@@ -12,16 +12,16 @@ def test_the_stage_rides_on_the_entry_of_the_thread_that_runs_it():
     try:
         with I._inflight("auto_decompose"):
             L._stage(object(), "2/3 repairer")
-            assert I.in_flight()[0]["stage"] | {"since": 0} == {"stage": "repairer", "done": 2, "of": 3, "since": 0}
-            assert pushed[-1][0]["stage"]["stage"] == "repairer", "pushed, not polled"
+            assert I.in_flight()[0]["stage"] | {"since": 0} == {"stage": "repairing what the checks refuse", "done": 2, "of": 3, "since": 0}
+            assert pushed[-1][0]["stage"]["stage"] == "repairing what the checks refuse", "pushed, not polled"
             with I._inflight("review_decomposition"):
                 I.staged("checker")
             L._stage(object(), "sufficiency 1 auditor")       # the outer entry is this thread's again
             outer = next(w for w in I.in_flight() if w["verb"] == "auto_decompose")
-            assert outer["stage"]["stage"] == "sufficiency 1 auditor" and outer["stage"]["done"] is None
+            assert outer["stage"]["stage"] == "writing the checks the goal still lacks" and outer["stage"]["done"] is None
             other = threading.Thread(target=I.staged, args=("elsewhere",))
             other.start(), other.join()
-            assert I.in_flight()[0]["stage"]["stage"] == "sufficiency 1 auditor", "another thread's work is not this one"
+            assert I.in_flight()[0]["stage"]["stage"] == "writing the checks the goal still lacks", "another thread's work is not this one"
     finally:
         I.LISTENERS.remove(pushed.append)
     assert I.MINE.get(threading.get_ident()) is None and not I.in_flight()

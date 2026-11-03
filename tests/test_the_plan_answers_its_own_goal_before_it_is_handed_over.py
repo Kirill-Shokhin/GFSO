@@ -38,6 +38,9 @@ def test_named_obligations_are_folded_in_and_the_residue_is_measured(monkeypatch
     class _Eng:
         graph = property(lambda self: self)
 
+        def get_active_children(self, _):       # …a plan with a split: a leaf's are said, not repaired
+            return [object()]
+
         def get_task(self, _):
             return object()
 
@@ -59,6 +62,9 @@ def test_what_the_repair_did_not_close_is_named(monkeypatch):
     class _Eng:
         graph = property(lambda self: self)
 
+        def get_active_children(self, _):       # …a plan with a split: a leaf's are said, not repaired
+            return [object()]
+
         def get_task(self, _):
             return object()
 
@@ -74,6 +80,9 @@ def test_a_check_that_names_nothing_changes_nothing(monkeypatch):
 
     class _Eng:
         graph = property(lambda self: self)
+
+        def get_active_children(self, _):       # …a plan with a split: a leaf's are said, not repaired
+            return [object()]
 
         def get_task(self, _):
             return object()
@@ -101,6 +110,9 @@ def test_what_the_parts_left_reaches_the_round_that_repairs_seams(monkeypatch):
 
     class _Eng:
         graph = property(lambda self: self)
+
+        def get_active_children(self, _):       # …a plan with a split: a leaf's are said, not repaired
+            return [object()]
 
         def get_task(self, _):
             return object()
@@ -130,6 +142,9 @@ def test_root_criteria_the_children_do_not_entail_reach_a_repair(monkeypatch):
 
     class _Eng:
         graph = property(lambda self: self)
+
+        def get_active_children(self, _):       # …a plan with a split: a leaf's are said, not repaired
+            return [object()]
 
         def get_task(self, _):
             return object()

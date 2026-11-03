@@ -737,6 +737,11 @@ def _close_the_goals_obligations(engine, request, rid, assignee, llm, spec, hole
     if mined is None:
         return spec, holes, ()
     record_goal_reading(engine, task, mined)
+    # A LEAF HAS NO SPLIT TO SECURE: at an atomic root a requirement no criterion writes is no failure of its validation,
+    # read only at contact (§8.3). It is said to the customer and not repaired here: the rounds were ~40% of a small
+    # task's plan, before its one executor and its validator had touched it (§9.9, wordtop, 2026-11-03).
+    if not engine.graph.get_active_children(rid):
+        return spec, holes, tuple(g.get("obligation", "") for g in mined)
     gaps, unentailed = mined, []
     for r in range(SUFFICIENCY_ROUNDS):
         if not gaps and not unentailed:

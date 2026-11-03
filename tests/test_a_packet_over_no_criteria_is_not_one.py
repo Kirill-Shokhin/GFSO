@@ -179,6 +179,19 @@ def test_an_empty_authoring_is_retried_within_the_repair_budget(monkeypatch):
 
 # === 4. the reply: "the gate will refuse" only where a gate does ===
 
+def test_a_leaf_s_obligations_are_said_and_not_repaired_at_authoring(monkeypatch):
+    """No split to secure at an atomic root (§8.3): the rounds cost ~40% of a small task's plan (wordtop, 2026-11-03)."""
+    leaf = {k: v for k, v in _PLAN.items() if k not in ("subtasks", "mappings")}
+    patch = {"name": leaf["name"], "add_root_criteria": leaf["root_criteria"],
+             "add_accepted_risks": leaf["accepted_risks"], "denial": leaf["denial"]}
+    rounds = []
+    monkeypatch.setattr(D, "_refine_round", lambda *a, **k: rounds.append(1) or (False, None, []))
+    monkeypatch.setattr(D, "_pin_by_part", lambda *a, **k: rounds.append(1) or (False, None, []))
+    e, out = _auto(monkeypatch, _Model(plans={1: patch}, gaps=["empty cells read as zero"]))
+    assert out.get("undecided_obligations") and not rounds
+    e.stop()
+
+
 def test_the_reply_promises_no_refusal_over_a_root_no_gate_holds(monkeypatch):
     leaf = {k: v for k, v in _PLAN.items() if k not in ("subtasks", "mappings")}
     patch = {"name": leaf["name"], "add_root_criteria": leaf["root_criteria"],

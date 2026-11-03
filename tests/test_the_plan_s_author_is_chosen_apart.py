@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 import gfso.tools_llm as TL
+from gfso import issuer as I
 from gfso.decompose import planning
 from gfso.engine.validation import l2_gate_on
 from tests.support import make_engine
@@ -108,3 +109,20 @@ def test_the_go_on_a_plan_file_stands_on_the_review_in_the_file(monkeypatch):
     monkeypatch.setattr(TL._planning, "text_of", lambda p: p)
     assert TL._the_go(e, "a file", "", None) == ("the goal", {"subtasks": []})
     assert e.graph.setting("l2_gate") == "0" and l2_gate_on(e.graph) is False
+
+
+def test_a_dispute_a_closed_plan_cannot_answer_stops_the_run_and_says_why(monkeypatch):
+    """Its issuer's right answer was thrown away and the model asked again, no line said (tracker, 2026-11-03)."""
+    e = _e()
+    paused = []
+    monkeypatch.setattr(I, "_still_open", lambda *a: True)
+    monkeypatch.setattr(I, "episode", lambda t: None)
+    monkeypatch.setattr(I, "extensions_spent", lambda *a: False)
+    monkeypatch.setattr(I, "review_due", lambda *a: False)
+    monkeypatch.setattr(I, "refused_on_this_version", lambda *a: "")
+    monkeypatch.setattr(I, "issuer_turn", lambda *a, **k: {"status": "unparsed", "why": "changed no criterion"})
+    monkeypatch.setattr(e, "users_plan", lambda: True)
+    monkeypatch.setattr(e, "pause", lambda who, why: paused.append(why))
+    monkeypatch.setattr(e, "challenge_reason", lambda t: "the check contradicts the spec")
+    assert I.settle(e, {}, "t", "dispute", "a", None)["status"] == "users"
+    assert "the check contradicts the spec" in paused[0]

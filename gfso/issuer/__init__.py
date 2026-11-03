@@ -2173,6 +2173,13 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
     if out["status"] != "applied" and _still_open(engine, task_id, question, ep):
         out = issuer_turn(engine, task_id, question, actor, verbs, where=where,
                           refusal=str(out.get("why") or out["status"]))
+    # …A DISPUTE A CLOSED PLAN CANNOT ANSWER IS THE USER'S: asked of a model again it was thrown away again, no line said,
+    # 29 calls in 27 min (tracker, 2026-11-03)
+    if question == "dispute" and out["status"] == "unparsed" and engine.users_plan():
+        why = (f"the plan the user gave cannot go on at {task_id}: its executor disputes a check, and only the user "
+               f"changes a check of that plan: {str(engine.challenge_reason(task_id) or '')[:300]}")
+        engine.pause("system", why)
+        return {"status": "users", "why": why}
     return out
 
 

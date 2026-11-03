@@ -63,6 +63,12 @@ def _inflight(name: str, engine=None, task_id=None):
     return _track()
 
 
+#: What a person reads for a stage the pipeline names by its role: "searcher" on the page said nothing (ui stream).
+_STAGE_WORDS = {"searcher": "listing what the task needs", "auditor": "writing the plan and its checks",
+                "sufficiency": "writing the checks the goal still lacks", "repairer": "repairing what the checks refuse",
+                "builder": "building the plan"}
+
+
 def staged(label: str) -> None:
     """The stage the work this thread runs has reached — `{stage, done, of, since}` on its entry, pushed as any entry
     is: the page told an authoring's progress only by the narration's prose (ui stream, 2026-10-31). `label` is the
@@ -71,7 +77,8 @@ def staged(label: str) -> None:
     with _INFLIGHT_LOCK:
         if (w := INFLIGHT.get(MINE.get(threading.get_ident()))) is None:
             return
-        w["stage"] = {"stage": re.sub(r"\s+", " ", re.sub(r"\d+/\d+", "", label)).strip(),
+        said = re.sub(r"\s+", " ", re.sub(r"\d+/\d+", "", label)).strip()
+        w["stage"] = {"stage": next((v for k, v in _STAGE_WORDS.items() if said.startswith(k)), said),
                       "done": int(m[1]) if m else None, "of": int(m[2]) if m else None, "since": round(time.time(), 1)}
         _changed()
 

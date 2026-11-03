@@ -1628,7 +1628,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     `export_plan` then reads back as the plan to hand in closed.
 
     `plan` is THE GO on a plan file (`plan` / `refine_plan`, a path or the text): the project is built from the goal
-    and the plan the file holds, as they stand — the customer's from then on, as any plan handed in."""
+    and the plan the file holds, exactly or refused; from then on contact may repair it, for the system wrote it."""
     request, spec = _the_go(engine, plan, request, spec) if plan is not None else (request, spec)
     model = model or engine.planner_model()
     _cb = emit_cb(engine, "decompose", _progress)
@@ -1697,7 +1697,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     # …A PLAN BEING POLISHED IS NOT YET THE USER'S: `open_plan` hands the spec in as a draft the system may repair and
     # re-split on contact, so its final graph (export_plan) shows what the plan needed — the author, 2026-10-25: «пока
     # план полируется оставлять открытым возможность менять, потом смотреть что менялось и фиксировать итог»
-    if spec is not None and not open_plan:
+    if spec is not None and not open_plan and plan is None:
         engine.give_users_plan(res.root_id)
     out = {"root_id": str(res.root_id),
            "subtasks": [{"id": str(c.id), "description": c.spec.description} for c in kids],
@@ -1837,9 +1837,12 @@ def _the_go(engine: Engine, plan: str, request: str, spec) -> tuple[str, dict]:
     if (request or "").strip() and request.strip() != p["goal"].strip():
         raise ValueError("auto_decompose: `request` differs from the goal the plan file answers — the go builds "
                          "the plan for its own goal; leave `request` out, or plan the new goal anew")
-    # …its review ran where it was written and its customer read it: a second one over the same file can change nothing
-    # in a plan that is now the user's, only stop it, with no move left to anyone (critic: no row ever ran this; every
-    # row of a plan handed in had the gate off, as `set_mode` says of a plan verified where it was authored)
+    # …its review ran where it was written and its customer read it: a second one, over the same file, was minutes and
+    # one more round of findings before any work (critic: no row ever ran this; every row of a plan handed in had the
+    # gate off, as `set_mode` says of a plan verified where it was authored). And not closed after its build, for the
+    # system wrote it (`auto_decompose`): a check of its own that contact refutes is repaired, where a closed plan spun on
+    # a true CHALLENGE, its issuer's right answer thrown away 29 times, 27 min (tracker, 2026-11-03; the author:
+    # «подчинять систему безоговорочно этому плану нельзя, он может быть сильным но не идеальным»). `spec` stays closed.
     engine.set_settings({"l2_gate": "0"}, AgentId(_agent_id()), "the go on a plan file: its review is in the file")
     return p["goal"], p["spec"]
 

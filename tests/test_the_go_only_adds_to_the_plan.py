@@ -1,5 +1,5 @@
-"""The go on a plan file builds the project from the file as it stands, and the plan is the customer's from then on
-(the author, 2026-10-31): every criterion, pinned check, mapping, Dep, register entry and scope line of the file is in
+"""The go on a plan file builds the project from the file as it stands (the author, 2026-10-31); contact may repair it
+from then on, the system having written it (the author, 2026-10-27, 2026-11-03: `auto_decompose`). Every criterion, pinned check, mapping, Dep, register entry and scope line of the file is in
 the built graph exactly, the go calls no model to repair it, and the plan read back off the graph renders to the
 file. What the system adds at the go — Del, state, the root's consent — is not in the file and not asked of it."""
 from __future__ import annotations
@@ -88,7 +88,7 @@ def test_the_plan_read_back_off_the_built_project_renders_to_the_file(go):
 
 def test_what_the_go_adds_is_not_in_the_file(go):
     e = go(_file())
-    assert e.users_plan() is True                       # the plan is the customer's: the system adds to it, never re-splits
+    assert e.users_plan() is False                      # the system wrote it: contact may repair it
     assert all(str(t.assignee) for t in e.graph.get_active_children(TaskId("root")))   # Del enters here, at the go
     assert set(tomllib.loads(_file())) == {"format", "goal", "plan", "fit", "review", "notes", "inputs"}   # …not in the file
 

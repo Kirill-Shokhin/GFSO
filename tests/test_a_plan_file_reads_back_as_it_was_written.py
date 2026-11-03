@@ -87,7 +87,8 @@ def test_the_go_builds_the_project_from_the_file_as_it_stands(monkeypatch, tmp_p
     path.write_text(A.render(GOAL, _plan()), encoding="utf-8")
     e = _engine(Mode.AUTO)
     out = TL.auto_decompose(e, plan=str(path))
-    assert seen == {"request": GOAL, "spec": _plan()} and e.users_plan() is True
+    assert seen == {"request": GOAL, "spec": _plan()}
+    assert e.users_plan() is False, "the system wrote this plan: contact repairs a check of its own"
     assert "error" not in out, out      # a plan handed in calls no model: none answering is no provider's fault
 
 
