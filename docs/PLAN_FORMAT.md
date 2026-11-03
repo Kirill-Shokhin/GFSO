@@ -151,7 +151,7 @@ plan is good: that is the review's.
 
 ## After the go
 
-`auto_decompose(plan=file)` builds the project from the goal and plan the file holds, as they stand, and records the plan as the user's (`Engine.give_users_plan`). Everything in the file is then in
+`auto_decompose(plan=file)` builds the project from the goal and plan the file holds, as they stand, and sets the project's Level-2 gate off, its review being in the file. Everything in the file is then in
 the graph exactly: the criteria with their pinned checks, the mappings, the Dep edges with glue and reads, the register
 and the scope. What the build adds is what the file leaves out: each part's Del, from the mode, and the nodes' states. No
 model is called: a plan the admission would refuse (`procedure.admission_defects`, for instance two probes of one criterion
@@ -161,8 +161,10 @@ running one command) is refused as it stands, naming why, before anything is bui
 plan read back off the graph (`extract_spec`) renders to the same file, and `tests/test_the_go_only_adds_to_the_plan.py`
 holds that.
 
-From then on, in a project run in AUTO, the system does not re-split the plan or rewrite any node's criteria; it may add
-(`validation.users_plan`, `users_criteria`). A change to the plan is the customer's act on the project.
+From then on the plan is open to contact, for the system wrote it: a check of its own that contact refutes is repaired, on
+the record with its reason. A plan handed in whole (`auto_decompose` with `spec`) is recorded as the user's
+(`Engine.give_users_plan`): in a project run in AUTO the system does not re-split it or rewrite any node's criteria, it may
+only add (`validation.users_plan`, `users_criteria`), and where contact refutes it the run stops saying why.
 
 ## Changing the format
 

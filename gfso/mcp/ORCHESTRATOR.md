@@ -86,8 +86,10 @@ stops with that cause.
 
 ## The loop (solo; in semi, over the levels you hold)
 
-1. **Structure — the verb by default; MANUAL where context must be studied (below).**
-   `auto_decompose(request, root_id, depth)` is THE one decomposition
+1. **Structure — the verb by default; MANUAL where context must be studied (below).** A plan file's go
+   (`auto_decompose(plan=path)`, above) builds the project from the file, its `request` left out or the plan's own goal,
+   and sets the Level-2 gate off, its review being in the file; what follows on structure and that gate is for a graph
+   made any other way. `auto_decompose(request, root_id, depth)` is THE one decomposition
    verb, dispatched by the target's state: on an empty project it AUTHORS the root from the request
    itself (no hand `create_task` needed) and builds the verified subtree; on an already-decomposed
    node it runs `depth` REFINE rounds over what exists (+1 iteration: new findings fold in as a

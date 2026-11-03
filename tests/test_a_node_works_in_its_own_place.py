@@ -123,12 +123,9 @@ def _run(e, agents, sessions: dict, until, validated: dict | None = None, rounds
                    runner=lambda en, t, ex, ag: run_executor(en, t, ex, ag, _llm=sessions[str(t)]),
                    validator_runner=lambda en, t, ag, **k: _auto_validate(
                        en, t, ag, _llm=_Validator(en, t, validated if validated is not None else {}), **k))
-    for _ in range(rounds):
-        d.dispatch_once()
-        time.sleep(0.05)
-        e.wait_idle()
-        if until():
-            return d
+    S._drive(e, d, until, rounds, pause=0.05)
+    if until():
+        return d
     raise AssertionError(f"not reached: {({t.id: t.state.name for t in e.all_tasks()})}")
 
 

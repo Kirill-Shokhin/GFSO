@@ -94,7 +94,7 @@ counter, drops `done_reason` (V=pass is RE-EARNED in OFFERED, never resurrected)
 stale the recorded independent verdict. The generation is `(iteration, reopens, revisions)` — the third
 member because §12.10 admits a re-ASSIGN from VALIDATING and §19.7 voids the pending delivery with it,
 while neither of the first two moves on a revision; and it is captured when a validation RUN STARTS
-(`Engine.generation_of`, handed to `record_exec_verdict`), because a verdict is about the delivery the
+(`Graph.generation_of`, handed to `record_exec_verdict`), because a verdict is about the delivery the
 validator read, not about whatever the node has become by the time it finishes. The self-PASS gate
 compares all three; q_V/false_fail_share compare the reopen generation. A pass-terminal reopened under the SAME criteria whose fresh run
 FAILs sets `false_positive` — exactly q_V's pass→later-fail member. ESCALATED needs nothing from R′:
@@ -154,7 +154,7 @@ it rolls up into (T1 non-redundancy). Where the validation stands is decided by 
 builds and checks it; the instrument validates at every seam and at the top of every scope one session
 carries, and a node inside such a scope is covered by that scope's validation (`validation.observed_here`).
 Where a registered executor holds the whole scope, the dispatcher runs it as one piece: one executor
-session over every open node in build order (`delegate.run_scope_executor`), then one validator run over
+session over every open node in build order (`sessions.run_scope_executor`), then one validator run over
 every delivered node, each node's own verdict recorded and signed parts first (`tools_llm.validate_scope`,
 `delegate._sign_scope`); a failing part fails the wholes above it on the criteria mapped to it. A childless
 node judged larger than one session gets no session: its split is owed (`validation.split_owed`), and where
@@ -300,9 +300,9 @@ gfso/
                             # and the ANSWERS the system gives: SignalOutcome/Refusal (what a refused
                             # transition says: kind · why · route) and Wait (why a node is not on the
                             # frontier and what would open it)
-      enums.py              # State(12; DONE/ABANDONED quasi-terminal §12.6), Signal(13 = 12 protocol
+      enums.py              # State(11; DONE/ABANDONED quasi-terminal §12.14), Signal(13 = 12 protocol
                             # + TIMEOUT), Verdict, CriticVerdict, Stage (the ledger's roles),
-                            # FM(7), RevisionReason (§15.8 typing)
+                            # FM(6), RevisionReason (§15.8 typing)
       effects.py            # MutateGraph (incl. dep_from/dep_froms), RunChecks, Recommend, Dispatch
       ports.py              # StoragePort (mandatory core incl. the append-only signal log),
                             # LLMProviderPort, ExecutionPort, AgentPort, VerifierPort, ClockPort, RunnerPort
@@ -334,8 +334,8 @@ gfso/
                             #     the COMPLETE transport registry (structural ∪ LLM)
 
   adapters/                 ← port implementations (import core only)
-    storage/ (sqlite, memory) · agents/ (human, …) · llm/ (stub | headless Claude CLI, generic
-    OpenAI-compatible) · verifiers/
+    storage/ (sqlite, memory) · agents/ (human, …) · llm/ (stub | the provider registry: headless
+    Claude CLI, chat APIs, plugins) · verifiers/
 
   decompose/ · critic/ · delegate.py · runtime.py   ← L2: the AI product (search↔audit monada,
                             # L2 validate, registry+dispatcher, DI/llm_factory/ProjectRegistry)
@@ -476,7 +476,7 @@ what they printed (`observe.py`) — an observation, never a verdict; `set_mode(
 
 ## Where a project's work runs — one server, execution isolated
 
-WHO answers is the provider (`LLMProviderPort`: `ClaudeCodeProvider`, the `claude -p` path, in adapters/llm/headless.py);
+WHO answers is the provider (`LLMProviderPort`, resolved by the registry above; the default `ClaudeCodeProvider`, the `claude -p` path, in adapters/llm/headless.py);
 WHERE its processes and the commands over a project's work run is the `ExecutionPort` (adapters/execution.py):
 `LocalExecution` — this host, as before — or `ContainerExecution` — one sealed Linux container per (execution, project)
 that the one server calls into with `docker exec`. A project chooses it on the existing doors: a role registered with
@@ -625,9 +625,9 @@ the node continues under a new contract in OFFERED: its **subtree is RETAINED, n
 a verb appears ONLY if logic is put in a transport instead of the Engine. Both are single, greppable invariants.
 
 ## Interfaces — one Engine, one action surface (`tools.py`), three transports
-The **Engine is the single source of all logic**; `gfso/tools.py` is the SINGLE action surface over it; the three
-transports (MCP · CLI · HTTP) are GENERATED from that one `TOOLS` registry. Adding an authoring verb = ONE Engine
-method + ONE `tools.TOOLS` entry → it appears on all three at once, zero per-adapter edits.
+The **Engine is the single source of all logic**; `gfso/tools.py`, with the verbs that call a model in `gfso/tools_llm.py`, is the SINGLE action surface over it; the three
+transports (MCP · CLI · HTTP) are GENERATED from one registry, `tools_llm.TOOLS`. Adding an authoring verb = ONE Engine
+method + ONE registry entry → it appears on all three at once, zero per-adapter edits.
 
 ```
    Engine (CORE)  ── the one place all logic lives; every verb is an Engine method
@@ -642,8 +642,7 @@ method + ONE `tools.TOOLS` entry → it appears on all three at once, zero per-a
 
 - `runtime.build_engine_from_env` = the shared CORE constructor (one Engine from `GFSO_DB_PATH`).
   Every setting it reads is owned by `gfso/config.py` — the one module that touches the environment
-  (`GFSO_L2_GATE` stays a direct read at its enforcement point, deliberately): the provider and its
-  billing mode, storage and model tiers, paths, and the measured dials — `GFSO_VALIDATION_BATCH`
+  (`GFSO_L2_GATE` stays a direct read at its enforcement point, deliberately): the provider, storage and model tiers, paths, and the measured dials — `GFSO_VALIDATION_BATCH`
   (how many probes one validator run owes at most — pinned, the parts' pinned ones each once, regression lines —
   and so how much of a validation runs in parallel; a criterion owing more is split between runs and read as their
   conjunction) and
@@ -816,7 +815,7 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    row gates, and CHECK-1c (anti-mock, an engineering addition with no canon row) does not. Cost,
    measured: 45 test fixtures were building decomposed nodes with no register and now carry one.
    **Closed since (2026-10-04):** CHECK-3 gates only the admission that sets the deadlines, where some choice of them
-   orders every edge (`Engine._refuse_deadlines_the_admission_cannot_order`); met afterwards it is §12.10's flag,
+   orders every edge (`admission.deadlines_the_act_sets`); met afterwards it is §12.10's flag,
    named in the frontier's step as the consumer's issuer's with his two moves and in `list_holes` as `kind: flag`
    (`validation.hole_kind`). The Syntactic-level gate on a whole's PASS binds only where the whole's issuer is its Del
    (`validation.whole_waits_for_its_parts`); at a seam the PASS lands and the departure from AND is said (§12.8).
@@ -856,7 +855,7 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    **CHECK-2** verified acyclicity of Dep and called it the row for D, so D-acyclicity (§9.5, §15.3) was
    checked nowhere; a node could be created as its own parent through the authoring door (measured). It
    is now decided where each part of it is visible — the split's own shape in `check_dag`, the ancestor
-   chain at the ASSIGN that would close a cycle (`Engine._assert_no_d_cycle`). **CHECK-6** quantified
+   chain at the ASSIGN that would close a cycle (`admission.refuse_a_d_cycle`). **CHECK-6** quantified
    over every child where §9.5 quantifies over the split's leaves (a root names its executor at its
    creation, §15.2). **`VALIDATING · ASSIGN→OFFERED`**, a row of §12.4 that §12.14 leans on for
    pre-registration, was refused outright over measured churn; it is admitted now, and the

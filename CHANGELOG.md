@@ -21,8 +21,12 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   cannot answer stops the run saying why, where it asked a model again with no line said.
 - A note through `refine_plan` no longer loosens checks it did not name, and what a plan spends is on the book of the
   project that asked.
+- A stopped project still knows its validator: the roster is published before the stop returns, where a finished run read
+  after a server start that its validator was on no roster.
 
 ### Changed
+- A split into one part is authored as the leaf it is: its criteria are the node's own, so a small task is not validated
+  twice over.
 - The attached agent's whole path stands in the first 4000 characters of its instructions, where a client cuts them.
 - The plan gate's re-check asks whether a pinned check probes what an obligation's own words name; another disguise of what
   a check refuses is that check's residue. A leaf's obligations are said once and not repaired at authoring, and a place

@@ -10,13 +10,13 @@ are separate projects inside it, not separate directories. The theory is in
 
 There are two ways to get a graph, and they are not equal in what they cost you.
 
-* **`plan(request)`, then `auto_decompose(plan=path)`** — the system writes a plan as a file, you read it whole, send a
-  note (`refine_plan`) or give the go; `auto_decompose(request)` does both in one call, with no reading between. Good
-  when the goal is generic enough that a model's weights already carry its structure.
+* **`plan(request)`, then `auto_decompose(plan=path)`** — the path your agent takes when you tell it a task: the system
+  writes a plan as a file, your agent reads it whole, sends a note (`refine_plan`) or gives the go, and contact repairs the
+  plan from there. `auto_decompose(request)` does both in one call, with no reading between.
 * **The manual mode** — you study the context and build the graph yourself, then run the checks over
-  it. This is the mode below, and it is the primary one for work on a codebase you know and a model
-  does not: a decomposition is an estimate `Ŝ` of a real structure `S` (§3.1), and the estimate can
-  only come from contact with the domain. Nothing in the apparatus can supply that for you.
+  it. This is the mode below, for work on a codebase you know and a model does not: a decomposition is an estimate `Ŝ` of
+  a real structure `S` (§3.1), and the estimate can only come from contact with the domain. Nothing in the apparatus can
+  supply that for you.
 
 The two mix. Hand-build the parts that need your context, let `auto_decompose` refine over what you
 built, and keep your ids, owners and accepted risks — a refine round folds new findings in as a
@@ -91,7 +91,8 @@ not know simply waits for that person — which is the honest state of the graph
 ## 3. Check the plan before writing any code
 
 Two levels: the engine admits a split only whole and clean at Level 0, and a child does not start executing
-until its parent's decomposition has a current Level-2 verdict.
+until its parent's decomposition has a current Level-2 verdict. A project built from a plan file has that review in the
+file: its go sets the gate off.
 
 **Level 0 — structure.** `list_holes()` answers `{holes, count}` — every unmet structural check
 across the graph at once: an uncovered criterion, an orphan child, a cycle, incoherent deadlines, a missing risk
@@ -119,8 +120,7 @@ dispute_finding("api", "<criterion>", "<why the entailment does hold>")
 The checker is an a-priori approximation, not an oracle; contact keeps the last word. What the engine
 enforces is that you *ran* it and dispositioned what it said — never that it was right.
 
-**If you have no checker.** The review needs a model — the Claude CLI on your `PATH`, with a credential set by
-`gfso credential claude`. With
+**If you have no checker.** The review needs a model on a credential its provider holds (`gfso credential`). With
 none, `review_decomposition` answers with no verdict, and no verdict is never read as clean: the gate
 stays shut and nothing executes. That is deliberate and it is not the only supported way to run. The
 canon's other branch (§9.9, EXPLORE) buys the plan's verification with *contact* instead of with a
@@ -130,6 +130,8 @@ checker, and it is a deployment setting rather than a skipped step:
 // data/serve.json — the switches the one server is raised with; then `gfso up` reconciles it
 { "GFSO_L2_GATE": "0" }
 ```
+
+For one project, `set_mode(..., l2_gate=False)`.
 
 Under it the Syntactic level (Level 0) still gates every admission, so a split is still refused for an
 uncovered criterion, an orphan, a cycle or a missing register — what you give up is the causal

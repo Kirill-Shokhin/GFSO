@@ -129,18 +129,20 @@ def _dispatcher(e, agents, executor, validator, per_node: list):
                                                                                          sign=sign))
 
 
-def _drive(e, d, until=lambda: False, rounds=200, wait=True) -> None:
+def _drive(e, d, until=lambda: False, rounds=200, wait=True, pause=0.03) -> None:
     """`rounds` of the dispatcher, or `until` holds. A session is a thread: counted rounds alone ran out while one still
     worked on a loaded machine, and a test asserted over what had not happened yet (shown, 36 of 36 under load). So the
-    last rounds wait for it, the wait bounded, unless a test holds its session on purpose."""
-    base, end, done = threading.active_count(), time.monotonic() + 120, 0
+    last rounds wait for it, the wait bounded, unless a test holds its session on purpose. By which threads, not how many:
+    a thread an earlier test left behind ending hid a session still at work."""
+    before, end, done = set(threading.enumerate()), time.monotonic() + 120, 0
     while done < rounds:
         d.dispatch_once()
-        time.sleep(0.03)
+        time.sleep(pause)
         e.wait_idle()
         if until():
             return
-        done = min(done + 1, rounds - 10) if wait and threading.active_count() > base and time.monotonic() < end else done + 1
+        working = wait and time.monotonic() < end and set(threading.enumerate()) - before
+        done = min(done + 1, rounds - 10) if working else done + 1
 
 
 def _states(e) -> dict:
