@@ -117,7 +117,7 @@ export async function loadCheckMap() {
 }
 // Absent from the map ≠ mapped to nothing: CHECK-1c is an engineering addition with no canon row,
 // CHECK-6 is a battery row guarding no mode (§9.5). Neither is `FM-?`, a defect it is not.
-export const FM_NONE = 'engineering checks (outside the canon battery)';
+export const FM_NONE = 'engineering checks';
 export const FM_NO_MODE = 'battery checks that guard no failure mode';
 export const fmOf = name => {
     const fm = FM.route[name];

@@ -15,7 +15,7 @@ export const failingNow = (rounds, state) => rounds?.at(-1)?.verdict === 'FAIL' 
 // 2026-10-26 — a node whose executor stopped twice without a report is its issuer's to revise in any state); until it is
 // served, the state's owner (§12.13). Not the step's signer: in solo and with no mode the issuer and the executor are one
 // name, and every issuer move read as the executor's (critic).
-const owes = (n, step) => ({executor: 'executor', issuer: 'issuer'})[step?.role] || OWES[n.state] || null;
+const owes = (n, step) => ({executor: 'executor', issuer: 'issuer', validator: 'validator'})[step?.role] || OWES[n.state] || null;
 const OWES = {OFFERED: 'executor', EXECUTING: 'executor', REWORKING: 'executor', CANCELLING: 'executor',
               CHALLENGED: 'issuer', BLOCKED: 'issuer', VALIDATING: 'issuer', ESCALATED: 'issuer'};
 // …and where the move owed is work in course, not a wait on the owner's decision: a verdict being validated (`decides`)

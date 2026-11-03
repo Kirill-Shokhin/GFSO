@@ -94,7 +94,7 @@ function read(plan) {
                assignee: mode() ? '' : $('gp-assignee').value.trim(), deadline: iso($('gp-deadline').value)};
     v.error = !v.description ? ['gp-desc', 'Describe the task first — a node is its contract, and this is its goal.']
         : !plan && !mode() && !v.assignee ? ['gp-assignee', 'Name an assignee: every task has exactly one accountable executor '
-                                             + '(Del, §2). Put your own name here if it is yours.'] : null;
+                                             + '(Del). Put your own name here if it is yours.'] : null;
     return v;
 }
 // The planner takes the statement as text — everything the form holds, so nothing typed is dropped.

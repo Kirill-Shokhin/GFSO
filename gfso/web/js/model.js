@@ -61,6 +61,8 @@ export async function loadFrontier() {
             .map(w => [w.task_id, [...(w.waits_on || [])]])) : null;
         // …and each node's step as the engine names it: whose move it is (run.js `owes`)
         S.steps = new Map((f.steps || []).filter(x => x.task_id).map(x => [x.task_id, x]));
+        // …and a verdict arriving by itself is the validator's, in the engine's kind: it read «waits on the issuer» under AUTO (critic)
+        for (const w of f.waiting || []) if (w.kind === 'validator' && !S.steps.has(w.task_id)) S.steps.set(w.task_id, {task_id: w.task_id, role: 'validator'});
         S.frontier = f;
     } catch (e) { /* the frontier is a read */ }
     // the panel keeps its moves on these only (panel.js): what the ENGINE says is this person's move — a state chip is

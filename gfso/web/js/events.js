@@ -67,6 +67,8 @@ function head(id, name, node, run, rs) {
 
 // What the reader set here outlives the view's redraw — every event of a live run redraws the deck, and a group opened,
 // a kind switched off or a search typed was undone a few seconds later (the author, 2026-10-27).
+// what a search reads is what a row says, not its record's field names: «fail» found every row by `failed_criteria` (critic)
+const said_ = o => o == null ? '' : typeof o === 'object' ? Object.values(o).map(said_).join(' ') : String(o);
 const on = new Set(Object.keys(KINDS).filter(k => k !== 'narration')), opened = new Set();
 let query = '', shown = null;
 
@@ -88,7 +90,7 @@ export function render(el, run, nodes, tasks, pipeline = []) {
         if (sel !== shown) { shown = sel; if (sel) opened.add(`g|${sel}`); }
         // a group's time and its place among the newest are its newest row the filter shows: hidden narration (a
         // migration's batch) stamped every group one minute and put the goal's verdict last (critic)
-        const kept = Object.fromEntries(ids.map(id => [id, by[id].filter(r => on.has(r.kind) && (!q || JSON.stringify(r.a || r.p).toLowerCase().includes(q)))]));
+        const kept = Object.fromEntries(ids.map(id => [id, by[id].filter(r => on.has(r.kind) && (!q || said_(r.a || r.p).toLowerCase().includes(q)))]));
         box.innerHTML = ids.filter(id => !sel || id === sel).sort((a, b) => (kept[b][0]?.t || 0) - (kept[a][0]?.t || 0)).map(id => {
             const rs = kept[id];
             if (!rs.length && (q || sel !== id)) return '';

@@ -192,7 +192,7 @@ export async function selectTask(id) {
         const typing = form?.contains(document.activeElement) && document.activeElement, at = typing && [typing.selectionStart, typing.selectionEnd];
         sb.classList.remove('hidden');
         rebuild(sb, d.id, PARTS.map(f => f(ctx)).join(''));
-        sb.dataset.last = last; sb.dataset.per = rounds.some(r => r.per) ? '1' : '';
+        sb.dataset.last = last; sb.dataset.per = rounds.filter(r => r.per).length;
         if (form && (!sig || acts?.actions?.includes(sig))) {
             $('inline-form')?.replaceWith(form);
             if (typing) { typing.focus(); if (at[0] != null) typing.setSelectionRange(...at); }
@@ -204,7 +204,7 @@ export async function selectTask(id) {
 // …and again once the run is read: the panel can open before the deck has built it — its signer, and the per-criterion
 // records of its rounds, which only the run joins from the verdict history (critic: a ?task= link drew ⊥ for a kept pass)
 export const resign = id => { const by = $('pn-by'); if (by) by.innerHTML = signedBy(S.run, id);
-    if ($('sidebar').dataset.key === id && (S.run?.rounds[id] || []).some(r => r.per) && !$('sidebar').dataset.per) selectTask(id); };
+    if ($('sidebar').dataset.key === id && +$('sidebar').dataset.per < (S.run?.rounds[id] || []).filter(r => r.per).length) selectTask(id); };
 
 export function closeSidebar() {
     closeReader();
@@ -315,7 +315,7 @@ const kids = d => d.children || [], vPart = c => vNow(c, S.run?.audit.filter(a =
 const passing = d => kids(d).filter(c => vPart(c) === 'pass').length;
 const composition = ({d}) => section('Composition — the parts', `<div class="composition-panel">`
     + tally(`${passing(d)}/${kids(d).length}`, 'parts pass') + `<div class="composition-formula">`
-    + `A forecast: V(parent) = AND(parts) holds under a correct decomposition (Th. 1), and the parent's V is its own `
+    + `A forecast: V(parent) = AND(parts) holds under a correct decomposition, and the parent's V is its own `
     + `verdict over the result</div>`
     + kids(d).map(c => { const v = vPart(c);
         return `<div class="composition-row v-${v}"><span class="v-sym">${V_SYMBOL[v]}</span>`
@@ -338,8 +338,8 @@ export const FACETS = [
      body: ({d}) => section('Description', `<div class="rd-text">${esc(d.description)}</div>`)},
     {id: 'verdict', label: 'Verdict', n: ({vr}) => vr?.verdict || (vr?.refused_report && '⊥'), body: verdictFull},
     {id: 'scope', label: 'Scope', n: ({d}) => (d.scope || []).length, body: list('scope', 'Scope — boundary exclusions')},
-    {id: 'risks', label: 'AcceptedRisk', n: ({d}) => (d.accepted_risks || []).length, body: list('accepted_risks', 'AcceptedRisk (STD-1)')},
-    {id: 'components', label: 'Risk components', n: ({d}) => (d.risk_components || []).length, body: list('risk_components', 'Risk components (STD-3)')},
+    {id: 'risks', label: 'AcceptedRisk', n: ({d}) => (d.accepted_risks || []).length, body: list('accepted_risks', 'AcceptedRisk')},
+    {id: 'components', label: 'Risk components', n: ({d}) => (d.risk_components || []).length, body: list('risk_components', 'Risk components')},
     {id: 'parts', label: 'Parts', n: ({d}) => kids(d).length && `${passing(d)}/${kids(d).length} pass`, body: composition},
     // all met reads as met, not «0/6 unmet» (audit D17)
     {id: 'checks', label: 'Checks', n: ({d}) => { const n = ran(d).length, un = ran(d).filter(c => !met(c)).length;

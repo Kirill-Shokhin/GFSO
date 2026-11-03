@@ -53,7 +53,7 @@ export function render(el, run, nodes) {
     const kinds = Object.keys(KIND).filter(k => c.byKind[k]);
     el.innerHTML = `<div class="cs">
         <div class="cs-tiles">
-            ${tile(money(Object.values(c.byKind)), 'spent', c.unpriced && tally(c.unpriced, 'unpriced', TIP.unpriced))}
+            ${tile(Object.values(c.byKind).some(k => k.procs) ? money(Object.values(c.byKind)) : '—', 'spent', c.unpriced && tally(c.unpriced, 'unpriced', TIP.unpriced))}
             ${tile(tok(c.tokens), 'tokens', 'cache included', c.untold && c.tokens != null && tally(c.untold, 'reported none'))}
             ${tile(lasting(run.clock.from, run.clock.span), 'run time', run.clock.folds.length && tally(dur(run.clock.folds.reduce((s, f) => s + f.to - f.from, 0)), 'idle, folded'))}
             ${tile(dur(c.busy), 'session time', tally(`${(c.busy / Math.max(run.clock.span, 1)).toFixed(1)}×`, 'the run'))}

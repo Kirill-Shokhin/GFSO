@@ -44,7 +44,7 @@ function stretches(run) {
         if (last && last.node === s.node && last.kind === s.kind && s.start - last.end < JOIN
             && !cuts(s.node).some(t => t > last.end - 1e3 && t <= s.start + 1e3)) {
             Object.assign(last, {end: Math.max(last.end, s.end), cost: last.cost + s.cost, tokens: last.tokens + s.tokens,
-                                 open: last.open || s.open, parts: last.parts + 1, busy: last.busy + (s.ms ?? s.end - s.start),
+                                 open: last.open || s.open, priced: last.priced !== false || s.priced !== false, parts: last.parts + 1, busy: last.busy + (s.ms ?? s.end - s.start),
                                  continued: (last.continued || 0) + (s.resumed ? 1 : 0)});
             if (s.agent && !last.agents.includes(s.agent)) last.agents.push(s.agent);
             if (s.handover) last.handed.push(cut(s));
@@ -52,7 +52,8 @@ function stretches(run) {
         } else out.push({...s, parts: 1, busy: s.ms ?? s.end - s.start, agents: s.agent ? [s.agent] : [], handed: s.handover ? [cut(s)] : [], members: [s]});
     }
     // what is left of its processes once those that continued or were handed over are counted: retries
-    for (const x of out) x.retried = x.parts - 1 - (x.continued || 0) - x.handed.length;
+    // a plan's merged sessions are its stages, none a retry (critic: «10 processes: 9 retried»)
+    for (const x of out) x.retried = x.kind === 'plan' ? 0 : x.parts - 1 - (x.continued || 0) - x.handed.length;
     return out;
 }
 

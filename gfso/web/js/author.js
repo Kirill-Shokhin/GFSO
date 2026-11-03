@@ -120,7 +120,7 @@ export async function submitDecompose() {
         return notice(`every criterion of this node must be mapped to the child that delivers it `
                       + `(CHECK-1, joint sufficiency). Still unmapped: ${unmapped.join(', ')}.`, 'bad');
     if (children.every(c => !c.spec.accepted_risks.length))
-        return notice('a decomposition needs its ACCEPTED_RISKS register (CHECK-4, §9.2: a decomposition '
+        return notice('a decomposition needs its ACCEPTED_RISKS register (a decomposition '
                       + 'without one is incomplete by definition). Add at least one factor — `+ accepted_risks` '
                       + 'on a subtask — or say in it that none is known.', 'bad');
     // …AND THE ENGINE'S OWN REFUSAL REACHES THE USER — a rejected plan closed the modal like an accepted one.
