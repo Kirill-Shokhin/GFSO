@@ -32,8 +32,7 @@ You (the agent session) operate a GFSO task graph through the `gfso` tools; the 
    register_agent("<project>-root", "llm-executor",  model="claude-haiku-5-5", workdir=W)
    register_agent("<project>-exec", "llm-executor",  model="claude-haiku-5-5", workdir=W)
    register_agent("<project>-val",  "llm-validator", model="claude-haiku-5-5", workdir=W)
-   set_mode("auto", system_model="claude-haiku-5-5")
-   set_mode(network={"mode": "off"})  # for `off`, a call of its own after the mode
+   set_mode("auto", system_model="claude-haiku-5-5")  # for `off`: network={"mode": "off"} in this call
    plan(request)              # minutes; name in `request` the files that define the work: it reads those
    auto_decompose(plan=path)  # the go
    ```
