@@ -10,17 +10,15 @@ Guards are simple predicates on graph state, read off `GuardContext` (`iteration
 
 ## FSM Transition Table (from paper §12 + vision doc)
 
-> **Canon names = code identifiers (the v4.0 naming lag is CLOSED).** The enum migration landed:
-> the code ships `OFFERED`, `REWORKING`, `ABANDONED` (the system trigger keeps the
-> lowercase name `timeout`), `CONFIRM_CANCEL`, the register field `ACCEPTED_RISKS`, `AUTO_PASS`, and
-> FM-3 `Veracity` / FM-5 `Freshness` — so a name in this document is the canon's and the code's at
-> once. The read-shim that decoded the pre-migration spellings is gone with the migration that
-> needed it: one vocabulary is written, and the same one is read. (One older read-map survives and is
+> **Canon names = code identifiers.** The code ships `OFFERED`, `REWORKING`, `ABANDONED` (the system
+> trigger keeps the lowercase name `timeout`), `CONFIRM_CANCEL`, the register field `ACCEPTED_RISKS`,
+> `AUTO_PASS`, and FM-3 `Veracity` / FM-5 `Freshness` — so a name in this document is the canon's and
+> the code's at once: one vocabulary is written, and the same one is read. (One read-map exists, and it is
 > a different thing — a pre-v3.7 `DONE(reason=CANCELLED)` row is mapped to `ABANDONED` on read, which
 > is why `DoneReason.CANCELLED` is still a member.) Section references here are v4.0 numbering.
 >
-> **The two rows that diverged from the canon in SHAPE are closed** (corners #3 and #1 of
-> `formal/README.md`), so the table below is canon-shaped and no longer carries a declared gap.
+> **The table is canon-shaped in every row.** The two rows whose shape the canon fixes are stated here
+> and in the corners below (#3 and #1):
 >
 > **(1)** `(VALIDATING, FAIL, iter >= max)` now targets **ESCALATED**, as §12.5 routes the exhausted
 > `FAIL↔REWORKING` loop and as §8.3 requires ("DONE is reached through acceptance (PASS), **never through fail**" — v4.1; the
@@ -109,7 +107,7 @@ cancellation as DONE(reason=CANCELLED) — migrated on read in the SQLite adapte
 retired OVERDUE is moved to ESCALATED when the database opens, logged as a migration (not a signal);
 audit rows that name OVERDUE keep their text and read as ESCALATED (`RETIRED_STATES`).
 
-ESCALATED resolution is INSIDE the FSM (§12.5). It was written as outside it, which singled out one issuer act as extra-protocol while ASSIGN, PASS, FAIL, CANCEL and REJECT_CHALLENGE are all inside — and left a state meaning "someone must decide" admitting no act of the decider. Measured cost: an agent whose root escalated built a second root beside it, then a third, and closed the goal on a childless leaf.
+ESCALATED resolution is INSIDE the FSM (§12.5): the issuer's re-ASSIGN, CANCEL and the state's own timeout are rows of the table like ASSIGN, PASS, FAIL and REJECT_CHALLENGE. A state meaning "someone must decide" that admitted no act of the decider would leave an agent whose root escalated to build around it.
 
 **Discovered-Dep (§11.2/§15.4, two-phase):** a BLOCK naming undeclared prerequisite NODE(s)
 (`blocker_task_ids`; `blocker_task_id` = single-blocker shorthand) emits RECORD_DEP PER named node —
@@ -142,9 +140,9 @@ validation rather than for a different signature. The record can come from the i
 `by_hand` so nothing downstream reads a self-named party as an instrument). An authorized instrument
 opens the gate by what it RECORDED, not by whose name is on the signal: the rule used to step aside
 for any id on the validator roster, and `source` is caller-supplied on the CLI and HTTP doors, so
-`register_agent(<any id>, "llm-validator")` plus one `signal ... PASS <that id>` closed a root that
-had delivered nothing — no verdict on the record at all (2026-09-05). Every instrument path in the
-product already writes its verdict before signing it, so what the narrowing removed is a signature
+`register_agent(<any id>, "llm-validator")` plus one `signal ... PASS <that id>` would close a root that
+had delivered nothing, with no verdict on the record at all. Every instrument path in the
+product writes its verdict before signing it, so what the rule refuses is a signature
 standing on nothing. What the dispatcher may NOT do is reuse an executor's own
 self-report as that verdict: the record names who produced it, and the executor's signature is not an
 independent one. An INTERNAL node (same Del as its parent — the executor's own private
@@ -192,15 +190,15 @@ runs of "the same agent" under different caps are not the same agent.
 
 **DONE is one state.** DONE is reached by PASS alone since v4.1 (a timed-out validation goes to ESCALATED); rows written before that change carry DONE(auto) as metadata in the graph, and it is the same FSM state. Simplifies the FSM — terminal is terminal. Reason is recorded by MutateGraph for metrics. What DONE does NOT carry is a verdict of fail: acceptance is its only route in (§8.3), the exhausted rework loop hands the node to its issuer in ESCALATED(fail) instead, and DONE(cancelled) is a pre-v3.7 encoding migrated on read.
 
-**Every wait's timeout → ESCALATED directly.** OFFERED, CHALLENGED, EXECUTING, REWORKING, BLOCKED and VALIDATING all hand a lapse to the issuer at once. There used to be a transit, OVERDUE, between a first and a second timeout: it admitted no progress signal and no revision, so its owner held only CANCEL, and its one exit was the second timeout into the state where the decision is actually made. It is gone, and re-ASSIGN is admitted in every live state but IDLE and CANCELLING.
+**Every wait's timeout → ESCALATED directly.** OFFERED, CHALLENGED, EXECUTING, REWORKING, BLOCKED and VALIDATING all hand a lapse to the issuer at once. There is no transit state (the retired OVERDUE) between a first and a second timeout: it would admit no progress signal and no revision, so its owner would hold only CANCEL, and its one exit would be the second timeout into the state where the decision is actually made. Re-ASSIGN is admitted in every live state but IDLE and CANCELLING.
 
-**CHALLENGED timeout → ESCALATED (§12.2).** A pending challenge that times out is an unresolved spec dispute, not a benign event — it goes to its issuer, never auto-accepts. (Earlier drafts auto-accepted → OFFERED; that silently resolved a dispute in the issuer's favour and was removed.)
+**CHALLENGED timeout → ESCALATED (§12.2).** A pending challenge that times out is an unresolved spec dispute, not a benign event — it goes to its issuer, never auto-accepts, because an auto-accept (→ OFFERED) would silently resolve a dispute in the issuer's favour.
 
-**VALIDATING timeout hands the decision back, and accepts nothing.** The issuer who did not validate within T_validate is asked again in ESCALATED; the delivery stays in the log and his re-ASSIGN re-presents it (§16.14). Until v4.1 this closed `DONE(auto_pass)` — the one timeout that invented a verdict, and one a parent's executor could obtain over his own child by letting its VALIDATING lapse. `DoneReason.AUTO_PASS` stays a member because rows written before this change carry it; nothing produces it any more.
+**VALIDATING timeout hands the decision back, and accepts nothing.** The issuer who did not validate within T_validate is asked again in ESCALATED; the delivery stays in the log and his re-ASSIGN re-presents it (§16.14). A timeout that closed `DONE(auto_pass)` would invent a verdict, one a parent's executor could obtain over his own child by letting its VALIDATING lapse. `DoneReason.AUTO_PASS` stays a member because stored rows carry it; nothing produces it.
 
-**CONFIRM_CANCEL — two-step handshake (canon §12.6; code synced at v3.7).** Cancellation is `CANCEL(issuer)→CANCELLING→CONFIRM_CANCEL(executor)→ABANDONED`, mirroring ASSIGN→ACCEPT. CONFIRM_CANCEL is an FSM-deadlock signal: the sole staffed exit from CANCELLING, carrying the executor's in-flight state (`SignalData.in_flight`) onto the audit log (T11). `CANCELLING--timeout-->ABANDONED` — cancellation is authoritative, executor silence still completes it (without the in-flight report). The cascade fires on CANCEL (entering CANCELLING): every live descendant gets its own CANCEL and runs its own handshake.
+**CONFIRM_CANCEL — two-step handshake (canon §12.6).** Cancellation is `CANCEL(issuer)→CANCELLING→CONFIRM_CANCEL(executor)→ABANDONED`, mirroring ASSIGN→ACCEPT. CONFIRM_CANCEL is an FSM-deadlock signal: the sole staffed exit from CANCELLING, carrying the executor's in-flight state (`SignalData.in_flight`) onto the audit log (T11). `CANCELLING--timeout-->ABANDONED` — cancellation is authoritative, executor silence still completes it (without the in-flight report). The cascade fires on CANCEL (entering CANCELLING): every live descendant gets its own CANCEL and runs its own handshake.
 
-**Revision = re-ASSIGN, same id (canon §12.3 Inv-1; code synced at v3.7).** A packet change on a live node is ONE re-ASSIGN under the same id → OFFERED (the executor re-ACCEPTs/CHALLENGEs); the APPLY_SPEC mutation re-authors in place and the superseded version lives in the append-only log (Inv-7). No CANCEL signal, no CANCELLING pass, no cascade — subtree retained; staleness surfaces via CHECK-1/CHECK-1b/CHECK-3. Not accepted from IDLE (no packet yet), CANCELLING, or terminals.
+**Revision = re-ASSIGN, same id (canon §12.3 Inv-1).** A packet change on a live node is ONE re-ASSIGN under the same id → OFFERED (the executor re-ACCEPTs/CHALLENGEs); the APPLY_SPEC mutation re-authors in place and the superseded version lives in the append-only log (Inv-7). No CANCEL signal, no CANCELLING pass, no cascade — subtree retained; staleness surfaces via CHECK-1/CHECK-1b/CHECK-3. Not accepted from IDLE (no packet yet), CANCELLING, or terminals.
 
 **The dispute is open after consent (v4.1).** EXECUTING and REWORKING admit CHALLENGE (§12.4): the defects the a-priori battery cannot see — FM-1.d, FM-2, FM-3's form — are met in the work, and routed through BLOCK the dispute lost both of its §16.12 closures (REJECT_CHALLENGE's justification and ACCEPT_CHALLENGE's positive one). What ACCEPT protects is untouched: the contract binds until the issuer answers, and REJECT_CHALLENGE returns the node to the wait the challenge interrupted under the same packet version, deadline and rework count — EXECUTING when an ACCEPT of the current version stands in the log, OFFERED when none does (a challenge raised from the offer; sending it to EXECUTING would put the executor to work on terms he never accepted). Consent is read off the log (`engine.audit.consented_on_current_version`: an ACCEPT after the latest version-installing event — an ASSIGN in any form, including a revision and a REOPEN, or an ACCEPT_CHALLENGE; a pre-consent REJECT_CHALLENGE enters OFFERED and installs nothing), into `GuardContext.consented`. The same reading says whether a node is reworking (`Engine.in_rework`: a FAIL on the current version, in EXECUTING or REWORKING), so a rework resumed in EXECUTING by a rejected challenge or a resolved block keeps its failed-criteria pointer in the packet and the directive.
 
@@ -284,7 +282,7 @@ def timeout_monitor(graph, queue):
                 queue.put(TimeoutSignal(task.id))
 ```
 
-**Key changes from v3:**
+**Properties of the loop:**
 - `graph.apply()` returns affected child task_ids, not signals; the engine loop (`gfso/engine/loop.py`) puts a CANCEL on the queue for each. Signal generation stays out of the graph.
 - `handlers.run_checks()` returns results. Stored in graph for Dispatch payload and metrics.
 - `handlers.recommend()` returns recommendation. Stored in graph for Dispatch payload.
@@ -386,7 +384,7 @@ mcp|api|web|cli|driver|main|doctor     → everything (and NOTHING below imports
 
 **L3 (adapters/):** Pluggable. Implements core/ ports. engine/ doesn't know which adapters exist.
 
-No upward dependencies, and the matrix above is the one the gate enforces (`tests/test_layering.py`) — including the part this prose used to round off: `gfso.adapters` may import `gfso.core` and other adapters, and binding (`mcp`/`api`/`web`/`cli`/`driver`/`main`/`doctor`) is the only place allowed to import binding.
+No upward dependencies, and the matrix above is the one the gate enforces (`tests/test_layering.py`): `gfso.adapters` may import `gfso.core` and other adapters, and binding (`mcp`/`api`/`web`/`cli`/`driver`/`main`/`doctor`) is the only place allowed to import binding.
 
 ## The Level-2 review — the ONE map (canon §9.5)
 
@@ -398,12 +396,11 @@ entailment · **Pragmatic** = level 2, causal correctness, pre-contact) — the 
 where a code layer and a verification level share a number and mean nothing alike. Note also that
 "semantic" belongs to verification level 1 — what `review_decomposition` reaches for is the
 Pragmatic level, which the canon marks a permanent boundary rather than a solved check (Ch. 20), so
-what runs here is an approximation to it, not the level itself. (The collision feeds the parked
-naming-overhaul; until then this section is the disambiguation.)
+what runs here is an approximation to it, not the level itself. This section is the disambiguation.
 
 Level 2 is NOT one component — it is one FUNCTION with four deliberate surfaces, split by
-the QUESTION each asks. Two prior designs are deliberately dead: the monolithic analyst⊥validator
-critic (E2-refuted: polices form, cannot move content) and the SEARCH-in-diff-mode hole-hunt
+the QUESTION each asks. Two designs are excluded: the monolithic analyst⊥validator
+critic (it polices form and cannot move content) and the SEARCH-in-diff-mode hole-hunt
 as the standalone verb (the opposite extreme — "what is missing" is the DECOMPOSER's question;
 it lives in refine and only there):
 
@@ -424,7 +421,7 @@ follow §9.9's marginal rule (VERIFY while marginal c_check < prevented FORM-ris
 mandated, the checker is ON-DEMAND — spent where the caller deems the risk worth one call
 (hand-authored graphs, external issuers, load-bearing seams), never auto-fired per ASSIGN.
 `validate_result` is NOT on this map: it is EXECUTION validation, post-contact — the contact
-itself, not a pre-contact check level (a recurring conflation, named here on purpose).
+itself, not a pre-contact check level.
 
 ## System LLM vs Agent LLM
 
@@ -470,7 +467,7 @@ system before its context outgrows the resource (`adapters/llm/budget.py`): at i
 margin, always; at the role's budget where one is set (`register_agent(context_budget=…)`), there at a point the session
 has checked. The session writes its own note under fixed sections and a fresh one continues on the packet, the note and
 the place's machine state — what the node's checks print now, what changed (`sessions._machine_state`). It runs on any
-provider whose round cut at its cap reports its stop and its context — a mechanism not yet measured on live rows.
+provider whose round cut at its cap reports its stop and its context.
 Before every executor session the system also runs the node's pinned checks once in a copy of its place and hands it
 what they printed (`observe.py`) — an observation, never a verdict; `set_mode(observe=False)` switches it off.
 
@@ -518,8 +515,8 @@ project's own setting on `set_mode`.
   question stays OPEN (a real deployment should anchor to real UTC dates or stronger — tamper-resistant
   time is an implementor's open end). A bound already passed fires ON ENTRY, so a state entered after
   its bound admits no signal before its timeout (§11.5). Deduplicated per state VISIT —
-  (task, state, `state_entered_at`): keying on the last-fired state alone went silent when an R′
-  reopen re-entered a fired-in state through a terminal (an Inv-5 hole found by the TLC spike model,
+  (task, state, `state_entered_at`): keying on the last-fired state alone would go silent when an R′
+  reopen re-entered a fired-in state through a terminal (an Inv-5 hole the TLC spike model shows,
   see `formal/tla/README.md`); a state change restamps the entry, so a re-entered state fires again.
 - **Graph store** persists G via StoragePort
 - **Audit trail** records every signal with timestamp, old/new state, effects, errors — APPEND-ONLY in
@@ -540,9 +537,8 @@ project's own setting on `set_mode`.
 
 # v3.6 — mutation surface, closure & interfaces
 
-> This section extends the CORE-FSM architecture above with the track-b work (the upper authoring layer, the
-> single-chokepoint closure, decompose, and the one-action-surface/three-transport interface model). Where the two conflict, THIS section is current (e.g. Recommend is no longer auto-emitted on ASSIGN; CHALLENGED-timeout
-> escalates rather than auto-accepting; revise does not cascade — see below).
+> This section extends the CORE-FSM architecture above with the upper authoring layer, the
+> single-chokepoint closure, decompose, and the one-action-surface/three-transport interface model.
 
 ## Two layers — every mutation is a logged signal
 Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME closed FSM — there is no exit from it.
@@ -574,14 +570,14 @@ Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME c
 | **reopen** | re-`ASSIGN` out of DONE/ABANDONED → OFFERED | R′ (§12.15): double-gated (finality of consumption ∧ max_reopens); verdict re-earned, never resurrected; consumed terminal = finally locked (recover by re-decomposition) |
 | **abandon** | `CANCEL` → CANCELLING → `CONFIRM_CANCEL` → ABANDONED | two-step handshake (§12.6); **cascades CANCEL to subtree**; never deleted (§17.1) |
 
-**Surface-don't-destroy** (canon §12.6; code synced at v3.7). abandon = `CANCEL` → opens the handshake and cascades the
+**Surface-don't-destroy** (canon §12.6). abandon = `CANCEL` → opens the handshake and cascades the
 subtree (its sub-work served a contract that no longer exists, §15.1); each node settles CANCELLING→ABANDONED
 on its executor's CONFIRM_CANCEL (or timeout — cancellation is authoritative). revise = re-`ASSIGN` (same id) →
 the node continues under a new contract in OFFERED: its **subtree is RETAINED, no cascade**; coverage staleness
 (uncovered new criterion / dangling mapping) is SURFACED by CHECK-1 / non-redundancy for the agent to resolve
 ∨ declare, not destroyed. The only IN-PLACE spec change is `ACCEPT_CHALLENGE`.
 
-## Decomposition surface — one operation over graph state (canon §17.1; code synced at v3.8)
+## Decomposition surface — one operation over graph state (canon §17.1)
 
 `auto_decompose` is the single decomposition verb, dispatched by the target's state; `depth` N ≡ init +
 (N−1) refine applications of the same operation:
@@ -611,9 +607,9 @@ the node continues under a new contract in OFFERED: its **subtree is RETAINED, n
 ## Closure invariant (proven)
 - **Static:** every authored-state write lives in `core/graph/mutations.py::apply`, called ONLY by
   `engine/loop.py::_execute_effects` (the event loop), which records an audit entry per signal.
-- **Build:** `decompose` builds THROUGH the FSM (`build_graph_live`); the old offline `build_graph` (direct
-  `save_task`) was DELETED — one build path, no offline authored-state write.
-- **Discovered-Dep is signal-driven (closed at v3.7):** BLOCK carrying `blocker_task_ids` (or the singular
+- **Build:** `decompose` builds THROUGH the FSM (`build_graph_live`) — one build path, no offline
+  authored-state write.
+- **Discovered-Dep is signal-driven:** BLOCK carrying `blocker_task_ids` (or the singular
   shorthand) emits RECORD_DEP per named blocker (provisional edges), RESOLVE_BLOCK emits ADJUDICATE_DEP
   (confirm all / corrected full set / retract all) — both through `mutations.apply` (§11.2/§15.4).
   `add_dependency(discovered=True)` remains as a test/offline convenience only, off every HTTP/MCP/CLI
@@ -702,15 +698,13 @@ and the rewrite happens BEHIND them; the FSM table, mutations, checks and metric
 
 ## Code ↔ canon corners (flagged, not patched — canon is truth)
 
-*(The three that were LIVE divergences of the ENGINE from the canon — **#3**, an edge the canon denies,
-**#1**, a row the canon exempts, and **#5**, a failure mode routed to the wrong repair — are now
-CLOSED or landed in part: the engine carries the canon's shape and each entry records what landed. The rest
-are settled by the canon and kept because the Lean encoding is where they show, or are engine gaps.)*
+*(Entries #3, #1 and #5 are points where the engine once departed from the canon; each now carries the
+canon's shape and records what it does. The rest are settled by the canon and kept because the Lean
+encoding is where they show, or are engine gaps.)*
 
-1. **IDLE has no timeout — the canon's position; the engine now agrees (CLOSED).**
-   `gfso/core/protocol/fsm.py` used to carry an `(IDLE, TIMEOUT)` row, added under the **v3.9**
-   reading in which Inv-5 was total over non-terminals; v4 exempts IDLE by name (§12.2, §12.12), so the
-   row was removed. What it had been written for — a crash orphan, observable in IDLE because
+1. **IDLE has no timeout — the canon's position, and the engine's (CLOSED).**
+   `gfso/core/protocol/fsm.py` carries no `(IDLE, TIMEOUT)` row: v4 exempts IDLE by name (§12.2, §12.12).
+   The case such a row would serve — a crash orphan, observable in IDLE because
    CREATE_TASK persisted while the same ASSIGN's landing did not, and at a root with no parent whose
    clock could surface it — is answered where the defect lives: `Engine._recover_orphans` re-sends the
    packet-less ASSIGN at startup, so the interrupted transition finishes through the queue — validated,
@@ -719,45 +713,40 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    explicit `s ≠ IDLE` hypothesis — the exemption in the type rather than papered over.
 2. **IDLE + CANCEL → CANCELLING — settled by the canon, not a divergence.** §12.4's IDLE row carries it;
    arguably vacuous, encoded faithfully because it is what both the canon and the code say.
-3. **`(VALIDATING, FAIL, iteration ≥ max)` — the edge the canon denies is GONE (CLOSED).**
-   The code, `Fsm.lean`, `FsmTable.tla` and `docs/architecture.md` now route the exhausted rework loop
-   to ESCALATED, the canon's target (§12.4, §12.5); before, it entered DONE, which §12.4 enters only
-   through PASS. The record carries `done_reason=FAIL`, so a verdict-escalation stays distinguishable
+3. **`(VALIDATING, FAIL, iteration ≥ max)` — routed to ESCALATED (CLOSED).**
+   The code, `Fsm.lean`, `FsmTable.tla` and `docs/architecture.md` route the exhausted rework loop
+   to ESCALATED, the canon's target (§12.4, §12.5); DONE is entered only through PASS (§12.4). The record carries `done_reason=FAIL`, so a verdict-escalation stays distinguishable
    from the timeout routes into ESCALATED — without which the standing-FAIL metric populations (q_D's
-   exhausted arm, `false_fail_share`) would have silently emptied, a blind metric reading as a clean
+   exhausted arm, `false_fail_share`) would silently empty, a blind metric reading as a clean
    one. The live path is tested through the engine, not the table alone
    (`tests/test_integration.py::test_exhausted_rework_escalates_and_stays_a_verdict`).
-4. **`(REWORKING, BLOCK) → BLOCKED` — the engine had an edge the v4.0 DIAGRAM omitted; RESOLVED in
-   favour of the engine.** `fsm.py` and `Fsm.lean` route BLOCK from REWORKING to BLOCKED; the edge is
-   derived (§12.4's rules), and §12.4 now writes the admissible sets out per state, closing the
-   diagram-only gap that let this hide. Consequence (`FsmCanon.canon_exec_rework_same`): EXECUTING ≡
+4. **`(REWORKING, BLOCK) → BLOCKED` — an edge the canon derives (§12.4's rules).**
+   `fsm.py` and `Fsm.lean` route BLOCK from REWORKING to BLOCKED, and §12.4 writes the admissible sets
+   out per state. Consequence (`FsmCanon.canon_exec_rework_same`): EXECUTING ≡
    REWORKING behaviourally — REWORKING an attribution label (§12.11).
 
-5. **The re-DELIVER refusal prescribed the wrong repair for an FM-1 failure (OPEN on (a); (b) landed).**
+5. **The re-DELIVER refusal under a refuted decomposition names the decomposition's repair (CLOSED).**
    `gfso/engine/validation.py` refuses a parent's re-delivery when its FAILed criteria
-   are covered by children untouched since that FAIL — an engine gap of its own: after a re-presentation
-   (a false FAIL among its cases) the canon admits "the re-delivery of an identical artifact" (§12.10), so
-   the refusal does not conform to §12.16 (ii) — and its message routed the repair DOWNWARD: *"Rework
-   flows DOWN: reopen the covering child … and rework it there"*. A parent's criterion failing while
+   are covered by children untouched since that FAIL. After a re-presentation (a false FAIL among its
+   cases) the canon admits "the re-delivery of an identical artifact" (§12.10); the refusal's non-conformance
+   to §12.16 (ii) there is carried below. A parent's criterion failing while
    every child passes its own is q_D's event, "whatever caused it" (§15.4; the cause is not q_D's to read,
    §16.9); where the cause is the split, the defect is the decomposition's, its repair a **re-admission of the parent's
    split** (§11.5) by its decomposer, who owns it (§9.7). A re-admission reopens no child, so the
-   finality gate is not involved.
+   finality gate is not involved — whereas reworking a covering child meets `Graph.is_consumed`, which
+   locks a DONE child on which any Dep-consumer built, so in a graph dense in Dep seams no covering child
+   may be unlocked.
 
-   Observed live (`EVIDENCE_LOG` §13.3, `markdown_renderer`): following the message's own route the
-   arm hit a wall, because `Graph.is_consumed` locks a DONE child on which any Dep-consumer built,
-   and a graph with 20 seams over 11 nodes has no unlocked covering child. On the re-admission route
-   the wall is not reached. Two things follow for the engineer, and the second is what keeps the fix
-   honest: (a) the refusal message must name the re-admission remedy; (b) adding coverage so that
+   Two things follow for the engineer. (a) The refusal names the re-admission remedy (the `revision`
+   text in `_refuted_coverage_refusal`: re-admit the split with a corrected mapping or an added covering
+   child, or revise the node where the criterion itself was wrong). (b) Adding coverage so that
    `⋀children ⊨ cᵢ` is the repair, while lowering `cᵢ` to what the children already deliver is a false
    close wearing the same shape — the two are told apart by what CHECK-1/CHECK-7 say after the repair
    and by whether the fail-extension of `cᵢ` shrank. Without that discriminator both moves would have
    to be forbidden, and the only legal repair would be lost with them.
 
-   **What landed** (`_refuted_coverage_refusal`, `tests/test_fm1_repair.py` — one planted case per
-   class). (a) Not landed: the refusal still names a revision of the parent under Inv-1 (`validation.py`), a
-   packet change that repairs no mapping — the split changes only by a re-admission (§11.5); the message is
-   engineering's to change. (b) The discriminator reads
+   **What the gate does** (`_refuted_coverage_refusal`, `tests/test_fm1_repair.py` — one planted case per
+   class). The discriminator reads
    the criteria as they stood when contact refuted them (snapshotted on the verdict record) against
    the criteria now, and disposes of each failed criterion: a criterion REMOVED, or LOOSENED where
    loosening is decidable — same metric, same operator, a bound admitting strictly more, the
@@ -775,10 +764,9 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    trigger would have let exactly the false close through. A leaf stays out of scope: its contract
    belongs to the issuer above, whose CHECK-1 surfaces any hole a rewrite leaves.
 
-   *(Threshold note, parked with a reason: the engine's point — "consumed while any Dep-consumer
-   exists" — locks earlier than the moment §12.14 adopts. Moving it is not needed once (a) and (b)
-   stand; if the wall reappears on the re-admission route, that is the measurement that would justify
-   touching it.)*
+   *(Threshold note: the engine's point — "consumed while any Dep-consumer exists" — locks earlier than
+   the moment §12.14 adopts. Moving it is not needed while (a) and (b) hold; it would be justified only
+   if the wall were reached on the re-admission route.)*
 
 6. **The vertical deadline rule now has a pre-exec check; CHECK-3 is unchanged.** Deadline coherence along D is form item (6) (§4.5), which CHECK-3 does not guard
    (§9.5, §20.10). It is L0 by construction (two packet fields, no domain knowledge), so it rides in a check of its own (`check_vertical_deadlines`,
@@ -790,36 +778,32 @@ are settled by the canon and kept because the Lean encoding is where they show, 
 
 7. **Non-redundancy beyond the topological proxy — still open, and stated where it shows.**
    CHECK-1b tests "every child is mapped to some parent criterion" and is renamed to its honest name,
-   `CHECK-1b:no_orphan` (a decision of the v4.0 naming pass, not a canon §; form item (3) keeps the name
+   `CHECK-1b:no_orphan` (an engineering name, not a canon §; form item (3) keeps the name
    *non-redundancy*). No pre-execution CHECK tests non-redundancy's formal face (§9.6, §20.10). Left open
    deliberately, with the proxy named as a proxy rather than dressed up as the condition.
 
 8. **§15.9's triage ORDER is not what `next_step` implements — named, not silently adopted.**
-   `Frontier._frontier` orders by action priority and then by id, not by §15.9's order. The gap is real
-   and the fix is cheap — but it changes the ORDER in which an agent is driven through a graph, which is
-   a measured quantity of the E3 arm (C3 cost, and through it C1/C2 attribution). Landing it inside a
-   naming migration would confound the next measurement with a behavioural change, so it is recorded
-   here and lands as its own change, measured against a run that did not have it.
+   `Frontier._frontier` sorts its candidates by action priority and then by id (`cands.sort`), not by §15.9's
+   order. Adopting §15.9's order would change the ORDER in which an agent is driven through a graph, a
+   behavioural change in its own right, so it is a change of its own and not a side effect of any rename.
 
 9. **The execution gate was a SELECTION from the Syntactic level; it is now the level (CLOSED, with two
    gaps open).** §11.5 makes the Syntactic level (§9.5) the admission condition, save what no act of the
    decomposer lifts, which is reported. The engine gated four of the seven rows: ACCEPTED_RISKS (4),
    risk nodes (5) and leaf delegation (6) were computed, surfaced by `get_checks`/`list_holes`, and
-   never blocked an ACCEPT — so a decomposition with an empty register was admitted. **What was argued
-   for it, and why it did not survive:** gating the register had been tried and measured — an agent
-   that cannot start until the register is non-empty writes a register in order to start, so the gate
-   bought fabricated entries and `edit_accepted_risks` churn. That is a fact about an incentive, not
-   about whose rule it is; a fabricated register is evidence against its author (§16.9, exception 7),
-   while an ungated canon level is a silent one. The gate now runs every row of the level
+   never blocked an ACCEPT — so a decomposition with an empty register would be admitted. **Why the
+   register is gated anyway:** an agent that cannot start until the register is non-empty may write one in
+   order to start, which buys fabricated entries and `edit_accepted_risks` churn. That is a fact about an
+   incentive, not about whose rule it is; a fabricated register is evidence against its author (§16.9,
+   exception 7), while an ungated canon level is a silent one. The gate runs every row of the level
    (`gfso/engine/validation.py`), pinned in both directions by `tests/test_structural.py` — every canon
-   row gates, and CHECK-1c (anti-mock, an engineering addition with no canon row) does not. Cost,
-   measured: 45 test fixtures were building decomposed nodes with no register and now carry one.
-   **Closed since (2026-10-04):** CHECK-3 gates only the admission that sets the deadlines, where some choice of them
+   row gates, and CHECK-1c (anti-mock, an engineering addition with no canon row) does not.
+   **CHECK-3** gates only the admission that sets the deadlines, where some choice of them
    orders every edge (`admission.deadlines_the_act_sets`); met afterwards it is §12.10's flag,
    named in the frontier's step as the consumer's issuer's with his two moves and in `list_holes` as `kind: flag`
    (`validation.hole_kind`). The Syntactic-level gate on a whole's PASS binds only where the whole's issuer is its Del
    (`validation.whole_waits_for_its_parts`); at a seam the PASS lands and the departure from AND is said (§12.8).
-   **Placement closed (2026-10-05):** the level runs at the split's admission, the decomposer's own act (§11.5), over
+   **Placement:** the level runs at the split's admission, the decomposer's own act (§11.5), over
    the split as it will stand — its children, their coverage, its register — and refuses the split whole, no child
    issued (`gfso/engine/admission.py`, every door that adds a child or changes the register). The child's ACCEPT no
    longer reads its parent's Level-0 holes. What breaks a split admitted clean — a revision of the contract, a child
@@ -832,7 +816,7 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    The engine refuses a child's first ACCEPT while its parent's decomposition carries no current,
    dispositioned causal review (`GFSO_L2_GATE`, on by default) — where the child's executor is the decomposer. The canon licenses no such gate:
    admission is the Syntactic level (§11.5), and the Pragmatic level is checkable only by execution
-   (§9.1, §20.2). What the gate enforces is therefore weaker than its name suggested and is stated as
+   (§9.1, §20.2). What the gate enforces is therefore weaker than its name and is stated as
    such in the code: **not** the checker's verdict but the verify-vs-explore decision (§9.9) taken once
    and made mechanical — the check must have HAPPENED over this version of the plan, and each finding
    must have been either repaired or disputed in writing (`dispute_finding`). The verdict stays
@@ -843,44 +827,37 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    findings (§12.16 (ii)); another executor's child is not refused, and the system holds its own spawn there instead
    (`Engine.execution_blocked_by`, read by the dispatcher), a person taking it exploring (§9.9). A review is current
    for one version of the plan: an admission, a revision of the parent's or a child's contract, and a child's
-   settled cancellation each stale it;
-   measured on the live substrate (BCB/120: three L0-clean plans, every planted entailment hole named,
-   zero false gaps). Two earlier citations claimed more — an address, **13.4-bis**, that exists in no
-   version of the canon, and the label "Level 2" used as if §9.5 gated the Pragmatic level. Both are
-   corrected in place (`gfso/engine/validation.py`, `tests/test_l2_gate.py`); what the gate does is
-   unchanged.
+   settled cancellation each stale it
+   (`gfso/engine/validation.py`, `tests/test_l2_gate.py`). §9.5 does not gate the Pragmatic level, and the
+   gate cites no canon address for itself.
 
-11. **Three §9.5/§12.4 rows the engine read wrongly, and one signal it should never have taken
-   (CLOSED).** Repairs, not corners — each is the canon's own sentence, and the code now says it:
-   **CHECK-2** verified acyclicity of Dep and called it the row for D, so D-acyclicity (§9.5, §15.3) was
-   checked nowhere; a node could be created as its own parent through the authoring door (measured). It
-   is now decided where each part of it is visible — the split's own shape in `check_dag`, the ancestor
-   chain at the ASSIGN that would close a cycle (`admission.refuse_a_d_cycle`). **CHECK-6** quantified
-   over every child where §9.5 quantifies over the split's leaves (a root names its executor at its
-   creation, §15.2). **`VALIDATING · ASSIGN→OFFERED`**, a row of §12.4 that §12.14 leans on for
-   pre-registration, was refused outright over measured churn; it is admitted now, and the
-   re-presentation price §12.10 names is charged instead — the pending PASS is voided at the revision,
-   so the node cannot settle on a verdict about a contract it no longer carries. And **`TIMEOUT`**, a
-   system mechanism, not a signal (§12.2), was reachable through the tool door: sent on a node in
-   VALIDATING it produced `DONE(auto_pass)`, a terminal around the AND gate (Thm 1), around verifier ≠
-   executor (§10.3) and around Inv-3. The door now closes on the twelve P2P signals and the engine
-   refuses a system signal that carries a sender.
+11. **Three §9.5/§12.4 rows and one signal, each the canon's own sentence (CLOSED).**
+   **CHECK-2** verifies acyclicity of Dep; D-acyclicity (§9.5, §15.3) is decided where each part of it is
+   visible — the split's own shape in `check_dag`, the ancestor chain at the ASSIGN that would close a cycle
+   (`admission.refuse_a_d_cycle`) — so a node cannot be created as its own parent through the authoring door.
+   **CHECK-6** quantifies over the split's leaves, as §9.5 does, not over every child (a root names its
+   executor at its creation, §15.2). **`VALIDATING · ASSIGN→OFFERED`**, a row of §12.4 that §12.14 leans on
+   for pre-registration, is admitted, and the re-presentation price §12.10 names is charged: the pending
+   PASS is voided at the revision, so the node cannot settle on a verdict about a contract it no longer
+   carries. And **`TIMEOUT`**, a system mechanism, not a signal (§12.2), is not a tool-door signal: sent
+   on a node in VALIDATING it would produce `DONE(auto_pass)`, a terminal around the AND gate (Thm 1),
+   around verifier ≠ executor (§10.3) and around Inv-3. The door closes on the twelve P2P signals and the
+   engine refuses a system signal that carries a sender.
 
-12. **The composition function `fᵢ` does not exist in the model; CHECK-7 hardcodes ONE of them.**
+12. **The composition function `fᵢ` is declared per criterion; CHECK-7 evaluates three (`sum`, `max`, `min`).**
    The canon's split may declare "the **composition function** fᵢ by which its responsible children's
    criteria secure it" (§2.4), which the Semantic level reads (§9.1) and CHECK-7 tests under (§9.6). In
-   the code `CriterionMapping` carries only the pair ⟨criterion name, child⟩ — there is nowhere to put
-   fᵢ — and `check_sufficiency` supplies a fixed one: it parses numeric bounds and **sums** the
-   children's values, so the canon's own worked example (100 + 100 ≤ 200) is checked and, say, a
-   max-composition (`latency = max(a, b)`) or a conjunction over booleans is not: such criteria fall into
-   the `beyond_tier` bucket and the check reports itself skipped rather than green — the honest half of
-   the present state. The gap is therefore not a false PASS but a **missing primitive**: CHECK-7 runs
-   mechanically only where the intended fᵢ happens to match the built-in sum (CHECK-8, joint
-   satisfiability, reads no fᵢ). Closing it is design work, not a patch — fᵢ must be authored somewhere
-   an agent can write it (a field on the mapping), typed enough for the solver (sum / max / min /
-   conjunction / a formula for SMT), and defaulted for the existing graphs. Cost, honestly: a schema
-   field + a migration of 149 stored graphs + the CHECK-7 dispatch + the authoring verb and its prompt.
-   **Not started; declared here so the Semantic level is not read as more than it is.**
+   the code it is the field `Criterion.composition` (`gfso/core/types/primitives.py`; `CriterionMapping`
+   carries only the pair ⟨criterion name, child⟩, since fᵢ is one statement about cᵢ however many children
+   carry it), and `core/handlers/constraint.py` composes the children's numeric bounds under it
+   (`_COMPOSITIONS`, `_compose`). A declared fᵢ the tier cannot evaluate (a conjunction over booleans, a
+   set union, a formula for SMT) is reported `beyond_tier` by name, and the check reports itself skipped
+   rather than green; a blank one is checked under `sum`, and a breach found under that assumed
+   composition says so (`_ASSUMED`). The remaining gap is therefore not a false PASS but the tier's reach:
+   CHECK-7 runs mechanically only for `sum`/`max`/`min` over numeric bounds (CHECK-8, joint
+   satisfiability, reads no fᵢ). Extending it means a typed fᵢ the solver can read (conjunction, a
+   formula for SMT) and its authoring verb and prompt. **Declared here so the Semantic level is not read
+   as more than it is.**
 
 13. **The register carries STD-1's estimate; §9.4's roll-up is not computed.** `AcceptedRiskItem` carries `p` and
    `impact` (STD-1's estimate), STD-3's `component`, and the split's own denial entry (§9.5), and CHECK-4 refuses an
@@ -890,16 +867,16 @@ are settled by the canon and kept because the Lean encoding is where they show, 
 
 14. **STD-3 components are records; their factorization is the author's.** A component is named on the split
    (`risk_components`), and a child's claim to mitigate it is recorded on that child (`covers_risks`), as `covers`
-   records a criterion's; CHECK-5 reads the record and is ⊥, not met, where none exists — the substring match over
-   descriptions is gone. Which factors group into which component stays the decomposer's statement (§9.4: the grouping
+   records a criterion's; CHECK-5 reads the record and is ⊥, not met, where none exists, and never matches on
+   description text. Which factors group into which component stays the decomposer's statement (§9.4: the grouping
    method is an implementation choice), unchecked beyond its form.
 
 15. **Inv-4 (Obligation-Symmetry) has no code object; its checkable content is Inv-8.** Of the eight
    invariants, seven are enforced or machine-checked: Inv-1, Inv-2, Inv-3, Inv-5 (pure timeout chains in
    Lean, run level in TLC), Inv-6, Inv-7, and Inv-8 (`FsmCanon.inv8_canon`, `inv8_mirror`). Inv-4
    operates only through the reading §12.9 adopts: its clause (1) is what Inv-8 checks, its clause (2)
-   pins CANCELLING and ESCALATED (§12.13). The meta-check this entry used to ask for — "every state gives
-   EACH role a move" — was the wrong shape: in the issuer's waits (CHALLENGED, BLOCKED, VALIDATING) only
+   pins CANCELLING and ESCALATED (§12.13). A meta-check "every state gives
+   EACH role a move" is the wrong shape: in the issuer's waits (CHALLENGED, BLOCKED, VALIDATING) only
    the issuer has one, correctly. Inv-8 asks for the OWNER's move, which is what is decided. The
    engine's own conformance to it is the test suite's (`tests/test_model_conformance.py`), not Lean's.
 16. **Bounds run on the project's clock — a reading of §12.2, declared.** §12.2: the deadline "runs across every state
@@ -915,15 +892,15 @@ are settled by the canon and kept because the Lean encoding is where they show, 
    bounds every re-issue. At the AUTO root the machine stands in for the user, the root's issuer (§10.1), and nothing above
    it bounds its patience; past the count it is told so and may still write a contract that changes what failed.
 
-**Two boundaries the E3 measurement walked into, delineated rather than patched (2026-08-16).**
+**Two boundaries, delineated rather than patched.**
 
-* **A vacuous Level-2 pass.** The gate reported `semantic_covered: true` over `criteria_checked: 0`
-  — truthfully, since the node it was checking carried no criteria at all. The hole is closed on the
-  structural side (CHECK-1 now fails a node that has children and no criteria of its own: by A1 an
-  empty criteria set makes the node unverifiable, not covered), but the CHECKER itself still cannot
-  tell "nothing to check" from "nothing to report". Kept as a boundary because the fix belongs to
-  the checker's own contract, which is a measured artefact — its wording is calibrated (`EVIDENCE_LOG` §13.6) and
-  changing it silently would confound the next reading of C1.
+* **A vacuous Level-2 pass.** The gate can report `semantic_covered: true` over `criteria_checked: 0`
+  — truthfully, when the node it checks carries no criteria at all. The structural side closes it
+  (CHECK-1 fails a node that has children and no criteria of its own: by A1 an
+  empty criteria set makes the node unverifiable, not covered), but the CHECKER itself cannot
+  tell "nothing to check" from "nothing to report". It stays a boundary because the fix belongs to
+  the checker's own contract, whose wording is calibrated against the evidence (`EVIDENCE_LOG` §13.6):
+  changing it silently changes the instrument the earlier readings were taken with.
 
 * **`ESCALATED` — the issuer's waiting state, not a settlement (§12.5).** Its entries, owner, moves and
   silent closing are §12.5 and §12.13's; the engine's re-ASSIGN out of it may omit the spec, never a live
