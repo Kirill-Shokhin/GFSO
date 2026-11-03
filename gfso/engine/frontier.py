@@ -903,9 +903,9 @@ class Frontier:
                     # …AND UNDER AUTO ONLY THE ONE ACT: the manual path offered there is refused at its door, and an AUTO
                     # customer that took it, refused, set about writing the code itself and quit (GB_spreadsheet_engine_
                     # tmpekc132, 2026-10-11)
-                    "directive": first + ("No graph yet — state the goal: `auto_decompose(request)` with the user's "
-                                          "request is your one act under AUTO; the system plans the work, does it and "
-                                          "validates it, and you read its status."
+                    "directive": first + ("No graph yet — `plan(request)` with the user's request writes the plan, you "
+                                          "read it whole, and `auto_decompose(plan=path)` is the go: the system does "
+                                          "the work and validates it, and you read its status."
                                           if self.engine.mode_kind() == Mode.AUTO else
                                           "No graph yet — `auto_decompose(request)` authors the root and its "
                                           "subtree from your goal; `create_task` + `decompose` is the manual "

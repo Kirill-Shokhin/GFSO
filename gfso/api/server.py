@@ -639,6 +639,16 @@ def _told_resources(app, loop, q):
     return on_resources
 
 
+def _socket_engine(app, query) -> "Engine | None":
+    """The graph a socket watches: none for the list of projects; else the tab's, which rides the url (the middleware
+    covers HTTP only) and, like every read, names an EXISTING project: opening a page on a mistyped name created that
+    project (2026-10-24)."""
+    if query.get("projects"):
+        return None
+    registry = app.state.registry
+    return registry.engine(query.get("project") or None, create=False) if registry else app.state.engine
+
+
 def _mount_events(app) -> None:
     """The live WS feed — every write, pushed to whoever is watching.
 
@@ -654,12 +664,11 @@ def _mount_events(app) -> None:
         here by hand): `transition` for an accepted signal, `reject` for a refused one,
         `pipeline` for what a running verb reports. The callbacks are unregistered on disconnect,
         so a dropped tab leaves nothing subscribed. Accepted only once subscribed: a page reads what is in flight
-        when its socket opens, and a start or end between that and the subscription reached it from neither."""
-        # the tab's project rides the WS url too (middleware covers HTTP only) — and, like every read,
-        # names an EXISTING project: opening a page on a mistyped name created that project (2026-10-24)
-        proj = websocket.query_params.get("project") or None
+        when its socket opens, and a start or end between that and the subscription reached it from neither.
+        `?projects=1` is the page with no project, the list of them: no graph is opened for it, and it hears what
+        is the whole server's: `inflight`, `resources`, `projects`."""
         try:
-            eng: Engine = app.state.registry.engine(proj, create=False) if app.state.registry else app.state.engine
+            eng = _socket_engine(app, websocket.query_params)
         except (KeyError, ValueError):
             await websocket.accept()
             await websocket.close(code=4404)
@@ -699,9 +708,10 @@ def _mount_events(app) -> None:
             loop.call_soon_threadsafe(q.put_nowait, {"type": "inflight", "in_flight": now})
 
         on_resources = _told_resources(app, loop, q)
-        eng.on_transition(on_transition)
-        eng.on_reject(on_reject)
-        eng.on_info(on_info)
+        if eng is not None:
+            eng.on_transition(on_transition)
+            eng.on_reject(on_reject)
+            eng.on_info(on_info)
         INFLIGHT_LISTENERS.append(on_inflight)
         _resources.LISTENERS.append(on_resources)
         try:
@@ -714,8 +724,9 @@ def _mount_events(app) -> None:
         finally:
             app.state.ws_clients.discard(q)
             for subs, cb in ((INFLIGHT_LISTENERS, on_inflight), (_resources.LISTENERS, on_resources),
-                             (eng._events._on_transition, on_transition),
-                             (eng._events._on_reject, on_reject), (eng._events._on_info, on_info)):
+                             *(() if eng is None else ((eng._events._on_transition, on_transition),
+                                                       (eng._events._on_reject, on_reject),
+                                                       (eng._events._on_info, on_info)))):
                 if cb in subs:
                     subs.remove(cb)
 

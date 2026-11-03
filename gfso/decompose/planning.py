@@ -31,21 +31,21 @@ _REVIEW_KEYS = ("gate_passed", "l0l1_failures", "semantic_covered", "semantic_fi
 
 
 def author(request: str, model: str, executor: str = "", depth: int = 1, review_model: str = "",
-           progress=None, execution=None) -> str:
+           progress=None, execution=None, ledger=None) -> str:
     """A plan file for `request`: authored by `model`, its fit judged against `executor`'s session, reviewed. The file
     holds the plan as BUILT (`extract_spec`), the shape a refine and the go read back."""
-    e = _scratch()
+    e = _scratch(ledger)
     res = _decompose.decompose_into(e, request, root_id=ROOT_ID, assignee=agent_id(), depth=depth, model=model,
                              llm=_decompose.default_llm(model, execution=execution), progress=progress, executor=executor)
     return artifact.render(request, extract_spec(e, str(res.root_id)),
                            _review(e, res.root_id, review_model or model, execution), executor=executor)
 
 
-def refine(text: str, note: str, model: str, review_model: str = "", progress=None, execution=None) -> str:
+def refine(text: str, note: str, model: str, review_model: str = "", progress=None, execution=None, ledger=None) -> str:
     """The plan file after the customer's `note`: one refine round over it with the note as its finding, the answer
     being what the round changed (or that it changed nothing), the review run again over the result."""
     p = artifact.parse(text)
-    e, llm = _scratch(), _decompose.default_llm(model, execution=execution)
+    e, llm = _scratch(ledger), _decompose.default_llm(model, execution=execution)
     # …a file the admission refuses is this round's to repair, never a dead end: the go's refusal sends the customer
     # here, and the round itself built the file first and died on the same refusal (V3_cc2, 2026-11-01)
     spec = _decompose.repaired_before_build(p["spec"], p["goal"], llm, p["executor"], progress, e, ROOT_ID)
@@ -117,9 +117,14 @@ def kept(text: str) -> Path:
     return path
 
 
-def _scratch() -> Engine:
+def _scratch(ledger=None) -> Engine:
+    """The engine a plan is built on, in memory: no project holds it. What it spends goes to `ledger`, the book of the
+    project that asked (`Engine.record_llm_usage`): kept here it was lost with the engine, and a person saw $0.00 spent
+    over a plan's ten minutes (rehearsal, 2026-11-03)."""
     e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
     e.start()
+    if ledger is not None:
+        e.record_llm_usage = ledger
     return e
 
 

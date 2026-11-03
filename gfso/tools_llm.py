@@ -1752,7 +1752,7 @@ def plan(engine: Engine, request: str, model: Optional[str] = None, executor: Op
     try:
         text = _planning.author(request, model, engine.workforce.executor_session(executor) if executor else "",
                                 depth, review_model or engine.system_model(), emit_cb(engine, "plan", _progress),
-                                execution=execution_of(engine))
+                                execution=execution_of(engine), ledger=engine.record_llm_usage)
     except NoPlan as no:
         return {"error": _no_plan(no)}
     return _plan_written(text)
@@ -1768,7 +1768,7 @@ def refine_plan(engine: Engine, plan: str, note: str, model: Optional[str] = Non
         # …the review is the system's, on its model: a planner named stronger authors, it does not also review (critic)
         text = _planning.refine(_planning.text_of(plan), note, model, review_model or engine.system_model(),
                                 emit_cb(engine, "plan", _progress),
-                                execution=execution_of(engine))
+                                execution=execution_of(engine), ledger=engine.record_llm_usage)
     except (NoPlan, ValueError, OSError) as e:
         return {"error": str(e)}
     return _plan_written(text)
@@ -2436,7 +2436,7 @@ def _mode_lock(name: str, fn):
                 f"by a machine — the autonomous level of §10.4 — and you are the goal's customer: you "
                 f"state the goal and read its status (`next_steps`, `get_graph`, `get_verdict`), you "
                 f"do not intervene. `{name}` is a move on the work, whatever name it is signed with. "
-                + ("Nothing is stated yet: the goal is stated by `auto_decompose(request)` with the user's request. "
+                + ("Nothing is stated yet: `plan(request)` with the user's request writes the plan you read, and `auto_decompose(plan=path)` is the go. "
                    if not engine.all_tasks() else "") +
                 f"The mode is the USER's choice, not yours: if the work seems to need another holder, "
                 f"tell the user and ask — change it only on their word.")

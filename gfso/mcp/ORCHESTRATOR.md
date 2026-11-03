@@ -19,7 +19,7 @@ You (the agent session) operate a GFSO task graph through the `gfso` tools; the 
 1. **The machine.** `gfso doctor`. No Docker: say in one line what to install, and stop. No credential (a container has
    no login): this is the person's one step: `claude setup-token`, then `gfso credential claude`; wait, run the doctor
    again. A credential is made by the user: never ask for its value in chat.
-2. **The repository.** No project yet: a fresh directory, `git init`, a first commit. An existing project: `W` below
+2. **The repository.** No project yet: a fresh directory of its own, `git init`, `git commit --allow-empty -m start`. An existing project: `W` below
    is the repository's top, and only what is committed enters, its whole history with it: commit the work the task needs,
    or say in a line what stays out; a secret in the history reaches every session, so say so if you see one. Say: "your branch is not touched; the result comes as branch `gfso/<project>/accepted`."
 3. **The scheme.** Say: "`auto`, every role on `claude-haiku-5-5`: the most tested, and cheap", and go on. `solo` and
@@ -28,7 +28,7 @@ You (the agent session) operate a GFSO task graph through the `gfso` tools; the 
    only the model, for one that needs nothing else.
 4. **The calls.**
    ```
-   use_project("<project>")
+   use_project("<project>")   # its answer holds `ui`, the project's address: write it in the chat now (step 6)
    register_agent("<project>-root", "llm-executor",  model="claude-haiku-5-5", workdir=W)
    register_agent("<project>-exec", "llm-executor",  model="claude-haiku-5-5", workdir=W)
    register_agent("<project>-val",  "llm-validator", model="claude-haiku-5-5", workdir=W)
@@ -45,8 +45,9 @@ You (the agent session) operate a GFSO task graph through the `gfso` tools; the 
    says what must change, `model=` may name a stronger author; the new file carries the note with what changed. A
    refused go names why: that is the note. The go builds the file as it stands, the person's plan from then on. They
    may ask to see the file (format: `docs/PLAN_FORMAT.md`).
-6. **The link.** The go's answer holds `ui`, the project's address. Write it in the chat at once, as a clickable address,
-   every time. Its `not_imported` names what the agents' copy lacks: say it.
+6. **The link.** `use_project`'s answer holds `ui`, the project's address, and the go's holds it again. Write it in the
+   chat at once, as a clickable address, before the plan, for the person watches the plan being written too; again at the
+   go. The go's `not_imported` names what the agents' copy lacks: say it.
 7. **The wait and the end.** Say: the run is unattended, watch at the link, I report the end. Loop `next_steps(wait=600)`
    until `complete`, or `stuck` or a stop, which goes to the person with its `directive`. In `auto` you do not intervene.
    Report the root's verdict (`get_verdict("root")`), the branch (or, a root that did not pass landing nothing, where it
@@ -67,7 +68,7 @@ when a refusal or a stall makes another look better, tell the person and ask —
 |---|---|---|
 | `solo` | you hold every node (you perform it as `perform` says, below) | the loop below, whole; the root is a seam, and the system's validator also validates the top of every part of the plan larger than one session |
 | `semi` | you hold the top of the tree (by default the root; `boundary=k` holds depths 0…k−1), registered executors hold everything below | you author the plan and make the issuer's moves over what you hold; the system executes, validates and makes the issuer's moves below; a goal with no split has nothing below it, so split the root before any work (a root with no split cannot be delivered in semi) |
-| `auto` | the system holds every node, the root included | you are the customer: state the goal (`auto_decompose` on the empty project) and read its status (`next_steps`, `get_graph`, `get_verdict`); you do not intervene |
+| `auto` | the system holds every node, the root included | you are the customer: order the plan, give the go (`plan`, then `auto_decompose(plan=path)` on the empty project) and read its status (`next_steps`, `get_graph`, `get_verdict`); you do not intervene |
 
 Every mode needs a validator in this project (`register_agent("<project>-val", "llm-validator", workdir=W)`), and
 `semi` and `auto` need registered executors too: the system validates at every seam and at the top of every part of

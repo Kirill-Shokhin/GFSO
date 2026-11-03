@@ -676,8 +676,21 @@ def _still_undecided(engine, task, llm, prior: tuple, *,
                      stage: Stage = Stage.UNDECIDED_OBLIGATIONS) -> tuple[dict, ...]:
     """`_decide` over the obligations in batches of DECIDE_BATCH, at once where the provider allows."""
     batches = [prior[i:i + DECIDE_BATCH] for i in range(0, len(prior), DECIDE_BATCH)]
-    staged(f"deciding {len(prior)} obligation(s) in {len(batches)} batch(es)")
+    staged(f"checking what the plan decides of {len(prior)} obligation(s) of the goal")
     return tuple(g for out in fan(llm, batches, lambda b: _decide(engine, task, llm, b), stage) for g in out)
+
+
+#: What the re-check asks: whether a pinned check probes what the obligation's own words name — never whether no result
+#: could get past the pins. No finite set of checks excludes a class without bound, so that question had one answer, and
+#: every round named a fresh form of one ban for a new criterion and a new part: 11 rounds, 77 minutes, 19 parts from 9,
+#: no work started (coreutils, 2026-11-03). What a check does not reach is its residue (§8.4), read at contact (§3.5).
+_DECIDE_ASK = ("For EACH numbered obligation decide one thing only: does a pinned check of the criteria as they now "
+               "stand — the node's own and its split's — probe every clause the obligation's own words name? {pins} A "
+               "ban is a clause like any other: a check that refuses the thing it forbids decides it, and another "
+               "disguise of that thing is the check's residue. Answer with the numbers of the obligations that are now "
+               "decided (`decided`), and for each one still undecided (`open`) its number and the clause of its own "
+               "words no pinned check probes. Name nothing new: what the goal carries was enumerated when it was "
+               "read, and this round is about what the criteria decide.")
 
 
 def _decide(engine, task, llm, prior: tuple) -> tuple[dict, ...]:
@@ -698,14 +711,7 @@ def _decide(engine, task, llm, prior: tuple) -> tuple[dict, ...]:
             + (f"# THE CRITERIA OF ITS SPLIT (its children's, with their pinned checks)\n{split}\n\n" if split else "")
             + _inputs_section(engine, task)
             + f"# THE GOAL'S OBLIGATIONS, AS ITS READING NAMED THEM\n{listed}\n\n"
-            f"For EACH numbered obligation decide one thing only: do the criteria as they now stand — the node's "
-            f"own and its split's pinned checks — "
-            f"DECIDE it — would a result satisfying every criterion necessarily have it? {PINS_DECIDE} Answer "
-            f"with the numbers of the obligations that are now decided (`decided`), and for each one still "
-            f"undecided (`open`) its number and what a result could do that passes every criterion AS IT NOW "
-            f"STANDS and still breaks the obligation — the part no pinned check probes. Name nothing new: what "
-            f"the goal carries was enumerated when it was read, and this round is about what the criteria "
-            f"decide.")
+            + _DECIDE_ASK.format(pins=PINS_DECIDE))
     def _not_rechecked(why: str) -> tuple:
         """⊥ IS NOT "STILL OPEN". The list stands — a check that could not run closes nothing — but
         the reader must be able to tell an assessment from a silence. Two doors reported these

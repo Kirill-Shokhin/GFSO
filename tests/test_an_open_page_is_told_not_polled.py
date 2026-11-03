@@ -1,6 +1,7 @@
 """An open page learns that a process of the server started or ended, and that a call's spend was booked, the moment it
 happens — pushed on its live feed — instead of re-reading `/api/runtime` every 5 s and the ledger every 30 s, intervals
 nothing justified (the author, 2026-10-25: «где то 5 секунд где то 30 … а как ты обоснуешь что это оптимальное»)."""
+import pytest
 from fastapi.testclient import TestClient
 
 from gfso import inflight
@@ -26,6 +27,21 @@ def test_a_process_starting_and_ending_reaches_the_open_page(monkeypatch, tmp_pa
             assert [(w["verb"], w["task_id"]) for w in started["in_flight"]] == [("validate_result", "r1")]
         ended = ws.receive_json()
         assert ended == {"type": "inflight", "in_flight": []}
+    assert not inflight.LISTENERS, "a closed page left its listener behind"
+
+
+def test_the_list_of_projects_hears_the_server_and_opens_no_graph(monkeypatch, tmp_path):
+    """The page with no project: what is the whole server's reaches it, a project's own writes do not, and it builds no
+    engine, even of the default project (an address with no project opens none, 1efdf4e)."""
+    eng, client = _client(monkeypatch, tmp_path)
+    reg = client.app.state.registry
+    monkeypatch.setattr(reg, "engine", lambda *a, **k: pytest.fail("the list opened a graph"))
+    with client.websocket_connect("/ws/events?projects=1") as ws:
+        with inflight._inflight("plan", eng, "r1"):
+            assert ws.receive_json()["type"] == "inflight"
+        assert ws.receive_json() == {"type": "inflight", "in_flight": []}
+        reg._on_create("another")
+        assert ws.receive_json() == {"type": "projects"}
     assert not inflight.LISTENERS, "a closed page left its listener behind"
 
 

@@ -5,6 +5,7 @@ leads on pins). Unset, the author is the system's model, as before."""
 import pytest
 
 import gfso.tools_llm as TL
+from gfso.decompose import planning
 from tests.support import make_engine
 
 
@@ -51,3 +52,12 @@ def test_the_plan_file_is_reviewed_on_the_systems_model_not_its_authors(monkeypa
     monkeypatch.setattr(TL, "_plan_written", lambda text: {})
     TL.plan(e, "sort a file") if verb == "plan" else TL.refine_plan(e, "x", "a note")
     assert got == {"author": "claude-sonnet-5-5", "review": "claude-haiku-5-5"}
+
+
+def test_what_a_plan_spends_is_on_the_book_of_the_project_that_asked():
+    """The plan's own engine is in memory and goes with its verb: what it spent was lost, and a person read $0.00 spent
+    over ten minutes of planning (rehearsal, 2026-11-03)."""
+    e = _e()
+    scratch = planning._scratch(e.record_llm_usage)
+    scratch.record_llm_usage("searcher", [{"model": "m", "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.5}])
+    assert sum(r.get("cost_usd") or 0 for r in e.graph._storage.get_usage()) == 0.5
