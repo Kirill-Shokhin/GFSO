@@ -11,7 +11,7 @@ import {bucketOf, statusLabel, vNow, V_SYMBOL, can, look, closureNote, contested
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
 import {glyph, mark} from './draw.js';
-import {when as at_, stamp, trim, plural, bare} from './fmt.js';
+import {when as at_, stamp, trim, plural, bare, spoken} from './fmt.js';
 
 const when = iso => at_(at(iso));
 const link = (facet, label) => `<button class="pn-link" data-action="read" data-facet="${facet}">${label} →</button>`;
@@ -236,13 +236,13 @@ export const pinned = (c, key) => (c.check || []).length
 // behaviours is shown once, the behaviours as its tooltip; evidence is shown whole.
 // ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision. A refused
 // report stands beside a verdict too (a later report refused), and is shown there as well (critic: hidden beside a PASS).
-const refusedOf = rr => !rr ? '' : `<div class="check-fail">${PANEL.refusedSaid}${esc(rr.note || 'the issuer decides')}</div>`
-    + (rr.why_it_is_not_a_verdict ? `<div class="verdict-evidence">${esc(rr.why_it_is_not_a_verdict)}</div>` : '');
+const refusedOf = rr => !rr ? '' : `<div class="check-fail">${PANEL.refusedSaid}${esc(spoken(rr.note || 'the issuer decides'))}</div>`
+    + (rr.why_it_is_not_a_verdict ? `<div class="verdict-evidence">${esc(spoken(rr.why_it_is_not_a_verdict))}</div>` : '');
 function verdictFull({vr}) {
     if (vr?.verdict) return section('Verdict on the work',
         `<div class="${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${vr.verdict} — ${signer(vr)}`
         + `${vr.current === false ? ' <span class="check-fail">(validated an EARLIER delivery)</span>' : ''}</div>`
-        + (vr.independence ? `<div class="verdict-evidence"${PANEL.signed}>${esc(vr.independence)}</div>` : '')
+        + (vr.independence ? `<div class="verdict-evidence"${PANEL.signed}>${esc(spoken(vr.independence))}</div>` : '')
         + refusedOf(vr.refused_report)
         // what failed is the ✗ rows below; said here only where no row per criterion was kept (audit DQ3)
         + ((vr.failed_criteria || []).length && !(vr.per_criterion || []).length ? `<div class="check-fail">failed: ${esc(vr.failed_criteria.join(', '))}</div>` : '')

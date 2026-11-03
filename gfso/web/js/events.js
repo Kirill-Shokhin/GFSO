@@ -4,7 +4,7 @@
 import {esc, tally} from './dom.js';
 import {bindFocus, focus, watch, point} from './store.js';
 import {glyph} from './draw.js';
-import {hm, day, bare} from './fmt.js';
+import {hm, day, bare, unref} from './fmt.js';
 import {S, kept, keep} from './state.js';
 import {PROJECT} from './api.js';
 import {at, said, failedOf, failingNow} from './run.js';
@@ -69,7 +69,6 @@ function head(id, name, node, run, rs) {
 // What the reader set here outlives the view's redraw — every event of a live run redraws the deck, and a group opened,
 // a kind switched off or a search typed was undone a few seconds later (the author, 2026-10-27).
 // what a search reads is what a row says, not its record's field names: «fail» found every row by `failed_criteria` (critic)
-const unref = t => t.replace(/\s*\(§[^)]*\)/g, '');   // the engine's narration cites the canon, which is not on the page
 const said_ = o => o == null ? '' : typeof o === 'object' ? Object.values(o).map(said_).join(' ') : String(o);
 // …and a reload: kept per project, as the deck keeps its tab
 const KEY = `gfso.events.${PROJECT}`, saved = kept(KEY, JSON.parse) || {};

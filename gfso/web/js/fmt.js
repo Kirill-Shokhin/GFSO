@@ -1,5 +1,8 @@
 // How the page writes a figure, a moment, a count of things and a text cut short — one spelling for every view.
 export const LOCALE = 'en-GB';                     // the page's language, not the browser's
+// the engine's own sentence said to a person: the canon it cites is not on the page, its code quotes are for agents. A model's text keeps its own.
+export const unref = t => t.replace(/\s*\(§[^)]*\)/g, '');
+export const spoken = t => unref(t).replace(/`([^`]*)`/g, '$1');
 
 export const hm = t => new Date(t).toTimeString().slice(0, 5);
 export const hms = t => new Date(t).toTimeString().slice(0, 8);

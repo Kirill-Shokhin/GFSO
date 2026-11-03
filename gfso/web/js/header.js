@@ -7,7 +7,7 @@ import {post, GOAL, PROJECT} from './api.js';
 import {S, taskOf, myRole, procs, begun} from './state.js';
 import {label, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow, PROC_KIND} from './run.js';
-import {dur, trim, cap, pct, stamp, clockAt} from './fmt.js';
+import {dur, trim, cap, pct, stamp, clockAt, spoken} from './fmt.js';
 import {rootOf, isRoot, depths} from './tree.js';
 import {askInPage, act} from './overlays.js';
 
@@ -214,7 +214,7 @@ export async function drawHeader() {
 // the server's prose said to a person: no § references (the canon is not on the page), no code quotes, no shouting — a
 // protocol word (PASS, FAIL, BLOCK…) keeps its capitals (audit A12)
 const SIGNALS = /^(PASS|FAIL|BLOCK|REOPEN|DONE|ASSIGN|DELIVER|ACCEPT|CHALLENGE|CANCEL|TIMEOUT)$/;
-const plain = t => t.replace(/\s*\(§[^)]*\)/g, '').replace(/`([^`]*)`/g, '$1')
+const plain = t => spoken(t)
     .replace(/\b[A-Z]{2,}(?:\s+[A-Z]{2,})*\b/g, w => w.split(/\s+/).every(x => SIGNALS.test(x)) ? w : w.toLowerCase());
 const readMeans = r => { const [, first, rest] = /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*)$/s.exec(r.means || '') || [, r.means];
     // …only when the heading says every word of it: «delegation correctness» gone left a ratio read the wrong way
