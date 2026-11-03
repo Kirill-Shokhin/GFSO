@@ -105,3 +105,12 @@ def test_a_comma_in_the_base_stays_inside_its_mount_field(tmp_path):
         fields = dict(f.split("=", 1) for f in next(csv.reader([spec])) if "=" in f)
         assert flag == "--mount" and fields["dst"] == x.to_inside(str(src)), spec
         assert all("=" in f for f in next(csv.reader([spec]))), spec
+
+
+def test_a_place_recorded_under_its_raw_name_is_still_made_after_the_name_was_made_safe(tmp_path):
+    """Else a delivered node of such a base, waiting on its validator through an upgrade, is validated away from its delivery."""
+    old = str(tmp_path / ".gfso-nodes-word top" / "p" / "root")
+    new = str(tmp_path / ".gfso-nodes-word~20top" / "p" / "root")
+    held = {WS.MADE + old: "1"}
+    engine = SimpleNamespace(graph=SimpleNamespace(setting=held.get))
+    assert WS.made(engine, new) is True

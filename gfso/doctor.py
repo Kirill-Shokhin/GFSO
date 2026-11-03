@@ -492,7 +492,7 @@ def setup(desktop: bool = False) -> int:
         pass
     print()
     code = doctor()
-    if door:       # …a client reads its servers at its start: a session already open has no gfso tools
+    if door and code == 0:       # …a client reads its servers at its start: a session already open has no gfso tools
         print("\nA new Claude Code session has the door; one already open does not. Say the task there.")
     return code
 

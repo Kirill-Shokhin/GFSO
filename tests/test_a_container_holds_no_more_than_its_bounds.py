@@ -645,6 +645,25 @@ def test_the_reader_tells_a_find_that_cannot_read_from_a_walk_that_failed(tmp_pa
 
 
 @pytest.mark.skipif(not shutil.which("sh"), reason="the reader's script is a POSIX shell's")
+@pytest.mark.parametrize("error, said", [("No such file or directory", "8192"),   # …a parallel build's temp: no stop
+                                         ("Permission denied", "U"), ("File name too long", "U")])  # …a walk that failed
+def test_a_file_gone_during_the_walk_is_a_reading_and_any_other_failure_is_not(tmp_path, error, said):
+    """A critic's churn answered `U` in 29% of its readings, and three in a row end a node: an honest build's vanishing
+    temp files must not, while a nest that fails the walk must."""
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "find").write_text(
+        '#!/bin/sh\ncase "$*" in *-maxdepth*|*-mindepth*) exit 0;; esac\n'
+        f"echo '1 1 8'; echo '2 1 8'; echo \"find: 'x': {error}\" >&2; exit 1\n", newline="\n")
+    (tmp_path / "bin" / "find").chmod(0o755)
+    (tmp_path / "d").mkdir()
+    got = subprocess.run(["sh", "-c", 'PATH="./bin:$PATH"; ' + E._HELD, "sh", "4097", "5", "d"], cwd=tmp_path,
+                         capture_output=True, text=True)
+    assert got.stdout.split()[0] == said, got.stdout + got.stderr
+    if said != "U":
+        assert got.stdout.split() == ["8192", "2", "d"], "no error line is read as an entry"
+
+
+@pytest.mark.skipif(not shutil.which("sh"), reason="the reader's script is a POSIX shell's")
 def test_the_reader_reads_a_real_tree_and_finds_a_real_nest(tmp_path):
     """The script itself, under the real `find`: every test above it feeds `_read` the script's answer."""
     (tmp_path / "d" / "a" / "b").mkdir(parents=True)

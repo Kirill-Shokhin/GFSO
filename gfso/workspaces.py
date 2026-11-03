@@ -16,7 +16,7 @@ from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task, grounds_key, root_of
-from gfso.core.types import HOST, MADE, VOLUME, Signal, TaskId, State, hold_places, nodes_dir
+from gfso.core.types import HOST, MADE, NODES, VOLUME, Signal, TaskId, State, base_named, hold_places, nodes_dir
 from gfso.core.protocol.procedure import round_of
 from gfso.engine.findings import record_round
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
@@ -80,7 +80,8 @@ def made(engine, place: str) -> bool:
     transition bus asks it. A place may stand nowhere on this host, and what stands where an agent writes decides
     nothing of the protocol."""
     if (got := engine.graph.setting(MADE + place)) is not None or (
-            got := engine.graph.setting(MADE + _spelled(place))) is not None:   # …as a copy-in carried it
+            got := engine.graph.setting(MADE + _spelled(place))) is not None or (   # …as a copy-in carried it
+            got := engine.graph.setting(MADE + _named_as_before(place))) is not None:
         return got == "1"
     # …a place made before the record was kept: asked once (once per process where it is not made), then recorded —
     # the record decides from there on. On this host, never by a call into a container from the transition bus: until
@@ -96,6 +97,11 @@ def made(engine, place: str) -> bool:
 
 def _record(engine, place: str, made: bool) -> None:
     engine.graph.store_setting(MADE + place, "1" if made else "0")
+
+
+def _named_as_before(place: str) -> str:
+    """A place of a base whose name holds what `place_name` escapes, as its record was written before it did."""
+    return str(Path(*(NODES + base_named(x) if x.startswith(NODES) else x for x in Path(place).parts)))
 
 
 def _spelled(place) -> str:

@@ -379,8 +379,8 @@ class _Credentials:
     def _booked(self, rec: dict) -> None:
         """One call's record, naming the credential this thread's call ran on."""
         rec["credential"] = self._mine.name
-        if rec.get("ended") == "unauthorized":
-            rec.setdefault("remedy", _REFUSED[self._mine.kind])
+        if rec.get("ended") == "unauthorized" and "remedy" not in rec:   # …`_no_store`'s has one, on a thread with no `kind` yet
+            rec["remedy"] = _REFUSED[self._mine.kind]
         self._mine.last = rec
         self._book(rec)
 

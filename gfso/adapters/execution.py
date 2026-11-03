@@ -457,9 +457,10 @@ _LAYER = re.compile(r"([\d.]+)\s*([kMGT]?B)")
 _HELD = ('m=$1; t=$2; shift 2; for d; do [ -d "$d" ] || continue; '
          'find "$d" -maxdepth 0 -xdev -ignore_readdir_race -printf "" 2>/dev/null || { echo "N 0 $d"; continue; }; '
          'if [ -n "$(timeout "$t" find "$d" -xdev -mindepth "$m" -print -quit 2>/dev/null)" ]; then echo "D 0 $d"; '
-         'continue; fi; { timeout "$t" find "$d" -xdev -ignore_readdir_race -printf "%i %n %b\\n"; '
-         'echo "rc $?"; } | awk -v d="$d" \'$1 == "rc" {rc = $2; next} seen[$1]++ {next} '
-         '{b += $3; n++} END {if (rc == 0) print b * 512, n, d; else if (rc == 124) print "T", 0, d; '
+         'continue; fi; { LC_ALL=C timeout "$t" find "$d" -xdev -ignore_readdir_race -printf "%i %n %b\\n" 2>&1; '
+         'echo "rc $?"; } | awk -v d="$d" \'$1 == "find:" {if ($0 ~ /No such file or directory$/) gone = 1; else bad = 1; next} '
+         '$1 == "rc" {rc = $2; next} seen[$1]++ {next} '
+         '{b += $3; n++} END {if (rc == 0 || (rc == 1 && gone && !bad)) print b * 512, n, d; else if (rc == 124) print "T", 0, d; '
          'else print "U", 0, d}\'; done')
 #: deeper than this a directory is no session's to keep unread: honest trees nest tens of levels, and a chain of hundreds
 #: of thousands made the reader stall for minutes or stop short and say nothing (critic) — its work is ended for it

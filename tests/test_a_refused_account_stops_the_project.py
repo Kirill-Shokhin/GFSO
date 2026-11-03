@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 import time
 
 import pytest
@@ -41,6 +42,7 @@ class _Proc:
 
 def _cli(monkeypatch, lines):
     monkeypatch.setattr(H.subprocess, "Popen", lambda args, **kw: _Proc(lines))
+    monkeypatch.setattr(E.LocalExecution, "which", lambda self, program: program)   # …a machine with no CLI, as CI is
     for name in ("adopt", "kill_tree", "release"):
         monkeypatch.setattr(E, name, lambda p: p)
 
@@ -89,7 +91,10 @@ def test_a_refused_token_names_the_one_remedy_and_the_verb_called(monkeypatch):
 
 def test_no_credential_at_all_is_named_as_none_with_the_same_remedy(monkeypatch):
     credentials.put("claude", "token", None)
-    err, stop = _plan_refused(monkeypatch)
+    box = {}     # …on a thread of its own, as a server's first call is: one that had a credential before hid a crash here
+    t = threading.Thread(target=lambda: box.update(got=_plan_refused(monkeypatch)))
+    t.start(), t.join()
+    err, stop = box["got"]
     assert "no credential of 'claude'" in err and "`claude setup-token`, then `gfso credential claude`" in err, err
     assert "was refused" not in err.split(":")[0], err
     assert "call plan again" in err and "no credential of 'claude'" in stop["why"], (err, stop)
