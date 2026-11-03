@@ -1548,6 +1548,7 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
     /* every call on the reader stands in the first view, before the words on the run: a row that scrolled hid them (critic 9) */
     .hd-needs { order: 7; flex: 1 1 100%; margin: 0; overflow: visible; flex-wrap: wrap; justify-content: flex-start; row-gap: 6px; }
     .hd-needs > .need { order: -1; }
+    .hd-needs > .tally, .hd-needs > .hd-quiet { border-left: none; padding-left: 0; }   /* a row that wraps has no line to set apart */
 }
 /* on the dark bar a dot is cream: stopped a ring, stopping the ring filled and pulsing — the accent sinks into ink there */
 .hd-run-state::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; box-sizing: border-box; background: transparent; border: 1.5px solid color-mix(in srgb, var(--bg) 60%, transparent); }
