@@ -116,4 +116,4 @@ class Parking:
 #: what only the user does to lift a place past its disk bound — the frontier's step and the machine issuer's stop say it
 USERS_WAY = ("only the user lifts it: a server restart counts the place again from what it then holds (GFSO_NODE_DISK "
              "and GFSO_NODE_FILES set the bound), then `start_project`; or hand a corrected plan as a new goal "
-             "(`auto_decompose` with `spec` on a new project); or leave it stopped (`stop_project`)")
+             "(`refine_plan` on its file, then `auto_decompose(plan=path)` on a new project; or `auto_decompose` with `spec`); or leave it stopped (`stop_project`)")

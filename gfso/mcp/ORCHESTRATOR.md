@@ -10,7 +10,7 @@ You operate a GFSO task graph through the `gfso` tools; the graph is the source 
   every session can read; the result comes as branch `gfso/<project>/accepted`, their branches untouched. The provider
   reads what the agents send it.
 - **What it costs.** Haiku 5.5, a plan given: $0.4–0.9, 14–55 min on a coreutils benchmark; $5.5–9.3, 71–92 min on a C
-  compiler one. Writing the plan adds minutes.
+  compiler one. The system writing the plan itself, as below: $1–1.7, 16–54 min on coreutils; a small utility, 29 min.
 
 ## Running the person's task: do these yourself, informing in a line
 

@@ -1629,7 +1629,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
 
     `plan` is THE GO on a plan file (`plan` / `refine_plan`, a path or the text): the project is built from the goal
     and the plan the file holds, as they stand — the customer's from then on, as any plan handed in."""
-    request, spec = _the_go(plan, request, spec) if plan is not None else (request, spec)
+    request, spec = _the_go(engine, plan, request, spec) if plan is not None else (request, spec)
     model = model or engine.planner_model()
     _cb = emit_cb(engine, "decompose", _progress)
     # …and SAY it, once, at the moment it happens: naming someone else here makes them the issuer of
@@ -1797,7 +1797,8 @@ def plan(engine: Engine, request: str, model: Optional[str] = None, executor: Op
         except NoPlan as no:
             return {"error": _no_plan(no)}
         return _plan_written(text)
-    return _once(("plan", engine.project_name, request, model, executor, depth, review_model), write)
+    return _once(("plan", engine.project_name, request, model, executor, depth, review_model or engine.system_model()),
+                 write)
 
 
 def refine_plan(engine: Engine, plan: str, note: str, model: Optional[str] = None,
@@ -1817,7 +1818,7 @@ def refine_plan(engine: Engine, plan: str, note: str, model: Optional[str] = Non
         except (NoPlan, ValueError, OSError) as e:
             return {"error": str(e)}
         return _plan_written(text)
-    return _once(("refine", engine.project_name, plan, note, model, review_model), write)
+    return _once(("refine", engine.project_name, plan, note, model, review_model or engine.system_model()), write)
 
 
 def _no_provider_answer(subtasks, stats, spec) -> dict:
@@ -1828,7 +1829,7 @@ def _no_provider_answer(subtasks, stats, spec) -> dict:
                       "the goal."} if not subtasks and not stats and spec is None else {})
 
 
-def _the_go(plan: str, request: str, spec) -> tuple[str, dict]:
+def _the_go(engine: Engine, plan: str, request: str, spec) -> tuple[str, dict]:
     """The goal and the plan a plan file holds, for the go — refused beside a second plan or another goal."""
     if spec is not None:
         raise ValueError("auto_decompose: pass the plan file (`plan`) or a spec (`spec`), not both")
@@ -1836,6 +1837,10 @@ def _the_go(plan: str, request: str, spec) -> tuple[str, dict]:
     if (request or "").strip() and request.strip() != p["goal"].strip():
         raise ValueError("auto_decompose: `request` differs from the goal the plan file answers — the go builds "
                          "the plan for its own goal; leave `request` out, or plan the new goal anew")
+    # …its review ran where it was written and its customer read it: a second one over the same file can change nothing
+    # in a plan that is now the user's, only stop it, with no move left to anyone (critic: no row ever ran this; every
+    # row of a plan handed in had the gate off, as `set_mode` says of a plan verified where it was authored)
+    engine.set_settings({"l2_gate": "0"}, AgentId(_agent_id()), "the go on a plan file: its review is in the file")
     return p["goal"], p["spec"]
 
 

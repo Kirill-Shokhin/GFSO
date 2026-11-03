@@ -10,6 +10,7 @@ import pytest
 
 import gfso.tools_llm as TL
 from gfso.decompose import planning
+from gfso.engine.validation import l2_gate_on
 from tests.support import make_engine
 
 
@@ -95,3 +96,15 @@ def test_a_plan_that_failed_is_written_again(monkeypatch):
     calls = []
     assert TL._once(("k",), lambda: calls.append(1) or {"error": "no"}) == {"error": "no"}
     assert TL._once(("k",), lambda: calls.append(1) or {"path": "p"}) == {"path": "p"} and len(calls) == 2
+
+
+def test_the_go_on_a_plan_file_stands_on_the_review_in_the_file(monkeypatch):
+    """A second review of the same file could only stop a plan that is now the user's, with no move left to anyone: under
+    AUTO a finding there ended the run (critic over the path; no row had ever run it with the gate on)."""
+    e = _e()
+    TL.set_mode(e, system_model="claude-haiku-5-5")
+    assert l2_gate_on(e.graph) is True or e.graph.setting("l2_gate") is None
+    monkeypatch.setattr(TL._artifact, "parse", lambda text: {"goal": "the goal", "spec": {"subtasks": []}})
+    monkeypatch.setattr(TL._planning, "text_of", lambda p: p)
+    assert TL._the_go(e, "a file", "", None) == ("the goal", {"subtasks": []})
+    assert e.graph.setting("l2_gate") == "0" and l2_gate_on(e.graph) is False

@@ -918,7 +918,7 @@ def _cancel(engine, task, actor, answer, why, verbs):
     if engine.users_plan() and users_criteria(engine.graph, task):
         reason = (f"the system's issuer finds {task.id} cannot be carried as the plan the user gave writes it: "
                   f"{why or 'no reason given'} — only the user re-plans it: hand a corrected plan as a new goal "
-                  f"(`auto_decompose` with `spec` on a new project), or `set_mode` (with `user_said`) to hold the plan "
+                  f"(`refine_plan` on its file, then `auto_decompose(plan=path)` on a new project; or `auto_decompose` with `spec`), or `set_mode` (with `user_said`) to hold the plan "
                   f"yourself; `start_project` alone asks its issuer again")
         # …ALWAYS asked: `pause` keeps a person's stop and takes over one the system lifts by itself (the account's
         # limit, a place down), which would otherwise lift with this verdict lost (critic over bc5fca4)
@@ -2134,7 +2134,7 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
                 or question == "split" else "cannot go on")
         why = (f"the plan the user gave {said} at {task_id} ({question}: "
                f"{what_contact_refuted(engine, task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans "
-               f"it: hand a corrected plan as a new goal (`auto_decompose` with `spec` on a new project), or `set_mode` "
+               f"it: hand a corrected plan as a new goal (`refine_plan` on its file, then `auto_decompose(plan=path)` on a new project; or `auto_decompose` with `spec`), or `set_mode` "
                f"(with `user_said`) to hold the plan yourself; `start_project` alone stops it here again")
         engine.pause("system", why)
         return {"status": "users", "why": why}
