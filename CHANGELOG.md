@@ -12,76 +12,6 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 
 ## [Unreleased]
 
-### Fixed
-- A verb longer than three minutes is answered over MCP: the bridge took a silence for a dead session, told the agent the
-  server had restarted, and the agent's resend paid for the whole plan again. It now asks its session; a call waits under the
-  client's own ceiling and is answered past it, and the same `plan` asked again joins the one under way or reads the one written.
-- The go on a plan with parts no longer stops on a second review of its own file, and a plan the system wrote stays open
-  to contact after its exact build: a check of its own that contact refutes is repaired. A dispute a plan handed in closed
-  cannot answer stops the run saying why, where it asked a model again with no line said.
-- A note through `refine_plan` no longer loosens checks it did not name, and what a plan spends is on the book of the
-  project that asked.
-- A stopped project still knows its validator: the roster is published before the stop returns, where a finished run read
-  after a server start that its validator was on no roster.
-
-### Changed
-- A split into one part is authored as the leaf it is: its criteria are the node's own, so a small task is not validated
-  twice over.
-- The attached agent's whole path stands in the first 4000 characters of its instructions, where a client cuts them.
-- The plan gate's re-check asks whether a pinned check probes what an obligation's own words name; another disguise of what
-  a check refuses is that check's residue. A leaf's obligations are said once and not repaired at authoring, and a place
-  holding nothing runs no check before its first session.
-- The agent attached over MCP says what GFSO gives and needs, makes the repository itself, states `auto` with every role on
-  `claude-haiku-5-5` as its recommendation rather than asking (`solo` and `semi` on request; the mode's lock is unchanged),
-  reads the plan and gives the go, and writes the project's link in the chat. `start_project` answers with that link
-  too, and a verb's link names the project it acted on however the session came to it.
-- A part's place starts from where its whole stood when the part entered the split, its producers coming by their Dep
-  edges, and what a session reads as the base holds no delivery: a sibling's work reaches it by the plan, not by the order
-  the parts started in. A plan that relied on that order meets the missing edge at contact (a BLOCK, or a FAIL), and
-  siblings editing one file conflict at the join for the whole to integrate.
-- A provider over a chat API runs its commands where a client's run, apart from the system's calls and on the action
-  record; a build, a check and such a command find the image's programs, the system's own calls the system's; a project's
-  model door listens on a port of its own; what a program prints reaches the server to 64 MiB a stream; a `unittest-checker`
-  is refused for a project in a container.
-- A node that passed and joined, or was cancelled, holds no container, its directories and CLI state kept; a node reopened
-  later starts them again. A stopped project's containers end once nothing of it runs, its volumes kept. An idle server
-  holds none either: its memory watch keeps a reader only while work stands on the machine.
-- The Level-2 check reads a node's goal from the goal alone and decides each obligation against what its validation runs:
-  its own pinned checks and its mapped children's, with the files they feed. A criterion added over checks already pinned
-  on the node is refused as deciding nothing new. A conflict with a settled child of the node's own split is reported
-  beside the gate's verdict rather than gating it, and shown to the issuer with what decides it: a new pinned check of the
-  contested behaviour on the live child.
-- A pinned exact check that does not finish within the system's per-check bound decides nothing: its criterion is
-  undecided, no PASS over it and no rework of honest work, and its issuer is told to re-pin it or cancel. A built delivery
-  the system cannot copy for an exact check FAILs that check, its cause said.
-- A model call runs only on a credential its provider holds, never on the machine's own login; a spent API credit is its
-  credential's limit, moved past like any other.
-- A refused `promote` or `resplit` names the move that fits: two parts that need each other are reshaped by the parent's
-  issuer, and a split that as a whole does not carry the goal goes to `refine`.
-- The page's design: one 48 px bar carries GFSO, the project, the goal and its mode, the run's state as a dot and words, and
-  every control as one button in sentence case; a node's panel opens on one state pill and a grid of its properties; the
-  five kinds of session are one ramp of filled tones in Spend and the timeline alike; a part closed by FAIL wears the FAIL
-  cross and is not done in any view.
-- On a phone one rule answers every tap: a first tap on a thing with a tip shows it, a second on that same thing acts, a
-  thing with no tip acts at once, a tap elsewhere or a scroll clears it, and a press held on a control shows its tip. The
-  first screen answers what runs and what waits, the strip's red first; a time view opens at its latest with its names kept
-  at the left; a node's panel closes with the browser's Back. A mouse is unchanged.
-- The graph folds only a plan too large to read at a readable zoom, decided on the whole plan whenever its nodes change. A
-  fold counts what it holds by the looks the drawing gives a node: at work, waiting on a decision, contested, by hand,
-  closed by FAIL, failing now. A click or a tap unfolds it, a pan begun on its tag unfolds nothing, and a push keeps a view
-  the reader has touched.
-- No figure on the page waits for a reload: an open page re-reads what each pushed line changed, the plan's record moving
-  included; what runs now is timed in place each second; a quiet run turns stalled and a deadline red at their own moment.
-  The header says «nothing needs you» only where the engine calls no one.
-- The page says one thing one way: «cancelled», «passed on» and every other state in its own word on every view, a moment
-  against a day the reader has, a count as its own mark. A stretch on the timeline passed from session to session is drawn
-  as its sessions, each piece and each cut saying its own on hover, the session's context against its budget and its model's
-  window. Beside a node's panel Spend and Models keep their layout and the time views scroll.
-- A model row's cost split weighs a cache write at the price its sessions paid and draws what it cannot price as one
-  «Not split» part saying why; sessions with no cost are one «N unpriced» mark.
-- The resources reading says, for each of containers, stats and disk, when Docker was last asked and why it gave nothing
-  then, so a page tells "not read yet" from "Docker does not answer".
-
 ### Added
 - A plan is a file of its own before any project exists: `plan(request, model)` authors and reviews it with no project,
   `refine_plan(file, note, model)` answers a customer's note by what the round changed and reviews it again, and
@@ -154,7 +84,107 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   project that never ran can be deleted from its page; a delivered goal says on which branch, or in which directory, its
   result lies (`get_graph` `landed`); the address with no project lists the projects and opens none.
 
+- `docs/e3_rows.csv`: every counted row of the pre-registered table, with its build, contract, time, cost and second number.
+
+### Changed
+- A split into one part is authored as the leaf it is: its criteria are the node's own, so a small task is not validated
+  twice over.
+- The attached agent's whole path stands in the first 4000 characters of its instructions, where a client cuts them.
+- The plan gate's re-check asks whether a pinned check probes what an obligation's own words name; another disguise of what
+  a check refuses is that check's residue. A leaf's obligations are said once and not repaired at authoring, and a place
+  holding nothing runs no check before its first session.
+- The agent attached over MCP says what GFSO gives and needs, makes the repository itself, states `auto` with every role on
+  `claude-haiku-5-5` as its recommendation rather than asking (`solo` and `semi` on request; the mode's lock is unchanged),
+  reads the plan and gives the go, and writes the project's link in the chat. `start_project` answers with that link
+  too, and a verb's link names the project it acted on however the session came to it.
+- A part's place starts from where its whole stood when the part entered the split, its producers coming by their Dep
+  edges, and what a session reads as the base holds no delivery: a sibling's work reaches it by the plan, not by the order
+  the parts started in. A plan that relied on that order meets the missing edge at contact (a BLOCK, or a FAIL), and
+  siblings editing one file conflict at the join for the whole to integrate.
+- A provider over a chat API runs its commands where a client's run, apart from the system's calls and on the action
+  record; a build, a check and such a command find the image's programs, the system's own calls the system's; a project's
+  model door listens on a port of its own; what a program prints reaches the server to 64 MiB a stream; a `unittest-checker`
+  is refused for a project in a container.
+- A node that passed and joined, or was cancelled, holds no container, its directories and CLI state kept; a node reopened
+  later starts them again. A stopped project's containers end once nothing of it runs, its volumes kept. An idle server
+  holds none either: its memory watch keeps a reader only while work stands on the machine.
+- The Level-2 check reads a node's goal from the goal alone and decides each obligation against what its validation runs:
+  its own pinned checks and its mapped children's, with the files they feed. A criterion added over checks already pinned
+  on the node is refused as deciding nothing new. A conflict with a settled child of the node's own split is reported
+  beside the gate's verdict rather than gating it, and shown to the issuer with what decides it: a new pinned check of the
+  contested behaviour on the live child.
+- A pinned exact check that does not finish within the system's per-check bound decides nothing: its criterion is
+  undecided, no PASS over it and no rework of honest work, and its issuer is told to re-pin it or cancel. A built delivery
+  the system cannot copy for an exact check FAILs that check, its cause said.
+- A model call runs only on a credential its provider holds, never on the machine's own login; a spent API credit is its
+  credential's limit, moved past like any other.
+- A refused `promote` or `resplit` names the move that fits: two parts that need each other are reshaped by the parent's
+  issuer, and a split that as a whole does not carry the goal goes to `refine`.
+- The page's design: one 48 px bar carries GFSO, the project, the goal and its mode, the run's state as a dot and words, and
+  every control as one button in sentence case; a node's panel opens on one state pill and a grid of its properties; the
+  five kinds of session are one ramp of filled tones in Spend and the timeline alike; a part closed by FAIL wears the FAIL
+  cross and is not done in any view.
+- On a phone one rule answers every tap: a first tap on a thing with a tip shows it, a second on that same thing acts, a
+  thing with no tip acts at once, a tap elsewhere or a scroll clears it, and a press held on a control shows its tip. The
+  first screen answers what runs and what waits, the strip's red first; a time view opens at its latest with its names kept
+  at the left; a node's panel closes with the browser's Back. A mouse is unchanged.
+- The graph folds only a plan too large to read at a readable zoom, decided on the whole plan whenever its nodes change. A
+  fold counts what it holds by the looks the drawing gives a node: at work, waiting on a decision, contested, by hand,
+  closed by FAIL, failing now. A click or a tap unfolds it, a pan begun on its tag unfolds nothing, and a push keeps a view
+  the reader has touched.
+- No figure on the page waits for a reload: an open page re-reads what each pushed line changed, the plan's record moving
+  included; what runs now is timed in place each second; a quiet run turns stalled and a deadline red at their own moment.
+  The header says «nothing needs you» only where the engine calls no one.
+- The page says one thing one way: «cancelled», «passed on» and every other state in its own word on every view, a moment
+  against a day the reader has, a count as its own mark. A stretch on the timeline passed from session to session is drawn
+  as its sessions, each piece and each cut saying its own on hover, the session's context against its budget and its model's
+  window. Beside a node's panel Spend and Models keep their layout and the time views scroll.
+- A model row's cost split weighs a cache write at the price its sessions paid and draws what it cannot price as one
+  «Not split» part saying why; sessions with no cost are one «N unpriced» mark.
+- The resources reading says, for each of containers, stats and disk, when Docker was last asked and why it gave nothing
+  then, so a page tells "not read yet" from "Docker does not answer".
+
+- No provider key is read from the environment (`<X>_API_KEY`, `GFSO_PROVIDER_<NAME>_API_KEY`,
+  `GFSO_GENERIC_API_KEY`), and `GFSO_BILLING` is gone: per-token billing is an `api` credential of `claude`. No process
+  the system starts inherits a key or a token but the model's client on this host, whose tools are scrubbed of it where
+  the host can (on Linux, with bubblewrap); in a container execution not even the client holds it — the project's model
+  door does, and the client only the door's key. A container's `env_file` is optional and refused if it names a
+  credential.
+- A refused authentication (the account signed out, a key refused or missing) and an execution place down stop the
+  project as the account's limit does, and every door names which of them stopped it.
+- A continued round of the Claude Code provider books its own cost, not the whole conversation's.
+- A root handed to another holder keeps its issuer: no executor becomes the issuer of the root it executes.
+- A step's `role` is read by one rule: a split owed, a plan repair and a plan check are the executor's own act.
+- A Dep edge is no criterion of its consumer: a `dep__` entry that pins no check declares the edge and is left out of the
+  node's verdict on every door (a seam that pins a consumer-side check stays a criterion). A node's PASS/FAIL and failed
+  list are computed from the validator's per-criterion entries; the validator is no longer asked for a verdict word.
+- A declared Dep edge is a record of its own, with its glue, written by the act that declares it — a split's admission
+  (`decompose`'s child `deps: [{from, glue}]`), `add_dependency`, or a criterion whose check reads the producer's
+  result — and no longer an entry of its consumer's criteria: node criteria lists carry no bare `dep__` entry, and an
+  edge is not deleted by a revision that leaves it out. `add_dependency` without `check` no longer re-offers the
+  consumer (unless its supplied deadline must move). A `depends_on` entry with no check is still read on the wire, as
+  the edge it declares. A database written before is migrated when it is opened — each such entry becomes its declared
+  edge record, logged as a migration; no conjunct of V changes.
+- No count of answers cancels a node any more: a contract version ends by its deadline, a node by its issuer's act.
+- Under AUTO a plan the user handed in (`auto_decompose` with `spec`) is theirs: the system adds to it and never
+  re-splits, re-pins or cancels it; where contact refutes it the run stops with the reason and the user's way out. The
+  system never cancels the user's goal.
+- A node's place is a repository of its own (a clone sharing the base's objects), its delivery fetched back by name; a
+  DELIVER records its commit, and what joins is the commit the PASS accepted.
+- With no mode set the system answers disputes at a seam only; a dispute a node's own issuer raises is its holder's.
+
 ### Fixed
+- A verb longer than three minutes is answered over MCP: the bridge took a silence for a dead session, told the agent the
+  server had restarted, and the agent's resend paid for the whole plan again. It now asks its session; a call waits under the
+  client's own ceiling and is answered past it, and the same `plan` asked again joins the one under way or reads the one written.
+- The go on a plan with parts no longer stops on a second review of its own file, and a plan the system wrote stays open
+  to contact after its exact build: a check of its own that contact refutes is repaired. A dispute a plan handed in closed
+  cannot answer stops the run saying why, where it asked a model again with no line said.
+- A note through `refine_plan` no longer loosens checks it did not name, and what a plan spends is on the book of the
+  project that asked.
+- A stopped project still knows its validator: the roster is published before the stop returns, where a finished run read
+  after a server start that its validator was on no roster.
+
 - A repair patch cannot end an authoring: what the admission refuses is taken back only when the repair rounds are spent,
   earlier the next round is told and finishes it; at the end a criterion goes back to its latest admitted text, one that
   never had any leaves and is said, and no mapping or seam is left naming what is gone. A patch re-emitting part of a split
@@ -204,36 +234,6 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 - An attempt that a limit moved to the next credential counts as no session and no ending anywhere on the page.
 - A project opened by many reads at once gets one engine.
 
-### Changed
-- No provider key is read from the environment (`<X>_API_KEY`, `GFSO_PROVIDER_<NAME>_API_KEY`,
-  `GFSO_GENERIC_API_KEY`), and `GFSO_BILLING` is gone: per-token billing is an `api` credential of `claude`. No process
-  the system starts inherits a key or a token but the model's client on this host, whose tools are scrubbed of it where
-  the host can (on Linux, with bubblewrap); in a container execution not even the client holds it — the project's model
-  door does, and the client only the door's key. A container's `env_file` is optional and refused if it names a
-  credential.
-- A refused authentication (the account signed out, a key refused or missing) and an execution place down stop the
-  project as the account's limit does, and every door names which of them stopped it.
-- A continued round of the Claude Code provider books its own cost, not the whole conversation's.
-- A root handed to another holder keeps its issuer: no executor becomes the issuer of the root it executes.
-- A step's `role` is read by one rule: a split owed, a plan repair and a plan check are the executor's own act.
-- A Dep edge is no criterion of its consumer: a `dep__` entry that pins no check declares the edge and is left out of the
-  node's verdict on every door (a seam that pins a consumer-side check stays a criterion). A node's PASS/FAIL and failed
-  list are computed from the validator's per-criterion entries; the validator is no longer asked for a verdict word.
-- A declared Dep edge is a record of its own, with its glue, written by the act that declares it — a split's admission
-  (`decompose`'s child `deps: [{from, glue}]`), `add_dependency`, or a criterion whose check reads the producer's
-  result — and no longer an entry of its consumer's criteria: node criteria lists carry no bare `dep__` entry, and an
-  edge is not deleted by a revision that leaves it out. `add_dependency` without `check` no longer re-offers the
-  consumer (unless its supplied deadline must move). A `depends_on` entry with no check is still read on the wire, as
-  the edge it declares. A database written before is migrated when it is opened — each such entry becomes its declared
-  edge record, logged as a migration; no conjunct of V changes.
-- No count of answers cancels a node any more: a contract version ends by its deadline, a node by its issuer's act.
-- Under AUTO a plan the user handed in (`auto_decompose` with `spec`) is theirs: the system adds to it and never
-  re-splits, re-pins or cancels it; where contact refutes it the run stops with the reason and the user's way out. The
-  system never cancels the user's goal.
-- A node's place is a repository of its own (a clone sharing the base's objects), its delivery fetched back by name; a
-  DELIVER records its commit, and what joins is the commit the PASS accepted.
-- With no mode set the system answers disputes at a seam only; a dispute a node's own issuer raises is its holder's.
-
 ### Security
 - Docker is part of the installation: `gfso setup` builds the agents' image from the file the package ships and
   declares it as the execution `default`, which an executor registered without one takes once its project's mode
@@ -279,6 +279,10 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 - The server answers only its own host names (`gfso serve --host`, `GFSO_ALLOWED_HOSTS`), refuses cross-site writes,
   gives a foreign origin reads only, and pins its CDN scripts by subresource integrity. `SECURITY.md` says what a
   container execution holds apart and what it does not.
+
+- The page runs no script but its own and its pinned library's, by a Content-Security-Policy under its escaping. A Linux
+  Docker Engine whose internal network leaks name lookups (CVE-2024-29018) is refused at setup and at every start, as a
+  Docker Desktop below its floor is.
 
 ## [0.2.0] — 2026-10-15
 

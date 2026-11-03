@@ -3525,21 +3525,30 @@ plan's cost is charged to neither arm. So that arm shows what the system does wi
 them — not what it does when it writes its own; the own-plan arm is that question.
 
 **What it shows.** Claims and held-out scores per row; time is active wall (the host's sleep and the account's limit
-windows taken out, disclosed per row in `results/_grid/E3_TABLE.md`); cost is the CLI's estimate.
+windows taken out, disclosed per row in [`e3_rows.csv`](e3_rows.csv)); cost is the CLI's estimate.
+
+**Corrected against the rows (2026-11-04).** A row-by-row check changed what stood here: `sql_database` · Haiku 4.5's first
+plan ran 495 active minutes, not 1019, the machine's sleep taken out; two runs declared smokes before their launch had been
+counted (`GB_sql_database_tn9t2x448`, `GB_coreutils_tnat0u688`), so the pre-registered roots are 18, not 20; the final
+`sql_database` rows of §13.47 and the `c_compiler` · Haiku 4.5 row on plan v4 ran without the contract's addendum and are
+not on one contract with the bare arm; `c_compiler` · Haiku 5.5's 98.7 % over all 299 tests reads 98.6 % on the 293 left when
+the six its probes were derived from are out; a continued line booked at its running total is out of §13.47's second row,
+$62.5, and of its first, $73.08; Amendment 2's 54.5 % below is a session's own reading of the root's tree, not on the rows'
+records, whose scores read the starter.
 
 | task | model | A: claims (held-out) | automatic, plan given: claims (held-out) | A time · cost | automatic time · cost |
 |---|---|---|---|---|---|
 | coreutils | haiku 4.5 | DONE ×5 (0.59–0.76) — **5/5 false** | DONE ×5 (1.000 ×5, signed 1.000 ×5) | 8–13 min · $1.3–2.3 | 120–253 min · $21–40 |
 | coreutils | haiku 5.5 | DONE ×4 (1.000 ×4) | DONE ×7 (1.000 ×7); 2 NOT DONE | 8–15 min · $0.3–1.0 | 14–55 min · $0.4–0.9 |
 | coreutils | sonnet 5.5 | DONE ×6 (1.000 ×6) | DONE ×2 (1.000 ×2) | 4–12 min · $0.7–2.3 | 7–10 min · $4.2–4.5 |
-| sql_database | haiku 4.5 | DONE ×5 (0.09–0.18), NOT DONE ×1 — **5/6 false** | NOT DONE ×1 (an earlier build); on the final plan v16: DONE ×2 (1.000, 0.818) — §13.47 | 10–12 min · $1.3–2.2 | 1019 min · $83 |
-| sql_database | haiku 5.5 | DONE ×4 (1.000, 1.000, 0.909, 1.000) — **1/4 false** | DONE ×3 (1.000 ×3) | 16–21 min · $0.3–1.3 | 56–97 min · $1.0–1.9 |
+| sql_database | haiku 4.5 | DONE ×5 (0.09–0.18), NOT DONE ×1 — **5/6 false** | NOT DONE ×1 (an earlier build); on the final plan v16: DONE ×2 (1.000, 0.818) — §13.47 | 10–12 min · $1.3–2.2 | 495 min · $83 |
+| sql_database | haiku 5.5 | DONE ×4 (1.000, 1.000, 0.909, 1.000) — **1/4 false** | DONE ×2 (1.000 ×2) | 16–21 min · $0.3–1.3 | 56–57 min · $1.0–1.2 |
 | sql_database | sonnet 5.5 | DONE ×4 (1.000 ×4) | DONE ×2 (1.000 ×2) | 6–8 min · $1.0–1.3 | 13–17 min · $4.3–5.6 |
 | c_compiler | haiku 4.5 | NOT DONE ×3 (0.12–0.15) | no verdict (two rows of an earlier build cut at the 9-h ceiling; the final-build row GB_c_compiler_tncfs1160 stopped unsettled on 2026-10-24, not re-run) | 7–10 min · $0.9–1.6 | — |
 | c_compiler | haiku 5.5 | NOT DONE ×4 (0.74–0.95) | **DONE ×2 (0.987, 0.997)** | 19–36 min · $1.4–4.6 | 71–92 min · $5.5–9.3 |
 | c_compiler | sonnet 5.5 | DONE ×2 (0.997 ×2) — **2/2 false** | DONE ×2 (0.997, 0.990) | 112–117 min · $48–52 | 35–43 min · $12–15 |
 
-The system's own plan (one row a cell, Amendments 1 and 3): coreutils — haiku 5.5 DONE ×2 (1.000), sonnet DONE (1.000);
+The system's own plan (one row a cell, Amendments 1 and 3): coreutils — haiku 5.5 DONE (1.000), sonnet DONE (1.000);
 sql_database — haiku 5.5 DONE (0.909), sonnet DONE (1.000); c_compiler × sonnet — two attempts, neither built a goal (the
 plan's authoring returned JSON with its closers lost; the second, a built plan, ended on a refused call at the harness);
 c_compiler × haiku 5.5 — NOT DONE at the 4 h ceiling (2026-10-29, build 14f9bbe, the environment's time 0 s; two earlier
@@ -3551,13 +3560,13 @@ an engine defect, a shared table read while threads wrote to it (fixed since, 6d
 at a spend ceiling with no verdict (below).
 
 **Read across the table.** The cells above pool rows of earlier builds on the same contract (arm A) or the same plan
-(automatic), each row with its build in `E3_TABLE.md`; the pre-registration counts only its build (`65cf516`, harness
+(automatic); every counted row is in [`e3_rows.csv`](e3_rows.csv); the pre-registration counts only its build (`65cf516`, harness
 a420043e) and the own-plan arm's amended builds. Both counts, one yardstick (held-out below 1.0):
 
 | | pre-registered build only | pooled |
 |---|---|---|
 | arm A: DONE claims · below held-out | 19 · 8 | 30 · 13 |
-| automatic: DONE roots · below held-out | 20 · 5 (90.9–99.7 %) | 28 · 5 |
+| automatic: DONE roots · below held-out | 18 · 5 (90.9–99.7 %) | 26 · 5 |
 
 - *Arm A's "done" is often not the contract's.* The oldest, smallest model claims it on `coreutils` with a quarter to
   most of the held-out suite failing, and on `sql_database` at 9–18 %; Sonnet claims it on `c_compiler` at 99.7 %. Where
@@ -3569,7 +3578,7 @@ a420043e) and the own-plan arm's amended builds. Both counts, one yardstick (hel
 - *On a plan given, the smaller models reach what they do not alone* — Haiku 4.5 on `coreutils` (59–76 % alone, 100 % ×5),
   Haiku 5.5 on `c_compiler` (74–95 % alone, 98.7 / 99.7 %, its plan's probes partly drawn from held-out tests). On
   `sql_database` Haiku 4.5 did not finish under the system: on the pre-registered build one row ended NOT DONE after
-  1019 active minutes ($83) and two were cut at the 9-h ceiling ($68, $92); on `c_compiler` its two rows were cut there too
+  495 active minutes ($83) and two were cut at the 9-h ceiling ($68, $92); on `c_compiler` its two rows were cut there too
   ($60, $65) — for system defects named below.
 - *What it costs.* On `coreutils` × Haiku 4.5 the automatic row costs about 16× the bare one at the medians ($25 against
   $1.5) and takes about 16× as long, plan not counted; on `c_compiler` × Haiku 5.5 about 2×; on `c_compiler` × Sonnet the
@@ -3580,8 +3589,8 @@ build ran to the 9-h ceiling for reasons measured in the rows themselves and fix
 machine issuer's repair re-homed the pinned inputs empty (`sql_database`); one session held a node that failed the same
 criteria nineteen rounds on real crashes and was never split (`c_compiler`, §3.7's leaf test now enforced at contact);
 the account's limit windows were read as answers and doubled the issuer's waits to two hours; validators citing a pinned
-check by its own directory name had truthful reports refused. The replacing rows run on `9155db9` (Amendment 2). Two own-plan rows on the earlier build were stopped by the spend guard at its ceiling with no verdict (`coreutils` and
-`sql_database` × haiku 4.5): one had re-validated its root whole every ten minutes. These cells are reported empty, not
+check by its own directory name had truthful reports refused. The replacing rows run on `9155db9` (Amendment 2). Two own-plan rows on the earlier build were stopped on their spend with no verdict (`coreutils` × haiku 4.5 by hand,
+`sql_database` × haiku 4.5 by the spend guard at its ceiling): one had re-validated its root whole every ten minutes. These cells are reported empty, not
 filled from another build.
 
 **Limits.** Three tasks and n of 1 to 9 per cell; the held-out suites are the benchmark's, so a criterion the suite does
@@ -3644,7 +3653,7 @@ WHERE col = expr` runs the WHERE as one more assignment, so every row is rewritt
 1, 2, 3 leaves 2, 2, 2). The plan names the behaviour — `dml`'s and the root's criteria cover UPDATE with WHERE — and every
 pinned probe of it uses a predicate other than `=` (`<`, `<>`, `>`, `IS NULL`): FM-3 of the plan's checks, a criterion
 whose procedure cannot see the case. The first row's tree encodes the SET items apart from the WHERE and passes the same
-tests through the same blind checks. Cost on the ledger: $68.36, of it $5.86 a continued round booked twice (fixed since), so $62.5 — executors $47.1, validation $12.7, the issuer
+tests through the same blind checks. Cost on the ledger: $68.36, of it $5.86 a continued round booked twice (fixed since), so $62.5 — executors $47.3, validation $12.7, the issuer
 $2.5.
 
 **What it does not show.** The plan's checks were verified against the oracle beforehand and polished on
@@ -3820,8 +3829,8 @@ launcher did not pass it, so they measured another contract. Every role haiku 5.
 - The two `coreutils` rows each span two builds: each stopped on an engine defect in the Level-2 gate, and was resumed after
   its fix on the same project. Their records' wall time counts the continuation alone (969 s, 1 302 s).
 - `c_compiler`'s rows of those days (`tnl51c552`, `tnlgsd008`, `tnmsd1088`, `tnpji8716`), all NOT DONE at the starter tree's
-  0.204, lack the addendum too. Of the own-plan rows on record since, the one with it, `GB_coreutils_tnrrb0968`, was stopped
-  at its plan's review with no held-out read.
+  0.204, lack the addendum too. Of the own-plan rows on record since, the two with it, `GB_coreutils_tnrrb0968` and `GB_coreutils_tnwsm7492`, were stopped
+  at their plan's review with no held-out read.
 
 **The context budget at a 128k line, one row per arm** (`c_compiler`, the given plan v4, every role haiku 5.5, AUTO; §13.49's
 reference on record, the cell registered in `PREREGISTERED_context_budget_2.md` before it ran). Executor figures, recounted
