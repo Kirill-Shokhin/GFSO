@@ -62,7 +62,7 @@ def refine(text: str, note: str, model: str, review_model: str = "", progress=No
         changed, _, problems = _decompose.refine_with(e, p["goal"], rid, agent_id(), llm,
                                                       findings, progress=progress, executor=p["executor"])
     changed = changed or spec != p["spec"]        # …the repair before the build changed it too
-    after = extract_spec(e, str(rid))
+    after = _exact_kept(before, extract_spec(e, str(rid)))
     # …said as what it is: one round read the note TOGETHER with the review's open findings, so a change is the round's,
     # not proven the note's; and an unchanged plan is the system's answer to the note, the review below its reasons
     head = ("what the round that read this note (with the review's open findings) changed:" if changed else
@@ -72,6 +72,20 @@ def refine(text: str, note: str, model: str, review_model: str = "", progress=No
     notes = p["notes"] + [{"note": note, "by": model, "answer": "\n".join(answer + [f"open: {x}" for x in problems])}]
     return artifact.render(p["goal"], after, _review(e, rid, review_model or model, execution, ledger),
                            notes, p["executor"])
+
+
+def _exact_kept(before: dict, after: dict) -> dict:
+    """`after`, each check the round left as it was (one command, one expectation) still `exact` where it was: a model
+    re-emitting a criterion left the flag out, and a note about two checks silently loosened six others (tracker,
+    Sonnet, 2026-11-03). What the system runs exactly is no less so for a round that did not mean to change it."""
+    exact = {(p.get("command"), p.get("expect")) for x in _parts(before).values() for c in x.get("criteria") or ()
+             for p in c.get("check") or () if p.get("exact") is True}
+    for x in _parts(after).values():
+        for c in x.get("criteria") or ():
+            for p in c.get("check") or ():
+                if (p.get("command"), p.get("expect")) in exact:
+                    p["exact"] = True
+    return after
 
 
 def _parts(s: dict) -> dict:

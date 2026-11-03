@@ -126,3 +126,15 @@ def test_a_dispute_a_closed_plan_cannot_answer_stops_the_run_and_says_why(monkey
     monkeypatch.setattr(e, "challenge_reason", lambda t: "the check contradicts the spec")
     assert I.settle(e, {}, "t", "dispute", "a", None)["status"] == "users"
     assert "the check contradicts the spec" in paused[0]
+
+
+def test_a_round_that_left_a_check_as_it_was_leaves_it_exact():
+    """A note about two checks silently loosened six others: the model re-emitted them without the flag (tracker, Sonnet,
+    2026-11-03). A check the round did change is the round's own."""
+    def spec(*checks):
+        return {"root_criteria": [], "subtasks": [{"id": "a", "criteria": [{"name": "c", "check": list(checks)}]}]}
+    same, changed = {"command": "x", "expect": "1"}, {"command": "y", "expect": "new"}
+    out = planning._exact_kept(spec({**same, "exact": True}, {"command": "y", "expect": "old", "exact": True}),
+                               spec(dict(same), dict(changed)))
+    (kept, other) = out["subtasks"][0]["criteria"][0]["check"]
+    assert kept.get("exact") is True and other.get("exact") is None
