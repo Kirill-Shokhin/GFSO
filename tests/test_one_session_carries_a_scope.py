@@ -10,6 +10,7 @@ A node above κ is not a leaf, and its split is owed (§3.7, §11.5). All with f
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import gfso.delegate as D
@@ -128,13 +129,18 @@ def _dispatcher(e, agents, executor, validator, per_node: list):
                                                                                          sign=sign))
 
 
-def _drive(e, d, until, rounds=200) -> None:
-    for _ in range(rounds):
+def _drive(e, d, until=lambda: False, rounds=200, wait=True) -> None:
+    """`rounds` of the dispatcher, or `until` holds. A session is a thread: counted rounds alone ran out while one still
+    worked on a loaded machine, and a test asserted over what had not happened yet (shown, 36 of 36 under load). So the
+    last rounds wait for it, the wait bounded, unless a test holds its session on purpose."""
+    base, end, done = threading.active_count(), time.monotonic() + 120, 0
+    while done < rounds:
         d.dispatch_once()
         time.sleep(0.03)
         e.wait_idle()
         if until():
             return
+        done = min(done + 1, rounds - 10) if wait and threading.active_count() > base and time.monotonic() < end else done + 1
 
 
 def _states(e) -> dict:

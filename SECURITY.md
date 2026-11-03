@@ -40,6 +40,8 @@ proxy without adding authentication of your own.
 What the server does refuse is a web page: it answers only to its own host names (so a name re-pointed
 at 127.0.0.1 is not served), and from a browser page that is not its own it serves no write and no
 live socket — and nothing at all to a browser that says the page is another site's (`Sec-Fetch-Site`).
+What agents write is shown on that page escaped, and a policy under it (`Content-Security-Policy`) runs no script but its own and
+its pinned library's, should the escaping miss.
 A server started on another name (`gfso serve --host`) answers to that name; any further name is added
 by hand in `GFSO_ALLOWED_HOSTS` (comma-separated). A front that forwards such a name to the server (a
 reverse proxy, `tailscale serve`) gives whatever reaches the front the server's every door: the
@@ -311,9 +313,8 @@ project has work in it, only with your own words asking for the change):
   Docker's default bridge it opens one port alone, its project's doors' (a number in 20000–29999 by the project), on any
   container there: a service of yours listening on that very number answers it, and another project's door answers only to
   its own key.
-- `off` reaches nothing but its model, through the door below (on a Linux Docker Engine older than 23.0.11, or a 25.x older than
-  25.0.5, an internal network still forwards name lookups, CVE-2024-29018, and nothing checks an engine's version; Docker Desktop is
-  not affected): the container stands on an internal Docker network of its own with no route out, and none of its agent's processes holds a
+- `off` reaches nothing but its model, through the door below (a Linux Docker Engine whose internal network still forwards name
+  lookups, CVE-2024-29018, is refused at setup and at every start, as a Docker Desktop below its floor is): the container stands on an internal Docker network of its own with no route out, and none of its agent's processes holds a
   capability to make one. Each closed project takes one of Docker's address pools; past their
   number a start fails.
 - Under every switch nothing reaches INTO a session's or a judge's container, and nothing passes

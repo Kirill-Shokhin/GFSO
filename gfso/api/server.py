@@ -1081,6 +1081,18 @@ def _door_origins() -> tuple:
                  for p in dict.fromkeys((_serverctl.PORT, 8080)))
 
 
+#: What the page may load and do, a second layer under its escaping: what the agents write is shown on it, and a script of
+#: theirs running there would hold every verb of a server with no login. `style-src` keeps 'unsafe-inline': the page and its
+#: graph library set styles inline, and a style runs nothing.
+_PAGE_POLICY = [
+    (b"content-security-policy", b"default-src 'self'; script-src 'self' https://unpkg.com; "
+                                 b"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+                                 b"img-src 'self' data: blob:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'none'; "
+                                 b"form-action 'self'; frame-ancestors 'none'"),
+    (b"x-content-type-options", b"nosniff"),
+]
+
+
 class _DoorGuard:
     """Refuses, before any route runs, a request whose Host names someone else, and anything but a read that a browser
     sent from a page not this server's — a socket, or a POST no preflight stops (an empty body stopped the server from
@@ -1104,7 +1116,12 @@ class _DoorGuard:
         # `?project=` wakes that project's engine and its clock (`Sec-Fetch-Site`: every current browser, every request)
         foreign = headers.get(b"sec-fetch-site", b"").decode("latin-1") in ("cross-site", "same-site")
         if host in _door_hosts() and not foreign and (read or own):
-            return await self.app(scope, receive, send)
+            async def with_policy(message):
+                """`message`, a response's start carrying the page's policy."""
+                if message["type"] == "http.response.start":
+                    message = {**message, "headers": [*message.get("headers", []), *_PAGE_POLICY]}
+                await send(message)
+            return await self.app(scope, receive, with_policy if scope["type"] == "http" else send)
         if scope["type"] == "websocket":
             return await send({"type": "websocket.close", "code": 4403})
         await send({"type": "http.response.start", "status": 403,

@@ -187,6 +187,23 @@ def below_floor(platform: str) -> "str | None":
     return None if tuple(map(int, m.groups())) >= DESKTOP_FLOOR else "Docker Desktop " + ".".join(map(str, DESKTOP_FLOOR))
 
 
+def refused_docker(version: str, platform: str) -> "str | None":
+    """Why this Docker (`docker version`: its engine's `version`, its `platform` name) holds none of the boundaries drawn
+    with it, or None: a Docker Desktop whose containers reach its own API; a Linux engine whose internal network still
+    forwards name lookups out, which is what `off` stands on (CVE-2024-29018: fixed in 23.0.11, 25.0.5 and 26.0.0, the 24
+    line never). A version that does not read is no refusal: nothing says it is old."""
+    if below := below_floor(platform):
+        return (f"{platform} is older than {below}: a container there reaches Docker's own API unauthenticated "
+                f"(CVE-2025-9074) — update Docker Desktop")
+    if platform.startswith("Docker Desktop") or not (m := re.match(r"(\d+)\.(\d+)\.(\d+)", version or "")):
+        return None
+    v = tuple(map(int, m.groups()))
+    if v >= (26, 0, 0) or (25, 0, 5) <= v < (26, 0, 0) or (23, 0, 11) <= v < (24, 0, 0):
+        return None
+    return (f"Docker Engine {version} forwards name lookups out of an internal network (CVE-2024-29018), so `off` would "
+            f"not hold — update to 25.0.5 or later")
+
+
 def _unavailable(ex, storage: bool):
     """Why `ex` cannot start a call (`ExecutionPort.unavailable`): the daemon's own words where it does not answer —
     Docker Desktop not running reads "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
@@ -195,15 +212,14 @@ def _unavailable(ex, storage: bool):
     every session dying, the probe saying "up" for 35 min); and, by a container of its own, a file written, read and
     removed in the project's places volume where it is made, its base read there — else None."""
     try:
-        got = run(["docker", "version", "--format", "{{.Server.Platform.Name}}"], timeout=60, text=True)
+        got = run(["docker", "version", "--format", "{{.Server.Version}}|{{.Server.Platform.Name}}"], timeout=60, text=True)
     except (OSError, subprocess.TimeoutExpired) as e:
         return str(e)
     if got.returncode:
         return (got.stderr or "").strip() or f"docker version exited {got.returncode}"
-    # …and a Docker whose containers reach its own API holds none of the boundaries drawn with them
-    if below := below_floor(got.stdout.strip()):
-        return (f"{got.stdout.strip()} is older than {below}: a container there reaches Docker's own API "
-                f"unauthenticated (CVE-2025-9074) — update Docker Desktop")
+    engine, _, platform = got.stdout.strip().partition("|")
+    if refused := refused_docker(engine, platform):
+        return refused
     if not storage:
         return None
     p = ex.project if isinstance(ex, PlaceContainer) else ex

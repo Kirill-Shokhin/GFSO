@@ -27,6 +27,15 @@ def test_its_own_names_are_answered(client, host):
     assert client.get("/api/tools", headers={"host": host}).status_code == 200
 
 
+def test_what_the_door_answers_holds_the_page_s_policy(client):
+    """Escaping alone stood between what agents write and a script on a page holding every verb (a critic, read); in a real
+    browser a planted handler and script ran with no policy and neither runs with this one."""
+    h = client.get("/", headers={"host": "127.0.0.1:8000"}).headers
+    policy = h["content-security-policy"]
+    assert "script-src 'self' https://unpkg.com;" in policy and "object-src 'none'" in policy and "'unsafe-eval'" not in policy
+    assert "frame-ancestors 'none'" in policy and h["x-content-type-options"] == "nosniff"
+
+
 @pytest.mark.parametrize("host", ["rebind.example:8000", "127.0.0.1.rebind.example", ""])
 def test_a_foreign_host_is_refused_before_any_verb(client, host):
     r = client.post("/api/run/create_task", headers={"host": host}, json={"task_id": "x"})

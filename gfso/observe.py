@@ -21,7 +21,7 @@ from typing import Optional
 from dataclasses import replace
 
 from gfso.core.types import IN_THE_WORKS_PATH
-from gfso.adapters.execution import ended_by_watch
+from gfso.adapters.execution import ended_by_watch, past_disk
 from gfso.adapters.snapshots import WATCHED, snapshot, swap
 from gfso.core.protocol.procedure import (INPUTS_TOKEN, PROBE_S, materialize_inputs, probe_id, shows,
                                          unsafe_input_paths)
@@ -145,7 +145,10 @@ def _fresh_run(ex, bash: str, c, p, tree: str, timeout: float, place: str, copyi
                 got = _run(ex, bash, swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, own),
                            own, timeout, place)
                 # …ended by the machine's memory watch: a neighbour's pressure is no observation of this delivery (critic B7)
-                return {"note": f"not run: {WATCHED}"} if ended_by_watch(ex.session(own)) else got
+                if ended_by_watch(ex.session(own)):
+                    return {"note": f"not run: {WATCHED}"}
+                # …by the disk's: the delivery's own, its cause said, as a build's, where a bare 137 read as any failure
+                return {**got, "out": f"the check was ended: {past}"} if (past := past_disk(ex.session(own))) else got
             finally:
                 t0 = time.monotonic()
     finally:

@@ -29,7 +29,7 @@ from pathlib import Path
 from gfso import __version__
 from gfso import serverctl
 from gfso.serverctl import port_state
-from gfso.adapters.execution import AGENT_DOCKERFILE, below_floor
+from gfso.adapters.execution import AGENT_DOCKERFILE, refused_docker
 from gfso.adapters.llm import credentials
 from gfso import config as _config
 from gfso.config import DEFAULT_EXECUTION, db_path as _config_db_path
@@ -120,9 +120,8 @@ def docker_state() -> tuple[bool, str]:
     if out.returncode != 0:
         return False, f"installed, its daemon does not answer — start Docker ({exe})"
     engine, _, desktop = out.stdout.strip().partition("|")
-    if (below := below_floor(desktop)) is not None:
-        return False, (f"{desktop} is older than {below}: a container there reaches Docker's own API unauthenticated "
-                       f"(CVE-2025-9074) — update Docker Desktop")
+    if refused := refused_docker(engine, desktop):
+        return False, refused
     return True, f"engine {engine}" + (f" ({desktop})" if desktop else "")
 
 

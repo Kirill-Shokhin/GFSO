@@ -138,9 +138,9 @@ def test_doctor_names_what_stops_delegated_work_in_one_line_each(home, monkeypat
 def test_a_docker_desktop_whose_containers_reach_its_api_is_no_floor():
     """CVE-2025-9074: before 4.44.3 a container reached Docker Desktop's Engine API unauthenticated — every boundary
     the system draws with containers stands on Docker itself holding."""
-    assert D.below_floor("Docker Desktop 4.44.2 (202017)") and D.below_floor("Docker Desktop 4.9.0 (1)")
-    assert D.below_floor("Docker Desktop 4.44.3 (1)") is None and D.below_floor("Docker Desktop 5.0.0 (1)") is None
-    assert D.below_floor("Docker Engine - Community") is None and D.below_floor("") is None
+    assert E.below_floor("Docker Desktop 4.44.2 (202017)") and E.below_floor("Docker Desktop 4.9.0 (1)")
+    assert E.below_floor("Docker Desktop 4.44.3 (1)") is None and E.below_floor("Docker Desktop 5.0.0 (1)") is None
+    assert E.below_floor("Docker Engine - Community") is None and E.below_floor("") is None
 
 
 def test_on_the_doors_order_the_mode_places_the_executors_already_registered(home):
@@ -159,7 +159,7 @@ def test_on_the_doors_order_the_mode_places_the_executors_already_registered(hom
 
 def test_a_docker_below_the_floor_stops_every_container_execution_not_only_doctor(monkeypatch):
     """An existing install that never ran setup again: its containers must not start on a Docker they could command."""
-    monkeypatch.setattr(E, "run", lambda args, **kw: subprocess.CompletedProcess(args, 0, "Docker Desktop 4.43.0 (1)\n", ""))
+    monkeypatch.setattr(E, "run", lambda args, **kw: subprocess.CompletedProcess(args, 0, "28.0.0|Docker Desktop 4.43.0 (1)\n", ""))
     assert "CVE-2025-9074" in E._unavailable(None, storage=False)
 
 

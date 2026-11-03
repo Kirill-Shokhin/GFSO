@@ -4,6 +4,7 @@ wrote at the user's next git; a second installation removed a first's running co
 
 CONTROLS: drop the check in `Place.path` and the first goes red; read `at` lexically in `_untar` and the second does; take the
 home out of the container's name and the third does; `-name .git` in `_EXPORT` and the live one does."""
+import contextlib
 import io
 import os
 import subprocess
@@ -13,7 +14,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from gfso import observe as O
 from gfso.adapters import execution as E
+from gfso.core.types import Criteria, Probe
 from gfso.adapters.execution import LocalExecution, _untar
 from gfso.adapters.llm.toolloop import Place
 from tests.test_a_session_holds_only_its_own_place import made, project  # noqa: F401 — a fixture
@@ -243,3 +246,31 @@ def test_live_an_export_neutralises_a_repository_by_its_shape_and_git_there_runs
     for d in ("shaped/thing", "shaped/.git/modules/nested", "plain/.git", "locked/.git"):
         at = out / d
         assert b"fsmonitor" not in (at / "config").read_bytes() and not (at / "hooks").exists(), d
+
+
+@pytest.mark.parametrize("version, platform, refused", [
+    ("23.0.10", "Docker Engine - Community", True), ("23.0.11", "Docker Engine - Community", False),
+    ("24.0.9", "Docker Engine - Community", True), ("25.0.4", "Docker Engine - Community", True),
+    ("25.0.5", "Docker Engine - Community", False), ("26.0.0", "Docker Engine - Community", False),
+    ("20.10.24", "", True), ("24.0.9", "Docker Desktop 4.90.0 (1)", False), ("", "Docker Engine - Community", False),
+])
+def test_a_linux_engine_whose_internal_network_leaks_names_is_refused(version, platform, refused):
+    assert bool(E.refused_docker(version, platform)) is refused
+
+
+def test_every_start_asks_the_engine_s_version(monkeypatch):
+    monkeypatch.setattr(E, "run", lambda argv, **k: subprocess.CompletedProcess(argv, 0, "24.0.9|Docker Engine - Community", ""))
+    assert "CVE-2024-29018" in E._unavailable(None, False)
+
+
+def test_a_check_the_disk_s_watch_ended_says_so(monkeypatch, tmp_path):
+
+
+    monkeypatch.setattr(O, "_run", lambda *a: {"rc": 137, "out": "", "stdout": "", "stderr": ""})
+    monkeypatch.setattr(O, "ended_by_watch", lambda ex: False)
+    monkeypatch.setattr(O, "past_disk", lambda ex: "its work past its bound")
+    ex = SimpleNamespace(release=lambda t: None, copy_tree=lambda a, b: None, files=None, session=lambda p: None,
+                         system_writes=lambda p, **k: contextlib.nullcontext(), scratch=lambda *a, **k: contextlib.nullcontext(str(tmp_path)))
+    c = Criteria("c", check=(Probe("b", "x", "ok", exact=True),))
+    got = O._fresh_run(ex, "sh", c, c.check[0], str(tmp_path), 5, str(tmp_path), [])
+    assert "past its bound" in got["out"] and got["stdout"] == ""

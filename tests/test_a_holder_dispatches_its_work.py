@@ -23,6 +23,7 @@ from gfso.core.graph.model import generation_of_task
 from gfso.core.types import AgentId, Mode, Signal, State, TaskId
 from gfso.decompose.build import build_graph_live
 from gfso.delegate import Dispatcher
+from tests.test_one_session_carries_a_scope import _drive
 from gfso.roster import AgentRegistry
 from gfso.config import VALIDATION_CLAIM_TTL
 from gfso.core.types.ports import SystemClock
@@ -71,11 +72,8 @@ def _dispatcher(e, agents, ran: list, llm=None):
                       consent_runner=lambda en, t, *a, **k: ran.append(("consent", str(t))) or {"status": "x"})
 
 
-def _pass(e, d, rounds=40):
-    for _ in range(rounds):
-        d.dispatch_once()
-        time.sleep(0.03)
-        e.wait_idle()
+def _pass(e, d, rounds=40, wait=True):
+    _drive(e, d, rounds=rounds, wait=wait)
 
 
 def _state(e, tid="root"):
@@ -318,7 +316,7 @@ def test_a_validation_queued_behind_other_sessions_is_the_systems_wait_not_the_h
     e.wait_idle()
     d._cap.opening.acquire()                          # every slot taken by other nodes' sessions
     try:
-        _pass(e, d, 10)
+        _pass(e, d, 10, wait=False)
         assert started == [] and _state(e) == State.VALIDATING
         steps = [s for s in TL.TOOLS["next_steps"](e).get("steps") or [] if s.get("task_id") == "root"]
         assert not any(s.get("mine") for s in steps), steps
