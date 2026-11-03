@@ -3543,7 +3543,8 @@ The system's own plan (one row a cell, Amendments 1 and 3): coreutils — haiku 
 sql_database — haiku 5.5 DONE (0.909), sonnet DONE (1.000); c_compiler × sonnet — two attempts, neither built a goal (the
 plan's authoring returned JSON with its closers lost; the second, a built plan, ended on a refused call at the harness);
 c_compiler × haiku 5.5 — NOT DONE at the 4 h ceiling (2026-10-29, build 14f9bbe, the environment's time 0 s; two earlier
-rows void, one on engine defects since fixed, one on the host's file sharing failing): the root's own split was never
+rows void, one on engine defects since fixed, one on the host's file sharing failing; all three without the addendum the
+bare arm ran on, §13.51): the root's own split was never
 admitted — its Level-2 review held the whole plan, the parts its findings did not concern included, for 3 h 50 min while
 each review named one more requirement of a universal criterion and the issuer added a part for it; the run also met
 an engine defect, a shared table read while threads wrote to it (fixed since, 6d73d55); the rest in flight or stopped
@@ -3703,7 +3704,8 @@ every role `claude-haiku-5-5`, AUTO, one server build for the series. Every row:
   cut, and each one adds a fresh session's re-reading (executor turns ×1.5–2.4); of the reopened sessions most only
   verified and answered. What a budget buys is a question for a task whose sessions grow long.
 - **The place observation pays:** without it the executors spend 13 % more turns and 30 % more money at an equal result.
-- **The system's own plan on haiku 5.5** (the arm the value claim rests on; one row on this build): DONE, every pinned
+- **The system's own plan on haiku 5.5** (the arm the value claim rests on; one row on this build, without the addendum the
+  bare arm ran on, §13.51): DONE, every pinned
   check run, held-out 0.818 (ordering and a mixed-stress suite not probed); $1.58 in columns (executors 0.45, validation
   0.26, issuer 0.38, planning 0.50); 119 min against the bare agent's 16–21. Contact showed the plan wrong five times,
   each carried by a BLOCK naming a missing producer or a defect in a pinned check; the issuer answered by promoting
@@ -3739,7 +3741,7 @@ of 28 executor sessions passed 128k (peak 337k), executors 0.91 of the row's cos
   one judge's container took 9 GiB of the machine, containers then having no memory bound (since bounded per
   container). Its second attempt's two references were stopped short of their root: both looped on a validator's
   standing finding whose command entered the node's own place, read as a gone past round and shown without its pinned
-  inputs (since fixed). No budget cell ran. The budget reading still waits; and a fresh pair of references was not
+  inputs (since fixed). No budget cell ran. The budget reading still waits (one cell was read later: §13.51); and a fresh pair of references was not
   needed for it — the plan-given references already on record serve, their build named.
 
 ### 13.50 The system's own plan for `c_compiler`, measured before any row: no planner yet meets every bar; the cheap model's pipeline holds the axes execution cannot repair (2026-10-31 → 11-01)
@@ -3795,3 +3797,71 @@ CATCH (near-misses a public check fails while its base passes), UNDECIDED (crite
   instead costs something: a forwarder's own form entered two checks. One near-miss no plan of five catches, identifiers with an
   underscore, a defect costing 5 of the 11 suites, though the contract's own examples write such names. No proof of the decomposer's
   quality stands, and no row of the system's own plan on `c_compiler` was run on any of this.
+
+### 13.51 Three readings to hold beside the above: own-plan rows on another contract, one budget cell on `c_compiler`, and a stage that walks the goal's text (2026-10-27 → 11-02)
+
+**Own-plan rows of 2026-10-27…10-31 ran without the addendum.** The bare arm and the own-plan rows of §13.46's grid (build
+fb85648: coreutils 1.000 ×2, `sql_database` 0.909) ran on the task's statement with the binding addendum of
+`experiments/e3_specbench/explicit_contracts/` (`spec_addendum.applied` true in each record). These rows did not: their
+launcher did not pass it, so they measured another contract. Every role haiku 5.5, AUTO, the system's own plan:
+
+| row | task | build | root | held-out | $ (ledger) |
+|---|---|---|---|---|---|
+| `GB_sql_database_tnkid4876` | `sql_database` | da9d102 | DONE (promise kept) | 0.818 | 1.58 |
+| `GB_coreutils_tnqh4a016` | `coreutils` | 076abfb, continued on 39fc840 | DONE (promise kept) | 0.891 | 1.05 |
+| `GB_coreutils_tnql66996` | `coreutils` | 39fc840, continued on 2f8ddcc | DONE (promise kept) | 0.874 | 1.67 |
+
+- **They do not read against the bare arm, nor as a fall from 1.000.** On `coreutils` the addendum withdraws "the specified
+  options only" and adds options; every held-out test these two rows miss, against a 1.000 row's passed list (13 and 15 of
+  119), is one of those (`cat -v -T -A`, `wc -L`, `sort -f -s`, `uniq -u -f -s`). The gap is what the statement they were
+  given did not ask for, so it is no measure of the plan's coverage. On `sql_database` the row misses two of 11 suites
+  (`07_order_complex`, `10_mixed_stress`) and the addendum states tie orders and result forms; which of its clauses decides
+  them was not traced, so 0.818 is not read as the addendum's cost either.
+- The two `coreutils` rows each span two builds: each stopped on an engine defect in the Level-2 gate, and was resumed after
+  its fix on the same project. Their records' wall time counts the continuation alone (969 s, 1 302 s).
+- `c_compiler`'s rows of those days (`tnl51c552`, `tnlgsd008`, `tnmsd1088`, `tnpji8716`), all NOT DONE at the starter tree's
+  0.204, lack the addendum too. Of the own-plan rows on record since, the one with it, `GB_coreutils_tnrrb0968`, was stopped
+  at its plan's review with no held-out read.
+
+**The context budget at a 128k line, one row per arm** (`c_compiler`, the given plan v4, every role haiku 5.5, AUTO; §13.49's
+reference on record, the cell registered in `PREREGISTERED_context_budget_2.md` before it ran). Executor figures, recounted
+from each row's session traces:
+
+| row | line | build | root | held-out | executor $ | requests | output tokens | sessions | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| `GB_c_compiler_ctx2ref_10291111` | none | 6d73d55 | DONE (promise kept) | 0.973 | 8.02 | 948 | 1.88 M | 28 | 8 786 s |
+| `GB_c_compiler_ctx3b1285_10301332` | 128k | a9c5b45 | DONE (promise kept) | 0.980 | 10.40 | 1 929 | 4.21 M | 71 | 14 268 s |
+
+- **At an equal result the line did not pay: about twice the work, 1.3× the money.** The registered rule (root DONE, held-out
+  ≥ 0.973, executor cost below $7.38) is not met. The share of requests above the 100k price step falls from 49 % to 23 %, and
+  the requests themselves double.
+- **The line model is refuted as stated.** A model cutting the reference's sessions at the line predicted 0.80 of its cost;
+  1.3 was measured. Per session the cost held; what it lacked is that the work itself grows with each change of session.
+- Limits: n = 1 per arm, one line, one task, one model; the builds differ and the cell ran beside another row, so wall time
+  is no comparison; the ledger holds $8.71 of the cell's $10.40 (8 sessions unbooked, an engine defect since fixed). The
+  cell's automatic validity flag is false on a path pattern matching a `sed` address over a program's variable `sb`, no path;
+  the registered rule does not read that flag. This says nothing of what a handover should carry, nor of another line.
+
+**A stage that walks the goal's text, read on near-misses blind to it** (`RESULT_decomposer_quality.md`, Amendments Q, R, S;
+read offline on benches of §13.50's form, no plan re-authored). A cheap model writes checks from the goal's text alone, a program
+handing it each code fence of the goal and asking again for names left out, and a second call writes harder cases over the
+first's items. Its first form, one call and a sentence asking for the goal's own text, was refuted by two bars. The fenced
+form held every bar on the seven near-misses of §13.50, but its second prompt's list was written knowing them, so 12 new
+single-edit near-misses per task were made by an agent told nothing of plans or lists, 6 each that the held-out suite sees:
+
+| of 6 seen near-misses, clean catch | `sql_database` | `c_compiler` |
+|---|---|---|
+| plans, revised pipeline (each plan) | 4 · 1 | 3 · 3 · 3 |
+| plans, stage split (each plan) | 5 · 5 | 3 · 4 |
+| the stage's checks alone (second call sonnet 5.5, each of two) | 6 · 6 | 3 · 3 |
+| joined to a plan, median, against that plan's | 6 against 2.5 and 5 | 3 against 3, 3.5 against 3.5 |
+
+- **Refuted as registered:** the joined checks had to rise by one on each task, and on `c_compiler` the rise is 0. Its rise
+  there on the seven earlier near-misses was what the prompt's author knew.
+- Read, not a bar: on a goal that states its outputs the stage catches more than any plan, 6 of 6 for about ten cents, and
+  one near-miss every plan misses (identifiers with an underscore) it catches; on the 6 the suite does not see it reads 3 · 2
+  against the stage split's 4 · 2. On a goal that names a standard's features and
+  leaves their meaning to the standard, the text gives no more than plans do; two seen near-misses there nothing catches.
+  Its false FAILs were read near zero against the contract by one reader, no second.
+- **The proof of the planner is not obtained.** The stage is shown on one task of two, is not in the product, and no row ran
+  on it.

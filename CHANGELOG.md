@@ -21,8 +21,64 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   record; a build, a check and such a command find the image's programs, the system's own calls the system's; a project's
   model door listens on a port of its own; what a program prints reaches the server to 64 MiB a stream; a `unittest-checker`
   is refused for a project in a container.
+- A node that passed and joined, or was cancelled, holds no container, its directories and CLI state kept; a node reopened
+  later starts them again. A stopped project's containers end once nothing of it runs, its volumes kept. An idle server
+  holds none either: its memory watch keeps a reader only while work stands on the machine.
+- The Level-2 check reads a node's goal from the goal alone and decides each obligation against what its validation runs:
+  its own pinned checks and its mapped children's, with the files they feed. A criterion added over checks already pinned
+  on the node is refused as deciding nothing new. A conflict with a settled child of the node's own split is reported
+  beside the gate's verdict rather than gating it, and shown to the issuer with what decides it: a new pinned check of the
+  contested behaviour on the live child.
+- A pinned exact check that does not finish within the system's per-check bound decides nothing: its criterion is
+  undecided, no PASS over it and no rework of honest work, and its issuer is told to re-pin it or cancel. A built delivery
+  the system cannot copy for an exact check FAILs that check, its cause said.
+- A model call runs only on a credential its provider holds, never on the machine's own login; a spent API credit is its
+  credential's limit, moved past like any other.
+- A refused `promote` or `resplit` names the move that fits: two parts that need each other are reshaped by the parent's
+  issuer, and a split that as a whole does not carry the goal goes to `refine`.
+- The page's design: one 48 px bar carries GFSO, the project, the goal and its mode, the run's state as a dot and words, and
+  every control as one button in sentence case; a node's panel opens on one state pill and a grid of its properties; the
+  five kinds of session are one ramp of filled tones in Spend and the timeline alike; a part closed by FAIL wears the FAIL
+  cross and is not done in any view.
+- On a phone one rule answers every tap: a first tap on a thing with a tip shows it, a second on that same thing acts, a
+  thing with no tip acts at once, a tap elsewhere or a scroll clears it, and a press held on a control shows its tip. The
+  first screen answers what runs and what waits, the strip's red first; a time view opens at its latest with its names kept
+  at the left; a node's panel closes with the browser's Back. A mouse is unchanged.
+- The graph folds only a plan too large to read at a readable zoom, decided on the whole plan whenever its nodes change. A
+  fold counts what it holds by the looks the drawing gives a node: at work, waiting on a decision, contested, by hand,
+  closed by FAIL, failing now. A click or a tap unfolds it, a pan begun on its tag unfolds nothing, and a push keeps a view
+  the reader has touched.
+- No figure on the page waits for a reload: an open page re-reads what each pushed line changed, the plan's record moving
+  included; what runs now is timed in place each second; a quiet run turns stalled and a deadline red at their own moment.
+  The header says «nothing needs you» only where the engine calls no one.
+- The page says one thing one way: «cancelled», «passed on» and every other state in its own word on every view, a moment
+  against a day the reader has, a count as its own mark. A stretch on the timeline passed from session to session is drawn
+  as its sessions, each piece and each cut saying its own on hover, the session's context against its budget and its model's
+  window. Beside a node's panel Spend and Models keep their layout and the time views scroll.
+- A model row's cost split weighs a cache write at the price its sessions paid and draws what it cannot price as one
+  «Not split» part saying why; sessions with no cost are one «N unpriced» mark.
+- The resources reading says, for each of containers, stats and disk, when Docker was last asked and why it gave nothing
+  then, so a page tells "not read yet" from "Docker does not answer".
 
 ### Added
+- A plan is a file of its own before any project exists: `plan(request, model)` authors and reviews it with no project,
+  `refine_plan(file, note, model)` answers a customer's note by what the round changed and reviews it again, and
+  `auto_decompose(plan=file)` is the go, which builds the project from the file as it stands or refuses it naming why,
+  never repaired by a model behind the customer's back. A refine round sent a refused file repairs those refusals first.
+  The format is `gfso-plan/1`, a `.gfso` TOML file whose form is checked at every level (`docs/PLAN_FORMAT.md`). The plan's
+  author can run on a model of its own, `set_mode(planner_model=…)`; the review, the issuer and every other role stay on
+  the system's.
+- Each session's work holds a disk bound of its own, over what it adds to the directories its containers write and to their
+  layers: `GFSO_NODE_DISK` (20 GiB) and `GFSO_NODE_FILES` (1,000,000). Past it its containers are removed and its
+  directories kept; a judge's build so ended fails its delivery with the bound named; what the system itself writes there
+  counts for no session. An executor's or a consent session that left no answer while its place's own directories hold
+  more than the bound parks the node at once with that cause, spending no retry: the page's step offers cancelling it, the
+  machine issuer is told that is its one move, and where only the user can lift it (an AUTO root, a part of a plan they
+  handed in) the run stops saying so. `SECURITY.md` says what this does not hold.
+- For developers: the default test suite runs no container and takes about two minutes, its temporary files in `.tmp` at
+  the main tree's top. Live tests run only with `--live`, one at a time, or `--live-owed <ref>` for what a change owes by a
+  table of paths, and a real container started outside them fails its test. CI runs them in Docker on the product's own
+  image, red when none passes.
 - Any model provider: a model spec `provider/model` per role (`ollama/…`, `deepseek/…`, `openrouter/…` and other
   OpenAI-compatible presets, a user's own by `GFSO_PROVIDER_<NAME>_*`, a third party's class by the entry-point group
   `gfso.providers`); agent roles over a chat API run in the system's own tool loop; `gfso provider-check <spec>` names
@@ -76,6 +132,16 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   project that never ran can be deleted from its page.
 
 ### Fixed
+- A repair patch cannot end an authoring: what the admission refuses is taken back only when the repair rounds are spent,
+  earlier the next round is told and finishes it; at the end a criterion goes back to its latest admitted text, one that
+  never had any leaves and is said, and no mapping or seam is left naming what is gone. A patch re-emitting part of a split
+  drops only what its findings name, and a null field keeps the plan's own.
+- The machine issuer's moves on a plan the system authors land, and the Level-2 gate reads a checker's entry by its text, a
+  word form reading as the one criterion it can mean.
+- Each exact check reads a copy of the built delivery of its own, one command once over each set of inputs it is pinned
+  with: over a shared copy or a key of the command alone, one check's run changed what a later one read.
+- A tool-less model call that ended in an API error is asked once more, an agent run with tools never; a scope edit reaches
+  a node in work.
 - The machine issuer answers no question in a subtree `auto_decompose` is still writing: two writers on one split had
   ended the authoring.
 - A part waits for the producers its whole reads, not only for its own: a node with declared dependencies no longer
@@ -166,8 +232,26 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 - A judge checks out the commit the delivery recorded from objects hashed again on its own side, every other input laid
   from the system's record; Git LFS files are judged on their content; a copy of a place not yet delivered has a git of
   its own. Every program the system hands Python by `-c` in an agent's tree runs with `-I`.
+- A place's model client runs in a container apart from the one the system's commands over the place run in: only the
+  client's mounts the place's CLI state, it has no git, each call loads no setting source, and its file tools may not write
+  under its home. A judge's copy is built in a container mounting no client's state, ended before the judge's client starts
+  in a fresh one.
+- What a judge compares a delivery with is the system's own and read-only, and each exact check starts in a container of
+  its own over its inputs laid afresh.
+- The action record is out of a command's reach: every call the system makes into a container resolves through the system's
+  directories first and an absolute shell. Each command's end line names what changed in the place while it ran, by a time
+  no process of the agent sets.
+- Under every switch nothing reaches into a session's or a judge's container; on its own network a session opens only TCP
+  to its project's door and gateway, and `open` goes outward only, private, tailnet and link-local addresses and IPv6 shut.
+- The model door reads each body as one strict JSON object, refuses any other, sends on its own re-serialization, and
+  passes no file nor container the account holds.
+- The agents' image is built on a base named by its digest, with a CLI binary refused unless its checksum is the file's; the
+  host's fetch of the accepted bundle checks every object where git is 2.46 or newer.
 - Every container is bounded in memory and processes (4 GiB, 4096 by default; `GFSO_CONTAINER_MEMORY`,
-  `GFSO_CONTAINER_PIDS`), and all of the system's containers on a Docker together in three quarters of its memory.
+  `GFSO_CONTAINER_PIDS`), and all of the system's containers on a Docker together in three quarters of its memory. Past 85%
+  of that ceiling a running server ends the containers of the one node's work furthest over its share, before the kernel
+  chooses; a judge's copy, build or exact check so ended is no verdict on its delivery.
+- What the server reads of a place as a file or a directory it reads to 64 MiB, past that not read.
 - The reader of the places a plan is made from works beside the base with a model-client state of its own.
 - The server answers only its own host names (`gfso serve --host`, `GFSO_ALLOWED_HOSTS`), refuses cross-site writes,
   gives a foreign origin reads only, and pins its CDN scripts by subresource integrity. `SECURITY.md` says what a
