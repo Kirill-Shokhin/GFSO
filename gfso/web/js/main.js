@@ -89,8 +89,11 @@ const ACT = {
 };
 // Esc closes whatever is open over the page: a popover, the reader, the goal form, the projects list
 document.addEventListener('keydown', e => { if (e.key !== 'Escape') return;
+    // …one at a time, the node's panel last: its × says Esc
+    const over = document.querySelector('.hd-quality.open') || $('reader')?.hidden === false || $('goal-panel')?.hidden === false;
     document.querySelectorAll('.hd-quality.open').forEach(p => { p.classList.remove('open'); p.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', false); });
-    closeReader(); goal.closeGoal(); closeProjects(); });
+    closeReader(); goal.closeGoal(); closeProjects();
+    if (!over && focus().select) point('select', null); });
 document.addEventListener('click', e => {
     const b = e.target.closest('[data-action]'), mine = e.target.closest('.hd-quality');
     // one popover at a time: a click anywhere else, or on a link inside one, closes the open ones

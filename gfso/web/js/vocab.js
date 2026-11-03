@@ -98,7 +98,7 @@ export const closureNote = cl => !cl ? ''
     : cl.refuted   ? 'PASS CONTRADICTED by its own current record'
     : cl.overruled ? `asserted by hand over an instrument's ${cl.overruled_verdict || 'opposite'}`
     : cl.by_hand   ? byHand(cl.validator)
-    : cl.provenance === 'self' ? 'self-reported by its own executor (§10.3 internal node)'
+    : cl.provenance === 'self' ? 'self-reported by its own executor (internal node)'
     : '';
 export const contested = cl => !!(cl && (cl.refuted || cl.overruled));
 // A Level-2 checker's word on one criterion.

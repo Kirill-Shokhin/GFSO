@@ -1547,6 +1547,7 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
     .hd-run-state { order: 6; margin-left: 0; }
     /* every call on the reader stands in the first view, before the words on the run: a row that scrolled hid them (critic 9) */
     .hd-needs { order: 7; flex: 1 1 100%; margin: 0; overflow: visible; flex-wrap: wrap; justify-content: flex-start; row-gap: 6px; }
+    .header .hd-left .hd-pop { left: auto; right: 0; }   /* it stands at the row's right end: to the right it ran off a phone */
     .hd-needs > .need { order: -1; }
     .hd-needs > .tally, .hd-needs > .hd-quiet { border-left: none; padding-left: 0; }   /* a row that wraps has no line to set apart */
 }

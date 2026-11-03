@@ -229,7 +229,7 @@ export const pinned = (c, key) => (c.check || []).length
       + c.check.map(p => [p.behaviour && `# ${p.behaviour}`, `$ ${p.command}`, `→ ${p.expect}`,
                           Object.keys(p.inputs || {}).length && `inputs: ${Object.keys(p.inputs).join(', ')}`]
                          .filter(Boolean).map(esc).join('\n')).join('\n\n') + `</pre></details>`
-    : `<div class="check-fail">no pinned check — nothing decides this criterion but a probe improvised at validation time (A1, §2)</div>`;
+    : `<div class="check-fail">no pinned check — nothing decides this criterion but a probe improvised at validation time</div>`;
 
 // THE EXECUTION VERDICT, criterion by criterion. ONE `<li>`, TWO FLEX CHILDREN: the icon, and one body
 // block — siblings in a flex row tore the result apart (author, 2026-09-12). A command run for several
@@ -316,7 +316,7 @@ const passing = d => kids(d).filter(c => vPart(c) === 'pass').length;
 const composition = ({d}) => section('Composition — the parts', `<div class="composition-panel">`
     + tally(`${passing(d)}/${kids(d).length}`, 'parts pass') + `<div class="composition-formula">`
     + `A forecast: V(parent) = AND(parts) holds under a correct decomposition (Th. 1), and the parent's V is its own `
-    + `verdict over the result (§12.8)</div>`
+    + `verdict over the result</div>`
     + kids(d).map(c => { const v = vPart(c);
         return `<div class="composition-row v-${v}"><span class="v-sym">${V_SYMBOL[v]}</span>`
             + `<span class="child-name" data-action="select" data-id="${esc(c.id)}">${esc(nameOf(c))}</span></div>`; }).join('')

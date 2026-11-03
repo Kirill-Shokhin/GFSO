@@ -79,13 +79,13 @@ const KEY = [
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
     {glyph: svg('<path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>'), head: 'FAIL'},
     {glyph: '<b class="kt">V</b>', head: "The node's verdict", means: 'pass only when every criterion passes'},
-    {glyph: '<b class="kt">⊥</b>', head: 'No value', means: 'not checked yet, checked and undecided, or not kept for that round — a mark\'s hover says which; not a third value (§2.3)'},
+    {glyph: '<b class="kt">⊥</b>', head: 'No value', means: 'not checked yet, checked and undecided, or not kept for that round — a mark\'s hover says which; not a third value'},
     {group: 'The deck'},
     {glyph: '<b class="kt">· N</b>', head: 'Sessions', means: 'beside «at work» only when not one per node — one session may carry a whole part'},
     {glyph: `<span class="wk-cost kc">${TOKENS.map(([k]) => `<i class="${COST_CLS(k)}" style="width:25%"></i>`).join('')}</span>`,
      head: 'Cost split', means: `Models: ${TOKENS.map(([, n]) => n).join(' · ')}, left to right; a segment's hover gives its figures`},
     {glyph: '<b class="kt">$</b>', head: 'Spend', means: 'booked when a session ends; a running one is counted, not priced'},
-    {glyph: '<i class="cv cv-done"></i>', head: "A part's state, not a verdict", means: 'a coverage cell: the part responsible for that criterion (§2.4); the row\'s mark is the root\'s own'},
+    {glyph: '<i class="cv cv-done"></i>', head: "A part's state, not a verdict", means: 'a coverage cell: the part responsible for that criterion; the row\'s mark is the root\'s own'},
     {group: 'Nodes'},
     node('done', 'Closed, passed', ''),
     {glyph: '<i class="kn kn-done kn-x"></i>', head: 'Closed by FAIL', means: 'closed on its FAIL; the cross is the FAIL mark of every view'},
@@ -96,7 +96,7 @@ const KEY = [
     node('cancelled', 'Cancelled', '', 'kept for its history'),
     node('contested', 'PASS contested', '', 'its own record contradicts it, or a hand overruled an instrument'),
     node('byhand', 'Closed by hand', '', 'on a person\'s word, not an instrument\'s check'),
-    {glyph: '<b class="kt">Del</b>', head: 'Its executor', means: 'the one accountable party (§2.6); it may run many sessions at once'},
+    {glyph: '<b class="kt">Del</b>', head: 'Its executor', means: 'the one accountable party; it may run many sessions at once'},
 ];
 export const keyPop = () => pop('How to read the page', 'Each mark means one thing in every view.', KEY.map(it => it.group ? it : {...it, key: true}));
 
@@ -269,7 +269,7 @@ const NO_VALUE = {unchecked: 'not checked yet', unanswered: 'no verdict on this 
 export const PANEL = {
     refusedSaid: 'a validator reported and the report was REFUSED as ⊥ — ',
     escalated: hover('The issuer decides', ISSUER_MOVES),
-    contested: hover('Read the verdict', 'Legitimate (§10.3), and nothing can check it (§15.7)'),
+    contested: hover('Read the verdict', 'Legitimate, and nothing can check it'),
     deadline: () => hover('Deadline', 'Red once it has passed'),
     earlier: hover('An earlier delivery', 'This verdict is about a delivery the current one replaced'),
     refused: note => hover('A later report was refused', note),
@@ -278,7 +278,7 @@ export const PANEL = {
     full: text => hover(text),
     directive: text => hover(text),
     model: id => hover(id),
-    signed: hover('Who signed it (§10.3)'),
+    signed: hover('Who signed it'),
     // the L2 review's way out, said under its findings (a label: it is needed exactly when the review fails)
     twoWays: 'Two ways out: EDIT the criteria this names (the fix retires this verdict — run the review again after it), '
         + 'or record why a finding is wrong (<code>dispute_finding</code>).',

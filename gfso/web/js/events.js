@@ -6,7 +6,7 @@ import {bindFocus, focus, watch, point} from './store.js';
 import {glyph} from './draw.js';
 import {hm, day, bare} from './fmt.js';
 import {S} from './state.js';
-import {at, said, failedOf} from './run.js';
+import {at, said, failedOf, failingNow} from './run.js';
 import {failedWords, TIP} from './hints.js';
 import {CARRIED, label, statusLabel, delivered} from './vocab.js';
 
@@ -56,7 +56,7 @@ function head(id, name, node, run, rs) {
     if (id === RUN) return `<summary><span class="ev-node">the run</span><span class="ev-rounds">on no node — stops, starts, the mode, tech reports</span>
         <time>${rs[0] ? `${day(rs[0].t)} ${hm(rs[0].t)}` : ''}</time></summary>`;
     const rounds = run.rounds[id] || [], fails = rounds.filter(r => r.verdict === 'FAIL'), lastFail = fails.at(-1);
-    const last = rounds.at(-1), why = lastFail && `${last?.verdict === 'FAIL' ? 'failing' : 'last FAIL'} (round ${lastFail.n}): ${failedWords(failedOf(run, id, lastFail.failed))}`;
+    const last = rounds.at(-1), why = lastFail && `${failingNow(rounds, node?.state) ? 'failing' : 'last FAIL'} (round ${lastFail.n}): ${failedWords(failedOf(run, id, lastFail.failed))}`;
     // one line each, cut at its end: the whole of it on hover
     return `<summary><span class="ev-node"${TIP.cell(name)}>${esc(name)}</span>
         <span class="state-badge ev-state">${esc(statusLabel(node.state, delivered(node) ? null : node.done_reason))}</span>

@@ -41,6 +41,15 @@ function standing(root) {
 // the mode's settings in words (set_mode's own names: l2_gate, observe, deadline_s)
 const SETTING = {l2_gate: 'Plan review gate', observe: 'Checks observed before execution', deadline_s: 'Default deadline', network: 'Network'};
 const SWITCH = new Set(['l2_gate', 'observe']);   // switches, whatever their value's type
+// the engine keeps a setting as a string and reads a switch on only at "1" (validation.py): by truth, "0" read «on», the
+// opposite of the engine, on a real run; a time «29160», the network a line of JSON (critic)
+function settingWord(k, v) {
+    if (SWITCH.has(k) || typeof v === 'boolean') return v === true || /^(1|true)$/i.test(String(v)) ? 'on' : 'off';
+    if (/_s$/.test(k) && Number.isFinite(+v)) return dur(+v * 1e3);
+    let o = v;
+    if (typeof v === 'string') try { o = JSON.parse(v); } catch (e) { return v; }
+    return o && typeof o === 'object' ? [o.mode, ...(o.hosts || o.allow || [])].filter(Boolean).join(', ') || JSON.stringify(o) : String(v);
+}
 const PERFORM = {dispatch: 'each node in a clean session of its executor', in_chat: "by the user's agent itself"};
 // where the delivered goal's work is, the engine's record: a closed goal said DONE and nothing of where to take it from
 const landedAt = root => { const l = S.graph.landed; return l && delivered(root)
@@ -63,7 +72,7 @@ async function goal() {
         st.planner_model && ['Planner model', `the plan is authored on ${modelName(st.planner_model)}`],
         // a setting in seconds is said as a time (deadline_s 29160 → deadline 8.1h)
         ...Object.entries(st).filter(([k]) => k !== 'system_model' && k !== 'planner_model').map(([k, v]) => [SETTING[k] || cap(k.replace(/_s$/, '').replace(/_/g, ' ')),
-            /_s$/.test(k) && typeof v === 'number' ? dur(v * 1e3) : typeof v === 'boolean' || SWITCH.has(k) ? (v ? 'on' : 'off') : typeof v === 'object' ? JSON.stringify(v) : String(v)])].filter(Boolean);
+            settingWord(k, v)])].filter(Boolean);
     // the goal's short name — up to its first parenthesis or colon — the whole of it on hover
     const full = nameOf(root), short = full.split(/\s[(:—]/)[0].slice(0, 40);
     const done = delivered(root);

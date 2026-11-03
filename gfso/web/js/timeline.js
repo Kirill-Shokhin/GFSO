@@ -34,7 +34,9 @@ const cut = s => ({t: s.end, peak: s.peak, window: s.window, budget: s.budget});
 
 // stretch of work, drawn once; its batches are counted in the tip, its cost summed.
 function stretches(run) {
-    const cuts = id => (run.rounds[id] || []).flatMap(r => [r.delivered, r.at]).filter(Boolean);
+    // …nor a dispute or a block: the work stood still through it, and one bar across it said «1 retried» (critic, on a real run)
+    const halts = run.audit.filter(a => /CHALLENGE|BLOCK/.test(a.signal || ''));
+    const cuts = id => [...(run.rounds[id] || []).flatMap(r => [r.delivered, r.at]), ...halts.filter(a => a.task_id === id).map(a => a.t)].filter(Boolean);
     const out = [];
     for (const s of [...run.sessions].sort((a, b) => a.node.localeCompare(b.node) || a.kind.localeCompare(b.kind) || a.start - b.start)) {
         const last = out.at(-1);
