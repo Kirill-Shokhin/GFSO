@@ -6,7 +6,7 @@
 import {$, el, esc, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task} from './api.js';
-import {S, hasKids, taskOf, myRole, agentName} from './state.js';
+import {S, hasKids, taskOf, myRole, agentName, moverOf} from './state.js';
 import {bucketOf, stateWord, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
@@ -324,7 +324,8 @@ const composition = ({d}) => section('Composition — the parts', `<div class="c
 
 // The node's audit slice, newest first; what a signal carried is folded under its line.
 const history = ({d}) => section('History — newest first', ul('item-list audit-list', [...d.audit].reverse().map(a => {
-    const line = `${when(a.timestamp)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? enteredWord(a) : 'rej'}${a.source ? ' by ' + esc(agentName(a.source)) : ''}`;
+    const who = moverOf(a);
+    const line = `${when(a.timestamp)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? enteredWord(a) : 'rej'}${who.word && who.word !== 'clock' ? ' by ' + esc(who.word) : ''}${who.as ? ` (signed as ${esc(who.as)})` : ''}`;
     const more = CARRIED.filter(([k]) => a[k] && a[k].length !== 0).map(([k, l]) => `<div class="rd-field"><b>${l}</b>${txt(a[k])}</div>`).join('');
     return `<li class="${a.rejected ? 'check-fail' : ''}">${more ? `<details data-key="${esc(`h|${d.id}|${a.timestamp}|${a.signal}`)}">`
         + `<summary>${line}</summary>${more}</details>` : line}</li>`;

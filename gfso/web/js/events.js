@@ -5,7 +5,7 @@ import {esc, tally} from './dom.js';
 import {bindFocus, focus, watch, point} from './store.js';
 import {glyph} from './draw.js';
 import {hm, day, unref} from './fmt.js';
-import {S, kept, keep, agentName} from './state.js';
+import {S, kept, keep, moverOf} from './state.js';
 import {PROJECT} from './api.js';
 import {at, said, failedOf, failingNow} from './run.js';
 import {failedWords, TIP} from './hints.js';
@@ -39,11 +39,11 @@ function row(r) {
     if (r.p) return `<li class="ev ev-narration${r.kind === 'run' ? ' ev-run' : ''}"><time>${hm(r.t)}</time><span class="ev-src">${esc(r.p.source)}</span><span class="ev-text"${r.p.text.length > 60 ? TIP.cell(unref(r.p.text)) : ''}>${esc(unref(r.p.text))}</span></li>`;
     // what it carried, folded — but its failed criteria, drawn as chips, and an error the move line already says
     const a = r.a, prose = CARRIED.filter(([k]) => a[k] && k !== 'failed_criteria' && (k !== 'error' || a.rejected)).map(([k, l]) => [l, a[k]]);
-    const sig = a.signal === 'PASS' || a.signal === 'FAIL' ? glyph(a.signal, 3.5) : '';
+    const sig = a.signal === 'PASS' || a.signal === 'FAIL' ? glyph(a.signal, 3.5) : '', who = moverOf(a);
     return `<li class="ev ev-${r.kind}${a.rejected ? ' ev-rejected' : ''}"><time>${hm(r.t)}</time>
         <span class="ev-sig">${sig}${a.signal}${a.rejected ? ' · refused' : ''}</span>
         <span class="ev-move">${a.old_state && a.new_state ? `${label(a.old_state)} → ${enteredWord(a)}` : a.rejected ? 'nothing changed' : esc(a.error || '')}</span>
-        <span class="ev-src">${esc(a.source ? agentName(a.source) : a.signal === 'TIMEOUT' ? 'clock' : '')}</span>
+        <span class="ev-src"${who.as ? TIP.cell(`Signed as ${who.as}`) : ''}>${esc(who.word)}</span>
         ${a.failed_criteria?.length ? `<span class="ev-failed">${a.failed_criteria.map(c => `<em>${esc(c)}</em>`).join('')}</span>` : ''}
         ${prose.length ? `<details data-key="${esc(`r|${a.task_id}|${a.timestamp}|${a.signal}`)}"${opened.has(`r|${a.task_id}|${a.timestamp}|${a.signal}`) ? ' open' : ''}><summary>${prose.map(p => p[0]).join(' · ')}</summary>${prose.map(([k, v]) => `<p><b>${k}</b> ${esc(v)}</p>`).join('')}</details>` : ''}</li>`;
 }

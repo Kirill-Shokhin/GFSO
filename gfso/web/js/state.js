@@ -14,6 +14,16 @@ import {bare} from './fmt.js';
 //              graph call it); projects.js — project; graph.js — mineOnly
 // an agent's id without the project's name, as everywhere; whole where the cut would read as a node: «Del root» beside the node root read backwards (live critic)
 export const agentName = id => { const b = bare(id, S.project); return S.tasks.some(t => t.id === b) ? id : b; };
+// WHO MADE A LOGGED MOVE, as the log says (`by_system`, §11.6): the signer alone read «by agent» on a decision no agent of the
+// user's made. A verdict the system signs is two things: who checked, where that is the validator, and who signed; any
+// other move of the system is the system's, its signer only a name it signs under (`as`). An older record says nothing: its signer.
+export const moverOf = a => {
+    const by = a.source && agentName(a.source);
+    if (!a.by_system) return {word: by || (a.signal === 'TIMEOUT' ? 'clock' : ''), as: null};
+    const t = S.tasks.find(x => x.id === a.task_id), issuer = (S.tasks.find(x => x.id === t?.parent_id) ?? t)?.assignee;
+    return ['PASS', 'FAIL'].includes(a.signal) && by && a.source !== issuer
+        ? {word: `${by}, signed by the system`, as: null} : {word: 'the system', as: by};
+};
 export const S = {tasks: [], graph: {nodes: [], edges: []}, closures: [], missing: '',
                   frontier: null, runState: null, waiting: null, steps: null, mySteps: new Map(),
                   run: null, pipeline: [], reports: [], metrics: null,
