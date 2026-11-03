@@ -25,7 +25,8 @@ export const moverOf = a => {
         ? {word: `${by}, signed by the system`, as: null} : {word: 'the system', as: by};
 };
 // a node's word now, as `enteredWord` says it of the move: a contract the log shows brought back by anything but its first offer has started
-export const stateWord = t => t.state === 'OFFERED' && S.run?.audit?.some(a => a.task_id === t.id && a.new_state === 'OFFERED' && a.old_state && a.old_state !== 'IDLE')
+// …`audit` where the caller holds the node's own: a panel draws before the run is rebuilt (critic)
+export const stateWord = (t, audit = S.run?.audit) => t.state === 'OFFERED' && audit?.some(a => (a.task_id ?? t.id) === t.id && a.new_state === 'OFFERED' && a.old_state && a.old_state !== 'IDLE')
     ? 'Offered again' : statusLabel(t.state, delivered(t) ? null : t.done_reason);
 export const S = {tasks: [], graph: {nodes: [], edges: []}, closures: [], missing: '',
                   frontier: null, runState: null, waiting: null, steps: null, mySteps: new Map(),

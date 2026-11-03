@@ -32,7 +32,7 @@ const meta = (html, text) => `<div class="pn-meta"${PANEL.full(text)}>${html}</d
 // THE STATE AS ONE PILL: the shape is the node's own look on the graph (the key's swatch — a mark keeps its meaning across
 // views), the accent only where V = fail on a node still open: the red that asks the reader to step in.
 const pill = (d, v) => `<span class="pn-pill k-${bucketOf(d.state)}${v === 'fail' && !terminal(d.state) ? ' fails' : ''}">`
-    + `${stateWord(d)}</span>`;
+    + `${stateWord(d, d.audit)}</span>`;
 // a property is a label and its value, one row of the grid; an absent one is no row
 const prop = (k, html, attrs = '') => html ? `<div class="pn-k">${k}</div><div class="pn-v"${attrs}>${html}</div>` : '';
 
@@ -167,9 +167,10 @@ const signedBy = (run, id) => [
     ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => prop('Unanswered', `<span class="wk-none">${tally(n, `${KIND[k].name} ${n > 1 ? 'sessions' : 'session'}`)}</span>`)),
 ].join('');
 
-// the dispute's words while it stands: what the issuer is asked to rule on
-const dispute = ({d}) => { const c = d.state === 'CHALLENGED' && [...(d.audit || [])].reverse().find(a => a.signal === 'CHALLENGE' && !a.rejected);
-    return c ? `<div class="pn-verdict check-fail"><b>Challenged</b><span class="pn-who">${esc(trim(spoken(c.reason || ''), 200))}</span>${link('history', 'whole')}</div>` : ''; };
+// why a node stands waiting on its issuer, while it does: a dispute's words, a block's
+const WHY = {CHALLENGED: ['CHALLENGE', 'Challenged'], BLOCKED: ['BLOCK', 'Blocked']};
+const dispute = ({d}) => { const w = WHY[d.state], c = w && [...(d.audit || [])].reverse().find(a => a.signal === w[0] && !a.rejected);
+    return c ? `<div class="pn-verdict check-fail"><b>${w[1]}</b><span class="pn-who">${esc(trim(spoken(c.reason || ''), 200))}</span>${link('history', 'whole')}</div>` : ''; };
 const PARTS = [head, verdict, dispute, facets, criteria, actions];   // the prose chips above the list, always on screen
 
 export async function selectTask(id) {
