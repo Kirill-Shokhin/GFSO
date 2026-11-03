@@ -48,8 +48,9 @@ reverse proxy, `tailscale serve`) gives whatever reaches the front the server's 
 system's own containers are kept off a front on your machine's addresses or your networks (below), nothing else
 there is — one the internet reaches a session under an `open` switch reaches too.
 
-**The engine executes code it did not write.** In the delegated regime it spawns Claude Code CLI
-subprocesses — executors that write and run code in a working directory you name, and validators that
+**The engine executes code it did not write.** In the delegated regime it runs agents through the project's
+provider — a model client such as the Claude Code CLI as a subprocess, or, for a chat API, the server calling the model
+and carrying out its tool calls — as executors that write and run code in a working directory you name, and validators that
 run the criteria of a delivery against the artifact. Where they run is said below: unattended work
 in a container, work your own agent does in its chat on your machine with your user's permissions.
 Treat a task graph from an untrusted source as untrusted input: its criteria are instructions that
