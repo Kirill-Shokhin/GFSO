@@ -1,14 +1,14 @@
 // Wiring: the page's start, its refresh policy, and the one dispatch from `data-action` controls and
 // live messages to the units that own them. No unit imports another's handlers; they meet here.
 import {$, ages, phone} from './dom.js';
-import {TASK, GOAL, getJSON, singleFlight} from './api.js';
+import {PROJECT, TASK, GOAL, getJSON, singleFlight} from './api.js';
 import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap, terminal, FM} from './vocab.js';
 import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
 import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
 import {drawHeader, drawQuality, toggleReports, stopRun, startRun} from './header.js';
-import {refreshProjects, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject} from './projects.js';
+import {refreshProjects, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject, listOnly} from './projects.js';
 import {selectTask, closeSidebar, resign, openReader, closeReader} from './panel.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
 import * as author from './author.js';
@@ -164,6 +164,7 @@ const LIVE = {
 
 async function init() {
     mountHints();
+    if (!PROJECT) return listOnly();
     // THE PAGE MUST FAIL LOUDLY, NOT BLANKLY: the graph library is a remote script, and with the CDN
     // unreachable a first-time user saw a toolbar over an empty page and no error (2026-09-02).
     if (!window.cytoscape || !window.dagre) {

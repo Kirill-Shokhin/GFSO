@@ -5,7 +5,7 @@ export const PROJECT = q.get('project') || '';
 export const TASK = q.get('task') || '';
 export const GOAL = q.has('goal');                    // arrived to state this project's goal
 // …and the tab goes to another project by its URL alone; `goal` opens the goal constructor there — a new project's first
-// act is stating its goal. Leaving names none: the server's active project.
+// act is stating its goal. Leaving names none: the list of projects.
 export const openProject = (name, {goal} = {}) => { location.search = '?project=' + encodeURIComponent(name) + (goal ? '&goal=1' : ''); };
 export const leave = () => { location.search = ''; };
 

@@ -460,7 +460,7 @@ Three are for using it; the rest are for running it, and you can ignore them unt
 | `gfso mcp` | A standalone MCP server with an engine of its own, for a client that must not share. Not the normal door; `connect` is. |
 | `gfso serve` | Run the server in *this* process — the primitive `up` calls. |
 
-**The UI is always at `http://127.0.0.1:8000`.** Whichever door raised the server, it is the same
+**The UI is always at `http://127.0.0.1:8000`:** that address alone lists the projects and opens none, and a project's page is `?project=<name>`, the link its agent gives you. Whichever door raised the server, it is the same
 single process, and it is a background service: it stays until `gfso down`, so closing your agent
 session does not take the UI with it. After `pipx upgrade gfso`, the next agent session reconciles
 the running server against what is installed and restarts it if they differ — an upgrade takes

@@ -22,9 +22,9 @@ whileShown(() => { if (!panel().hidden) draw(); });   // a new reading redraws t
 export async function refreshProjects() {
     let d;
     try { d = await getJSON('/api/projects?limit=0'); } catch (e) { return; }   // single-project server
-    S.project = PROJECT || d.active;
+    S.project = PROJECT;
     all = d.projects.map(n => ({n, t: d.last_active?.[n], ...(d.about?.[n] || {})}));
-    $('project-open').textContent = S.project;
+    $('project-open').textContent = S.project || 'Projects';
     $('project-delete').hidden = !neverRan(all.find(p => p.n === S.project), d.active);
     if (!panel().hidden) draw();
 }
@@ -140,6 +140,18 @@ export async function toggleProjects() {
     readResources();
     $('pl-search').focus();
 }
-export const closeProjects = () => { panel().hidden = true; };
+export const closeProjects = () => { panel().hidden = !!PROJECT; };
+
+// AN ADDRESS THAT NAMES NO PROJECT SHOWS NONE: it read the server's active project, whichever an agent had last used, so
+// a bare link opened someone's run and woke its engine (the author, 2026-11-03: «прямая ссылка должна давать пустой проект
+// наверное либо его отсутствие»). The page is the list, read from the files; the feed is a project's, so it is read again
+// when the tab comes back to the reader.
+export async function listOnly() {
+    document.body.classList.add('no-project');
+    const again = async () => { S.inflight = (await getJSON('/api/runtime').catch(() => null))?.in_flight || []; await refreshProjects(); draw(); readResources(); };
+    panel().hidden = false;
+    addEventListener('focus', again);
+    await again();
+}
 export const moreProjects = () => { shown += SHOWN; draw(); };
 export const searchProjects = () => { shown = SHOWN; draw(); };
