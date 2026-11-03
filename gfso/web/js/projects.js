@@ -9,7 +9,8 @@ import {S, procs} from './state.js';
 import {notice, askInPage, act} from './overlays.js';
 import {modelName, goalWord, terminal} from './vocab.js';
 import {hm, dayLong, usd, clockAt} from './fmt.js';
-import {readResources, machine, ofProject, whileShown} from './resources.js';
+import {readResources, machine, ofProject, whileShown, onReading} from './resources.js';
+import {connectWS} from './live.js';
 
 // How many pieces of long work each project has running, from the one registry the server keeps.
 export const busyByProject = () => S.inflight.reduce((m, w) => (m[w.project] = (m[w.project] || 0) + 1, m), {});
@@ -144,14 +145,16 @@ export const closeProjects = () => { panel().hidden = !!PROJECT; };
 
 // AN ADDRESS THAT NAMES NO PROJECT SHOWS NONE: it read the server's active project, whichever an agent had last used, so
 // a bare link opened someone's run and woke its engine (the author, 2026-11-03: «прямая ссылка должна давать пустой проект
-// наверное либо его отсутствие»). The page is the list, read from the files; the feed is a project's, so it is read again
-// when the tab comes back to the reader.
+// наверное либо его отсутствие»). The page is the list, read from the files, on the server's own feed, which builds no engine.
 export async function listOnly() {
     document.body.classList.add('no-project');
     const again = async () => { S.inflight = (await getJSON('/api/runtime').catch(() => null))?.in_flight || []; await refreshProjects(); draw(); readResources(); };
+    // a process that ended may have closed a run: its row is read again, once a burst of them has settled
+    let soon;
+    const moved = d => { S.inflight = d.in_flight || []; draw(); clearTimeout(soon); soon = setTimeout(refreshProjects, 500); };
     panel().hidden = false;
-    addEventListener('focus', again);
     await again();
+    connectWS({inflight: moved, resources: onReading, projects: refreshProjects, opened: again, resync: again});
 }
 export const moreProjects = () => { shown += SHOWN; draw(); };
 export const searchProjects = () => { shown = SHOWN; draw(); };

@@ -9,7 +9,7 @@ const lost = () => banner('gfso-conn', 'connection lost — this page is showing
 // …by the page's own scheme: a page served over https (`tailscale serve`) may not open a ws:// socket — the browser threw,
 // and the page's start ended there, its project picker never drawn (the author, 2026-10-28)
 export function connectWS(handlers, missing = false, again = false) {
-    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/events` + (PROJECT ? `?project=${encodeURIComponent(PROJECT)}` : ''));
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/events` + (PROJECT ? `?project=${encodeURIComponent(PROJECT)}` : '?projects=1'));
     ws.onmessage = e => { const d = JSON.parse(e.data); handlers[d.type]?.(d); };
     // a project that came to exist while the feed could not hear it: what made it happened before this socket, so read it
     // (a socket the server closes again at once with 4404 opened too: only one that stays open has a project behind it)
