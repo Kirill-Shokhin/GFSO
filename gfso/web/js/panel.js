@@ -7,7 +7,7 @@ import {$, el, esc, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task} from './api.js';
 import {S, hasKids, taskOf, myRole, agentName} from './state.js';
-import {bucketOf, statusLabel, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
+import {bucketOf, stateWord, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
 import {glyph, mark} from './draw.js';
@@ -32,7 +32,7 @@ const meta = (html, text) => `<div class="pn-meta"${PANEL.full(text)}>${html}</d
 // THE STATE AS ONE PILL: the shape is the node's own look on the graph (the key's swatch — a mark keeps its meaning across
 // views), the accent only where V = fail on a node still open: the red that asks the reader to step in.
 const pill = (d, v) => `<span class="pn-pill k-${bucketOf(d.state)}${v === 'fail' && !terminal(d.state) ? ' fails' : ''}">`
-    + `${statusLabel(d.state, delivered(d) ? null : d.done_reason)}</span>`;
+    + `${stateWord(d)}</span>`;
 // a property is a label and its value, one row of the grid; an absent one is no row
 const prop = (k, html, attrs = '') => html ? `<div class="pn-k">${k}</div><div class="pn-v"${attrs}>${html}</div>` : '';
 

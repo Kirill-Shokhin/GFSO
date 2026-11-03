@@ -1,7 +1,7 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc, tally} from './dom.js';
 import {S, taskOf, myRole, nowOf} from './state.js';
-import {bucketOf, statusLabel, contested, cancelled, nameOf, criteriaOf, delivered, closedByFail} from './vocab.js';
+import {bucketOf, stateWord, contested, cancelled, nameOf, criteriaOf, delivered, closedByFail} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip, TOUCH} from './tip.js';
 import {point, watch, focus, rebring} from './store.js';
@@ -244,7 +244,7 @@ function nodeTip(t) {
     const rs = S.run?.rounds[t.id] || [], w = S.run?.waits[t.id], last = rs.at(-1);
     const words = w?.deps.length ? w.deps.map(d => nameOf(taskOf(d)) || d) : w && waitWords(w, d => d);
     const shown = readableLabel(nameOf(t)) === nameOf(t) && cy.zoom() * 11 >= READABLE;
-    return TIP.node(t, !shown && nameOf(t), `<span class="tt-status state-badge b-${bucketOf(t.state)}">${statusLabel(t.state, delivered(t) ? null : t.done_reason)}</span>`,
+    return TIP.node(t, !shown && nameOf(t), `<span class="tt-status state-badge b-${bucketOf(t.state)}">${stateWord(t)}</span>`,
         words !== '—' && words, rs, criteriaOf(t).length,
         last?.verdict === 'FAIL' && failingNow(rs, t.state) && failedWords(failedOf(S.run, t.id, last.failed)),
         foldOf(t.id).failing.map(x => nameOf(taskOf(x)) || x));
