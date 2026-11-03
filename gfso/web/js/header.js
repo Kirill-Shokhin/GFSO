@@ -3,7 +3,7 @@
 // popover carries the meanings the server sends beside them.
 import {$, esc, data, tally, daily} from './dom.js';
 import {H, QUALITY, GRADES, doing} from './hints.js';
-import {post, GOAL} from './api.js';
+import {post, GOAL, PROJECT} from './api.js';
 import {S, taskOf, myRole, procs, begun} from './state.js';
 import {label, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow, PROC_KIND} from './run.js';
@@ -157,7 +157,7 @@ function stalled(calls) {
     return need(1, `stalled since ${clockAt(last)}`, [root.id], H.stalled, '', 'stalled', false);
 }
 let wake;
-daily(() => drawHeader());   // a moment said without its day (today's) gains it at midnight
+if (PROJECT) daily(() => drawHeader());   // a moment said without its day (today's) gains it at midnight
 
 export async function drawHeader() {
     // the left side is written ONCE, after every read: written first and the switch added after the frontier's
@@ -185,7 +185,9 @@ export async function drawHeader() {
     chips += stalled(chips);
     drawReports();
     $('hd-goal').innerHTML = left + runSwitch(S.runState);
-    $('hd-needs').innerHTML = status + (chips || (heard && S.runState?.state === 'running' ? '<span class="hd-quiet">nothing needs you</span>' : ''));
+    // …and a goal closed undelivered is said by its verdict alone: «FAILED nothing needs you» read as leave it (critic)
+    const root = rootOf(S.tasks), failed = root && terminal(root.state) && !delivered(root);
+    $('hd-needs').innerHTML = status + (chips || (heard && !failed && S.runState?.state === 'running' ? '<span class="hd-quiet">nothing needs you</span>' : ''));
 }
 
 // The quality metrics. What each MEANS, how far it can be trusted (§15.8's grade) and which of them call a person are the

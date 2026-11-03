@@ -64,9 +64,9 @@ function strip() {
     // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
     // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
     const red = back.length ? `<button class="dk-block" data-node="${esc(back[0][0])}" data-k="back|${esc(back[0][0])}"${STRIP.back(back.map(([id, n]) => `${run.name(id)}: ${plural(n, 'FAIL')}`))}>${tally(back.length, 'sent back')}${back.length === 1 ? `<b>${esc(trim(run.name(back[0][0]), 20))}</b>` : ''}</button>` : '';
-    // what is red comes first after what is at work, and before it on a phone: the line scrolls, and what stands past its width
-    // is behind its fade — one session's chip took a phone's whole line (critics)
-    return (phone() ? red + now_ : now_ + red)
+    // what is red comes first: the line scrolls, and what stands past its width is behind its fade — one session's chip took
+    // a phone's whole line, and at 1024 with a panel open the red stood past the edge under what was at work (critics)
+    return red + now_
         // …its tip names each whole under its state's word, never cut to a chip's width nor a raw state by a dash (audit B9)
         + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.length, [...new Set(issuer.map(t => label(t.state)))]
             .flatMap(word => [`${word}:`, ...issuer.filter(t => label(t.state) === word).map(t => `– ${nameOf(t)}`)]))}>${tally(issuer.length, 'on the issuer')}</span>` : '')

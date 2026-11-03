@@ -19,7 +19,8 @@ export const bare = (id, project) => project && id.startsWith(`${project}-`) ? i
 export const dur = ms => ms < 90e3 ? `${Math.round(ms / 1e3)}s` : ms < 90 * 60e3 ? `${Math.round(ms / 60e3)}m` : `${(ms / 3600e3).toFixed(1)}h`;
 
 // money and token counts; a count a provider did not report says so (`none`)
-export const usd = x => `$${x.toFixed(2)}`;
+// a priced sum below a cent is no zero: 31k tokens read $0.00 (critic)
+export const usd = x => x > 0 && x < 0.005 ? '<$0.01' : `$${x.toFixed(2)}`;
 export const NOT_REPORTED = 'not reported';
 // a sum over sessions none of which reported a price is not reported, never $0.00 (another provider's case)
 export const money = (cost, procs, unpriced) => procs > 0 && unpriced === procs ? NOT_REPORTED : usd(cost);

@@ -1296,6 +1296,7 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .project-panel { width: min(760px, 70vw); z-index: 31; }
 body.no-project .project-panel { width: 100%; padding-inline: max(20px, calc((100% - 960px) / 2)); }
 body.no-project .project-panel .sidebar-close, body.no-project #hd-quality { display: none; }
+body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
 .pl-bar { display: flex; align-items: center; gap: 10px; }
 .pl-bar input { flex: 1; margin: 0; }
 .pl-bar .list-add { margin: 0; white-space: nowrap; }

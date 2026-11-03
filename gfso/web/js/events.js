@@ -74,10 +74,13 @@ export function render(el, run, nodes, tasks, pipeline = []) {
     const name = run.name, by = streams(run, nodes, pipeline), ids = [...nodes.map(n => n.id), RUN];
     // a kind's count over what is in view: the whole run, or the one node chosen
     const count = (k, sel) => (sel ? [by[sel] || []] : Object.values(by)).reduce((n, rs) => n + rs.filter(r => r.kind === k).length, 0);
-    el.innerHTML = `<div class="ev-bar">${Object.keys(KINDS).filter(k => count(k)).map(k => `<button class="ev-chip${on.has(k) ? ' on' : ''}" data-kind="${k}">${k}<b>${count(k)}</b></button>`).join('')}
+    // …a redraw under the reader's typing keeps the box and the caret: each burst of narration took the search away (critic)
+    const typing = el.querySelector('.ev-find'), caret = typing === document.activeElement ? typing.selectionStart : null;
+    el.innerHTML =`<div class="ev-bar">${Object.keys(KINDS).filter(k => count(k)).map(k => `<button class="ev-chip${on.has(k) ? ' on' : ''}" data-kind="${k}">${k}<b>${count(k)}</b></button>`).join('')}
         <input class="ev-find" type="search" placeholder="find in events…"><span class="ev-only"></span></div><div class="ev-groups"></div>`;
     const box = el.querySelector('.ev-groups'), find = el.querySelector('.ev-find');
     find.value = query;
+    if (caret != null) { find.focus(); find.setSelectionRange(caret, caret); }
     // a details opened or closed by the reader is remembered by its key; a node newly selected opens its own group
     box.addEventListener('toggle', e => { const k = e.target.dataset?.key; if (k) e.target.open ? opened.add(k) : opened.delete(k); }, true);
     const draw = () => {
