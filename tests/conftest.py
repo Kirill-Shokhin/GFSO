@@ -177,63 +177,49 @@ class _NoLiveModel(subprocess.Popen):          # a subclass: callers subscript i
         super().__init__(args, *a, **k)
 
 
-#: what a change to a path of the execution layer owes, whichever stream lands it: these live files, by name, under the
-#: one lock (`--live-owed <ref>` reads the paths from git) — which controls a change owes is no lander's judgement
-LIVE_OWED = {
-    "gfso/adapters/execution.py": ("a_container_runs_a_call_with_the_hosts_paths_mapped", "a_container_holds_no_more_than_its_bounds",
-                                   "a_session_holds_only_its_own_place", "a_sessions_commands_run_apart_from_its_client",
-                                   "a_chat_providers_commands_run_apart", "a_part_starts_with_no_siblings_work_but_by_an_edge", "what_a_program_prints_is_bounded_in_the_server", "a_judges_pinned_inputs_are_the_systems", "the_way_out_is_a_switch_set_outside",
-                                   "a_projects_places_stand_in_its_volume"),    # …the judge's whole file: `snapshots.py` and the pin's
-    "gfso/adapters/door.py": ("a_projects_places_stand_in_its_volume", "a_container_holds_no_more_than_its_bounds"),
-    "gfso/adapters/egress.py": ("the_way_out_is_a_switch_set_outside",),
-    "gfso/adapters/shell.py": ("a_sessions_commands_run_apart_from_its_client", "a_chat_providers_commands_run_apart", "a_container_holds_no_more_than_its_bounds"),
-    "gfso/adapters/llm/toolloop.py": ("a_chat_providers_commands_run_apart",),
-    "gfso/adapters/snapshots.py": ("the_runs_of_a_validation_do_not_share_a_tree", "a_judge_judges_what_was_delivered", "the_system_reads_a_place_where_its_agent_cannot_lead_it_out",
-                                   "the_systems_git_runs_in_the_place_it_reads"),
-    "gfso/adapters/worktrees.py": ("a_part_starts_with_no_siblings_work_but_by_an_edge", "a_projects_places_stand_in_its_volume", "the_base_is_imported_and_its_result_lands_as_a_branch",
-                                   "the_systems_git_runs_in_the_place_it_reads"),
-    "gfso/adapters/lfs.py": ("lfs_files_come_in_whole_and_leave_as_pointers", "the_base_is_imported_and_its_result_lands_as_a_branch"),
-    "gfso/adapters/agent.Dockerfile": ("a_session_holds_only_its_own_place", "a_sessions_commands_run_apart_from_its_client"),
-    "gfso/observe.py": ("a_judges_pinned_inputs_are_the_systems", "a_session_holds_only_its_own_place"),
-    "gfso/adapters/resources.py": ("an_orphan_is_known_by_an_id_no_spelling_shares",),
-    "gfso/adapters/children.py": ("a_sessions_commands_run_apart_from_its_client",),
-    "gfso/config.py": ("a_container_holds_no_more_than_its_bounds",),
+#: THE LIVE TESTS, BY WHAT THEY CHECK: each file in one group, a group run alone by `--live-group <name>[,<name>]`, the
+#: group what the change is about, under the one lock. The whole of them, `--live`, is CI's at a push
+LIVE_GROUPS = {
+    "judge": ("a_judge_judges_what_was_delivered", "a_judges_pinned_inputs_are_the_systems", "the_runs_of_a_validation_do_not_share_a_tree"),
+    "places": ("a_projects_places_stand_in_its_volume", "a_session_holds_only_its_own_place", "a_part_starts_with_no_siblings_work_but_by_an_edge"),
+    "landing": ("the_base_is_imported_and_its_result_lands_as_a_branch", "lfs_files_come_in_whole_and_leave_as_pointers"),
+    "commands": ("a_sessions_commands_run_apart_from_its_client", "a_chat_providers_commands_run_apart"),
+    "network": ("the_way_out_is_a_switch_set_outside",),
+    "bounds": ("a_container_holds_no_more_than_its_bounds", "what_a_program_prints_is_bounded_in_the_server"),
+    "git": ("the_systems_git_runs_in_the_place_it_reads", "the_system_reads_a_place_where_its_agent_cannot_lead_it_out",
+            "a_container_runs_a_call_with_the_hosts_paths_mapped"),
+    "resources": ("an_orphan_is_known_by_an_id_no_spelling_shares",),
 }
 
 
-def owed(paths) -> set:
-    """The live test files (by stem, without `test_`) a change to `paths` owes."""
-    return {f for p in paths for f in LIVE_OWED.get(p, ())}
-
-
 def pytest_addoption(parser):
-    parser.addoption("--live", action="store_true", help="also run the live tests (real containers, ~50 min): one such "
-                                                         "run per machine, once before a pin or a push, and CI's job")
-    parser.addoption("--live-owed", metavar="REF", help="the default suite and the live files the change since REF owes (`LIVE_OWED`), under the lock; "
-                                                       "REF is what the change is measured from: main before it lands")
+    parser.addoption("--live", action="store_true", help="also run every live test (real containers, ~50 min): CI's job")
+    parser.addoption("--live-group", metavar="NAMES", help=f"only these groups' live tests, comma-separated: {', '.join(LIVE_GROUPS)}")
 
 
 def pytest_configure(config):
-    _NoLiveModel.containers = bool(config.getoption("--live") or config.getoption("--live-owed"))
+    _NoLiveModel.containers = bool(config.getoption("--live") or config.getoption("--live-group"))
     config.addinivalue_line("markers", "no_model_path: the test drives the path where no model answers "
                                        "(a spawn attempt is expected and fails as a missing CLI does)")
     config.addinivalue_line("markers", "live: runs real containers (every `test_live_*`, marked here by name, and any "
-                                       "other so marked) — not run unless `--live` or `--live-owed` is given")
+                                       "other so marked) — not run unless `--live` or `--live-group` is given")
 
 
 def pytest_collection_modifyitems(config, items):
     for it in items:
         if it.name.startswith("test_live_"):
             it.add_marker(pytest.mark.live)
-    ref = config.getoption("--live-owed")
-    files = (owed(subprocess.run(["git", "diff", "--name-only", ref], capture_output=True, text=True, check=True).stdout.split())
-             if ref else None)
-    if not config.getoption("--live") or ref:
-        gone = [it for it in items if it.get_closest_marker("live")
-                and not (ref and it.path.stem.removeprefix("test_") in files)]
-        if gone:
-            config.hook.pytest_deselected(items=gone)
-            items[:] = [it for it in items if it not in set(gone)]
+    names = (config.getoption("--live-group") or "")
+    if unknown := [n for n in names.split(",") if n and n not in LIVE_GROUPS]:
+        raise pytest.UsageError(f"no live group {', '.join(unknown)}: {', '.join(LIVE_GROUPS)}")
+    if names:
+        files = {f for n in names.split(",") for f in LIVE_GROUPS[n]}
+        gone = [it for it in items if not it.get_closest_marker("live") or it.path.stem.removeprefix("test_") not in files]
+    else:
+        gone = [] if config.getoption("--live") else [it for it in items if it.get_closest_marker("live")]
+    if gone:
+        config.hook.pytest_deselected(items=gone)
+        items[:] = [it for it in items if it not in set(gone)]
 
 
 #: held by the one suite running live tests on this machine, by the OS, so it goes with its process and two starts at once
@@ -260,7 +246,7 @@ def pytest_sessionstart(session):
     numbered directory stays three days by its own `.lock`): known by the process each names."""
     if hasattr(session.config, "workerinput"):
         return
-    if session.config.getoption("--live") or session.config.getoption("--live-owed"):
+    if session.config.getoption("--live") or session.config.getoption("--live-group"):
         _take_the_live_lock()
     root = session.config._tmp_path_factory.getbasetemp()
     (root / OWNER).write_text(str(os.getpid()), encoding="utf-8")
@@ -274,8 +260,8 @@ def pytest_sessionstart(session):
 
 
 def pytest_terminal_summary(terminalreporter, config):
-    if not (config.getoption("--live") or config.getoption("--live-owed")):     # …said under xdist too: its workers collect
-        terminalreporter.write_line("live tests NOT run: they need `--live`, or `--live-owed <ref>` for what a change owes")
+    if not (config.getoption("--live") or config.getoption("--live-group")):     # …said under xdist too: its workers collect
+        terminalreporter.write_line("live tests NOT run: they need `--live-group <name>` for what a change is about, or `--live`")
 
 
 @pytest.fixture(autouse=True, scope="session")

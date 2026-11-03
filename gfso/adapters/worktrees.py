@@ -258,8 +258,15 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
             raise OSError(f"the delivery could not be committed in {place}: {r.stderr.strip()}")
         # …taken back into the base under the node's own name, never the place's word
         if branch and is_clone(place, execution):
-            _name(base, branch, _carry(base, place, base, "HEAD", execution), execution)
+            try:
+                _name(base, branch, _carry(base, place, base, "HEAD", execution), execution)
+            except OSError as e:
+                raise NotCarried(f"the delivery could not be taken back into the project: {e}") from e
         return git(place, "rev-parse", "HEAD^{tree}", execution=execution).stdout.strip()
+
+
+class NotCarried(OSError):
+    """A delivery its executor can lift the cause of, a size past what a carry holds: told it, as what `NotStaged` says."""
 
 
 class NotStaged(OSError):
@@ -359,7 +366,7 @@ def _carry(base, src, dst, rev: str, execution) -> str:
 _POINTED = r'''r=$1; shift
 l=$(git "$@" rev-list --objects --filter=blob:limit=1025 $r) || exit 1
 printf '%s\n\n' "$l"
-printf '%s\n' "$l" | cut -d' ' -f1 | git "$@" cat-file --batch'''
+printf '%s\n' "$l" | cut -d' ' -f1 | git "$@" cat-file --batch-check='%(objecttype) %(objectname)' | sed -n 's/^blob //p' | git "$@" cat-file --batch'''
 _BLOB = re.compile(rf"^(?P<blob>[0-9a-f]{{40,64}}) blob \d+\n{re.escape(lfs.SPEC.decode())}(?:ext-[^\n]*\n)*"
                    r"oid sha256:(?P<oid>[0-9a-f]{64})\nsize (?P<size>\d+)\n", re.M)
 #: of the object paths on stdin (`<store>/`-relative), those none of the stores "$@" holds
@@ -371,7 +378,7 @@ def pointed(repo, revs: list, execution) -> dict:
     at `repo`, read in its own container as git stores them — no filter runs to read them."""
     r = execution.session(str(repo)).run(["sh", "-c", _POINTED, "sh", " ".join(revs), *apart(execution)],
                                          cwd=str(repo), timeout=_SLOW, env=_env())
-    if r.returncode or children.CUT in r.stdout:
+    if r.returncode or (len(r.stdout) > children.PRINTED_CAP and children.CUT in r.stdout):
         raise OSError(f"{repo}: its LFS pointers could not be read ({r.stderr.strip()[-300:] or 'past what the server holds'})")
     listing, _, batch = r.stdout.partition("\n\n")
     paths = dict(ln.split(" ", 1) for ln in listing.splitlines() if " " in ln)
@@ -554,7 +561,7 @@ def merge(base, into, branch: str, message: str, execution=None) -> str | None:
         # …its objects into `into`'s own store: a session reads no delivery through the base (`execution._READ_COPY`)
         try:
             _carry(base, base, into, sha, execution)
-        except OSError as e:                # …said as any join's refusal: the whole integrates, or the root's join is retried
+        except OSError as e:                # …said as any join's refusal, its cause the whole's or its issuer's to read
             return str(e)
         r = git(into, "merge", "--no-ff", "--no-edit", "--no-verify", "-m", message, sha, execution=execution)
         if r.returncode == 0:

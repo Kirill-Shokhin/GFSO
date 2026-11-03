@@ -254,7 +254,10 @@ def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tup
             _before_a_part_joins(engine, top, base, place, ex)
         if (why := W.merge(base, place, ref, f"gfso: {x.id} joins {top.id}", execution=ex)):
             unjoined.append((str(x.id), xw[2], why, ref))   # …and the accepted commit: what it merges, held on
-            W.bring(base, place, xw[2], execution=ex)        # …named in its own repository, as its packet says
+            try:
+                W.bring(base, place, xw[2], execution=ex)    # …named in its own repository, as its packet says
+            except OSError as e:                             # …not carried: the session starts, its packet says why
+                unjoined[-1] = (str(x.id), xw[2], f"{why}; {e}", ref)
     return place, unjoined, w
 
 

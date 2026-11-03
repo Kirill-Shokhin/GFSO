@@ -237,7 +237,7 @@ def _committed(engine, executor_id, workspace: tuple | None, message: str) -> tu
     try:
         return W.commit_all(workspace[0], workspace[1], message, executor_id, execution=execution_of(engine),
                             branch=workspace[2]) or None, None
-    except W.NotStaged as e:
+    except (W.NotStaged, W.NotCarried) as e:
         return None, str(e)
 
 

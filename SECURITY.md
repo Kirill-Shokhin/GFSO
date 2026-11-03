@@ -84,7 +84,7 @@ and nothing of your disk is mounted into any of its containers:
   see another node's place, conversations or inputs, nor the system's own checks. What it receives of other nodes' work
   comes by the joins the system makes into its place, by the plan alone: a place starts from where its whole stood
   when the part entered its split, a sibling's work reaching it by a Dep edge, not by the order the parts happened to
-  start in. What it reads as the base is a copy holding what was imported, never a delivery, whose
+  start in. What it reads as the base is a copy holding what was imported (hard links: a file the system writes in place in the base, which git does not, shows there too), never a delivery, whose
   objects reach a place when it joins there; a project made before this keeps, readable by id alone, what its base already held.
 - The commands a session's Claude Code client runs (its Bash tool) do not run beside the client. The
   client's shell is one the system lays where no agent process writes, and it sends each command to
@@ -125,7 +125,9 @@ where a session connected. A client that runs a shell beside itself
     one pipe into a git the system makes in the copy's container, with no configuration, hook, filter
     or rule of the executor's or the base's; every object is hashed again against its id there before
     anything is checked out, so nothing the executor can write is read after that check. Nothing of it
-    passes through the server's memory, and no size limit applies but the disk.
+    passes through the server's memory, and no size limit applies but the disk. A delivery's own commit does: it is
+    carried from its place into the project, and at a join into its whole, through the server's memory, to 512 MiB beyond what the target
+    holds (an LFS file apart). Past that the delivery is not handed in, its executor told why, or the join is refused, the cause in the whole's packet.
   - The Git LFS objects the recorded tree's pointers name are streamed the same way from the place's
     and the base's LFS stores into the copy's own, each kept only where its size and sha256 are its
     pointer's, and the checkout writes their content through the system's own filter; one no store
@@ -303,8 +305,9 @@ In a container execution no session holds its provider's credential; a session o
 (`LocalExecution`) runs as the user it runs under and reads what that user reads, the credential
 store included. A provider over a chat API calls its model from the
 server itself; only its tools run in the container: its commands through the system's shell into the commands' container
-above, on the same record, under the same switch, what they left running ending with its run; its file tools in its place's client container, reading the base as a session reads it and a file up to
-32 MiB, on no record but the agent trace you may turn on. The Claude Code client, which runs inside,
+above, on the same record, under the same switch, what they left running ending with its run; its Read, Write and Edit in its place's client container, reading the base as a session reads it and a file up to
+32 MiB, following a link a command laid as far as that container reaches (its own state and home, its own node alone), its Glob and
+Grep read-only in the place's own, on no record but the agent trace you may turn on. The Claude Code client, which runs inside,
 reaches its model under every switch through its project's door: a container of its own that
 holds the credential (from `gfso credential`) and nothing of the project. The client — and every
 command it runs, which inherits its environment — holds only the door's key, which opens that door and

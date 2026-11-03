@@ -791,7 +791,7 @@ _FILE_OPS = {
                   'chmod 1777 -- "$d" && [ -d "$d" ] && [ ! -L "$d" ] && [ "$(stat -c %u -- "$d")" = 0 ] || '
                   '{ echo "$d: not the system\'s directory" >&2; exit 1; }; done; '
                   'tar -x -m -C "$b" -f - && find "$b" -mindepth 1 -type d -exec chmod 1777 {} +',
-    "read_tree": '[ -d "$1" ] && tar -c -C "$1" . | head -c "$2"',
+    "read_tree": '[ -d "$1" ] && { tar -c -C "$1" . || echo gfso-tar-failed >&2; } | head -c "$2"',
     "subdirs": '[ -d "$1" ] && find "$1" -mindepth 1 -maxdepth "$2" -type d -printf "%P\\0"',
     "remove_matching": 'r=$1; shift; [ -d "$r" ] || exit 0; '
                        'for g; do find -P "$r" -mindepth 1 -path "$r/$g" ! -type d -delete || exit 1; done',
@@ -887,7 +887,11 @@ if [ -z "$c" ]; then
   mkdir -p "$d" && { [ ! -d /tmp/in/tree ] || cp -a /tmp/in/tree/. "$d/"; } && read_copy
   exit
 fi
-[ -d "$d/.git" ] || { rm -rf "$d" && mkdir -p "$d" && g init -q; } || exit 1
+if [ -d "$d/.git" ]; then       # …its config, hooks and rules anew: nothing a volume kept runs at this import (each a new file: the read copy's are links)
+  rm -rf "$d/.git/config" "$d/.git/hooks" "$d/.git/info/attributes" && g init -q || exit 1
+else
+  rm -rf "$d" && mkdir -p "$d" && g init -q || exit 1
+fi
 g fetch -q --update-head-ok /tmp/in/bundle HEAD "+refs/heads/gfso/$p/*:refs/gfso-import/*" || exit 1
 g for-each-ref --format='%(refname:lstrip=2) %(objectname)' refs/gfso-import/ | while read -r n s; do
   g update-ref "refs/heads/gfso/$p/$n" "$s" "" 2>/dev/null
@@ -2420,7 +2424,8 @@ class ContainerFiles(FilesPort):
     def read_tree(self, path: str) -> dict | None:
         """One `tar -c` inside, its regular files read out of the stream; None past `TREE_CAP`: a directory an agent filled
         stood whole in the server's memory, every project's with it."""
-        if (r := self._file("read_tree", path, str(TREE_CAP + 1))) is None or r.returncode or len(r.stdout) > TREE_CAP:
+        if ((r := self._file("read_tree", path, str(TREE_CAP + 1))) is None or r.returncode or len(r.stdout) > TREE_CAP
+                or b"gfso-tar-failed" in (r.stderr or b"")):      # …a directory with an unreadable file is not read whole
             return None
         with tarfile.open(fileobj=io.BytesIO(r.stdout)) as t:
             return {m.name.removeprefix("./"): t.extractfile(m).read() for m in t.getmembers() if m.isreg()}
