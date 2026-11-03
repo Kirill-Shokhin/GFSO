@@ -73,7 +73,9 @@ ${rs[0].stage}`;
     }
     return span;
 }
-function sessions(calls, audit, pipeline) {
+function sessions(calls, audit, pipeline, tasks = []) {
+    // a turn that led to no signal, a declined one, is its issuer's: Del of the parent, a root's own (§10.1)
+    const byId = new Map(tasks.map(t => [t.id, t])), issuerOf = id => (byId.get(byId.get(id)?.parent_id) ?? byId.get(id))?.assignee;
     calls = calls.filter(c => c.duration_ms > 0 && c.node_id);
     const spawns = {};
     for (const p of pipeline) { const {node, text} = said(p.message); if (node && /^executor \S+ spawned/.test(text)) (spawns[node] ??= []).push(at(p.ts)); }
@@ -85,7 +87,7 @@ function sessions(calls, audit, pipeline) {
             && SIGNS[kind]?.includes(a.signal));
         return {node: c.node_id, kind, stage: c.stage, start, end, ms: c.duration_ms, cost: c.cost_usd || 0,
                 tokens: [c.input_tokens, c.output_tokens, c.cache_input_tokens].reduce(add, null),
-                out: c.output_tokens ?? null, model: c.model, agent: signer?.source || null, priced: (c.cost_usd || 0) > 0,
+                out: c.output_tokens ?? null, model: c.model, agent: signer?.source || (kind === 'issuer' && issuerOf?.(c.node_id)) || null, priced: (c.cost_usd || 0) > 0,
                 handover: c.handover || 0, resumed: !!c.resumed, peak: c.peak_context ?? null, window: c.context_window ?? null, budget: c.context_budget ?? null};
     });
 }
@@ -159,7 +161,9 @@ export function runNow(tasks, procs = [], sessions = [], auto = false) {
     const on = new Map(), up = ancestorsIn(tasks);
     for (const w of procs) if (!on.has(w.task_id)) on.set(w.task_id, w);
     // …but a leaf one scope session carries is at work: a process or an open session on an ancestor is its session
-    const carried = id => up(id).some(x => on.has(x) || open.has(x));
+    // …a session of execution: an issuer's turn or a consent on the parent marked an idle leaf as worked, and could hide a dead one (critic)
+    const carries = new Set([...procs.filter(w => PROC_KIND[w.verb] === 'exec').map(w => w.task_id), ...sessions.filter(s => s.open && s.kind === 'exec').map(s => s.node)]);
+    const carried = id => up(id).some(x => carries.has(x));
     const work = new Set(tasks.filter(t => on.has(t.id) || open.has(t.id)
         || (working(t.state) && !parent.has(t.id) && (!auto || carried(t.id)))).map(t => t.id));
     const carrier = id => { const x = [id, ...up(id)].find(x => on.has(x)); return x ? [x, on.get(x)] : []; };
@@ -367,7 +371,7 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
     // session and no ending: the call ran on, so it draws no bar and counts in no sessions — only Models says how many
     const moved = calls.filter(c => c.ended === 'moved');
     calls = calls.filter(c => c.ended !== 'moved');
-    const ss = sessions(calls, audit, pipeline), open = openSessions(procs, pipeline, now);
+    const ss = sessions(calls, audit, pipeline, tasks), open = openSessions(procs, pipeline, now);
     const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, nameOf(n)]));
     return {
         name: id => names[id] || id, auto, now: runNow(tasks, procs, all, auto),

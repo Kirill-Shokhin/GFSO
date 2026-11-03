@@ -85,7 +85,7 @@ const strip = (rounds, name, now) => { const rs = rounds.slice(-12), open = x =>
         return r.verdict && last && now && now !== 'pass' && now !== 'fail' ? [null, 'current']
             : why === 'unkept' && last && now === 'pass' ? ['PASS'] : v === '⊥' ? [null, last && why === 'unanswered' ? 'unchecked' : why] : [v.toUpperCase()]; };
     return rs.length < 2 ? '' : `<span class="cr-strip">` + rs.map((r, i) => { const [v, why] = one(r, i);
-        return `<svg width="8" height="10" viewBox="${i * 8} -5 8 10"${PANEL.round(r.n, v, why)}>${v ? mark(v, i * 8 + 4, 0, 2.5) : open(i * 8 + 4)}</svg>`; }).join('') + '</span>'; };
+        return `<svg width="8" height="10" viewBox="${i * 8} -5 8 10"${PANEL.round(r.n, v, why, r.per?.find(x => x.criterion === name)?.evidence)}>${v ? mark(v, i * 8 + 4, 0, 2.5) : open(i * 8 + 4)}</svg>`; }).join('') + '</span>'; };
 
 // A criterion is one line at the current verdict; unfolded (one at a time) it reads what it asks, what the
 // verdict found, and its pinned check.

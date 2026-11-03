@@ -1420,8 +1420,11 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
     .pl-where, .pl-mode, .pl-res { grid-column: 2; text-align: left; }
     .pl-cost { grid-column: 3; grid-row: 1; }
     .dk-grip { top: -10px; height: 20px; }
-    /* THE HEAD IN TWO ROWS: what runs and waits, with the sum, first; the tabs under it, scrolled sideways — in one row the
-       strip began at x=411 of a 412 px screen, the first screen's answer off it (audit E1/B10) */
+}
+/* THE HEAD IN TWO ROWS where the deck is narrow, a phone or beside a panel: what runs and waits, with the sum, first; the tabs
+   under it, scrolled sideways — in one row the strip began at x=411 of a 412 px screen (audit E1/B10), past the edge at 800 with a panel */
+.deck { container: deck / inline-size; }
+@container deck (max-width: 680px) {
     .dk-head { flex-wrap: wrap; height: auto; gap: 0 10px; padding: 0 0 0 8px; overflow: visible; mask-image: none !important; }
     .dk-strip { order: 1; flex: 1 1 0; min-width: 0; height: 34px; }
     .dk-sum { order: 2; padding-left: 0; padding-right: 8px; align-self: center; }
