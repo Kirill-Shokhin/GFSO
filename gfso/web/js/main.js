@@ -155,6 +155,8 @@ const LIVE = {
     async transition(d) {
         const t = S.tasks.find(x => x.id === d.task_id);
         if (t) t.state = d.new_state;                  // the tooltip reads the cache
+        // …and so do Events' word and the panel's wait, off the graph read: with no process moving they stayed stale (critic)
+        const drawn = S.graph.nodes.find(x => x.id === d.task_id); if (drawn) drawn.state = d.new_state;
         hear(d.task_id, d.new_state);                  // …and a graph read already out does not undo it
         rebuildRun();                                  // …and what runs now is read again over the new state
         // A node that SETTLES changes more than its colour — how it closed is drawn on it — so terminal

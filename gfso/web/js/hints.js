@@ -18,7 +18,7 @@
 //              projects.js delete, acts.js, goal.js); forms' own field help (index.html goal panel, goal.js).
 //   work.js  — the line under the Models table naming sessions that spent nothing (content, not a hint).
 import {esc} from './dom.js';
-import {dur, hm, hms, usd, money, NOT_REPORTED, tok, pct, cap, plural, bare, trim} from './fmt.js';
+import {dur, hm, hms, usd, money, NOT_REPORTED, tok, pct, cap, plural, bare} from './fmt.js';
 import {S} from './state.js';
 import {statesIn, label, TOKENS, WRITES, nameOf} from './vocab.js';
 
@@ -275,7 +275,7 @@ export const PANEL = {
     refused: note => hover('A later report was refused', note),
     // a ⊥ says WHY there is no value: the engine's reasons differ, and «not kept» is true only of an old round (critic)
     // …with what the validator found: once a later PASS stands, nothing else shows why this round failed (critic)
-    round: (n, v, why, found) => hover(`${v || 'No value'}\tRound ${n}`, !v && cap(NO_VALUE[why]), v !== 'pass' && found && trim(found, 240)),
+    round: (n, v, why, found) => hover(`${v || 'No value'}\tRound ${n}`, !v && cap(NO_VALUE[why]), v !== 'pass' && found),
     full: text => hover(text),
     directive: text => hover(text),
     model: id => hover(id),
