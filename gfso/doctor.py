@@ -232,7 +232,7 @@ def _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg
     what the live server is serving) and it prints them. The printing is the part a bug report
     carries, so it is its own function and reads as the report it is."""
     rows = [
-        ("gfso", f"{__version__}   (canon v4.0 is a separate line and is not this number)"),
+        ("gfso", f"{__version__}   (canon v4.1 is a separate line and is not this number)"),
         ("python", f"{platform.python_version()}  {sys.executable}"),
         ("executable", f"{script}" + ("" if script.exists() else "   MISSING")),
         ("platform", f"{platform.system()} {platform.release()}"),

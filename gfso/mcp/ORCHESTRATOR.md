@@ -41,7 +41,7 @@ You operate a GFSO task graph through the `gfso` tools; the graph is the source 
 6. **The link.** Write `ui` again at the go, clickable. The go's `not_imported` names what the agents' copy lacks: say it.
 7. **The wait and the end.** Say: unattended, watch at the link, I report the end. Loop `next_steps(wait=600)` until
    `complete`, or `stuck` or a stop, which goes to the person with its `directive`; in `auto` you do not intervene. Report
-   the root's verdict (`get_verdict("root")`) and the link; the result lies on the branch alone, so run it there and give
+   the root's verdict (`get_verdict("root")`) and the link; the result lies on the branch alone, so read what it runs, then run it there, and give
    the one command that shows it, and say a next task starts from their HEAD: merge first to build on this.
 
 ## An executor on this host

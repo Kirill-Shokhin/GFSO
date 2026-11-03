@@ -78,7 +78,7 @@ def test_doctor_runs_and_reports_this_installation(tmp_path, monkeypatch, capsys
     out = capsys.readouterr().out
     assert __version__ in out
     assert str(tmp_path) in out                       # the home it would actually use
-    assert "canon v4.0 is a separate line" in out     # the two version lines, said where it matters
+    assert "canon v4.1 is a separate line" in out     # the two version lines, said where it matters
     assert code in (0, 1)
 
 

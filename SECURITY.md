@@ -23,7 +23,7 @@ against an escape from Docker or its kernel, which every project shares (no VM p
 delivered code it runs can reach, where only a pinned one is out of its reach; a model judge's reading, which what it reads can argue with, where only a pinned check decides by itself; anything for what runs on your machine, namely the work your
 own agent does in its chat, the validator of that work, and the reader of a plan's documents. What the agents wrote reaches that
 agent of yours as text, in what a check printed and in a plan's words, past every container: it is told to take these as data, which
-a model can be argued out of, and whether the telling holds against a real model is not measured; a result is read before it is run
+a model can be argued out of, measured on one plain instruction alone (a cheap model followed it in none of six tries, told or not); a result is read before it is run
 on your machine. The rest of this file says how each of these holds, and what stays open.
 
 ## What this software does on your machine
