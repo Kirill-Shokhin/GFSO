@@ -5,7 +5,8 @@ import {esc, tally} from './dom.js';
 import {bindFocus, focus, watch, point} from './store.js';
 import {glyph} from './draw.js';
 import {hm, day, bare} from './fmt.js';
-import {S} from './state.js';
+import {S, kept, keep} from './state.js';
+import {PROJECT} from './api.js';
 import {at, said, failedOf, failingNow} from './run.js';
 import {failedWords, TIP} from './hints.js';
 import {CARRIED, label, statusLabel, delivered} from './vocab.js';
@@ -70,8 +71,11 @@ function head(id, name, node, run, rs) {
 // what a search reads is what a row says, not its record's field names: «fail» found every row by `failed_criteria` (critic)
 const unref = t => t.replace(/\s*\(§[^)]*\)/g, '');   // the engine's narration cites the canon, which is not on the page
 const said_ = o => o == null ? '' : typeof o === 'object' ? Object.values(o).map(said_).join(' ') : String(o);
-const on = new Set(Object.keys(KINDS).filter(k => k !== 'narration')), opened = new Set();
-let query = '', shown = null;
+// …and a reload: kept per project, as the deck keeps its tab
+const KEY = `gfso.events.${PROJECT}`, saved = kept(KEY, JSON.parse) || {};
+const save = () => keep(KEY, JSON.stringify({on: [...on], opened: [...opened], query}));
+const on = new Set(saved.on || Object.keys(KINDS).filter(k => k !== 'narration')), opened = new Set(saved.opened || []);
+let query = saved.query || '', shown = null;
 
 export function render(el, run, nodes, tasks, pipeline = []) {
     const name = run.name, by = streams(run, nodes, pipeline), ids = [...nodes.map(n => n.id), RUN];
@@ -85,7 +89,7 @@ export function render(el, run, nodes, tasks, pipeline = []) {
     find.value = query;
     if (caret != null) { find.focus(); find.setSelectionRange(caret, caret); }
     // a details opened or closed by the reader is remembered by its key; a node newly selected opens its own group
-    box.addEventListener('toggle', e => { const k = e.target.dataset?.key; if (k) e.target.open ? opened.add(k) : opened.delete(k); }, true);
+    box.addEventListener('toggle', e => { const k = e.target.dataset?.key; if (k) e.target.open ? opened.add(k) : opened.delete(k); save(); }, true);
     const draw = () => {
         const q = find.value.trim().toLowerCase(), sel = focus().select;
         if (sel !== shown) { shown = sel; if (sel) opened.add(`g|${sel}`); }
@@ -103,10 +107,10 @@ export function render(el, run, nodes, tasks, pipeline = []) {
     };
     el.querySelector('.ev-bar').onclick = e => {
         const k = e.target.dataset.kind;
-        if (k) { on.has(k) ? on.delete(k) : on.add(k); e.target.classList.toggle('on'); draw(); }
+        if (k) { on.has(k) ? on.delete(k) : on.add(k); e.target.classList.toggle('on'); save(); draw(); }
         if (e.target.matches('[data-clear]')) point('select', null);
     };
-    find.oninput = () => { query = find.value; draw(); };
+    find.oninput = () => { query = find.value; save(); draw(); };
     draw();
     watch((st, key) => key === 'select' && draw(), el);   // before the focus paint: draw rebuilds what paint marks
     bindFocus(box);
