@@ -34,7 +34,7 @@ daily(() => shown.forEach(f => f()));   // «last read» said without its day ga
 const mark = (figure, label, counted) => tally(figure, label, RES.counted(counted));
 // a count's noun in its number: «1 container running», «2 executors» (audit C12)
 const many = (n, one, more = `${one}s`) => n === 1 ? one : more;
-const ROLE = {door: 'model door'};
+const ROLE = {door: 'model door', judge: 'validator', system: 'system container'};
 // each role's containers as their own marks, the busy ones beside them
 const roles = cs => {
     const by = {};

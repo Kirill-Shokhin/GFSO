@@ -42,13 +42,13 @@ function strip() {
     const live = busy.map(t => {
         const w = at.on(t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : at.carrier(t.id);
         const what = w ? doingOf(w) : doing(t.state);
-        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(clockAt(w.since * 1e3), PROC_KIND[w.verb]) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), doingOf(by)) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
+        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(clockAt(w.since * 1e3), PROC_KIND[w.verb], what) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), doingOf(by)) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
             + `<span>${what}${w ? `<b class="dk-age">${since(w.since * 1e3)}</b>` : ''}</span></button>`;
     });
     // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too
     const drawn = new Set(S.tasks.map(t => t.id));
     for (const w of mine.filter(w => !w.task_id || !drawn.has(w.task_id)))
-        live.push(`<span class="dk-live on"${STRIP.live('The goal', STRIP.running(clockAt(w.since * 1e3), PROC_KIND[w.verb]))}><i${beat()}></i><em>the goal</em>`
+        live.push(`<span class="dk-live on"${STRIP.live('The goal', STRIP.running(clockAt(w.since * 1e3), PROC_KIND[w.verb], doingOf(w)))}><i${beat()}></i><em>the goal</em>`
             + `<span>${doingOf(w)}<b class="dk-age">${since(w.since * 1e3)}</b></span></span>`);
     // as many chips as the line holds, the rest counted (`drawStrip`): what waits and what it cost stay on the line
     const more = '<span class="dk-more"></span>';

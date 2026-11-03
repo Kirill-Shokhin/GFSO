@@ -250,7 +250,7 @@ export const STRIP = {
     more: rows => hover(`${rows.length} more at work`, rows),
     // what the chip does not say: where the session runs and since when — its act is the chip's own words (critic, 2026-11-01:
     // «auto_decompose — a session…» beside «planning» named one act two ways)
-    running: (at, model) => model ? `A session of this server, since ${at}` : `The server's own step, no model, since ${at}`,
+    running: (at, model, what) => `${cap(what)}: ${model ? 'a session of this server' : "the server's own step, no model"}, since ${at}`,
     carried: (top, act) => `Carried by the session on ${top}, ${act}`,
     idle: 'In a working state; no process of this server runs it',
     // a role a line: its share of the spend drawn, its sum at the end; sessions in the label (the author: no figures run on

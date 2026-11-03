@@ -20,8 +20,8 @@ export const agentName = id => { const b = bare(id, S.project); return S.tasks.s
 export const moverOf = a => {
     const by = a.source && agentName(a.source);
     if (!a.by_system) return {word: by || (a.signal === 'TIMEOUT' ? 'clock' : ''), as: null};
-    const t = S.tasks.find(x => x.id === a.task_id), issuer = (S.tasks.find(x => x.id === t?.parent_id) ?? t)?.assignee;
-    return ['PASS', 'FAIL'].includes(a.signal) && by && a.source !== issuer
+    const validator = a.source !== 'agent' && !S.tasks.some(t => t.assignee === a.source);
+    return ['PASS', 'FAIL'].includes(a.signal) && by && validator
         ? {word: `${by}, signed by the system`, as: null} : {word: 'the system', as: by};
 };
 export const S = {tasks: [], graph: {nodes: [], edges: []}, closures: [], missing: '',

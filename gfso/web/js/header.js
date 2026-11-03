@@ -5,7 +5,7 @@ import {$, esc, data, tally, daily} from './dom.js';
 import {H, QUALITY, GRADES, doing} from './hints.js';
 import {post, GOAL, PROJECT} from './api.js';
 import {S, taskOf, myRole, procs, begun} from './state.js';
-import {label, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
+import {label, stateWord, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow, PROC_KIND} from './run.js';
 import {dur, trim, cap, pct, stamp, clockAt, spoken} from './fmt.js';
 import {rootOf, isRoot, depths} from './tree.js';
@@ -26,7 +26,7 @@ function standing(root) {
     const said = s => label(s).toLowerCase();
     const phrase = {
         // a split goal not yet taken has its parts at work: "not started" alone read beside "1 at work" (live AUTO row)
-        OFFERED: parts.length ? `the goal itself ${said('OFFERED')}` : said('OFFERED'), IDLE: said('OFFERED'),
+        OFFERED: parts.length ? `the goal itself ${stateWord(root).toLowerCase()}` : stateWord(root).toLowerCase(), IDLE: said('OFFERED'),
         REWORKING: "reworking: the goal's validation failed",
         VALIDATING: 'delivered, awaiting the verdict',
         CHALLENGED: `${said('CHALLENGED')}, waiting on the issuer`, BLOCKED: `${said('BLOCKED')}, waiting on the issuer`,

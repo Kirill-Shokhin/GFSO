@@ -59,7 +59,7 @@ function stretches(run) {
 
 export function render(el, run, nodes) {
     const ids = rows(run, nodes), name = run.name, work = stretches(run);
-    const W = axisWidth(el), LEFT = gutter(W), cutN = id => Math.floor((LEFT - 18) / (run.depth[id] ? 6 : 7)), H = TOP + ids.length * ROW + AXIS, f = frame(run, W, LEFT);
+    const W = axisWidth(el), LEFT = gutter(W), cutN = id => Math.floor((LEFT - 18) / (run.depth[id] ? 6 : 7)), H = TOP + Math.max(ids.length, 1) * ROW + AXIS, f = frame(run, W, LEFT);
     const Y = id => TOP + ids.indexOf(id) * ROW + ROW / 2 + 4;
     // A STRETCH PASSED ON from session to session is drawn as its sessions, each its own piece of the bar between the cuts and
     // its own tip — its time, cost, tokens, its round, and where it stood when it passed on, against its budget and window
@@ -110,7 +110,7 @@ export function render(el, run, nodes) {
         <line class="tl-base dash" x1="${LEFT}" x2="${W - 16}" y1="${cy(peak)}" y2="${cy(peak)}"/>
         <path class="tl-conc" d="${line}"/>
         ${top ? `<circle class="tl-peakdot" cx="${f.X(top[0])}" cy="${cy(peak)}" r="2.5"/>` : ''}
-        ${ids.map(row).join('')}
+        ${ids.length ? ids.map(row).join('') : `<text class="tl-wait" x="${LEFT + 8}" y="${TOP + 18}">No nodes yet: they are drawn when the plan is written</text>`}
         <line class="tl-split" x1="0" x2="${W}" y1="${TOP + ROW + 2}" y2="${TOP + ROW + 2}"/></svg>`;
     pinLeft(el.querySelector('svg.tl'), LEFT);
     // who ran a stretch, only where its node had more than one for that kind of work, without the project's name its id

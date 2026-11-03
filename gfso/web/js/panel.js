@@ -8,7 +8,7 @@ import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task} from './api.js';
 import {S, hasKids, taskOf, myRole, agentName, moverOf} from './state.js';
 import {bucketOf, stateWord, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
-        byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label} from './vocab.js';
+        byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label, enteredWord} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
 import {glyph, mark} from './draw.js';
 import {when as at_, stamp, trim, plural, spoken} from './fmt.js';
