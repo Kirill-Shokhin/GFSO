@@ -151,7 +151,8 @@ def declare_default(tag: str) -> str:
         return f"execution {DEFAULT_EXECUTION!r} declared on {tag}"
     if DEFAULT_EXECUTION in got and not str(was).startswith(AGENT_IMAGE + ":"):
         return f"execution {DEFAULT_EXECUTION!r} is your own ({was}): left as it is"
-    got[DEFAULT_EXECUTION] = {"image": tag}
+    # …the image alone moves: a switch the user set here turned `open` at an upgrade, with nothing said (critic)
+    got[DEFAULT_EXECUTION] = {**(got.get(DEFAULT_EXECUTION) or {}), "image": tag}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(got, indent=1), encoding="utf-8")
     return f"execution {DEFAULT_EXECUTION!r} declared on {tag} ({path})"

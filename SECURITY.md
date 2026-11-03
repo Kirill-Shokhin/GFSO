@@ -1,5 +1,29 @@
 # Security
 
+## What it promises, in short
+
+Work the system dispatches runs unattended, so it runs in Docker, which the installation requires (the one exception is your
+word, `GFSO_LOCAL_AGENTS=allow`, which puts it on your machine, with none of what follows). Under either network switch, for that work:
+- Nothing of your disk is mounted where an agent runs. Your repository enters as its committed HEAD with all its history, which
+  every session can read: clean a secret out of the history first. What is uncommitted does not enter, and the project's log says so.
+  The root's accepted result comes back as the branch `gfso/<project>/accepted`, your working tree and branches untouched.
+- No agent process holds your provider's credential: one small container does, and it passes the model's messages alone.
+- No session reads another node's files but by the plan's edges, nor reaches the log of signals and verdicts, and no one judges its own
+  delivery: the check is on a copy of the commit delivered, in a container of its own.
+
+The switch is yours, per execution or per project, and the default is `open`:
+- `open` is for work that may leak or needs the current internet: it reaches outward, and two sessions may relay through a server out
+  there. Your machine and the private networks it stands on are shut; a service of yours on a public address is the internet.
+- `off` is for what must not leak and for checking runs: a container reaches nothing but its model, through that door, which passes
+  only what the model answers by itself.
+
+Under `off` your code still goes to the model's provider, as far as an agent sends it there, on your account. It stays with you only
+where every role, the system's own too (`set_mode(system_model=, planner_model=)`), names a local model. Not promised: a boundary
+against an escape from Docker or its kernel, which every project shares (no VM per task); a check a judge writes itself, which the
+delivered code it runs can reach, where only a pinned one is out of its reach; anything for what runs on your machine, namely the work your
+own agent does in its chat, the validator of that work, and the reader of a plan's documents. The rest of this file says how each
+of these holds, and what stays open.
+
 ## What this software does on your machine
 
 Two properties matter before you run it anywhere but a laptop.
@@ -280,8 +304,9 @@ project has work in it, only with your own words asking for the change):
   Docker's default bridge it opens one port alone, its project's doors' (a number in 20000–29999 by the project), on any
   container there: a service of yours listening on that very number answers it, and another project's door answers only to
   its own key.
-- `off` reaches nothing but its model, through the door below: the container stands on an internal
-  Docker network of its own with no route out, and none of its agent's processes holds a
+- `off` reaches nothing but its model, through the door below (on a Linux Docker Engine older than 23.0.11, or a 25.x older than
+  25.0.5, an internal network still forwards name lookups, CVE-2024-29018, and nothing checks an engine's version; Docker Desktop is
+  not affected): the container stands on an internal Docker network of its own with no route out, and none of its agent's processes holds a
   capability to make one. Each closed project takes one of Docker's address pools; past their
   number a start fails.
 - Under every switch nothing reaches INTO a session's or a judge's container, and nothing passes

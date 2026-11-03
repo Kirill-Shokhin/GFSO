@@ -2262,10 +2262,11 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
                                   ("observe", None if observe is None else "1" if observe else "0")) if v is not None}
     # …asked of the roster, not of the declaration: an unreadable declaration still names a container, whose switch the
     # user must be able to store (it holds the way out shut meanwhile, `execution_of`)
-    if network is not None and declaring_role(engine) is None:
-        return {"refused": True, "error": "this project's sessions run on this host — no execution is declared for its "
-                                          "roles (`register_agent(..., execution=)`) — so there is no container whose "
-                                          "network a switch could turn"}
+    no_container = {"refused": True, "error": "this project's sessions run on this host — no execution is declared for its "
+                                              "roles (`register_agent(..., execution=)`) — so there is no container whose "
+                                              "network a switch could turn"}
+    if m is None and network is not None and declaring_role(engine) is None:
+        return no_container
     if m is None:
         if not settings:
             return {"refused": True, "error": "name a mode, or a setting of this project to change"}
@@ -2276,6 +2277,8 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
     # a refusal shut the user's other choices — in their chat, on this host (critic)
     def held() -> dict:
         """The mode recorded, its staffing read once the default holds the executors — or the refusal."""
+        if network is not None and declaring_role(engine) is None:      # …asked here: the default has placed them by now
+            return no_container
         staff = mode_staffing(engine, m.value, perform)
         pool, dispatch = [AgentId(a) for a in staff["executors"]], staff["dispatch"]
         if not staff["ready"]:

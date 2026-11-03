@@ -88,6 +88,30 @@ def test_setup_declares_the_default_moves_it_on_an_upgrade_and_keeps_a_users_own
     assert "your own" in D.declare_default("gfso-agent:c") and stands() == "my-own:1"
 
 
+def test_an_upgrade_moves_the_image_and_keeps_the_switch_set_on_the_default(home):
+    """The whole entry was replaced, so `off` on setup's own `default` turned `open` at the next image, with nothing said."""
+    (home / "executions.json").write_text(json.dumps({"default": {"image": "gfso-agent:a", "network": {"mode": "off"}}}))
+    D.declare_default("gfso-agent:b")
+    assert json.loads((home / "executions.json").read_text())["default"] == {"image": "gfso-agent:b", "network": {"mode": "off"}}
+
+
+def test_the_switch_is_set_with_the_mode_that_places_the_executors_in_the_default(home):
+    """Asked before the default held them, the call was refused as work "on this host": the usual order, register then mode."""
+    _declare(home)
+    e = make_engine()
+    for args in (["init", "-q"], ["-c", "user.email=x@x", "-c", "user.name=x", "commit", "-q", "--allow-empty", "-m", "one"]):
+        subprocess.run(["git", *args], cwd=home / "w", check=True)
+    assert TL.register_agent(e, "p-exec", "llm-executor", workdir=str(home / "w")).get("refused") is not True
+    assert TL.register_agent(e, "p-val", "llm-validator", workdir=str(home / "w")).get("refused") is not True
+    got = TL.set_mode(e, "solo", network={"mode": "off"}, perform="dispatch")
+    assert not got.get("refused"), got
+
+
+def test_the_switch_with_no_container_to_turn_is_still_refused(home):
+    e = make_engine()
+    assert "no execution is declared" in TL.set_mode(e, "solo", network={"mode": "off"}, perform="in_chat")["error"]
+
+
 def test_the_image_is_named_by_its_file():
     assert D.agent_image().startswith("gfso-agent:") and D.AGENT_IMAGE_FILE.is_file()
 
