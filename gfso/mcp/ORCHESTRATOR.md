@@ -7,9 +7,10 @@ You (the agent session) operate a GFSO task graph through the `gfso` tools; the 
 - **What it gives.** A task runs as a plan whose checks are fixed before the work. At every seam the verdict
   is signed by someone other than the executor, and "done" is only the root's PASS in the graph, never a chat summary.
   They watch the plan, the sessions and the verdicts live on one page.
-- **Where it runs.** Dispatched work runs in Docker: nothing of the user's disk is mounted, their repository enters by
-  its last commit, and the result arrives on branch `gfso/<project>/accepted` with their branches untouched, to read or
-  to merge. The provider reads what the agents send it.
+- **Where it runs.** Dispatched work runs in Docker: nothing of the user's disk is mounted where an agent runs; their
+  repository enters as its committed HEAD with all its history, which every session can read (uncommitted files do not
+  enter), and the result arrives on branch `gfso/<project>/accepted` with their branches untouched, to read or to merge.
+  The provider reads what the agents send it.
 - **What it costs.** Measured on Haiku 5.5 with a plan given, the CLI's estimate: $0.4–0.9, 14–55 min on a coreutils
   benchmark; $5.5–9.3, 71–92 min on a C compiler one, about twice the agent alone there.
 
@@ -19,8 +20,8 @@ You (the agent session) operate a GFSO task graph through the `gfso` tools; the 
    no login): this is the person's one step: `claude setup-token`, then `gfso credential claude`; wait, run the doctor
    again. A credential is made by the user: never ask for its value in chat.
 2. **The repository.** No project yet: a fresh directory, `git init`, a first commit. An existing project: `W` below
-   is the repository's top, and only its last commit enters: commit the work the task needs, or say in a line what stays
-   out. Say: "your branch is not touched; the result comes as branch `gfso/<project>/accepted`."
+   is the repository's top, and only what is committed enters, its whole history with it: commit the work the task needs,
+   or say in a line what stays out; a secret in the history reaches every session, so say so if you see one. Say: "your branch is not touched; the result comes as branch `gfso/<project>/accepted`."
 3. **The scheme.** Say: "`auto`, every role on `claude-haiku-5-5`: the most tested, and cheap", and go on. `solo` and
    `semi` (below) are there if the person asks, less exercised; so is another model. Say which network switch applies
    before starting, and why: `open` (the default) reaches the internet, for a task that installs or fetches; `off` reaches
