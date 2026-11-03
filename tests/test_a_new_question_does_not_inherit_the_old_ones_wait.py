@@ -27,7 +27,8 @@ def test_an_escalation_is_asked_at_once_after_the_dispute_backed_off(tmp_path, m
         before = set(threading.enumerate())
         I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
         for th in set(threading.enumerate()) - before:
-            th.join(5)
+            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
+                th.join(5)
 
     for _ in range(4):   # the dispute's turns fail; each sweep runs past the wait the last one left
         sweep()

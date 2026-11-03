@@ -32,7 +32,8 @@ def _sweep(e, tmp_path, pid):
     before = set(threading.enumerate())
     I.answer_open_questions(e, _Roster(), lambda k: True, lambda *a, **k: None, threading.Semaphore(1), verbs, {})
     for th in set(threading.enumerate()) - before:
-        th.join(10)
+        if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
+            th.join(10)
     e.wait_idle()
     return llm
 

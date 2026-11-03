@@ -23,7 +23,8 @@ def _waits(e, agents, settles, monkeypatch, settle=None) -> list:
         before = set(threading.enumerate())
         I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
         for th in set(threading.enumerate()) - before:
-            th.join(5)
+            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
+                th.join(5)
         out.append(round(max(nb for _, nb, _ in ledger.values()) - time.monotonic()))
         ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
     return out

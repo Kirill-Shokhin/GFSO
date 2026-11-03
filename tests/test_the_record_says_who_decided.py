@@ -184,7 +184,8 @@ def test_the_mark_survives_the_threads_the_system_answers_on(tmp_path):
     before = set(threading.enumerate())
     I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, threading.Semaphore(1), _accepting(e), {})
     for th in set(threading.enumerate()) - before:
-        th.join(10)
+        if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
+            th.join(10)
     e.wait_idle()
     assert _one(e, "root", Signal.ACCEPT_CHALLENGE).by_system
 

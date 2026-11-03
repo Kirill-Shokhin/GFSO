@@ -20,7 +20,8 @@ def _sweeper(e, agents, monkeypatch, status):
         before = set(threading.enumerate())
         I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger, owed)
         for th in set(threading.enumerate()) - before:
-            th.join(5)
+            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
+                th.join(5)
         ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})   # every sweep runs past the wait
     return sweep, q, owed
 
@@ -79,7 +80,8 @@ def test_control_without_the_monitor_nothing_is_said(tmp_path, monkeypatch):
         before = set(threading.enumerate())
         I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
         for th in set(threading.enumerate()) - before:
-            th.join(5)
+            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
+                th.join(5)
         ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
     assert not _stuck(e)
 

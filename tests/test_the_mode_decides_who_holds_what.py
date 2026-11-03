@@ -456,7 +456,8 @@ def _sweeps(e, agents, settles, monkeypatch):
         before = set(threading.enumerate())
         I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
         for th in set(threading.enumerate()) - before:
-            th.join(5)
+            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
+                th.join(5)
         e.wait_idle()
         ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
     return ledger
@@ -506,7 +507,8 @@ def _served(e, agents, settles, monkeypatch, closes_after=(), waits=None, settle
         got = I.answer_open_questions(e, agents, lambda key: True, lambda *a, **kw: None, cap, None, ledger)
         served += got
         for th in set(threading.enumerate()) - before:
-            th.join(5)
+            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
+                th.join(5)
         if waits is not None:
             waits.append(round(max(nb for _, nb, _ in ledger.values()) - time.monotonic()))
             ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
@@ -1233,7 +1235,8 @@ def test_a_dispute_rejected_without_contact_is_not_a_reason_to_close_the_node(tm
         before = set(threading.enumerate())
         I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, verbs, ledger)
         for th in set(threading.enumerate()) - before:
-            th.join(10)
+            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
+                th.join(10)
         e.wait_idle()
         ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})     # past the backoff
     assert e.graph.get_state(TaskId("kid")) == State.CHALLENGED, "the dispute still stands, the node is not closed"

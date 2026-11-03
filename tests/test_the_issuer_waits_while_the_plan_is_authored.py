@@ -19,7 +19,8 @@ def _sweep(e, agents, monkeypatch):
     before = set(threading.enumerate())
     I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, threading.Semaphore(1), None, {})
     for th in set(threading.enumerate()) - before:
-        th.join(5)
+        if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
+            th.join(5)
     return asked
 
 
