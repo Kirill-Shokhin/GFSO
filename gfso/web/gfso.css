@@ -230,7 +230,12 @@ body {
 .pl-delete { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tr-mono); color: var(--ui-on-chrome);
              background: transparent; border: none; opacity: 0.45; cursor: pointer; padding: 3px 6px; }
 .pl-delete:hover { opacity: 1; color: var(--acc-on-chrome, var(--ui-on-chrome)); text-decoration: underline; }
+body.project-missing #hd-quality, body.project-missing .deck { display: none; }
+.need:not(button) { cursor: default; }
+#new-project-box { display: inline-flex; gap: 6px; align-items: center; }
+#new-project-box input { padding: 4px 8px; border: 1px solid var(--hair-on-chrome); border-radius: var(--radius); background: transparent; }
 .role-select input {
+    color: var(--ui-on-chrome);
     width: 130px;
     font-family: var(--font-body);
     text-transform: none;

@@ -99,7 +99,7 @@ function sessions(calls, audit, pipeline) {
 // line standing, and a node parked for its issuer drew an open execution for 40 min (a void row, 2026-10-26). The log
 // gives only who was spawned, for the bar's label.
 export const PROC_KIND = {delegated_execution: 'exec', delegated_consent: 'consent', validate_result: 'val', validate_scope: 'val',
-                   issuer_turn: 'issuer', auto_decompose: 'plan', review_decomposition: 'plan'};
+                   issuer_turn: 'issuer', auto_decompose: 'plan', plan: 'plan', refine_plan: 'plan', review_decomposition: 'plan'};
 function openSessions(procs, pipeline, now) {
     const who = {};
     for (const p of pipeline) { const {node, text} = said(p.message), hit = node && /^executor (\S+) spawned/.exec(text); if (hit) who[node] = hit[1]; }

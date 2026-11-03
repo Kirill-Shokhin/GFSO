@@ -55,7 +55,7 @@ export function askProjectName(then = {}) {
     const input = el('input', {id: 'new-project-name', placeholder: 'new project name', pattern: '[A-Za-z0-9_-]+'});
     const go = () => NAME.test(input.value.trim()) ? openProject(input.value.trim(), then)
                                                    : notice('a project name is [A-Za-z0-9_-]', 'bad');
-    const box = el('span', {id: 'new-project-box'}, input, el('button', {className: 'btn btn-sm', id: 'new-project-go',
+    const box = el('span', {id: 'new-project-box'}, input, el('button', {className: 'hd-q', id: 'new-project-go',
                                                                          textContent: 'Open', onclick: go}));
     input.onkeydown = ev => { if (ev.key === 'Enter') go(); };
     $('project-open').after(box);

@@ -51,8 +51,9 @@ async function goal() {
     const root = rootOf(S.tasks), mode = S.graph.mode?.mode;
     // a project named to state its goal in does not exist until that goal is created — not an error
     if (!root) return GOAL && S.missing ? '<span class="hd-phrase">A new project — it exists once its goal is created</span>'
-        : `<span class="hd-phrase${S.missing ? ' acc' : ''}">${esc(S.missing
-            || (procs().some(w => w.verb === 'auto_decompose') ? 'The goal is being planned' : 'No goal yet'))}</span>`;
+        // …nor is a link opened before its project is: the server's sentence spoke to an agent, in red, of a normal wait
+        : `<span class="hd-phrase">${S.missing ? 'This project does not exist yet — the page comes alive when it does'
+            : procs().some(w => PROC_KIND[w.verb] === 'plan') ? 'The goal is being planned' : 'No goal yet'}</span>`;
     // …and how THIS project's mode was set: by whom, when, the model the system's own roles run on, its settings
     const m = S.graph.mode, st = m?.settings || {};
     // …each a capitalised head in words, its moment as the page says moments, an on/off as on/off (audit A10)
@@ -76,8 +77,9 @@ async function goal() {
 }
 
 // One chip per kind of call on a person; `ids` are the nodes it is about, the first one is selected.
-const need = (n, text, ids, rows, cls = '', kind = text, counted = true) => !n ? '' : `<button class="need${cls}"${data({action: ids[0] && 'select', id: ids[0]})}`
-    + `${H.need(kind, rows)}>${counted ? tally(n, esc(text)) : esc(text)}</button>`;
+// …with no node to go to it is no control, so a finger's first tap shows its tip (a refused landing's reason hid behind a long press)
+const need = (n, text, ids, rows, cls = '', kind = text, counted = true, tag = ids[0] ? 'button' : 'span') => !n ? '' : `<${tag} class="need${cls}"${data({action: ids[0] && 'select', id: ids[0]})}`
+    + `${H.need(kind, rows)}>${counted ? tally(n, esc(text)) : esc(text)}</${tag}>`;
 const CALLS = ['ESCALATED', 'CHALLENGED', 'BLOCKED'];
 // Under AUTO the system makes every issuer move below the root (set_mode), so a challenge or a block there is the
 // machine issuer's to answer — in the strip as its turn or its wait, never here as a call on a person (critic).
@@ -150,6 +152,8 @@ function stalled(calls) {
     if (calls || !run || !root || terminal(root.state) || busyNow(procs(), run.sessions)
         || S.runState?.state !== 'running') return '';
     const last = Math.max(...run.audit.map(a => a.t), ...run.sessions.map(s => s.end), 0);
+    // a run read before the first event says nothing of a stall: it read «stalled since 1 Jan 08:00» (critic)
+    if (!last) return '';
     // …the quiet turns into a stall at a moment known now, with nothing pushed then: the header is drawn again at it
     clearTimeout(wake);
     if (Date.now() - last <= GAP) { wake = setTimeout(drawHeader, last + GAP - Date.now() + 1e3); return ''; }

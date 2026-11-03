@@ -316,8 +316,8 @@ const laid = animate => new Promise(done => { const lay = cy.layout({...LAYOUT, 
 const redraw = () => drawGraph(true);
 export async function drawGraph(found) {
         if (!found) {
-            // a project not on disk yet has no mode: a mode set first would have created it (a goal stated here)
-            document.body.classList.add('manual');
+            // a project not on disk yet: nothing of a run to show nor a move to sign, only the wait for it (a goal stated here)
+            document.body.classList.add('project-missing');
             cy.elements().remove();
             return;
         }
@@ -325,6 +325,7 @@ export async function drawGraph(found) {
         // a project with a mode is moved by agents and the system; the person's own moves, and the name they sign
         // them with, belong to a project without one, where a node is held by whoever it names (author, 2026-10-26)
         document.body.classList.toggle('manual', !g.mode?.mode);
+        document.body.classList.remove('project-missing');
         // a changed plan is measured whole before anything is painted, and only then folded; the layout runs unanimated and
         // the moves below stay in one task, so the whole drawing is never seen
         const view = {zoom: cy.zoom(), pan: {...cy.pan()}}, sameProject = S.project === drawnIn;

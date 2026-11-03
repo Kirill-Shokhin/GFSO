@@ -7,10 +7,11 @@ import {S, procs} from './state.js';
 import {rootOf} from './tree.js';
 import {hm} from './fmt.js';
 import {PLAN} from './hints.js';
+import {PROC_KIND} from './run.js';
 
 export function drawPlanning() {
     let box = $('cy-plan');
-    const w = !rootOf(S.tasks) && procs().find(p => p.verb === 'auto_decompose');
+    const w = !rootOf(S.tasks) && procs().find(p => PROC_KIND[p.verb] === 'plan');
     if (!w) return void box?.remove();
     box ??= $('cy').appendChild(Object.assign(document.createElement('div'), {id: 'cy-plan', className: 'cy-plan'}));
     const s = w.stage;

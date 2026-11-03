@@ -43,7 +43,7 @@ const later = (o = {}) => {
     soon = setTimeout(async () => {
         const w = {...want};
         for (const k in want) want[k] = false;
-        if (w.all) { await S.reload(); goal.recheckHolds(); }
+        if (w.all) { await S.reload(); goal.recheckHolds(); w.header = true; }   // …and the header again over the run read below
         if (!w.all && w.header) await refreshHeader();
         // …a transition read the panel just now: the line narrating it adds nothing
         if (!w.all && w.panel && focus().select && Date.now() - paneled > 3e3) await selectTask(focus().select);
