@@ -76,10 +76,11 @@ val` : k;
     }
     return span;
 }
-function sessions(calls, audit, pipeline, tasks = []) {
-    // an issuer's turn is its issuer's, signed or declined: Del of the parent; the root's issuer stands outside the plan, its turns
-    // are the system's (`mode_holder`): «exec 3» had the executor answering its own dispute (critic)
-    const byId = new Map(tasks.map(t => [t.id, t])), issuerOf = id => byId.get(byId.get(id)?.parent_id)?.assignee;
+function sessions(calls, audit, pipeline) {
+    // who took an issuer's turn is what the engine narrates («root: exec, on outside — decline»), the node's own Del as often as
+    // its parent's (53 on a real run: 47 and 6); a turn it names no one for, a dispute's, is the system's
+    const turns = pipeline.filter(p => p.source === 'issuer').map(p => { const {node, text} = said(p.message), hit = /^(\S+), on /.exec(text || ''); return hit && {node, by: hit[1], t: at(p.ts)}; }).filter(Boolean);
+    const tookTurn = (node, end) => turns.find(x => x.node === node && x.t >= end - 1e3 && x.t <= end + 30e3)?.by;
     calls = calls.filter(c => c.duration_ms > 0 && c.node_id);
     const spawns = {exec: {}, val: {}};
     for (const p of pipeline) { const {node, text} = said(p.message); const of = /^executor \S+ spawned/.test(text) ? spawns.exec : /^independent validator/.test(text) ? spawns.val : null; if (node && of) (of[node] ??= []).push(at(p.ts)); }
@@ -91,7 +92,7 @@ function sessions(calls, audit, pipeline, tasks = []) {
             && SIGNS[kind]?.includes(a.signal));
         return {node: c.node_id, kind, stage: c.stage, start, end, ms: c.duration_ms, cost: c.cost_usd || 0,
                 tokens: [c.input_tokens, c.output_tokens, c.cache_input_tokens].reduce(add, null),
-                out: c.output_tokens ?? null, model: c.model, agent: (kind === 'issuer' ? issuerOf(c.node_id) : signer?.source) || null, priced: (c.cost_usd || 0) > 0,
+                out: c.output_tokens ?? null, model: c.model, agent: (kind === 'issuer' ? tookTurn(c.node_id, end) : signer?.source) || null, priced: (c.cost_usd || 0) > 0,
                 handover: c.handover || 0, resumed: !!c.resumed, peak: c.peak_context ?? null, window: c.context_window ?? null, budget: c.context_budget ?? null};
     });
 }
@@ -205,6 +206,14 @@ function clock(spans, points, now) {
 }
 
 // How many sessions of a kind ran at once, as a step series; its peak is the parallelism figure.
+// a validation's calls overlapping on one node are one validation at work
+export const oneValidation = list => { const out = [], last = {};
+    for (const s of [...list].sort((a, b) => a.start - b.start)) {
+        const m = s.kind === 'val' && last[s.node];
+        if (m && s.start <= m.end) m.end = Math.max(m.end, s.end);
+        else { const c = {...s}; out.push(c); if (s.kind === 'val') last[s.node] = c; }
+    }
+    return out; };
 export function concurrency(list) {
     const ev = list.flatMap(s => [[s.start, 1], [s.end, -1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     let cur = 0, peak = 0;
@@ -377,13 +386,15 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
     // session and no ending: the call ran on, so it draws no bar and counts in no sessions — only Models says how many
     const moved = calls.filter(c => c.ended === 'moved');
     calls = calls.filter(c => c.ended !== 'moved');
-    const ss = sessions(calls, audit, pipeline, tasks), open = openSessions(procs, pipeline, now);
+    const ss = sessions(calls, audit, pipeline), open = openSessions(procs, pipeline, now);
+    // a process on no node yet, the goal's plan: it runs the clock though it draws no bar («0s run» under seven minutes of a plan)
+    const loose = procs.filter(w => !w.task_id && PROC_KIND[w.verb]).map(w => ({start: w.since * 1e3, end: now}));
     const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, nameOf(n)]));
     return {
         name: id => names[id] || id, auto, now: runNow(tasks, procs, all, auto),
         sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges, waiting, steps),
-        clock: clock(all, audit.map(a => a.t), open.length ? now : null),
-        exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(all.filter(s => s.kind === 'val')),
+        clock: clock([...all, ...loose], audit.map(a => a.t), open.length || loose.length ? now : null),
+        exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(oneValidation(all.filter(s => s.kind === 'val'))),
         criteria: criteria(audit, tasks, verdicts), work: {...work(calls), moved: moved.length},
         cost: {total: sum(ss, s => s.cost), tokens: total(ss, s => s.tokens), untold: ss.filter(s => s.tokens == null).length, busy: sum(ss, s => s.ms ?? s.end - s.start),
                unpriced: ss.filter(s => !s.priced).length,

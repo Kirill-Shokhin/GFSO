@@ -1,7 +1,7 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc, tally} from './dom.js';
-import {S, taskOf, myRole, nowOf} from './state.js';
-import {bucketOf, stateWord, contested, cancelled, nameOf, criteriaOf, delivered, closedByFail} from './vocab.js';
+import {S, taskOf, myRole, nowOf, stateWord} from './state.js';
+import {bucketOf, contested, cancelled, nameOf, criteriaOf, delivered, closedByFail} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip, TOUCH} from './tip.js';
 import {point, watch, focus, rebring} from './store.js';

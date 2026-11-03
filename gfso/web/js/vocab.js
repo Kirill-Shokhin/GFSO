@@ -93,8 +93,6 @@ export const V_SYMBOL = {pass: '✓', fail: '✗', undef: '⊥'};
 export const modelName = m => { const x = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(m || '');
     return x ? `${x[1]} ${x[2]}${x[3] ? '.' + x[3] : ''}` : /^(haiku|sonnet|opus|fable)$/.test(m || '') ? `${m} (version not recorded)` : m || 'model not recorded'; };
 export const statusLabel = (s, doneReason) => (s === 'DONE' && doneReason) ? doneReason : label(s);
-// a node's word now: its contract offered again after a dispute has started (`enteredWord` says the same of the move)
-export const stateWord = t => t.state === 'OFFERED' && t.was_challenged ? 'Offered again' : statusLabel(t.state, delivered(t) ? null : t.done_reason);
 
 // A CLOSED NODE IS NOT ONE KIND OF THING (§15.7): what the drawing says about a closure, in words.
 export const byHand = who => `asserted by hand — ${who || 'someone'}, not an instrument`;

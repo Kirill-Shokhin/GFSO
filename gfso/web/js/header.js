@@ -4,8 +4,8 @@
 import {$, esc, data, tally, daily} from './dom.js';
 import {H, QUALITY, GRADES, doing} from './hints.js';
 import {post, GOAL, PROJECT} from './api.js';
-import {S, taskOf, myRole, procs, begun} from './state.js';
-import {label, stateWord, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
+import {S, taskOf, myRole, procs, begun, stateWord} from './state.js';
+import {label, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow, PROC_KIND} from './run.js';
 import {dur, trim, cap, pct, stamp, clockAt, spoken} from './fmt.js';
 import {rootOf, isRoot, depths} from './tree.js';
@@ -96,7 +96,7 @@ const CALLS = ['ESCALATED', 'CHALLENGED', 'BLOCKED'];
 // a registered executor issues, and the engine refuses a person's move there (critic)
 // …and on the root the engine says: a move its mode gives the system (`performed_by`) is made without a person: a red chip stood
 // on a dispute the system answered 54 s later (live critic); a user's own dispute stays his
-const madeWithout = t => S.frontier?.steps?.some(x => x.task_id === t.id && x.performed_by === 'system');
+const madeWithout = t => S.frontier?.steps?.some(x => x.task_id === t.id && !x.mine);
 const onAPerson = t => { const m = S.graph.mode; return m?.mode === 'auto' ? isRoot(t) && !madeWithout(t)
     : m?.mode === 'semi' ? (S.run?.depth ?? depths(S.tasks))[t.id] < (m.boundary || 1) : true; };
 const byState = s => { const ts = S.tasks.filter(t => t.state === s && onAPerson(t));
@@ -195,7 +195,7 @@ export async function drawHeader() {
         const own = (f.steps || []).filter(x => x.mine);
         const mine = own.filter(x => !shown(taskOf(x.task_id))), me = myRole() || 'you', blocked = f.blocked_by || [];
         chips = (f.stuck ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
-                                f.directive || H.stuck, '', 'stuck') : '')
+                                spoken(f.directive || '') || H.stuck, '', 'stuck') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
                    mine.map(x => `${x.action} ${named(x.task_id)}`)) + chips;
     }

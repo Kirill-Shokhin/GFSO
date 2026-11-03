@@ -3,7 +3,7 @@
 import {$} from './dom.js';
 import {PROJECT} from './api.js';
 import {childrenOf} from './tree.js';
-import {cancelled} from './vocab.js';
+import {cancelled, statusLabel, delivered} from './vocab.js';
 import {runNow} from './run.js';
 import {bare} from './fmt.js';
 
@@ -24,6 +24,9 @@ export const moverOf = a => {
     return ['PASS', 'FAIL'].includes(a.signal) && by && validator
         ? {word: `${by}, signed by the system`, as: null} : {word: 'the system', as: by};
 };
+// a node's word now, as `enteredWord` says it of the move: a contract the log shows brought back by anything but its first offer has started
+export const stateWord = t => t.state === 'OFFERED' && S.run?.audit?.some(a => a.task_id === t.id && a.new_state === 'OFFERED' && a.old_state && a.old_state !== 'IDLE')
+    ? 'Offered again' : statusLabel(t.state, delivered(t) ? null : t.done_reason);
 export const S = {tasks: [], graph: {nodes: [], edges: []}, closures: [], missing: '',
                   frontier: null, runState: null, waiting: null, steps: null, mySteps: new Map(),
                   run: null, pipeline: [], reports: [], metrics: null,

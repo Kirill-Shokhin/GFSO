@@ -47,6 +47,7 @@ export function frame(run, W, left, right = 16) {
         // fractions of the span labelled to the minute repeated a label on a short run (02:27, 02:27, 02:28… — a
         // newcomer reading the page, 2026-10-26)
         ticks(y0, y1, ly) {
+            if (!run.clock.t0) return '';   // no moment yet: an epoch's 08:00 stood on the axis
             const n = Math.max(2, Math.floor((W - left) / 110)), lo = run.clock.t0;
             const step = STEPS.find(s => span / s <= n) || STEPS.at(-1), tz = new Date(lo).getTimezoneOffset() * 60e3;
             // a run over days names the day on its first tick of each new day — at midnight, or after an overnight fold that

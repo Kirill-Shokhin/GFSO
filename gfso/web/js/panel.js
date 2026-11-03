@@ -6,8 +6,8 @@
 import {$, el, esc, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task} from './api.js';
-import {S, hasKids, taskOf, myRole, agentName, moverOf} from './state.js';
-import {bucketOf, stateWord, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
+import {S, hasKids, taskOf, myRole, agentName, moverOf, stateWord} from './state.js';
+import {bucketOf, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label, enteredWord} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
 import {glyph, mark} from './draw.js';
@@ -69,7 +69,7 @@ function verdict({vr}) {
     // what failed is not repeated here: it is the ✗ rows of the criteria list just below
     // ⊥ IS NOT "NOT VALIDATED": a validator reported and the engine refused it — the issuer owes a decision.
     return vr?.refused_report ? `<div class="pn-verdict check-fail"><span class="pn-who">${PANEL.refusedSaid}`
-        + `${esc(vr.refused_report.note || 'the issuer decides')}</span>${link('verdict', 'why')}</div>` : '';
+        + `${esc(spoken(vr.refused_report.note || 'the issuer decides'))}</span>${link('verdict', 'why')}</div>` : '';
 }
 
 // One mark per round (run.js): this criterion named in a FAIL → the cross; a PASS (every criterion passing) → an ink
@@ -144,8 +144,8 @@ function actions({d, acts}) {
     if (!m?.mode) { const btns = [...open, ...moves].join(''); return btns ? foot('', btns) : ''; }
     const steps = (S.mySteps?.get(d.id) || []).filter(x => !x.performed_by || x.performed_by === me);
     if (!steps.length) return '';
-    const said = steps.map(x => `<div class="pn-step"${m.mode === 'auto' ? '' : PANEL.directive(x.directive)}>${esc(x.action)}`
-        + `${m.mode === 'auto' ? '' : ` — ${esc(trim(x.directive || '', 220))}`}</div>`).join('');
+    const said = steps.map(x => `<div class="pn-step"${m.mode === 'auto' ? '' : PANEL.directive(spoken(x.directive || ''))}>${esc(x.action)}`
+        + `${m.mode === 'auto' ? '' : ` — ${esc(trim(spoken(x.directive || ''), 220))}`}</div>`).join('');
     // outside AUTO the engine's performed_by names the holder even for work its hands do, so the mode's perform still
     // decides that work is the clean session's (critic: Deliver offered beside «PERFORMED BY … WAIT»)
     const waits = m.perform !== 'in_chat' && steps.every(x => DISPATCHED.has(x.action));
@@ -156,7 +156,7 @@ function actions({d, acts}) {
 // A node whose own sessions are booked nowhere — run inside a scope's session booked to its top, or done by the
 // user's agent or a person, whose model the system is not told — is signed by who delivered it, and says so.
 const deliveredBy = (run, id) => { const by = (run?.rounds[id] || []).map(r => r.by).filter(Boolean).at(-1);
-    return by && !run.work.byNode[id]?.exec ? [prop('Executed by', `<b>${esc(by)}</b> <span class="wk-none">no session booked to this node — its model is not reported here</span>`)] : []; };
+    return by && !run.work.byNode[id]?.exec ? [prop('Executed by', `<b>${esc(agentName(by))}</b> <span class="wk-none">no session booked to this node — its model is not reported here</span>`)] : []; };
 // who ran it, one grid row per role: «Executed by · haiku 5.5 ×12»
 const ROLE_ORDER = ['plan', 'consent', 'exec', 'issuer', 'val'];   // executed, issued, validated — one order on every node
 const signedBy = (run, id) => [
@@ -167,7 +167,10 @@ const signedBy = (run, id) => [
     ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => prop('Unanswered', `<span class="wk-none">${tally(n, `${KIND[k].name} ${n > 1 ? 'sessions' : 'session'}`)}</span>`)),
 ].join('');
 
-const PARTS = [head, verdict, facets, criteria, actions];   // the prose chips above the list, always on screen
+// the dispute's words while it stands: what the issuer is asked to rule on
+const dispute = ({d}) => { const c = d.state === 'CHALLENGED' && [...(d.audit || [])].reverse().find(a => a.signal === 'CHALLENGE' && !a.rejected);
+    return c ? `<div class="pn-verdict check-fail"><b>Challenged</b><span class="pn-who">${esc(trim(spoken(c.reason || ''), 200))}</span>${link('history', 'whole')}</div>` : ''; };
+const PARTS = [head, verdict, dispute, facets, criteria, actions];   // the prose chips above the list, always on screen
 
 export async function selectTask(id) {
     try {

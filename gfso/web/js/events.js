@@ -5,11 +5,11 @@ import {esc, tally} from './dom.js';
 import {bindFocus, focus, watch, point} from './store.js';
 import {glyph} from './draw.js';
 import {hm, day, unref} from './fmt.js';
-import {S, kept, keep, moverOf} from './state.js';
+import {S, kept, keep, moverOf, stateWord} from './state.js';
 import {PROJECT} from './api.js';
 import {at, said, failedOf, failingNow} from './run.js';
 import {failedWords, TIP} from './hints.js';
-import {CARRIED, label, stateWord, delivered, enteredWord} from './vocab.js';
+import {CARRIED, label, delivered, enteredWord} from './vocab.js';
 
 const KINDS = {
     verdict: ['PASS', 'FAIL'], delivery: ['DELIVER'], assignment: ['ASSIGN', 'ACCEPT', 'REOPEN'],
@@ -60,7 +60,7 @@ function head(id, name, node, run, rs) {
     const last = rounds.at(-1), why = lastFail && `${failingNow(rounds, node?.state) ? 'failing' : 'last FAIL'} (round ${lastFail.n}): ${failedWords(failedOf(run, id, lastFail.failed))}`;
     // one line each, cut at its end: the whole of it on hover
     return `<summary><span class="ev-node"${TIP.cell(name)}>${esc(name)}</span>
-        <span class="state-badge ev-state">${esc(stateWord(S.tasks.find(t => t.id === node.id) ?? node))}</span>
+        <span class="state-badge ev-state">${esc(stateWord(node))}</span>
         <span class="ev-rounds">${rounds.length ? tally(rounds.length, rounds.length > 1 ? 'rounds' : 'round') + (fails.length ? tally(fails.length, 'failed') : '') : 'no delivery yet'}</span>
         ${why ? `<span class="ev-why${last?.verdict === 'FAIL' ? '' : ' was'}"${TIP.cell(why)}>${esc(why)}</span>` : ''}
         <time>${rs[0] ? `${day(rs[0].t)} ${hm(rs[0].t)}` : ''}</time></summary>`;

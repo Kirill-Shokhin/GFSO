@@ -1408,7 +1408,7 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
     .hd-goal { order: 2; flex: 1 0 100%; flex-wrap: wrap; row-gap: 6px; }
     .hd-goal .hd-root { flex: 1 0 100%; max-width: none; text-align: left; padding-left: 0; }
     .hd-needs { order: 5; flex: 1 0 100%; justify-content: flex-start; overflow-x: auto; }
-    .dk-chips { max-width: none; flex: 0 1 auto; min-width: 0; }   /* the strip's own room: a cap of the screen ran past it (critic) */
+    .dk-chips { max-width: calc(100% - 80px); flex: 0 0 auto; }   /* the strip's room less its count; what else stands on the line scrolls: red first, then this */
     .dk-live { min-width: 0; }
     .dk-strip.fit .dk-live, .dk-live { overflow: hidden; }
     .dk-strip.fit .dk-live em, .dk-live em { flex: 0 1 auto; min-width: 5ch; white-space: nowrap; }
