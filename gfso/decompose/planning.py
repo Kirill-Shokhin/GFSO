@@ -9,6 +9,7 @@ the plan, stated mechanically, and the review run again) or gives the go: a proj
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 from dataclasses import asdict
@@ -18,7 +19,7 @@ import gfso.decompose as _decompose
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.config import ROOT_ID, agent_id, data_dir
-from gfso.core.types import TaskId
+from gfso.core.types import Stage, TaskId
 from gfso.critic import runner
 from gfso.decompose import artifact
 from gfso.decompose.build import build_graph_live
@@ -34,29 +35,32 @@ def author(request: str, model: str, executor: str = "", depth: int = 1, review_
            progress=None, execution=None, ledger=None) -> str:
     """A plan file for `request`: authored by `model`, its fit judged against `executor`'s session, reviewed. The file
     holds the plan as BUILT (`extract_spec`), the shape a refine and the go read back."""
-    e = _scratch(ledger)
-    res = _decompose.decompose_into(e, request, root_id=ROOT_ID, assignee=agent_id(), depth=depth, model=model,
-                             llm=_decompose.default_llm(model, execution=execution), progress=progress, executor=executor)
+    e, llm = _scratch(), _decompose.default_llm(model, execution=execution)
+    with _booked(ledger, llm):
+        res = _decompose.decompose_into(e, request, root_id=ROOT_ID, assignee=agent_id(), depth=depth, model=model,
+                                        llm=llm, progress=progress, executor=executor)
     return artifact.render(request, extract_spec(e, str(res.root_id)),
-                           _review(e, res.root_id, review_model or model, execution), executor=executor)
+                           _review(e, res.root_id, review_model or model, execution, ledger), executor=executor)
 
 
 def refine(text: str, note: str, model: str, review_model: str = "", progress=None, execution=None, ledger=None) -> str:
     """The plan file after the customer's `note`: one refine round over it with the note as its finding, the answer
     being what the round changed (or that it changed nothing), the review run again over the result."""
     p = artifact.parse(text)
-    e, llm = _scratch(ledger), _decompose.default_llm(model, execution=execution)
+    e, llm = _scratch(), _decompose.default_llm(model, execution=execution)
     # …a file the admission refuses is this round's to repair, never a dead end: the go's refusal sends the customer
     # here, and the round itself built the file first and died on the same refusal (V3_cc2, 2026-11-01)
-    spec = _decompose.repaired_before_build(p["spec"], p["goal"], llm, p["executor"], progress, e, ROOT_ID)
+    with _booked(ledger, llm):
+        spec = _decompose.repaired_before_build(p["spec"], p["goal"], llm, p["executor"], progress, e, ROOT_ID)
     _, rid, _ = build_graph_live(spec, p["goal"], e, root_id=ROOT_ID, assignee=agent_id())
     before = p["spec"]                          # the plan as the customer has it — what the answer says changed
     open_ = [f"[undecided] {g.get('obligation')} — admits: {g.get('admits')}"
              for g in p["review"].get("undecided_obligations") or ()]
     findings = "# THE CUSTOMER'S NOTE ON THIS PLAN\n" + note.strip() + (
         "\n\n# OPEN LEVEL-2 FINDINGS the plan was reviewed with\n" + "\n".join(open_) if open_ else "")
-    changed, _, problems = _decompose.refine_with(e, p["goal"], rid, agent_id(), llm,
-                                           findings, progress=progress, executor=p["executor"])
+    with _booked(ledger, llm):
+        changed, _, problems = _decompose.refine_with(e, p["goal"], rid, agent_id(), llm,
+                                                      findings, progress=progress, executor=p["executor"])
     changed = changed or spec != p["spec"]        # …the repair before the build changed it too
     after = extract_spec(e, str(rid))
     # …said as what it is: one round read the note TOGETHER with the review's open findings, so a change is the round's,
@@ -66,7 +70,7 @@ def refine(text: str, note: str, model: str, review_model: str = "", progress=No
             "and the review below, are the answer; send a sharper note, or name a stronger model")
     answer = [head] + (changes(before, after) if changed else [])
     notes = p["notes"] + [{"note": note, "by": model, "answer": "\n".join(answer + [f"open: {x}" for x in problems])}]
-    return artifact.render(p["goal"], after, _review(e, rid, review_model or model, execution),
+    return artifact.render(p["goal"], after, _review(e, rid, review_model or model, execution, ledger),
                            notes, p["executor"])
 
 
@@ -117,19 +121,25 @@ def kept(text: str) -> Path:
     return path
 
 
-def _scratch(ledger=None) -> Engine:
-    """The engine a plan is built on, in memory: no project holds it. What it spends goes to `ledger`, the book of the
-    project that asked (`Engine.record_llm_usage`): kept here it was lost with the engine, and a person saw $0.00 spent
-    over a plan's ten minutes (rehearsal, 2026-11-03)."""
+def _scratch() -> Engine:
     e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
     e.start()
-    if ledger is not None:
-        e.record_llm_usage = ledger
     return e
 
 
-def _review(e: Engine, rid, model: str, execution=None) -> dict:
-    c = json.loads(json.dumps(asdict(runner.review_decomposition(e, TaskId(str(rid)),
-                                                                 llm=llm_factory(model, execution=execution))),
-                              default=str))
+@contextlib.contextmanager
+def _booked(ledger, llm, stage=Stage.DECOMPOSER):
+    """What `llm` spends here, on `ledger`, the book of the project that asked (`Engine.record_llm_usage`), though the
+    call fail: no node holds a plan, and a person read $0.00 spent over ten minutes of planning (rehearsal, 2026-11-03)."""
+    try:
+        yield
+    finally:
+        if ledger is not None:
+            ledger(stage, llm, TaskId(ROOT_ID))
+
+
+def _review(e: Engine, rid, model: str, execution=None, ledger=None) -> dict:
+    llm = llm_factory(model, execution=execution)
+    with _booked(ledger, llm, Stage.L2_CHECK_PLAN):
+        c = json.loads(json.dumps(asdict(runner.review_decomposition(e, TaskId(str(rid)), llm=llm)), default=str))
     return {"by": model, **{k: c[k] for k in _REVIEW_KEYS}}

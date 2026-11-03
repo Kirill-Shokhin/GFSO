@@ -8,6 +8,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+
 import gfso.tools as T
 from gfso import observe, sessions as S
 from gfso.core.types import AgentId, Mode, TaskId
@@ -55,7 +57,16 @@ def test_one_command_pinned_twice_is_matched_against_each_expectation(tmp_path):
     assert [r["matched"] for r in observe_place(e, [t], str(tmp_path))["root"]] == [True, False]
 
 
+def test_a_place_holding_nothing_runs_no_check(tmp_path, monkeypatch):
+    """A first session on an empty repository: each check over no work costs a person seconds and tells nothing."""
+    monkeypatch.setattr(observe, "run_checks", lambda *a: pytest.fail("a check ran over nothing"))
+    e, t = _node({"behaviour": "b", "command": "./tool", "expect": "ok"})
+    (tmp_path / ".git").mkdir()
+    assert observe_place(e, [t], str(tmp_path)) == {}
+
+
 def test_a_place_with_nothing_built_reads_as_one_line(tmp_path):
+    (tmp_path / "notes.txt").write_text("a place with no program in it")
     e, t = _node(*({"behaviour": f"b{i}", "command": "./sql_database < q.sql", "expect": str(i)} for i in range(5)))
     seen = observe_place(e, [t], str(tmp_path))
     text = _executor_packet(e, t, str(tmp_path), seen=seen)
@@ -64,6 +75,7 @@ def test_a_place_with_nothing_built_reads_as_one_line(tmp_path):
 
 def test_a_check_past_its_time_is_named_and_the_rest_of_the_time_is_bounded(tmp_path, monkeypatch):
     monkeypatch.setattr(observe, "PROBE_S", 1)
+    (tmp_path / "a").write_text("")
     e, t = _node({"behaviour": "it hangs", "command": "sleep 5", "expect": ""})
     (row,) = observe_place(e, [t], str(tmp_path))["root"]
     assert row["note"] == "did not finish in 1 s" and "matched" not in row

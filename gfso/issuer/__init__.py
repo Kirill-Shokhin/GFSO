@@ -413,9 +413,11 @@ def _gate_findings(engine, task_id) -> str:
                "exactly, its pinned inputs included." if lines else "")
             + (f"\n\n{own} of them (`undecided: …`) are requirements of this node's OWN goal that none of its OWN "
                f"criteria's PINNED CHECKS decides: no move on a child closes one — the next review names it again. "
-               f"What closes one is a NEW pinned check of what its finding says is still admitted — `add_criterion` "
+               f"What closes one is a NEW pinned check of the clause its finding says no check probes — `add_criterion` "
                f"on this node with that check (a criterion over checks already pinned here decides nothing new and is "
-               f"refused), then `reshape` with `map` gives it the child that delivers it."
+               f"refused), then `reshape` with `map` gives it the child that delivers it. A finding that only names "
+               f"another disguise of what a pinned check already refuses is that check's residue: `dispute` it, "
+               f"naming the check."
                if own else ""))
 
 

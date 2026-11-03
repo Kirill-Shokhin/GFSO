@@ -49,13 +49,17 @@ def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None
     """{task id: [{criterion, behaviour, command, expect, rc, out, matched, note}]} — every check pinned to `tasks`'
     criteria run once, in contract order, in one copy of `place` (`adapters.snapshots`) with its inputs laid from the
     contract, where the project's work runs. A check run already for an earlier node is not run again. {} where there is
-    nothing to observe: no place, the project said no, the copy could not be made — the place itself is never run in,
+    nothing to observe: no place, nothing in it, the project said no, the copy could not be made — the place itself is never run in,
     the session starts on it."""
     probes = [(t, c, p) for t in tasks for c in t.spec.criteria for p in (c.check or ()) if p.command]
     if not (place and probes and observing(engine.graph)):
         return {}
     ex, budget = execution_of(engine), min(OBSERVE_S, (cap or OBSERVE_S) // 4)
     if not ex.shell():
+        return {}
+    # …nor a place holding nothing: what each check prints over no work tells a session nothing it does not see, and it
+    # cost a person 6:42 of 47 checks before a first line was written (rehearsal, 2026-11-03)
+    if not set(ex.files.listdir(place)) - {".git"}:
         return {}
     seen = {}
     with ex.scratch("gfso-observe-", system=True) as tmp:

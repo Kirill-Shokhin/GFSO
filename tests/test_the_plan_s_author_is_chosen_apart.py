@@ -54,10 +54,13 @@ def test_the_plan_file_is_reviewed_on_the_systems_model_not_its_authors(monkeypa
     assert got == {"author": "claude-sonnet-5-5", "review": "claude-haiku-5-5"}
 
 
-def test_what_a_plan_spends_is_on_the_book_of_the_project_that_asked():
-    """The plan's own engine is in memory and goes with its verb: what it spent was lost, and a person read $0.00 spent
-    over ten minutes of planning (rehearsal, 2026-11-03)."""
+def test_what_a_plan_spends_is_on_the_book_of_the_project_that_asked(monkeypatch):
+    """The plan holds no node and its own engine goes with its verb: nothing booked the provider's calls, and a person
+    read $0.00 spent over ten minutes of planning (rehearsal, 2026-11-03). Booked though the authoring fail."""
     e = _e()
-    scratch = planning._scratch(e.record_llm_usage)
-    scratch.record_llm_usage("searcher", [{"model": "m", "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.5}])
+    llm = type("L", (), {"calls": [{"model": "m", "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.5}]})()
+    monkeypatch.setattr(planning._decompose, "default_llm", lambda *a, **k: llm)
+    monkeypatch.setattr(planning._decompose, "decompose_into", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("cut")))
+    with pytest.raises(RuntimeError, match="cut"):
+        planning.author("sort a file", "m", ledger=e.record_llm_usage)
     assert sum(r.get("cost_usd") or 0 for r in e.graph._storage.get_usage()) == 0.5

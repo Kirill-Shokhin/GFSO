@@ -756,7 +756,7 @@ def _decide(engine, task, llm, prior: tuple) -> tuple[dict, ...]:
                   # …and with a current counter-example, the first reading is not shown at all: "only cat and sort are
                   # pinned", false for an hour, was what the issuer kept answering (critic over e9e19d4)
                   "admits": (f"(RE-CHECKED against the criteria as they stand now and still not decided by them — "
-                             f"a NEW pinned check of what is still admitted closes it.) "
+                             f"a NEW pinned check of the clause it names closes it.) "
                              + (f"Still admitted now: {now[str(i)]}" if now.get(str(i))
                                 else "The argument below is the FIRST reading of the goal and does not describe "
                                      "the contract as it stands: " + _first_reading(g)))} for i, g in _kept)

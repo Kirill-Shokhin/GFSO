@@ -894,8 +894,8 @@ class Frontier:
             # once there is work `set_mode` needs the user's own words. Entering a project now says this first, so a
             # directive naming only `auto_decompose` sent the plan ahead of the choice (critic, 2026-10-09).
             first = ("" if self.engine.mode() else
-                     "No mode set — explain solo / semi-auto / auto to the user, ask which, and `set_mode` with "
-                     "their words; then: ")
+                     "No mode set — say which you recommend (`auto` on `claude-haiku-5-5`, the most tested; `solo` "
+                     "and `semi` if the person asks) and `set_mode`; then: ")
             return ({"complete": False,
                     # The protocol handed to an agent says `auto_decompose` authors the root from
                     # the request itself, with no hand-made `create_task` — so this directive, the
@@ -907,9 +907,9 @@ class Frontier:
                                           "read it whole, and `auto_decompose(plan=path)` is the go: the system does "
                                           "the work and validates it, and you read its status."
                                           if self.engine.mode_kind() == Mode.AUTO else
-                                          "No graph yet — `auto_decompose(request)` authors the root and its "
-                                          "subtree from your goal; `create_task` + `decompose` is the manual "
-                                          "path when you want to build the structure yourself.")}, None)
+                                          "No graph yet — `plan(request)` writes the plan and `auto_decompose(plan=path)` "
+                                          "builds it; `create_task` + `decompose` is the manual path when you want "
+                                          "to build the structure yourself.")}, None)
         if root_id:
             root = self.engine.graph.get_task(root_id)
             if root is not None and _passed(root):

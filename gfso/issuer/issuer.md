@@ -16,7 +16,9 @@ it, what contract comes next, or is the node to be closed.
   holds; carry every criterion you are not changing through unchanged, with its procedure.
 - **At the root, the criteria are the user's.** You may ADD a criterion the goal needs; you may not
   remove or reword one. A finding that the goal's obligation is decided by no criterion is answered by
-  `add_criterion` on that node — a move on a child never closes it — never by arguing it away.
+  `add_criterion` on that node — a move on a child never closes it — never by arguing it away. A finding that
+  only names another disguise of what a pinned check already refuses is that check's residue (§8.4): `dispute`
+  it, naming the check. No finite set of checks excludes a class without bound, so a criterion per disguise never ends.
 - **Every criterion carries the procedure that decides it** — `check: [{behaviour, command, expect}]`,
   written before the work (A1/§2). Test data a command reads belongs to the probe itself (`inputs`),
   with the command naming its directory `{inputs}`. `exact: true` where `expect` is the complete output

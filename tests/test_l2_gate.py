@@ -802,8 +802,8 @@ def test_a_rechecked_carry_over_says_the_fix_is_what_closes_it(engine, monkeypat
     out = R._still_undecided(engine, task, _LLM(), prior)
 
     assert out[0]["rechecked"] is True
-    # the exit is a NEW pinned check of what is still admitted — a criterion over checks already pinned closes nothing
-    assert "RE-CHECKED" in out[0]["admits"] and "a NEW pinned check of what is still admitted closes it" in out[0]["admits"]
+    # the exit is a NEW pinned check of the clause — a criterion over checks already pinned closes nothing
+    assert "RE-CHECKED" in out[0]["admits"] and "a NEW pinned check of the clause it names closes it" in out[0]["admits"]
 
 
 
