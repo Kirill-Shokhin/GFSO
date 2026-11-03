@@ -21,8 +21,10 @@ Under `off` your code still goes to the model's provider, as far as an agent sen
 where every role, the system's own too (`set_mode(system_model=, planner_model=)`), names a local model. Not promised: a boundary
 against an escape from Docker or its kernel, which every project shares (no VM per task); a check a judge writes itself, which the
 delivered code it runs can reach, where only a pinned one is out of its reach; a model judge's reading, which what it reads can argue with, where only a pinned check decides by itself; anything for what runs on your machine, namely the work your
-own agent does in its chat, the validator of that work, and the reader of a plan's documents. The rest of this file says how each
-of these holds, and what stays open.
+own agent does in its chat, the validator of that work, and the reader of a plan's documents. What the agents wrote reaches that
+agent of yours as text, in what a check printed and in a plan's words, past every container: it is told to take these as data, which
+a model can be argued out of, and whether the telling holds against a real model is not measured; a result is read before it is run
+on your machine. The rest of this file says how each of these holds, and what stays open.
 
 ## What this software does on your machine
 
@@ -95,8 +97,12 @@ and nothing of your disk is mounted into any of its containers:
   refuse does not land, the cause said), nothing of the agents' configuration travels, and your working tree and branches
   are not touched; a
   project whose base is no git repository gets its result in `.gfso-accepted-<base>/<project>/`
-  beside it. `gfso export-places` writes the places out for reading, with every agent repository's
-  configuration and hooks replaced, in any spelling of `.git`, and a `.git` that is a file removed.
+  beside it. `gfso export-places`, whose stream its process holds whole in memory, up to all the places hold, writes the
+  places out for reading, no link leading out of them, with the configuration and hooks of every
+  repository replaced, each known by its shape whatever its directory is called, and a `.git` that is a file removed; a
+  directory shaped as one loses its `config` and `hooks` though it was none. On a disk that reads two spellings as one
+  name, an entry that would land on another is not written. What landed is then read on your own disk: anything git would
+  run or follow there is removed; if it cannot be, no export is left. The notes beside the export say what was.
 - Each agent session runs in a container of its own place. It writes there alone, reads the project's
   base read-only, and holds its node's own temp and its place's own model-client state. Its client runs in a
   container of the place apart from the one the system runs its own commands over the place in: only the client's
@@ -130,7 +136,7 @@ where a session connected. A client that runs a shell beside itself
   command's text names.
 - The checks the system runs over a delivery run what the agents wrote (the plan's probes, the
   delivery's own scripts), so each runs in a container of its own copy of the delivery, mounting
-  that copy and a temp of its own and nothing else.
+  a directory that holds that copy, its inputs and its temp, gone with the check, and nothing else.
 - The system's own commands over an agent's repository — git, reading and writing its files — run in
   the container of the place that repository stands in, chosen by the system's own record of the
   place, never by what stands there, which mounts no model client's state: what that repository's configuration
@@ -199,7 +205,8 @@ where a session connected. A client that runs a shell beside itself
   and to containers that are not the system's. Before the kernel chooses, a running server does: every two seconds it
   reads the group, and once what it holds that no reclaim gives back — all its memory less its page cache, a tmpfs or
   memfd counted as memory — passes 85% of the ceiling, it ends every container of the one node's work standing furthest
-  over its share (the ceiling over the works holding at least 64 MiB), whatever number of containers that work runs in;
+  over its share (the ceiling over the works holding at least 64 MiB), whatever number of containers that work runs in,
+  if that work is its own installation's: another's is its own server's to end, and with none running, the kernel's;
   nobody over a share, nothing is ended. Honest page cache fires nothing, a runaway spread over three containers or
   hidden in a memfd is ended and its neighbour left running (measured). The price: an honest work over its share
   while the rest stand near the ceiling is ended too, though the sum might never have reached it. Past the ceiling itself, for a runaway faster
@@ -223,9 +230,9 @@ where a session connected. A client that runs a shell beside itself
   the next delivery's own build is the re-check.
 
 What one session can still reach:
-- Only the root's executor works in the base; its model-client state still holds what sessions an earlier version
-  ran there wrote — consents, and the reader of the places a plan is made from. Every other session, a parent's
-  consent and that reader included, works in a place of its own. A project whose base is no git repository with a
+- On a git base every session works in a place of its own, a root's executor, a parent's consent and the reader of
+  the places a plan is made from included; a project's model-client state from an earlier version still holds what
+  sessions then ran in the base wrote. A project whose base is no git repository with a
   commit has no places, so a container runs none of its dispatched work: it stops with the cause, `git init` and a
   first commit named. On your machine, with the word, such a project's sessions all work in the base and can read
   each other's conversations.

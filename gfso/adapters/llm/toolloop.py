@@ -25,7 +25,7 @@ from pathlib import Path
 from gfso.config import agent_trace_dir, env_without_secrets
 from gfso.core.types import PlaceUnavailable
 from gfso.adapters.worktrees import base_of
-from gfso.places import cheap_to_ask
+from gfso.places import cheap_to_ask, names_a_device
 
 #: what one tool result may carry into the context — the CLI's own cap on a command's output
 OUTPUT_CAP = 30_000
@@ -120,11 +120,11 @@ class Place:
     def path(self, p: str, write: bool = False) -> Path:
         """The host path a tool's argument names, however the model spelled it — refused outside the place."""
         p = self.exec.to_outside(str(p or ""))
-        # …before any filesystem call: resolving a share a model named opened a connection from the host, past any switch
-        if not cheap_to_ask(p) and cheap_to_ask(self.cwd):
-            raise PermissionError(f"{p} is a network path, outside this run's place")
         if os.name == "nt" and (m := re.match(r"^/([a-zA-Z])/(.*)$", p)):        # Git bash's /c/… spelling
             p = f"{m.group(1)}:/{m.group(2)}"
+        # …before any filesystem call: resolving a share a model named opened a connection from the host, past any switch
+        if names_a_device(p) or (not cheap_to_ask(p) and cheap_to_ask(self.cwd)):
+            raise PermissionError(f"{p} is a network path, outside this run's place")
         full = (Path(p) if Path(p).is_absolute() else self.cwd / p).resolve()
         if not self._inside(full, write):
             raise PermissionError(f"{p} is outside this run's place ({self.cwd})" + (" — it writes only there" if write else ""))

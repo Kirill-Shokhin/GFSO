@@ -15,7 +15,6 @@ from __future__ import annotations
 import subprocess
 import time
 import uuid
-from contextlib import suppress
 from pathlib import Path
 from typing import Optional
 
@@ -64,14 +63,14 @@ def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None
     seen = {}
     with ex.scratch("gfso-observe-", system=True) as tmp:
         with snapshot(place, Path(tmp) / "place", ex) as tree:
-            for t, row in run_checks(ex, probes, place, tree, tmp, budget):
+            for t, row in run_checks(ex, probes, place, tree, budget):
                 seen.setdefault(str(t.id), []).append(row)
     return seen
 
 
-def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) -> list:
+def run_checks(ex, probes, place: str, tree: Optional[str], budget: float) -> list:
     """[(key, {criterion, behaviour, command, expect, exact, rc, out, matched, note})] — each `(key, criterion, probe)`
-    of `probes` run in `tree`, a copy of `place`, with its inputs laid from the contract under `tmp`: each distinct
+    of `probes` run in `tree`, a copy of `place`, with its inputs laid from the contract: each distinct
     command once, PROBE_S at most and `budget` in all, matched by `printed`. [] where nothing can run: no copy, no shell,
     inputs that cannot be laid as pinned (refused at admission). The one runner of the system's own checks: before a
     session (`observe_place`) and over a fresh copy of a delivery at its validation (`tools_llm._observe_exact`)."""
@@ -90,7 +89,7 @@ def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) 
             # …the copies' time not counted: a large delivered tree spent the budget copying, and its later checks —
             # the failing one among them — went unrun, the judge's word deciding (critic B8)
             left = budget - (time.monotonic() - t0 - sum(copying))
-            ran[once] = (_fresh_run(ex, bash, c, p, tree, tmp, min(PROBE_S, left), place, copying) if left >= 1
+            ran[once] = (_fresh_run(ex, bash, c, p, tree, min(PROBE_S, left), place, copying) if left >= 1
                          else {"note": "not run: the observation's time ran out"})
             # …not finished in the time it was given — its own bound, or what the observation's budget left it, or none
             # left at all —: it decided nothing in finite time, and the delivery's own code spends that budget, so a
@@ -107,7 +106,7 @@ def run_checks(ex, probes, place: str, tree: Optional[str], tmp, budget: float) 
     return out
 
 
-def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str, copying: list) -> dict:
+def _fresh_run(ex, bash: str, c, p, tree: str, timeout: float, place: str, copying: list) -> dict:
     """One check from what the system laid: the copy's container started anew — every process and file an earlier
     check left outside the copy gone with the last one (`release`) —, the pinned inputs laid afresh, as the system's,
     in a directory no earlier check could know the name of. A check runs the delivery's code, and what it left steered
@@ -116,41 +115,41 @@ def _fresh_run(ex, bash: str, c, p, tree: str, tmp, timeout: float, place: str, 
     (critic B6). And over a copy of the built delivery of its own, gone after it: over one they shared, a check that
     ran the delivered code changed what a later one read, and a forced FAIL turned into the judge's word (critic B7)."""
     ex.release(tree)
-    own = str(Path(tmp) / f"run-{uuid.uuid4().hex[:12]}")
     t0 = time.monotonic()
+    # …in a directory of the system's of its own, its container mounting that alone: under one the copies shared, the
+    # first check's code rewrote the built delivery every later one is copied from (a pinned PASS forged, critic, live),
+    # and what each left beside its copy outgrew the disk's bound unread (critic, measured). One reading of the disk, by
+    # the one write there: ten had cost a person 6:08 of a simple task's checks (rehearsal, 2026-11-03)
     try:
-        with ex.system_writes(own):        # …the system's copy, no check's growth against its disk bound
-            ex.copy_tree(tree, own)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        # …the copy is of the BUILT delivery, whose files are the delivery's to choose: one it makes impossible to copy
-        # (a path past the system's limit) is its FAIL, the cause said — as the checkout's (`NotTheDelivery`); read as
-        # "not observed" it handed every exact check to the judge's word (critic B9)
-        cause = f"the built delivery could not be copied for this check: ...{str(e)[-120:]}"
-        return {"rc": 1, "out": cause, "stdout": "", "stderr": cause}
+        with ex.scratch("gfso-check-", system=True) as root:
+            own, laid = str(Path(root) / "copy"), str(Path(root) / f"inputs-{uuid.uuid4().hex[:12]}")
+            with ex.system_writes(root):                # …no check's growth against its disk bound
+                try:
+                    ex.copy_tree(tree, own)
+                except (OSError, subprocess.TimeoutExpired) as e:
+                    # …the copy is of the BUILT delivery, whose files are the delivery's to choose: one it makes impossible
+                    # to copy (a path past the system's limit) is its FAIL, the cause said — as the checkout's
+                    # (`NotTheDelivery`); read as "not observed" it handed every exact check to the judge's word (critic B9)
+                    cause = f"the built delivery could not be copied for this check: ...{str(e)[-120:]}"
+                    return {"rc": 1, "out": cause, "stdout": "", "stderr": cause}
+                try:
+                    # …this probe's own inputs alone: every criterion's, laid for each check, cost the square of their number
+                    dirs = materialize_inputs([replace(c, check=(p,))], Path(laid), ex.files)
+                except (OSError, subprocess.TimeoutExpired) as e:
+                    return {"note": f"not run: its inputs could not be laid ({e})"}
+            # …nor their time counted: the system's own write left later checks of a rich contract unrun, the judge's word
+            # deciding them, as its removal below would (critic B9)
+            copying.append(time.monotonic() - t0)
+            try:
+                d = dirs.get(probe_id(c.name, p))
+                got = _run(ex, bash, swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, own),
+                           own, timeout, place)
+                # …ended by the machine's memory watch: a neighbour's pressure is no observation of this delivery (critic B7)
+                return {"note": f"not run: {WATCHED}"} if ended_by_watch(ex.session(own)) else got
+            finally:
+                t0 = time.monotonic()
     finally:
         copying.append(time.monotonic() - t0)
-    t0 = time.monotonic()
-    try:
-        # …this probe's own inputs alone: every criterion's, laid for each check, cost the square of their number
-        with ex.system_writes(laid := str(Path(tmp) / f"inputs-{uuid.uuid4().hex[:12]}")):
-            dirs = materialize_inputs([replace(c, check=(p,))], Path(laid), ex.files)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return {"note": f"not run: its inputs could not be laid ({e})"}
-    finally:
-        # …nor their laying: the system's own write, measured twice for the disk's watch (~0.5–1.5 s), left later
-        # checks of a rich contract unrun, the judge's word deciding them
-        copying.append(time.monotonic() - t0)
-    try:
-        d = dirs.get(probe_id(c.name, p))
-        got = _run(ex, bash, swap(p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command, place, own), own,
-                   timeout, place)
-        # …ended by the machine's memory watch: a neighbour's pressure is no observation of this delivery (critic B7)
-        return {"note": f"not run: {WATCHED}"} if ended_by_watch(ex.session(own)) else got
-    finally:
-        t0 = time.monotonic()
-        with suppress(OSError):
-            ex.remove_tree(own)
-        copying.append(time.monotonic() - t0)            # …its removal no more counted than its copy (critic B9)
 
 
 def printed(got: dict, expect: str) -> bool:

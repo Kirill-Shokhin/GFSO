@@ -383,6 +383,17 @@ def watch_ceiling() -> None:
         threading.Thread(target=_watch_ceiling, name="gfso-ceiling", daemon=True).start()
 
 
+def _own_of(ids: list) -> list:
+    """Those of the containers `ids` this installation made. Another's is its own server's to end, which reads the same
+    group: what a watch ended it remembers in its own memory alone, so a judge ended from beside would read as ended by
+    its own bound and FAIL an honest delivery (critic). With no server of its own there, the kernel's limit holds."""
+    if not ids:
+        return []
+    got = run(["docker", "inspect", "-f", f'{{{{.Id}}}} {{{{index .Config.Labels "{HOME}"}}}}', *ids], timeout=60, text=True)
+    own = {i for i, _, h in (ln.partition(" ") for ln in (got.stdout or "").splitlines()) if h == _home()}
+    return [i for i in ids if i in own]
+
+
 def _watch_ceiling(stop: threading.Event | None = None) -> None:
     """WHO PAYS WHEN THE MACHINE'S CEILING IS NEAR: the node's work standing furthest over its fair share, not the
     kernel's choice — at the group's max the kernel ends its largest process, an honest one beside a runaway spread over
@@ -411,7 +422,7 @@ def _watch_ceiling(stop: threading.Event | None = None) -> None:
                      "--mount", "type=bind,src=/sys/fs/cgroup,dst=/cg,readonly", "--entrypoint", "sleep",
                      CEILING_IMAGE, "infinity"], timeout=120)
                 continue
-            if ends := _over_share(got.stdout, _units):
+            if ends := _own_of(_over_share(got.stdout, _units)):
                 names = run(["docker", "inspect", "-f", "{{.Name}}", *ends], timeout=60, text=True).stdout or ""
                 _WATCH_ENDED.update(n.strip().lstrip("/") for n in names.splitlines() if n.strip())
                 done = run(["docker", "kill", *ends], timeout=60, text=True)
@@ -583,6 +594,11 @@ class DiskLedger:
                 del self.busy[at]
             self.touched.add(at)
             return n
+
+    def made(self, at: tuple) -> None:
+        """The system made `at` just now, empty: nothing it holds from here on stood before."""
+        with self.lock:
+            self.base.setdefault(at, (0, 0))
 
     def lose(self, at: tuple) -> None:
         """A system write into `at` that was not measured: its charge stands, its baseline taken again at the next
@@ -823,28 +839,40 @@ _EXPORT = r'''b=$1
 note() { printf 'NOTE: %s\n' "$*" >&2; }
 mkdir -p /tmp/x || exit 1
 (cd /from && tar -c --exclude=./.gfso-sys --exclude=./.gfso-tmp .) | tar -x -C /tmp/x || note "files it could not read are not exported"
+chmod -R u+rwX /tmp/x 2>/dev/null
 find /tmp/x -iname .git ! -type d -print -delete | while read -r g; do note "${g#/tmp/x/}: a .git that is no directory, removed"; done
-find /tmp/x -iname .git -type d -prune > /tmp/repos
-while read -r g; do
-  r=${g%/*}
-  rm -f "$g/commondir" "$g/config.worktree"
+cat > /tmp/one <<'ONE'
+note() { printf 'NOTE: %s\n' "$*" >&2; }
+has() { d=$1; p=$2; set -- "$d"/$p; [ -e "$1" ] || [ -L "$1" ]; }
+b=$1; shift
+for g; do
+  [ -d "$g" ] || continue
+  case "${g##*/}" in
+    .[gG][iI][tT]) ;;
+    *) has "$g" '[hH][eE][aA][dD]' || continue
+       has "$g" '[cC][oO][mM][mM][oO][nN][dD][iI][rR]' || { has "$g" '[oO][bB][jJ][eE][cC][tT][sS]' && has "$g" '[rR][eE][fF][sS]'; } || continue ;;
+  esac
   mv "$g/config" /tmp/theirs 2>/dev/null || : > /tmp/theirs
-  rm -rf "$g/hooks"
-  for k in core.repositoryformatversion core.bare; do
-    v=$(git config --file /tmp/theirs --get "$k" </dev/null) && git config --file "$g/config" "$k" "$v" </dev/null
+  find "$g" -mindepth 1 -maxdepth 1 \( -iname config -o -iname config.worktree -o -iname commondir -o -iname hooks \) -exec rm -rf -- {} +
+  for k in core.repositoryformatversion:0:1 core.bare:true:false extensions.objectformat:sha1:sha256 extensions.refstorage:files:reftable; do
+    n=${k%%:*}; o=${k#*:}
+    v=$(git config --file /tmp/theirs --get "$n" </dev/null 2>/dev/null)
+    case "$v" in "${o%:*}"|"${o#*:}") git config --file "$g/config" "$n" "$v" </dev/null ;; esac
   done
-  git config --file /tmp/theirs --get-regexp '^extensions\.' | while read -r k v; do git config --file "$g/config" "$k" "$v"; done
   a=$g/objects/info/alternates
   [ -f "$a" ] || continue
   cp "$a" /tmp/alternates
   printf '%s\n' "$b/.git/objects" > "$a"
   if GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c core.fsmonitor=false -c core.hooksPath=/dev/null \
-      -C "$r" repack -a -d -q </dev/null; then
+      --git-dir="$g" repack -a -d -q </dev/null; then
     rm -f "$a"
   else
-    cp /tmp/alternates "$a" && note "${r#/tmp/x/}: not repacked — exported as it stands, its objects still the base's"
+    cp /tmp/alternates "$a" && note "${g#/tmp/x/}: not repacked — exported as it stands, its objects still the base's"
   fi
-done < /tmp/repos
+done
+exit 0
+ONE
+find /tmp/x -type d -exec sh /tmp/one "$b" {} +
 if [ -d /tmp/x/.gfso-base/.git ]; then
   GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C /tmp/x/.gfso-base bundle create -q /tmp/x/gfso-refs.bundle \
     HEAD --branches='gfso/*' </dev/null || note "the base's branches could not be bundled"
@@ -1693,7 +1721,12 @@ class Volume:
         said = [x[6:] for x in (got.stderr or b"").decode(errors="replace").splitlines() if x.startswith("NOTE: ")]
         if got.returncode:
             raise OSError(f"{self.name}: its places could not be exported ({'; '.join(said) or got.returncode})")
-        if notes := said + _untar(got.stdout, to):
+        try:
+            notes = said + _untar(got.stdout, to) + _left_inert(to)
+        except OSError as e:
+            shutil.rmtree(to, ignore_errors=True)
+            raise OSError(f"{self.name}: an exported repository could not be made inert, nothing is left of the export ({e})")
+        if notes:
             (to.parent / ".gfso-export-notes").write_text("\n".join(notes) + "\n", encoding="utf-8")
         return notes
 
@@ -1742,17 +1775,26 @@ def _base_of_places(record: dict) -> str | None:
 
 def _untar(data: bytes, to: Path) -> list:
     """A tar stream's entries under `to`, none outside it — a link whose target, read from its own directory, leaves
-    `to`, or one the host cannot make, written as a file naming its target; an entry the host refuses (two names one
-    on a case-blind disk) passed over — and what was not written as it stood, said."""
+    `to`, or one the host cannot make, written as a file naming its target; an entry the host refuses passed over —
+    and what was not written as it stood, said. On a disk that folds names, an entry whose name this disk would read
+    as another is not written: a `.git.` or `git~1` beside a neutralised `.git` wrote into it (critic, live), a `CONFIG`
+    over its config, an `X/` through a link `x`."""
     to.mkdir(parents=True, exist_ok=True)
-    root, notes = to.resolve(), []
+    root, notes, spelled = to.resolve(), [], {}
     with tarfile.open(fileobj=io.BytesIO(data)) as t:
         for m in t.getmembers():
             at = Path(os.path.abspath(root / m.name))
+            if at == root:
+                continue
             try:
                 # …where it really leads, through the links laid so far: a stream folded by a case-blind disk wrote through one
                 if not at.is_relative_to(root) or not at.parent.resolve().is_relative_to(root):
                     raise OSError("outside the export")
+                # …of the name as the stream spells it: `abspath` above has already trimmed it, on Windows
+                if _FOLDING and _folds_onto_another([c for c in m.name.split("/") if c not in ("", ".")], spelled):
+                    raise OSError("a name this disk would read as another")
+                if m.islnk() and not (root / m.linkname).resolve().is_relative_to(root):
+                    raise OSError("a hard link through a link out of the export")
                 if not m.issym():
                     t.extract(m, to, filter="tar")
                     continue
@@ -1765,8 +1807,76 @@ def _untar(data: bytes, to: Path) -> list:
                     os.symlink(m.linkname, at)
                 except OSError:
                     at.write_text(m.linkname, encoding="utf-8")
-            except (OSError, tarfile.TarError) as e:
+            except (OSError, ValueError, tarfile.TarError) as e:
                 notes.append(f"{m.name}: not written ({e})")
+    # …and where each link really leads, all of them laid: a chain, each of its links inside by its text, read a host
+    # file through the export and had the sweep after it act out there (critic, ran)
+    for d, dirs, files in os.walk(root):
+        for p in (Path(d) / n for n in (*dirs, *files)):
+            if p.is_symlink() and not Path(os.path.realpath(p)).is_relative_to(root):
+                target = os.readlink(p)
+                p.unlink()
+                p.write_text(target, encoding="utf-8")
+                notes.append(f"{p.relative_to(root).as_posix()}: a link out of the export, kept as a file naming {target}")
+    return notes
+
+
+#: a host whose disk reads two spellings as one name
+_FOLDING = os.name == "nt" or sys.platform == "darwin"
+#: all a neutralised repository's config holds (`_EXPORT`)
+_INERT_LINE = re.compile(r"\s*(\[core\]|\[extensions\]|(repositoryformatversion|bare|objectformat|refstorage)\s*=\s*\w+)?\s*", re.I)
+
+
+def _folds_onto_another(parts: list, spelled: dict) -> bool:
+    """Would this disk read the path `parts` as another than it says? A name it trims or takes a stream of (Windows), a
+    backslash it takes for a separator, its short name for `.git`, or a spelling differing from one laid before; what it
+    lays is noted in `spelled`."""
+    at = ""
+    for c in parts:
+        if c[-1] in ". " or ":" in c or chr(92) in c or re.fullmatch(r"git~\d+", c, re.I):
+            return True
+        at = f"{at}/{c.casefold()}"
+        if spelled.setdefault(at, c) != c:
+            return True
+    return False
+
+
+def _left_inert(to: Path) -> list:
+    """The export as it landed on this host's disk, whatever spelled it there: no directory git would take for a
+    repository holds what git would run or follow — a `.git` file, hooks, a `commondir`, a config beyond the format, an
+    alternates file (a path of the agent's, which git opens: a share, a connection). What the container left behind for
+    any cause is removed and said; what cannot be removed is an `OSError`: then no export."""
+    notes = []
+
+    def gone(p: Path, why: str) -> None:
+        """`p` removed, whatever its modes, and said."""
+        for d, _, fs in os.walk(p) if p.is_dir() and not p.is_symlink() else ():
+            os.chmod(d, stat.S_IRWXU)
+            for f in fs:
+                with contextlib.suppress(OSError):
+                    if not os.path.islink(os.path.join(d, f)):
+                        os.chmod(os.path.join(d, f), stat.S_IRUSR | stat.S_IWUSR)
+        shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink()
+        notes.append(f"{p.relative_to(to).as_posix()}: {why}, removed")
+
+    for d, dirs, files in os.walk(to):
+        here, names = Path(d), {n.lower(): n for n in (*dirs, *files)}
+        if ".git" in names and not (here / names[".git"]).is_dir():
+            gone(here / names[".git"], "a .git that is no directory")
+            dirs[:] = [n for n in dirs if n != names[".git"]]
+        shaped = "head" in names and ("commondir" in names or ("objects" in names and "refs" in names))
+        if here.name.lower() != ".git" and not shaped:
+            continue
+        for k in ("hooks", "commondir", "config.worktree"):
+            if k in names:
+                gone(here / names[k], "what git would follow in a repository")
+                dirs[:] = [n for n in dirs if n != names[k]]
+        if (cfg := here / names.get("config", "config")).is_dir() or cfg.is_symlink() or (
+                cfg.is_file() and not all(_INERT_LINE.fullmatch(ln) for ln in cfg.read_text("utf-8", "replace").splitlines())):
+            gone(cfg, "a repository's config beyond its format")
+            dirs[:] = [n for n in dirs if n != cfg.name]
+        if (alt := here / names.get("objects", "objects") / "info" / "alternates").exists() or alt.is_symlink():
+            gone(alt, "a path git would open for objects")
     return notes
 
 
@@ -1986,6 +2096,17 @@ class _SystemWrites:
         except ValueError:
             return contextlib.nullcontext()      # …no node's directory: nothing of it is counted against a node
         return self.volume.writes(root, _real(path), removing)
+
+    def system_made(self, path: str) -> None:
+        """The system has just made the directory `path`, empty: a writable root's baseline without reading it. Inside
+        a root with no baseline, that root is read as it stands: what it holds may be older than this server."""
+        with contextlib.suppress(ValueError):
+            root = _writable_root(p := _real(path), self)
+            if root == p:
+                _LEDGER.made(self.volume.key(root))
+            elif self.volume.key(root) not in _LEDGER.base:
+                with self.volume.writes(root, p):
+                    pass
 
     def remove_tree(self, path: str) -> None:
         """`ExecutionPort.remove_tree`, what the system had put there coming off its account."""
@@ -2300,8 +2421,10 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
             owner = None
         if owner is None:
             return self.temp_root()
-        if owner.is_relative_to(self.tmp):
-            return str(owner)                            # a directory of the temp lent to one call is its own temp
+        # …a directory of the temp lent to one call is its own temp, and one of the system's: gone with it, where what a
+        # check left in a temp of its own stood through every later one, on no bound (critic)
+        if owner.is_relative_to(self.tmp) or owner.parent == self.sys:
+            return str(owner)
         d = self.tmp / f"node-{hashlib.sha1(os.path.normcase(owner).encode()).hexdigest()[:12]}"
         _TEMPS[os.path.normcase(d)] = owner        # …whose session's container mounts it, made at its start (`ContainerFiles`)
         return str(d)
@@ -2602,7 +2725,7 @@ class PlaceContainer(ContainerExecution):
             return [(self.rw, False)]                    # the keeper of the CLI state: it alone, nothing of a place
         laid = [] if self.rw.name.endswith(LAID) else [(self.rw.with_name(self.rw.name + LAID), True)]
         if _scratch_above(self.rw) or self.rw.is_relative_to(self.sys):
-            return [(self.rw, False), *laid, own_temp]
+            return [(self.rw, False), *laid, *([own_temp] if own_temp[0] != self.rw else [])]
         if self.rw.is_relative_to(tmp):
             return [*([] if self.rw == self.base else [(self.base, True)]), (self.rw, False)]
         # its validations' scratch read-only beside its place, a root's base as a node's clone: its rounds hold the
@@ -2683,12 +2806,16 @@ class PlaceContainer(ContainerExecution):
         if self.state is None:
             return                                       # …the keeper's own: the state volume whole, nothing lent
         keeper = self.project.session(str(self.project.state))
-        for at, cwd, made in ((self.project, self.base, lent), (keeper, keeper.rw, [str(self.state)])):
-            with contextlib.ExitStack() as held:         # …made by the system: their baselines as it leaves them
-                for d in made:
-                    held.enter_context(self.project.system_writes(d))
-                if made and (r := at.run(["mkdir", "-p", "--", *made], cwd=str(cwd), timeout=60)).returncode:
-                    raise OSError(f"{self.container}: its directories could not be made ({r.stderr.strip()[-300:]})")
+        for at, cwd, wanted in ((self.project, self.base, lent), (keeper, keeper.rw, [str(self.state)])):
+            if not wanted:
+                continue
+            # …nothing measured around it: one that stands is not written, and one made now holds nothing, its baseline
+            r = at.run(["sh", "-c", 'i=0; for d; do i=$((i+1)); [ -d "$d" ] && continue; mkdir -p -- "$d" || exit 1; '
+                                    'echo "$i"; done', "sh", *wanted], cwd=str(cwd), timeout=60)
+            if r.returncode:
+                raise OSError(f"{self.container}: its directories could not be made ({r.stderr.strip()[-300:]})")
+            for i in (r.stdout or "").split():
+                self.project.system_made(wanted[int(i) - 1])
 
     def stop(self) -> None:
         """This session's container and its commands', its client's with them: the way out is its project's."""

@@ -279,7 +279,7 @@ def test_live_near_the_ceiling_the_watch_ends_only_the_runaway(monkeypatch, case
 
     def start(node, body):
         return subprocess.run(["docker", "run", "-d", "--network", "none", "--memory", "1g", "--memory-swap", "1g",
-                               "--label", f"{E.HOME}=h", "--label", f"{E.PROJECT}=p", "--label", f"{E.NODE}={node}",
+                               "--label", f"{E.HOME}={E._home()}", "--label", f"{E.PROJECT}=p", "--label", f"{E.NODE}={node}",
                                "--cgroup-parent", f"/{group}", IMAGE, "python3", "-c", body],
                               capture_output=True, text=True).stdout.strip()
     try:
@@ -704,10 +704,11 @@ def test_laying_a_checks_inputs_spends_none_of_the_observations_time(monkeypatch
     monkeypatch.setattr(O, "_run", lambda *a: {"rc": 0, "out": "ok", "stdout": "ok", "stderr": ""})
     monkeypatch.setattr(O, "ended_by_watch", lambda ex: False)
     ex = SimpleNamespace(shell=lambda: "sh", release=lambda tree: None, copy_tree=lambda a, b: None,
-                         system_writes=lambda p: contextlib.nullcontext(), files=None, remove_tree=lambda p: None,
+                         system_writes=lambda p, **k: contextlib.nullcontext(), files=None, remove_tree=lambda p: None,
+                         scratch=lambda *a, **k: contextlib.nullcontext(str(tmp_path)),
                          session=lambda p: None)
     c = Criteria(name="c", check=tuple(Probe(behaviour=f"b{i}", command=f"echo {i}", expect="ok") for i in range(5)))
-    rows = O.run_checks(ex, [("k", c, p) for p in c.check], str(tmp_path), str(tmp_path), str(tmp_path), 1.5)
+    rows = O.run_checks(ex, [("k", c, p) for p in c.check], str(tmp_path), str(tmp_path), 1.5)
     assert [r.get("note") for _, r in rows] == [None] * 5, rows
 
 

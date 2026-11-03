@@ -1246,8 +1246,7 @@ def _observe_exact(engine: Engine, parts: list, workdir, built: Optional[list] =
                         # copy inside an enclosing repository (critic over the fresh copy). State an executor's own run
                         # left in a place with no recorded commit is the pin's to start clean of (`EXACT_TEXT`)
                         why, rows = ("its inputs could not be laid",
-                                     dict(run_checks(ex, probes, workdir, tree, at,
-                                                               OBSERVE_S + FRESH_S * len(probes))))
+                                     dict(run_checks(ex, probes, workdir, tree, OBSERVE_S + FRESH_S * len(probes))))
             except Uncopied as e:
                 why = str(e)
     return {k: rows.get(k) or {"note": f"not run: {why}"} for k, _, _ in probes}

@@ -536,7 +536,8 @@ def test_live_a_clone_that_does_not_repack_is_exported_as_it_stands_and_named(tm
         x.stop()
         x.volume.remove()
     notes = (out / ".gfso-export-notes").read_text(encoding="utf-8")
-    assert "a: not repacked" in notes and (out / "p" / "a" / ".git" / "objects" / "info" / "alternates").exists()
+    assert "a/.git: not repacked" in notes and "alternates" in notes, "a path of the container's opens nothing on the host: said, removed"
+    assert not (out / "p" / "a" / ".git" / "objects" / "info" / "alternates").exists()
     assert not (out / "p" / "b" / ".git" / "objects" / "info" / "alternates").exists(), "the rest made whole"
 
 

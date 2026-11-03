@@ -444,7 +444,9 @@ class _NotAPath:
 @pytest.mark.parametrize("path, askable, what", [
     (BS * 2 + "?" + BS + "C:" + BS + "Users", True, "extended-length LOCAL, 0.0 ms to stat"),
     ("//?/C:/Users", True, "the same in forward slashes"),
-    (BS * 2 + "." + BS + "pipe" + BS + "x", True, "a device path is local"),
+    (BS * 2 + "." + BS + "pipe" + BS + "x", False, "a device by name: `Mup` is one, measured 21 s"),
+    (BS * 2 + "?" + BS + "GLOBALROOT" + BS + "Device" + BS + "Mup" + BS + "srv", False, "the redirector by its device"),
+    (BS + "??" + BS + "UNC" + BS + "srv" + BS + "sh", False, "the kernel's own prefix passes to the kernel"),
     (BS * 2 + "?" + BS + "UNC" + BS + "srv" + BS + "sh", False, "the one remote extended form"),
     (BS * 2 + "srv" + BS + "share", False, "a plain UNC share"),
     ("//srv/share", False, "a UNC share in forward slashes"),

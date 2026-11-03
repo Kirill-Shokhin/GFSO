@@ -7,6 +7,7 @@ left — a process, a `GNUmakefile` beside a pinned `Makefile` — is gone befor
 
 Not held, named in SECURITY.md: inside ONE command, a file the code adds beside the inputs before a later step of that
 command reads the directory."""
+import contextlib
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,6 +38,11 @@ def project(tmp_path, monkeypatch):
     yield x
     x.stop()
     x.volume.remove()
+
+
+@contextlib.contextmanager
+def _a_scratch(at):
+    yield str(at)
 
 
 @docker
@@ -78,9 +84,31 @@ def test_live_what_one_system_check_leaves_reaches_no_later_one(project):
         with project.scratch("gfso-exact-", system=True) as tmp:
             project.files.mkdir(str(tree := Path(tmp) / "exact" / "delivery"))
             rows = dict(run_checks(project, [("p", c, plant), ("r", c, read)], str(project.parent / ".gfso-nodes-ws/p/a"),
-                                   str(tree), tmp, 120))
+                                   str(tree), 120))
         assert rows["p"].get("matched"), rows["p"]
         assert rows["r"].get("matched"), rows["r"]
+    finally:
+        project.stop()
+
+
+@docker
+def test_live_a_check_reaches_neither_the_delivery_later_checks_are_copied_from_nor_keeps_anything_beside_its_copy(project):
+    """Under one directory for all, a first check's code rewrote the built delivery and the next printed what it was told:
+    a pinned PASS forged; and what each left beside its copy stood through the rest, on no bound (critic, live)."""
+    forge = Probe("rewrites whatever it finds", "for d in $(find / -path /proc -prune -o -path /sys -prune -o -type d -name delivery -print 2>/dev/null); do echo forged > $d/f; done; "
+                  "echo left > ../beside; echo left > \"${TMPDIR:-/tmp}/beside\"; echo LEFT", "LEFT", exact=True)
+    read = Probe("reads", "cat f; ls -A .. \"${TMPDIR:-/tmp}\" | grep -c beside", "as delivered 0", exact=True)
+    c = Criteria("c", check=(forge, read))
+    made(project, "a")
+    try:
+        with project.scratch("gfso-exact-", system=True) as tmp:
+            project.files.mkdir(str(tree := Path(tmp) / "exact" / "delivery"))
+            project.files.write_bytes(str(tree / "f"), b"as delivered" + bytes([10]))
+            rows = dict(run_checks(project, [("p", c, forge), ("r", c, read)], str(project.parent / ".gfso-nodes-ws/p/a"),
+                                   str(tree), 120))
+        assert rows["p"].get("matched"), rows["p"]
+        assert rows["r"].get("matched") and "forged" not in rows["r"]["out"], rows["r"]["out"]
+        assert rows["r"]["out"].splitlines()[-1].strip() == "0", rows["r"]
     finally:
         project.stop()
 
@@ -99,7 +127,7 @@ def test_live_a_program_one_check_lays_on_the_path_runs_in_no_later_one(project)
         with project.scratch("gfso-exact-", system=True) as tmp:
             project.files.mkdir(str(tree := Path(tmp) / "exact" / "delivery"))
             rows = dict(run_checks(project, [("l", c, lie), ("c", c, cmp)], str(project.parent / ".gfso-nodes-ws/p/a"),
-                                   str(tree), tmp, 120))
+                                   str(tree), 120))
         assert rows["l"].get("matched"), rows["l"]
         assert rows["c"].get("matched"), rows["c"]
     finally:
@@ -113,15 +141,16 @@ def test_an_exact_check_the_memory_watch_ended_observed_nothing(monkeypatch, tmp
     files = SimpleNamespace(seal_files=lambda base, laid: None)
     ex = SimpleNamespace(release=lambda tree: None, files=files, session=lambda tree: box,
                          copy_tree=lambda src, dst: None, remove_tree=lambda path: None,
-                         system_writes=E.ExecutionPort.system_writes.__get__(object()))
+                         system_writes=E.ExecutionPort.system_writes.__get__(object()),
+                         scratch=lambda *a, **k: _a_scratch(tmp_path))
     monkeypatch.setattr(O, "_run", lambda *a, **k: {"rc": 128, "out": "cannot exec in a stopped state", "stdout": "",
                                                      "stderr": "cannot exec in a stopped state"})
     p = PIN.check[0]
     monkeypatch.setattr(E, "_WATCH_ENDED", {"check.gfso-exact-x"})
-    got = O._fresh_run(ex, "bash", PIN, p, str(tmp_path), tmp_path, 10, str(tmp_path), [])
+    got = O._fresh_run(ex, "bash", PIN, p, str(tmp_path), 10, str(tmp_path), [])
     assert "stdout" not in got and "memory watch" in got["note"], got
     monkeypatch.setattr(E, "_WATCH_ENDED", set())
-    assert "stdout" in O._fresh_run(ex, "bash", PIN, p, str(tmp_path), tmp_path, 10, str(tmp_path), []), \
+    assert "stdout" in O._fresh_run(ex, "bash", PIN, p, str(tmp_path), 10, str(tmp_path), []), \
         "a check its own code ended is observed as it ended"
 
 
@@ -141,7 +170,7 @@ def test_live_no_exact_check_changes_the_delivery_a_later_one_reads(project, ord
                                                   "selftest.sh": b"echo ok > status.txt; echo SELFTEST OK\n"})
             runs = [("s", c, selftest), ("r", c, status)]
             rows = dict(run_checks(project, runs if order == "the selftest first" else runs[::-1],
-                                   str(project.parent / ".gfso-nodes-ws/p/a"), str(tree), tmp, 120))
+                                   str(project.parent / ".gfso-nodes-ws/p/a"), str(tree), 120))
         assert rows["s"].get("matched") and rows["r"].get("matched") is False, rows
     finally:
         project.stop()
@@ -156,7 +185,7 @@ def test_one_command_pinned_over_two_inputs_is_run_over_each(tmp_path):
                                        exact=True),))
     (tree := tmp_path / "tree").mkdir()
     rows = dict(run_checks(LocalExecution(), [("s", small, small.check[0]), ("b", big, big.check[0])], str(tree),
-                           str(tree), tmp_path, 60))
+                           str(tree), 60))
     assert rows["s"]["matched"] and rows["b"]["matched"], rows
 
 
@@ -174,7 +203,7 @@ def test_live_a_delivery_that_cannot_be_copied_for_a_check_fails_it(project):
                                                 'mkdir "$d" && cd "$d"; done; echo x > f'], cwd=str(tree), timeout=60)
             assert r.returncode == 0, r.stderr
             rows = dict(run_checks(project, [("d", c, deep)], str(project.parent / ".gfso-nodes-ws/p/a"), str(tree),
-                                   tmp, 120))
+                                   120))
         assert rows["d"].get("matched") is False and "could not be copied" in rows["d"]["out"], rows
     finally:
         project.stop()
