@@ -5,8 +5,8 @@ import {esc, unseen, tallySvg} from './dom.js';
 import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, axisWidth, mark, pinLeft} from './draw.js';
-import {trim, bare} from './fmt.js';
-import {S} from './state.js';
+import {trim} from './fmt.js';
+import {S, agentName} from './state.js';
 import {failedOf} from './run.js';
 import {label} from './vocab.js';
 import {TIP, KIND} from './hints.js';
@@ -115,7 +115,7 @@ export function render(el, run, nodes) {
     pinLeft(el.querySelector('svg.tl'), LEFT);
     // who ran a stretch, only where its node had more than one for that kind of work, without the project's name its id
     // carries (a prefix common to every agent was none: the user's own `agent` shares nothing — critic 17)
-    const who = x => new Set(work.filter(w => w.node === x.node && w.kind === x.kind).flatMap(w => w.agents)).size > 1 && x.agents.map(a => bare(a, S.project)).join(', ');
+    const who = x => new Set(work.filter(w => w.node === x.node && w.kind === x.kind).flatMap(w => w.agents)).size > 1 && x.agents.map(agentName).join(', ');
     // the row's name in a tip only where its label is off the screen
     const named = id => unseen(el.querySelector(`.tl-row[data-node="${CSS.escape(id)}"] .tl-name`)) && name(id);
     bindFocus(el, e => {

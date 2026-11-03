@@ -94,7 +94,10 @@ const CALLS = ['ESCALATED', 'CHALLENGED', 'BLOCKED'];
 // machine issuer's to answer — in the strip as its turn or its wait, never here as a call on a person (critic).
 // …and under SEMI only the top the user's agent holds (`boundary` = k holds depths 0…k−1; the root by default): below it
 // a registered executor issues, and the engine refuses a person's move there (critic)
-const onAPerson = t => { const m = S.graph.mode; return m?.mode === 'auto' ? isRoot(t)
+// …and on the root the engine says: a move its mode gives the system (`performed_by`) is made without a person: a red chip stood
+// on a dispute the system answered 54 s later (live critic); a user's own dispute stays his
+const madeWithout = t => S.frontier?.steps?.some(x => x.task_id === t.id && x.performed_by === 'system');
+const onAPerson = t => { const m = S.graph.mode; return m?.mode === 'auto' ? isRoot(t) && !madeWithout(t)
     : m?.mode === 'semi' ? (S.run?.depth ?? depths(S.tasks))[t.id] < (m.boundary || 1) : true; };
 const byState = s => { const ts = S.tasks.filter(t => t.state === s && onAPerson(t));
     return need(ts.length, label(s).toLowerCase(), ts.map(t => t.id), ts.map(t => named(t.id))); };
@@ -188,8 +191,7 @@ export async function drawHeader() {
         // …and a node a state chip already shows is not counted twice.
         // (dropped only where that chip IS shown: under AUTO a person's own move below the root has none — critic)
         const shown = t => CALLS.includes(t.state) && onAPerson(t);
-        // the engine's `mine`, as it is: under AUTO it marks the customer's own rulings on the root (a user's dispute) —
-        // and today also a system dispute there, which /actions does not narrow by the mode lock: engineering's to fix
+        // the engine's `mine`, as it is: under AUTO it marks the customer's own rulings on the root (a user's dispute)
         const own = (f.steps || []).filter(x => x.mine);
         const mine = own.filter(x => !shown(taskOf(x.task_id))), me = myRole() || 'you', blocked = f.blocked_by || [];
         chips = (f.stuck ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,

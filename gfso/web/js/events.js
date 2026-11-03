@@ -4,12 +4,12 @@
 import {esc, tally} from './dom.js';
 import {bindFocus, focus, watch, point} from './store.js';
 import {glyph} from './draw.js';
-import {hm, day, bare, unref} from './fmt.js';
-import {S, kept, keep} from './state.js';
+import {hm, day, unref} from './fmt.js';
+import {S, kept, keep, agentName} from './state.js';
 import {PROJECT} from './api.js';
 import {at, said, failedOf, failingNow} from './run.js';
 import {failedWords, TIP} from './hints.js';
-import {CARRIED, label, statusLabel, delivered} from './vocab.js';
+import {CARRIED, label, statusLabel, delivered, enteredWord} from './vocab.js';
 
 const KINDS = {
     verdict: ['PASS', 'FAIL'], delivery: ['DELIVER'], assignment: ['ASSIGN', 'ACCEPT', 'REOPEN'],
@@ -42,8 +42,8 @@ function row(r) {
     const sig = a.signal === 'PASS' || a.signal === 'FAIL' ? glyph(a.signal, 3.5) : '';
     return `<li class="ev ev-${r.kind}${a.rejected ? ' ev-rejected' : ''}"><time>${hm(r.t)}</time>
         <span class="ev-sig">${sig}${a.signal}${a.rejected ? ' · refused' : ''}</span>
-        <span class="ev-move">${a.old_state && a.new_state ? `${label(a.old_state)} → ${label(a.new_state)}` : a.rejected ? 'nothing changed' : esc(a.error || '')}</span>
-        <span class="ev-src">${esc(a.source ? bare(a.source, S.project) : a.signal === 'TIMEOUT' ? 'clock' : '')}</span>
+        <span class="ev-move">${a.old_state && a.new_state ? `${label(a.old_state)} → ${enteredWord(a)}` : a.rejected ? 'nothing changed' : esc(a.error || '')}</span>
+        <span class="ev-src">${esc(a.source ? agentName(a.source) : a.signal === 'TIMEOUT' ? 'clock' : '')}</span>
         ${a.failed_criteria?.length ? `<span class="ev-failed">${a.failed_criteria.map(c => `<em>${esc(c)}</em>`).join('')}</span>` : ''}
         ${prose.length ? `<details data-key="${esc(`r|${a.task_id}|${a.timestamp}|${a.signal}`)}"${opened.has(`r|${a.task_id}|${a.timestamp}|${a.signal}`) ? ' open' : ''}><summary>${prose.map(p => p[0]).join(' · ')}</summary>${prose.map(([k, v]) => `<p><b>${k}</b> ${esc(v)}</p>`).join('')}</details>` : ''}</li>`;
 }
@@ -54,7 +54,7 @@ const days = (rs, i) => (i ? day(rs[i].t) !== day(rs[i - 1].t) : rs.some(r => da
     ? `<li class="ev-day">${day(rs[i].t)}</li>` : '';
 
 function head(id, name, node, run, rs) {
-    if (id === RUN) return `<summary><span class="ev-node">the run</span><span class="ev-rounds">on no node — stops, starts, the mode, tech reports</span>
+    if (id === RUN) return `<summary><span class="ev-node">the run</span><span class="ev-rounds">on no node — the plan's writing, stops, starts, the mode, tech reports</span>
         <time>${rs[0] ? `${day(rs[0].t)} ${hm(rs[0].t)}` : ''}</time></summary>`;
     const rounds = run.rounds[id] || [], fails = rounds.filter(r => r.verdict === 'FAIL'), lastFail = fails.at(-1);
     const last = rounds.at(-1), why = lastFail && `${failingNow(rounds, node?.state) ? 'failing' : 'last FAIL'} (round ${lastFail.n}): ${failedWords(failedOf(run, id, lastFail.failed))}`;

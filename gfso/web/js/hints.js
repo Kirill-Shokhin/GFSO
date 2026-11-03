@@ -18,8 +18,8 @@
 //              projects.js delete, acts.js, goal.js); forms' own field help (index.html goal panel, goal.js).
 //   work.js  — the line under the Models table naming sessions that spent nothing (content, not a hint).
 import {esc} from './dom.js';
-import {dur, hm, hms, usd, money, NOT_REPORTED, tok, pct, cap, plural, bare} from './fmt.js';
-import {S} from './state.js';
+import {dur, hm, hms, usd, money, NOT_REPORTED, tok, pct, cap, plural} from './fmt.js';
+import {S, agentName} from './state.js';
 import {statesIn, label, TOKENS, WRITES, nameOf} from './vocab.js';
 
 // ── the renderers ──
@@ -238,6 +238,8 @@ const DOING = {review_decomposition: 'reviewing the plan', join_whole: 'joining 
     observation: 'observing its place',
     EXECUTING: 'executing', REWORKING: 'reworking', VALIDATING: 'validating'};
 export const doing = (verb, kind) => DOING[verb] || KIND[kind]?.doing || verb.replace(/_/g, ' ');
+// a bar's round: a session of the round's work or its check; a plan, a consent or an issuer's turn delivered nothing (live critic)
+const roundOf = (x, r) => r && (x.kind === 'val' ? `Round ${r.n}: ${r.verdict || 'no verdict yet'}` : x.kind === 'exec' && `Round ${r.n}`);
 export const STRIP = {
     live: (name, row) => hover(name, row),
     block: (n, of, direct, through) => hover(`${n} wait on ${of}`, 'None starts until it passes', direct,
@@ -248,7 +250,7 @@ export const STRIP = {
     more: rows => hover(`${rows.length} more at work`, rows),
     // what the chip does not say: where the session runs and since when — its act is the chip's own words (critic, 2026-11-01:
     // «auto_decompose — a session…» beside «planning» named one act two ways)
-    running: at => `A session of this server, since ${at}`,
+    running: (at, model) => model ? `A session of this server, since ${at}` : `The server's own step, no model, since ${at}`,
     carried: (top, act) => `Carried by the session on ${top}, ${act}`,
     idle: 'In a working state; no process of this server runs it',
     // a role a line: its share of the spend drawn, its sum at the end; sessions in the label (the author: no figures run on
@@ -297,7 +299,7 @@ export const TIP = {
     node: (t, name, badge, waits, rs, criteria, failing, sentBack) => card(name || '',
         [rs.length && roundsLine(rs), failing && `Failing: ${failing}`,
          Array.isArray(waits) ? waits.length === 1 ? `Waits on ${waits[0]}` : [`Waits on ${waits.length}:`, waits.map(n => `– ${n}`)] : waits && `Waits on ${waits}`,
-         criteria && (criteria === 1 ? '1 criterion' : `${criteria} criteria`), t.assignee && `Del: ${bare(t.assignee, S.project)}`,
+         criteria && (criteria === 1 ? '1 criterion' : `${criteria} criteria`), t.assignee && `Del: ${agentName(t.assignee)}`,
          sentBack.length && ['Sent back inside:', sentBack.map(n => `– ${n}`)]], badge),
     // ONE SESSION of a stretch passed on from session to session — its own piece of the bar between the cuts, saying itself:
     // its time, cost, tokens, round, and, where it passed its work on («passed on», never «handed over», the key's word for
@@ -308,7 +310,7 @@ export const TIP = {
     // validation's piece keeps the round's verdict and what failed, its own result
     session: (m, x, p, r, f, name, who) => card(`${cap(KIND[m.kind].name)}, ${dur(m.end - m.start)}${m.cost ? `\t${usd(m.cost)}` : ''}`, [
         name, span(m), m.tokens && `${tok(m.tokens)} tokens`, who,
-        r && (m.kind === 'val' ? `Round ${r.n}: ${r.verdict || 'no verdict yet'}` : `Round ${r.n}`), m.kind === 'val' && f && failedRows(f),
+        roundOf(m, r), m.kind === 'val' && f && failedRows(f),
         m.resumed && 'Continued the session before it',
         // ONE meter on the window's scale: where it stopped filled, its budget a mark on the same line — two near-empty
         // meters side by side read 114k against 50k as 30k against 50k (audit B14)
@@ -327,7 +329,7 @@ export const TIP = {
     // the node had more than one (`who`, timeline.js), without the project's name every id carries.
     bar: (x, r, f, name, who) => card(`${cap(KIND[x.kind].name)}, ${dur(x.end - x.start)}${x.cost ? `\t${usd(x.cost)}` : ''}`, [
         name, span(x), x.tokens && `${tok(x.tokens)} tokens`, who,
-        r && (x.kind === 'val' ? `Round ${r.n}: ${r.verdict || 'no verdict yet'}` : `Round ${r.n}`), x.kind === 'val' && f && failedRows(f),
+        roundOf(x, r), x.kind === 'val' && f && failedRows(f),
         x.parts > 1 && [`${x.parts} processes, ${dur(x.busy)} busy`, x.kind === 'val' ? 'the validator works in batches of probes'
             : [x.continued && `${x.continued} continued ${x.continued > 1 ? 'their' : 'its'} session`, x.retried > 0 && `${x.retried} retried`]
                 .filter(Boolean).join(', ')].filter(Boolean).join(': '),

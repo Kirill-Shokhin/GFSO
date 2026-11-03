@@ -66,7 +66,9 @@ ${c.stage}`, n = next[k];
         let e = at(rs.at(-1).ts);
         const work = rs.reduce((s, c) => s + c.duration_ms, 0), from = e - work, k = `${rs[0].node_id}
 ${rs[0].stage}`;
-        const spawn = rs.length > 1 ? Math.max(-Infinity, ...(spawns[rs[0].node_id] || []).filter(t => t <= from && t >= (prev[k] ?? -Infinity))) : -Infinity;
+        // …a validation too: its pinned checks run before its model is called, the bar began 40 s after the process did and two at once read as one (live critic)
+        const val = kindOf(rs[0].stage) === 'val';
+        const spawn = rs.length > 1 || val ? Math.max(-Infinity, ...((val ? spawns.val : spawns.exec)[rs[0].node_id] || []).filter(t => t <= from && t >= (prev[k] ?? -Infinity))) : -Infinity;
         const gap = spawn > -Infinity ? (from - spawn) / rs.length : 0;
         for (let i = rs.length - 1; i >= 0; i--) { const d = rs[i].duration_ms + gap; span.set(rs[i], [e - d, e]); e -= d; }
         prev[k] = at(rs.at(-1).ts);
@@ -77,17 +79,18 @@ function sessions(calls, audit, pipeline, tasks = []) {
     // a turn that led to no signal, a declined one, is its issuer's: Del of the parent, a root's own (§10.1)
     const byId = new Map(tasks.map(t => [t.id, t])), issuerOf = id => (byId.get(byId.get(id)?.parent_id) ?? byId.get(id))?.assignee;
     calls = calls.filter(c => c.duration_ms > 0 && c.node_id);
-    const spawns = {};
-    for (const p of pipeline) { const {node, text} = said(p.message); if (node && /^executor \S+ spawned/.test(text)) (spawns[node] ??= []).push(at(p.ts)); }
+    const spawns = {exec: {}, val: {}};
+    for (const p of pipeline) { const {node, text} = said(p.message); const of = /^executor \S+ spawned/.test(text) ? spawns.exec : /^independent validator/.test(text) ? spawns.val : null; if (node && of) (of[node] ??= []).push(at(p.ts)); }
     const spanOf = spans(calls, spawns);
     return calls.map(c => {
         const [start, end] = spanOf.get(c), kind = kindOf(c.stage);
-        // the ledger names no agent: the one who signed the node's next act after the call is it
+        // the ledger names no agent: the one who signed the node's next act after the call is it; an issuer's turn is its
+        // issuer's (§10.1) whatever signs next: three turns moved from exec to agent on an ACCEPT_CHALLENGE 20 min later (live critic)
         const signer = audit.find(a => a.task_id === c.node_id && !a.rejected && a.t >= end - 1e3
             && SIGNS[kind]?.includes(a.signal));
         return {node: c.node_id, kind, stage: c.stage, start, end, ms: c.duration_ms, cost: c.cost_usd || 0,
                 tokens: [c.input_tokens, c.output_tokens, c.cache_input_tokens].reduce(add, null),
-                out: c.output_tokens ?? null, model: c.model, agent: signer?.source || (kind === 'issuer' && issuerOf?.(c.node_id)) || null, priced: (c.cost_usd || 0) > 0,
+                out: c.output_tokens ?? null, model: c.model, agent: (kind === 'issuer' && issuerOf?.(c.node_id)) || signer?.source || null, priced: (c.cost_usd || 0) > 0,
                 handover: c.handover || 0, resumed: !!c.resumed, peak: c.peak_context ?? null, window: c.context_window ?? null, budget: c.context_budget ?? null};
     });
 }

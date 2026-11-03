@@ -3,8 +3,8 @@
 import {esc, tally, lasting} from './dom.js';
 import {TIP, KIND, levelName, sessionsOf} from './hints.js';
 import {bindFocus, bringSelected} from './store.js';
-import {dur, trim, money as reported, NOT_REPORTED, tok, bare} from './fmt.js';
-import {S} from './state.js';
+import {dur, trim, money as reported, NOT_REPORTED, tok} from './fmt.js';
+import {S, agentName} from './state.js';
 import {concurrency} from './run.js';
 
 
@@ -44,19 +44,21 @@ export function render(el, run, nodes) {
     // ids without the project's name, as everywhere (f76e1a9) — no caption naming the cut: `agent` and the system's own
     // sessions never carried it (audit C3); the sessions no assignee ran are the system's planning and issuer turns (C4)
     const ids = Object.keys(c.byAgent);
-    const agentRows = ids.map(id => ({id, label: id === '—' ? 'the system' : bare(id, S.project), parts: c.byAgent[id],
+    const agentRows = ids.map(id => ({id, label: id === '—' ? 'the system' : agentName(id), parts: c.byAgent[id],
         peak: concurrency(run.sessions.filter(s => (s.agent || '—') === id && !s.open)).peak}))
         .sort((a, b) => b.peak - a.peak || a.label.localeCompare(b.label));
     const nodeRows = Object.entries(node).map(([id, parts]) => ({id, label: name(id), parts}))
         .sort((a, b) => Object.values(b.parts).reduce((s, p) => s + p.cost, 0) - Object.values(a.parts).reduce((s, p) => s + p.cost, 0));
     const levelRows = Object.entries(level).sort(([a], [b]) => a - b).map(([d, parts]) => ({label: levelName(d), parts}));
     const kinds = Object.keys(KIND).filter(k => c.byKind[k]);
+    // nothing booked yet says nothing: «not reported», «0s», «0.0× the run» stood under a plan at work (live critic)
+    const booked = Object.values(c.byKind).some(k => k.procs);
     el.innerHTML = `<div class="cs">
         <div class="cs-tiles">
-            ${tile(Object.values(c.byKind).some(k => k.procs) ? money(Object.values(c.byKind)) : '—', 'spent', c.unpriced && tally(c.unpriced, 'unpriced', TIP.unpriced))}
-            ${tile(tok(c.tokens), 'tokens', 'cache included', c.untold && c.tokens != null && tally(c.untold, 'reported none'))}
+            ${tile(booked ? money(Object.values(c.byKind)) : '—', 'spent', c.unpriced && tally(c.unpriced, 'unpriced', TIP.unpriced))}
+            ${tile(booked ? tok(c.tokens) : '—', 'tokens', 'cache included', c.untold && c.tokens != null && tally(c.untold, 'reported none'))}
             ${tile(lasting(run.clock.workedFrom, run.clock.worked), 'run time', run.clock.folds.length && tally(dur(run.clock.folds.reduce((s, f) => s + f.to - f.from, 0)), 'idle, folded'))}
-            ${tile(dur(c.busy), 'session time', tally(`${(c.busy / Math.max(run.clock.worked, 1)).toFixed(1)}×`, 'the run'))}
+            ${tile(booked ? dur(c.busy) : '—', 'session time', booked && tally(`${(c.busy / Math.max(run.clock.worked, 1)).toFixed(1)}×`, 'the run'))}
             ${tile(run.exec.peak, 'executors at once', tally(run.val.peak, 'validators'))}
         </div>
         <div class="cs-legend">${kinds.map(k => `<span><i class="cs-${k}"></i>${KIND[k].name} <b>${money([c.byKind[k]])}</b>`

@@ -55,6 +55,8 @@ export const cancelled = t => t?.state === 'ABANDONED' || t?.done_reason === 'CA
 export const goalWord = root => !terminal(root?.state) ? '' : delivered(root) ? 'done' : root.done_reason === 'FAIL' ? 'failed' : 'cancelled';
 // a node the plan left unnamed is said by its id, never as nothing
 export const nameOf = t => t?.name || t?.id;
+// the word for a state a move entered: a contract offered again after consent or a dispute has started, «Not started» 39 min in read as nothing done (live critic)
+export const enteredWord = a => a.new_state === 'OFFERED' && a.old_state !== 'IDLE' ? 'Offered again' : label(a.new_state);
 // A Dep edge's bare declaration (`dep__…` with no check) is no criterion of its consumer — V leaves it out (Spec.conjuncts);
 // a `dep__` that pins a check on this result is one, like any other. The criteria a verdict is over, by name.
 export const conjunct = c => !c?.depends_on || !!c.check?.length;

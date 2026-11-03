@@ -6,12 +6,12 @@
 import {$, el, esc, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task} from './api.js';
-import {S, hasKids, taskOf, myRole} from './state.js';
+import {S, hasKids, taskOf, myRole, agentName} from './state.js';
 import {bucketOf, statusLabel, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
 import {glyph, mark} from './draw.js';
-import {when as at_, stamp, trim, plural, bare, spoken} from './fmt.js';
+import {when as at_, stamp, trim, plural, spoken} from './fmt.js';
 
 const when = iso => at_(at(iso));
 const link = (facet, label) => `<button class="pn-link" data-action="read" data-facet="${facet}">${label} →</button>`;
@@ -45,7 +45,7 @@ function head({d, rounds}) {
         + `<div class="pn-status">${pill(d, v)}<span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v === 'undef' ? '⊥' : v}</span>`
         + `<span class="pn-id"${PANEL.full(d.id)}>${esc(d.id)}</span></div>`
         + `<div class="pn-grid">`
-        + prop('Del', `<code>${esc(d.assignee ? bare(d.assignee, S.project) : '—')}</code>`)
+        + prop('Del', `<code>${esc(d.assignee ? agentName(d.assignee) : '—')}</code>`)
         + prop('Round', n ? `<b class="pn-fig">${n}</b>${inWork ? ' in work' : ''}` : '')
         + prop('Result', !d.parent_id && delivered(d) && S.graph.landed ? `<code${H.landed(S.graph.landed)}>${esc(S.graph.landed.branch || S.graph.landed.path)}</code>` : '')
         // a deadline only where it still binds (audit D18)
@@ -220,7 +220,7 @@ const txt = x => Array.isArray(x) && x.every(i => typeof i === 'string') ? `<ul 
 
 // Who produced a verdict: a hand or an instrument — nothing closes on impression (HTTP door, 2026-09-02).
 export const signer = vr => vr.by_hand ? byHand(esc(vr.validator || ''))
-    : `validated by ${esc(vr.validator ? bare(vr.validator, S.project) : 'an instrument')}${vr.validator_model ? `, ${esc(modelName(vr.validator_model))}` : ''}`;
+    : `validated by ${esc(vr.validator ? agentName(vr.validator) : 'an instrument')}${vr.validator_model ? `, ${esc(modelName(vr.validator_model))}` : ''}`;
 export const perCrit = vr => Object.fromEntries((vr?.per_criterion || []).map(c => [c.criterion, c]));
 
 // A criterion's pinned check is what makes it a contract (A1, §2) — folded, the longest part of it.
@@ -324,7 +324,7 @@ const composition = ({d}) => section('Composition — the parts', `<div class="c
 
 // The node's audit slice, newest first; what a signal carried is folded under its line.
 const history = ({d}) => section('History — newest first', ul('item-list audit-list', [...d.audit].reverse().map(a => {
-    const line = `${when(a.timestamp)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? label(a.new_state) : 'rej'}${a.source ? ' by ' + esc(bare(a.source, S.project)) : ''}`;
+    const line = `${when(a.timestamp)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? enteredWord(a) : 'rej'}${a.source ? ' by ' + esc(agentName(a.source)) : ''}`;
     const more = CARRIED.filter(([k]) => a[k] && a[k].length !== 0).map(([k, l]) => `<div class="rd-field"><b>${l}</b>${txt(a[k])}</div>`).join('');
     return `<li class="${a.rejected ? 'check-fail' : ''}">${more ? `<details data-key="${esc(`h|${d.id}|${a.timestamp}|${a.signal}`)}">`
         + `<summary>${line}</summary>${more}</details>` : line}</li>`;

@@ -5,12 +5,15 @@ import {PROJECT} from './api.js';
 import {childrenOf} from './tree.js';
 import {cancelled} from './vocab.js';
 import {runNow} from './run.js';
+import {bare} from './fmt.js';
 
 // THE WHOLE SURFACE, written by its owners and read by the views:
 //   model.js — tasks, graph, closures, missing (the graph read); frontier, runState, waiting, steps, mySteps (the
 //              engine's next_steps); run, pipeline (the run read and built); reports, metrics (the system's own reads)
 //   main.js  — inflight (the server's processes), agentId, reload (the page's refresh policy: units that change the
 //              graph call it); projects.js — project; graph.js — mineOnly
+// an agent's id without the project's name, as everywhere; whole where the cut would read as a node: «Del root» beside the node root read backwards (live critic)
+export const agentName = id => { const b = bare(id, S.project); return S.tasks.some(t => t.id === b) ? id : b; };
 export const S = {tasks: [], graph: {nodes: [], edges: []}, closures: [], missing: '',
                   frontier: null, runState: null, waiting: null, steps: null, mySteps: new Map(),
                   run: null, pipeline: [], reports: [], metrics: null,
