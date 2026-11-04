@@ -9,7 +9,7 @@ import {failingNow, failedOf} from './run.js';
 import {TIP, waitWords, failedWords} from './hints.js';
 import {css, beat} from './draw.js';
 import {childrenOf, ancestorsIn} from './tree.js';
-import {planChanged, decide, foldInto, isHidden, unfold, refold, refoldOne, openHere, foldOf, asking} from './fold.js';
+import {planChanged, decide, decidedBefore, foldInto, isHidden, unfold, refold, refoldOne, openHere, foldOf, asking} from './fold.js';
 
 // Leaf tokens are hex literals (draw.js css).
 const [INK, SOFT, FAINT, PAPER, BG, ACC, TOMB, TOMB_LINE] = ['--ink', '--ink-soft', '--ink-faint', '--paper', '--bg', '--acc', '--ui-tomb', '--ui-tomb-line'].map(css);
@@ -344,8 +344,11 @@ export async function drawGraph(found) {
         // the moves below stay in one task, so the whole drawing is never seen
         const view = {zoom: cy.zoom(), pan: {...cy.pan()}}, sameProject = S.project === drawnIn;
         if (planChanged(g.nodes)) {
-            place(g); cy.resize();
-            if (cy.nodes().length) { await laid(false); cy.fit(undefined, 30); decide(g.nodes, cy.zoom() < FLOOR); cy.viewport(view); }
+            cy.resize();
+            if (!decidedBefore(g, [cy.width(), cy.height(), FLOOR])) {
+                place(g);
+                if (cy.nodes().length) { await laid(false); cy.fit(undefined, 30); decide(g.nodes, cy.zoom() < FLOOR); cy.viewport(view); }
+            }
         }
         const undrawable = place(g);
         // the same nodes drawn again keep the view; so does a plan that changed under a view the reader has touched (the view

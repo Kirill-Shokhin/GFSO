@@ -793,7 +793,7 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
                      f"and did not close anything — a later record is evidence about the same "
                      f"delivery, never a replacement for the one that was acted on."),
         }
-    if str(task_id) in engine.refuted_passes():
+    if (engine.closure_of(TaskId(task_id)) or {}).get("refuted"):    # this node's own: the list walks every node
         out["contradicts_state"] = (
             f"{task_id} is {t.state.name} at PASS, and the verdict above — its CURRENT one — is "
             f"FAIL. The state is showing a signature that landed before this verdict did. This is "

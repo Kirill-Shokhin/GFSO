@@ -317,3 +317,15 @@ def test_every_verdict_is_served_with_what_each_criterion_read():
     assert got[0]["per_criterion"][0]["verdict"] == "fail" and got[1]["per_criterion"], got
     assert all("log_at" in o and "iteration" in o for o in got), got
     e.stop()
+
+
+def test_the_page_reads_many_verdicts_at_once_with_each_nodes_own_answers():
+    e = _seam_delivered_kid()
+    _fail(e, "kid")
+    with TestClient(create_app(e)) as c:
+        many = c.post("/api/verdicts", json=["kid", "nosuch", "root"]).json()
+        for i in ("kid", "root"):
+            assert many[i] == {**c.get(f"/api/tasks/{i}/verdict").json(), "history": c.get(f"/api/tasks/{i}/verdicts").json()}
+        assert many["kid"]["verdict"] and many["kid"]["history"], many
+        assert "nosuch" not in many and c.post("/api/verdicts", json=[]).json() == {}
+    e.stop()

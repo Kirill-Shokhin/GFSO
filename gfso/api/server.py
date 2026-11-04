@@ -888,8 +888,20 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
         # would put that defect back and, worse, tell the reader to run a verb this door does not
         # serve. `criterion=` is accepted for a caller who wants one entry, and changes nothing
         # about the whole read being whole.
+        return _whole_verdict(e, task_id, criterion)
+
+    def _whole_verdict(e: Engine, task_id: str, criterion: str = "") -> dict:
         return _naming_the_scope(
             _tools.TOOLS["get_verdict"](e, task_id, criterion=criterion, _trim=False), _scope_name())
+
+    @app.post("/api/verdicts")
+    def get_many_verdicts(ids: list[str] = Body(...)):
+        """Each named node's verdict, as `/api/tasks/{id}/verdict` answers it, with its `history` as `/verdicts` does: the
+        page reads them at every load, two requests a node. A POST because a plan's ids outgrow a request line. A node the
+        graph does not hold is left out."""
+        e: Engine = _e()
+        return {i: {**_whole_verdict(e, i), "history": observations(e.graph._storage, TaskId(i))}
+                for i in ids if e.graph.get_task(TaskId(i)) is not None}
 
     def _hash_registry_file() -> str:
         # the stamp `up` compares it with, by the one function that makes it (D-F18: two hand copies)

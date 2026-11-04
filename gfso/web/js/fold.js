@@ -2,7 +2,7 @@
 // The canvas draws what this says and measures for it; nothing here knows of the canvas.
 // A plan too large to read whole folds a part's own parts — a 49-part plan drawn whole was dust at zoom 0.24 (audit DQ1/E2);
 // the goal's parts always stand, and the reader unfolds a part by its tag or a double-click.
-import {S, taskOf, nowOf} from './state.js';
+import {S, taskOf, nowOf, kept, keep} from './state.js';
 import {bucketOf, cancelled, contested, closedByFail} from './vocab.js';
 import {failingNow} from './run.js';
 import {depths, ancestorsIn} from './tree.js';
@@ -24,6 +24,17 @@ export function planChanged(nodes) {
 export const decide = (nodes, tooSmall) => {
     const parent = Object.fromEntries(nodes.map(n => [n.id, n.parent_id]));
     folding = tooSmall && nodes.some(n => parent[parent[n.id]]);
+    keep(`fold:${S.project}`, JSON.stringify({measured, folding}));
+};
+// The same drawing on the same canvas measures the same, so a load of a plan this viewer has seen lays the whole out no more:
+// on a phone that layout was a second of the load. False: measure, and `decide` answers.
+let measured = null;
+export const decidedBefore = (g, canvas) => {
+    measured = JSON.stringify([g.nodes.map(n => [n.id, n.name]), g.edges.map(e => [e.source, e.target, e.type]), canvas]);
+    const was = kept(`fold:${S.project}`, JSON.parse);
+    if (was?.measured !== measured) return false;
+    folding = was.folding;
+    return true;
 };
 
 // the drawn node standing for each node: itself, or the outermost ancestor whose parts are folded
