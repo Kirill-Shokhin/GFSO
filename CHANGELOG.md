@@ -190,6 +190,10 @@ that would establish one (E3) has shown so far, and what not, is in the README a
   by the system's issuer after a session that ran commands over the delivery, under the criteria it names and never the last
   check of one; the part stays as it settled and the verdict names what no longer runs (`checks_no_longer_run`). A check a ruling
   left running stays demanded and its `FAIL` stands. A plan handed in stops instead.
+  by the system's issuer once it has run it, under the criteria it names and never the last check of one; the part stays as
+  it settled and the verdict names what no longer runs (`checks_no_longer_run`). A plan handed in stops instead.
+- A `docker run` cut by its time while Docker was still making the container no longer leaves that container standing with its
+  mounts after a removal that answered 0.
 - A call in a container whose ending meets a Docker slow to answer still ends its client on the host; left standing, it held
   whoever read it, a `plan` for 24 minutes.
 - `gfso setup` brings a registration naming another installation to this one, and says where a directory's own entry goes

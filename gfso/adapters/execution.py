@@ -566,7 +566,7 @@ def _read(vol: str, subs: list, image: "str | None" = None) -> dict:
                    "sh", str(DISK_DEPTH + 1), str(DISK_READ_S), *(f"/v/{s}" for s in subs)],
                   timeout=2 * DISK_READ_S * len(subs) + 60, text=True)    # …each directory's two walks
     except subprocess.TimeoutExpired:
-        run(["docker", "rm", "-f", name], timeout=60)        # …the CLI ended, not its container (critic: one leaked)
+        _end_cut(name)                                       # …the CLI ended, not its container (critic: one leaked)
         raise
     if got.returncode:
         raise OSError(f"{vol} was not read: {(got.stderr or '').strip()[-200:]}")
@@ -760,6 +760,15 @@ def file_record_path(project: str) -> Path:
     return data_dir() / "files" / f"{component(project)}.jsonl"
 
 
+def _end_cut(name: str) -> None:
+    """The container of a `docker run` cut by its time. Cut while Docker makes it, it appears after a removal that answered
+    0 (13 of 80 cuts at 50–100 ms, within 1.5 s), holding its mounts: removed again until that time has passed; later still,
+    a server's next start sweeps it (`end_leftovers`)."""
+    for wait in (0, 0.5, 1, 2):
+        time.sleep(wait)
+        run(["docker", "rm", "-f", name], timeout=60)
+
+
 def _files_changed(vol: str, since: dict, image: "str | None") -> dict:
     """{subpath: (its clock now, its entries, cut?) or None where this image cannot say} of the volume `vol`, read-only, in a
     container of its own as `_read`'s, as root past every mode, each bounded in what reaches this process."""
@@ -771,7 +780,7 @@ def _files_changed(vol: str, since: dict, image: "str | None") -> dict:
                    "sh", str(FILES_BYTES), str(DISK_READ_S), *(x for sub, s in since.items() for x in (sub, s))],
                   timeout=DISK_READ_S * len(since) + 60)
     except subprocess.TimeoutExpired:
-        run(["docker", "rm", "-f", name], timeout=60)
+        _end_cut(name)
         raise
     if got.returncode:           # …killed partway: what it read is not all, and the clock must not move over it
         raise OSError(f"its reader exited {got.returncode}: {(got.stderr or b'').decode(errors='replace').strip()[-200:]}")
@@ -1873,7 +1882,7 @@ class Volume:
                        "sh", "-c", *script],
                       timeout=self.copy_time, **kw)
         except subprocess.TimeoutExpired:
-            run(["docker", "rm", "-f", one], timeout=60)        # …a copy cut by its time must not go on writing
+            _end_cut(one)                                       # …a copy cut by its time must not go on writing
             raise
         if got.returncode:
             run(["docker", "rm", "-f", one], timeout=60)

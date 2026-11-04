@@ -272,6 +272,30 @@ def test_live_a_volume_lost_under_its_record_stops_the_place_and_is_never_refill
         x.volume.remove()
 
 
+def test_a_container_docker_makes_after_the_cut_goes_too(tmp_path, monkeypatch):
+    """Cut while Docker makes it, a container appears after a removal that answered 0: measured on Docker, here by its shape."""
+    clock, stood = [0.0], []
+
+    def fake(args, **kw):
+        if args[:2] == ["docker", "run"]:
+            raise subprocess.TimeoutExpired(args, kw.get("timeout"))
+        if args[:3] == ["docker", "rm", "-f"]:
+            stood.append(clock[0] >= 1.4)     # …it stands by now, or this removal found nothing and answered 0 all the same
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(E, "run", fake)
+    monkeypatch.setattr(E.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    x = E.ContainerExecution("t", IMAGE, None, str(tmp_path / "state"), str(tmp_path / "ws"), "p")
+    monkeypatch.setattr(x.volume, "require", lambda mounts: None)
+    with pytest.raises(subprocess.TimeoutExpired):
+        x.volume._one_shot(IMAGE, [], ["true"], "cut")
+    assert any(stood), "no removal came after the container appeared"
+    stood.clear(), clock.__setitem__(0, 0.0)
+    with pytest.raises(subprocess.TimeoutExpired):
+        E._files_changed("v", {"a": "0"}, IMAGE)
+    assert any(stood), "no removal came after the container appeared"
+
+
 @live
 def test_live_a_copy_in_cut_by_its_time_leaves_no_copy_running_and_the_next_start_makes_it_whole(tmp_path,
                                                                                                     monkeypatch):
