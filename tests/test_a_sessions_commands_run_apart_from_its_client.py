@@ -417,10 +417,33 @@ def test_a_volume_gone_with_its_project_is_not_made_again_by_asking(tmp_path, mo
     E._FILES.clear()
     monkeypatch.setattr(E, "data_dir", lambda: tmp_path)
     E._FILES[("v", "s")] = {"since": "1", "work": ("p", "n", "r", "c"), "image": "i", "left": False}
-    monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=1))
     monkeypatch.setattr(E, "_files_changed", lambda *a: pytest.fail("a `docker run --mount` makes the volume"))
+    monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=1, stderr="error: Docker is not answering"))
+    E._record_files({})
+    assert E._FILES, "no answer is not gone: its clock stands for when Docker is back"
+    monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=1, stderr="Error: No such volume: v"))
     E._record_files({})
     assert not E._FILES
+
+
+def test_a_session_noted_after_the_list_was_asked_has_not_left_for_being_absent_from_it(tmp_path, monkeypatch):
+    E._FILES.clear()
+    monkeypatch.setattr(E, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(E, "_files_changed", lambda v, s, i: {"s": ("100.0", [], False)})
+    asked = time.monotonic()
+    E._FILES[("v", "s")] = {"since": "1", "work": ("p", "n", "r", "c"), "image": "i", "left": False, "noted": asked + 0.001}
+    E._record_files({}, asked)
+    assert E._FILES, "it started while the list was being read"
+    time.sleep(0.01)
+    E._record_files({})
+    assert not E._FILES
+
+
+def test_a_reader_that_died_moves_no_clock(monkeypatch):
+    monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=137, stdout=b"\0\1s\x01100.5\0f a\0", stderr=b"killed"))
+    with pytest.raises(OSError, match="137"):
+        E._files_changed("v", {"s": "1"}, "i")
 
 
 @live

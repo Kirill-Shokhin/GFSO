@@ -11,6 +11,7 @@ and ICMP and the live test's SCTP line goes; the filter's first two lines off an
 import json
 import os
 import subprocess
+import threading
 import time
 import uuid
 from types import SimpleNamespace
@@ -104,19 +105,49 @@ def test_a_freed_address_leaves_its_holder_and_the_next_user_s_flow_is_on_no_rec
     assert [r["to"] for r in _rows(data)] == ["1.1.1.1"]
 
 
-def test_a_stranger_on_a_freed_address_is_written_under_no_one(data):
-    """Attribution by the address alone: another installation's container took it within its holder's grace, and its
-    destinations and a million lost packets went on the record of the one that left (critic, ran)."""
+def test_a_stranger_on_a_freed_address_is_written_under_no_one_and_the_next_start_under_its_name_is(data):
+    """By the address alone a stranger went on the record of the one that left; by the link first read a place's next
+    container, the same name and address, was silently off it (critics, ran). The MAC of that start tells both."""
+    b = N._Book()
+    b.learn("/a|p|n|executor|172.17.0.2/aa:aa \n")
+    flow = lambda to, mac: json.dumps({**json.loads(_flow(to=to)), "mac": mac})
+    b.heard(flow("1.1.1.1", "aaaa"), 1.0)
+    b.heard(flow("6.6.6.6", "bbbb"), 2.0)
+    b.heard('{"drops": 1000000, "src": "172.17.0.2", "mac": "bbbb"}', 3.0)
+    assert [r.get("to") for r in _rows(data)] == ["1.1.1.1"]
+    b.learn("/a|p|n|executor|172.17.0.2/cc:cc \n")                    # …its next start, the same name and address
+    b.heard(flow("7.7.7.7", "cccc"), 4.0)
+    assert _rows(data)[-1]["to"] == "7.7.7.7"
+
+
+def test_an_address_a_standing_container_left_is_no_longer_its(data, monkeypatch):
+    """A switch moves a container to another address under the same name: the old stayed its for as long as the name stood."""
+    b = N._Book()
+    b.learn("/a|p|n|executor|172.17.0.2/aa \n", whole=True)
+    b.learn("/a|p|n|executor|172.19.0.3/bb \n", whole=True)
+    t = time.monotonic()
+    monkeypatch.setattr(N.time, "monotonic", lambda: t + N.GRACE_S + 1)
+    b.learn("/a|p|n|executor|172.19.0.3/bb \n", whole=True)
+    assert list(b.holders) == [("172.19.0.3", "bb")]
+
+
+def test_a_torn_line_stops_no_reader_and_is_said(data):
     b = _book()
-    b.heard(json.dumps({**json.loads(_flow(to="1.1.1.1")), "link": "vethA"}), 1.0)
-    b.learn("/a|p|n|executor|172.17.0.2 \n", whole=True)               # …a turn of the watch keeps what it knows
-    b.heard(json.dumps({**json.loads(_flow(to="1.1.1.2")), "link": "vethA"}), 2.0)
-    b.heard(json.dumps({**json.loads(_flow(to="6.6.6.6")), "link": "vethB"}), 3.0)
-    b.heard('{"drops": 1000000, "src": "172.17.0.2", "link": "vethB"}', 4.0)
-    assert [r.get("to") for r in _rows(data)] == ["1.1.1.1", "1.1.1.2"]
-    b.learn("/c|p|n|executor|172.17.0.2 \n")                           # …this installation's next, on its own link
-    b.heard(json.dumps({**json.loads(_flow(to="7.7.7.7")), "link": "vethC"}), 5.0)
-    assert _rows(data)[-1]["container"] == "c"
+    b.heard('{"drops": 5, "src": "172.17.0.2"}', 1.0)
+    with N.record_path("p").open("a") as f:
+        f.write('{"at": 1, "tor\n')
+    assert any("1 lines" in x for x in N.said_apart("p")) and any("5 packets" in x for x in N.said_apart("p"))
+
+
+def test_two_writers_tear_no_row(data):
+    """Three processes at full speed left torn lines and lost rows on Windows (critic, ran); this is one process's threads,
+    each with its own open, which contend for the same lock."""
+    path = data / "r.jsonl"
+    threads = [threading.Thread(target=lambda: [N.append(path, {"at": 1.0, "x": "y" * 500}) for _ in range(100)]) for _ in range(4)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    rows, bad = N.rows_of(path)
+    assert len(rows) == 400 and bad == 0
 
 
 def test_docker_gone_with_work_standing_leaves_a_gap_and_a_quiet_end_none(data, monkeypatch):
@@ -167,6 +198,7 @@ def test_a_server_gone_with_its_work_standing_leaves_a_gap_on_the_record(data, m
     E.end_leftovers()
     assert "a" in removed and "c" in removed and "b" not in removed
     assert "gap" in _rows(data)[0] and not (data / "network" / "q.jsonl").exists()
+    assert "gap" in json.loads(E.file_record_path("p").read_text().splitlines()[0]), "both records"
 
 
 def test_the_next_holder_of_an_address_takes_it_at_once(data):

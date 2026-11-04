@@ -33,7 +33,7 @@ from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MA
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
                          memory_ceiling, network_record_off, node_disk, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
-from gfso.adapters.records import append, said_of
+from gfso.adapters.records import append, said_of, wait_to_be_the_one
 from gfso.places import same_place
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, run_printing, spawn_kw
 
@@ -400,7 +400,17 @@ def watch_ceiling() -> None:
     Docker answers yet: it asks again each turn."""
     if not _WATCH.is_set():
         _WATCH.set()
-        threading.Thread(target=_watch_ceiling, name="gfso-ceiling", daemon=True).start()
+        threading.Thread(target=_the_one_watch, args=("ceiling", _watch_ceiling), name="gfso-ceiling", daemon=True).start()
+
+
+def _the_one_watch(name: str, watch, *args) -> None:
+    """`watch`, once no other process of this installation runs it: each with its own ledger and its own record of what it
+    ended, a second would charge a node with the system's writes and read another's end as a bound of its own (critic)."""
+    held = wait_to_be_the_one(data_dir() / f"{name}.watch")
+    try:
+        watch(*args)
+    finally:
+        held.close()
 
 
 def _own_of(ids: list) -> list:
@@ -496,6 +506,8 @@ def _disk_works(home: str) -> dict:
     got = run(["docker", "ps", "-a", "-s", "--filter", f"label={NODE}", "--filter", f"label={HOME}={home}", "--format",
                f'{{{{.ID}}}}\t{{{{.Names}}}}\t{{{{.State}}}}\t{{{{.Size}}}}\t{{{{.Label "{PROJECT}"}}}}\t'
                f'{{{{.Label "{NODE}"}}}}\t{{{{.Label "{ROLE}"}}}}\t{{{{.Image}}}}'], timeout=300, text=True)
+    if got.returncode:           # …Docker not answering is no installation with no work: every directory would read as left
+        raise OSError(f"Docker did not list its containers: {(got.stderr or '').strip()[-200:]}")
     rows = [r.split("\t") for r in (got.stdout or "").splitlines() if r.count("\t") == 7]
     rows = [r for r in rows if r[6] != "system"]
     mounts = run(["docker", "inspect", "-f", "{{.Id}}\t{{json .HostConfig.Mounts}}", *(r[0] for r in rows)],
@@ -731,7 +743,7 @@ def watch_disk() -> None:
     """The disk's watch, for this server's life (`_watch_disk`) over this installation's nodes, started once."""
     if not _DISK_WATCH.is_set():
         _DISK_WATCH.set()
-        threading.Thread(target=_watch_disk, args=(None, None, _home()), name="gfso-disk", daemon=True).start()
+        threading.Thread(target=_the_one_watch, args=("disk", _watch_disk, None, None, _home()), name="gfso-disk", daemon=True).start()
 
 
 #: what a reading of a volume's directories for what changed says of each, at most `FILES_BYTES`: `\0\1<dir>\1<its clock>\0`, or
@@ -771,6 +783,8 @@ def _files_changed(vol: str, since: dict, image: "str | None") -> dict:
     except subprocess.TimeoutExpired:
         run(["docker", "rm", "-f", name], timeout=60)
         raise
+    if got.returncode:           # …killed partway: what it read is not all, and the clock must not move over it
+        raise OSError(f"its reader exited {got.returncode}: {(got.stderr or b'').decode(errors='replace').strip()[-200:]}")
     said = {}
     for part in (got.stdout or b"").split(b"\0\1")[1:]:
         head, _, rest = part.partition(b"\0")
@@ -793,28 +807,30 @@ def _note_files(ex) -> None:
         for d in ex.writable():
             with _FILES_LOCK:
                 _FILES.setdefault(ex.volume.key(d), {"since": since}).update(
-                    work=(ex.project_name, ex.node, ex.role, ex.container), image=ex.image, left=False)
+                    work=(ex.project_name, ex.node, ex.role, ex.container), image=ex.image, left=False, noted=time.monotonic())
 
 
-def _record_files(works: dict) -> None:
+def _record_files(works: dict, asked: "float | None" = None) -> None:
     """S6's file half: what changed in every directory a session mounts writable, on its project's record on the host, read
     from outside the session (the disk's watch): nothing a session does to its own containers, its memory or its processes
     reaches this, whichever way it wrote and whether or not it ran a command. Where, not who: the system's own writes there
-    show too. A directory whose work left is read once more; one cut keeps its clock, so the next reading reads it again."""
+    show too. A directory whose work left is read once more; one cut keeps its clock, so the next reading reads it again.
+    `asked`: when `works` was asked of Docker: what was noted since is not gone for being absent from it."""
     with _FILES_LOCK:
         for k, w in works.items():
             for d in w["dirs"]:
                 _FILES.setdefault(d, {"since": "new"}).update(work=k, image=w["image"], left=False)
         standing = {d for w in works.values() for d in w["dirs"]}
         for d, f in _FILES.items():
-            f["left"] = d not in standing
+            f["left"] = d not in standing and f.get("noted", 0) < (time.monotonic() if asked is None else asked)
         now = dict(_FILES)
     for vol in {v for v, _ in now}:
         mine = {s: f for (v, s), f in now.items() if v == vol}
-        if any(f["left"] for f in mine.values()) and run(["docker", "volume", "inspect", vol], timeout=60).returncode:
-            for s in mine:                # …gone with its project: asking would have Docker make it again, empty
-                _FILES.pop((vol, s), None)
-            continue
+        if any(f["left"] for f in mine.values()) and (there := run(["docker", "volume", "inspect", vol], timeout=60, text=True)).returncode:
+            if "no such volume" in (there.stderr or "").lower():      # …gone with its project: asking would have Docker make it again, empty
+                for s in mine:
+                    _FILES.pop((vol, s), None)
+            continue                                                  # …or Docker did not answer: the clocks stand for when it does
         try:
             said = _files_changed(vol, {s: f["since"] for s, f in mine.items()}, next(iter(mine.values()))["image"])
         except (OSError, subprocess.TimeoutExpired) as e:
@@ -849,10 +865,11 @@ def _watch_disk(stop: threading.Event | None, every: float | None, scope: str, l
         try:
             bound = node_disk()
             ledger.begin()
+            asked = time.monotonic()
             works = _disk_works(scope)
             added = ledger.added(works, _disk_read(works))
             try:
-                _record_files(works)
+                _record_files(works, asked)
             except Exception as e:      # …the record's failure costs no one's bound
                 log.warning(f"what changed on Docker's disk was not recorded now ({e})")
             with ledger.lock:
@@ -1283,7 +1300,8 @@ def end_leftovers() -> None:
         if ids := [r[0] for r in rows if r[1] in ("", _home())]:
             _keep_logs(ids)
             for project in {r[2] for r in rows if r[1] == _home() and r[2]}:
-                append(network_record_path(project), {"at": time.time(), "gap": "a server went with its work standing: what that work did since may not be on the record"})
+                for record in (network_record_path(project), file_record_path(project)):
+                    append(record, {"at": time.time(), "gap": "a server went with its work standing: what that work did since may not be on the record"})
             run(["docker", "rm", "-f", *ids], timeout=120)
         run(["docker", "network", "prune", "-f", "--filter", f"label={HOME}={_home()}"], timeout=120)
 

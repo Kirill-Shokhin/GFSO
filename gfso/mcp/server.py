@@ -172,6 +172,11 @@ def _with_ui_link(name: str, out, project=None, engine=None):
 def _link_and_say(name: str, out: dict, project, engine) -> None:
     """What the person is told, only where it is so: the end by where the result landed (a part's `complete`, a run with
     no container, a base with no git say otherwise or nothing), the go only where it built work no one holds."""
+    # …a session that hid where it went was read only by whoever ran `gfso network` (critic): at the end it is told, a link
+    # that cannot be made or not
+    if engine is not None and name == "next_steps" and out.get("complete") and (said := said_apart(engine.project_name)):
+        out["the_records_say"] = said
+        out["say"] = "Tell them what the system's own records say of this run: `the_records_say`."
     try:
         link = _ui_link(project or out.get("active"))
     # the docstring's contract: a link is a convenience, and the verb's result is already correct without it
@@ -184,10 +189,8 @@ def _link_and_say(name: str, out: dict, project, engine) -> None:
             f"the branch `{where['branch']}` with their own untouched, {link}, and the one command that shows the result "
             "(`git worktree add`: a checkout refuses over uncommitted files); a next task starts from their HEAD: merge "
             "first to build on this." if where.get("branch") else f"where the result lies, `{where.get('path')}`, and {link}."))
-    # …a session that hid where it went was read only by whoever ran `gfso network` (critic): at the end it is told
-    if engine is not None and name == "next_steps" and out.get("complete") and (said := said_apart(engine.project_name)):
-        out["the_records_say"] = said
-        out["say"] = f"{out.get('say', '')} Tell them too what the system's own records say of this run: `the_records_say`.".strip()
+        if "the_records_say" in out:
+            out["say"] += " Tell them too what the system's own records say of this run: `the_records_say`."
     if name not in _UI_LINK_VERBS or "ui" in out:
         return
     out["ui"] = link

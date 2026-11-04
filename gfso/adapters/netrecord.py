@@ -19,7 +19,7 @@ from pathlib import Path
 
 from gfso.adapters import execution as E
 from gfso.adapters.execution import HOME, NODE, PROJECT, ROLE, LocalExecution, PlaceUnavailable, ceiling, executions, file_record_path, host_env, installation, network_record_path, run
-from gfso.adapters.records import append
+from gfso.adapters.records import append, rows_of
 from gfso.config import data_dir, network_record_off
 
 log = logging.getLogger(__name__)
@@ -61,15 +61,15 @@ def name(b, at):
         at += b[at] + 1
     return ".".join(parts)[:253]
 class Link:
-    def __init__(self, n, k):
-        self.n, self.k, self.seen, self.ports, self.src, self.lost, self.cut = n, k, set(), {}, None, 0, False
+    def __init__(self, k):
+        self.k, self.seen, self.ports, self.src, self.mac, self.lost, self.cut = k, set(), {}, None, "", 0, False
 links = {}
 changes = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, 0)
 changes.bind((0, 1))
 def tell(link):
     link.lost += struct.unpack("II", link.k.getsockopt(263, 6, 8))[1]
     if link.lost and link.src:
-        say(drops=link.lost, src=link.src, link=link.n)
+        say(drops=link.lost, src=link.src, mac=link.mac)
         link.lost = 0
 def close(n):
     try:
@@ -91,7 +91,7 @@ def scan():
                 k.setsockopt(socket.SOL_SOCKET, 26, struct.pack("HL", len(P), ctypes.addressof(code)))
                 k.bind((n, 3))
                 k.setblocking(False)
-                links[n] = Link(n, k)
+                links[n] = Link(k)
             except OSError:
                 pass
 scan()
@@ -105,7 +105,7 @@ def one(link):
     proto, hl = (p[20], 40) if v6 else (p[23], (p[14] & 15) * 4)
     src, dst = ((socket.inet_ntop(socket.AF_INET6, p[22:38]), socket.inet_ntop(socket.AF_INET6, p[38:54])) if v6 else
                 (socket.inet_ntoa(p[26:30]), socket.inet_ntoa(p[30:34])))
-    link.src = src
+    link.src, link.mac = src, p[6:12].hex()
     port = struct.unpack("!H", p[14 + hl + 2:14 + hl + 4])[0] if proto in (6, 17, 132, 136) and len(p) >= 14 + hl + 4 else 0
     asked = name(p, 14 + hl + 8 + 12) if proto == 17 and port == 53 else ""
     key = hash((proto, dst, port, asked))    # …a hash: a list of names at their longest would outgrow this container
@@ -116,14 +116,14 @@ def one(link):
         link.ports[host] = n = link.ports.get(host, 0) + 1
         if n > PORTS:
             if n == PORTS + 1:
-                say(src=src, link=link.n, proto=proto, to=dst, port=-1, asked="")
+                say(src=src, mac=link.mac, proto=proto, to=dst, port=-1, asked="")
             link.ports[host] = PORTS + 2
             return
     if len(link.seen) >= BUDGET:
         link.cut = True
-        return say(src=src, link=link.n, cut=BUDGET)
+        return say(src=src, mac=link.mac, cut=BUDGET)
     link.seen.add(key)
-    say(src=src, link=link.n, proto=proto, to=dst, port=port, asked=asked)
+    say(src=src, mac=link.mac, proto=proto, to=dst, port=port, asked=asked)
 while True:
     ready = select.select([changes, 0, *(l.k for l in links.values())], [], [], 10)[0]
     if 0 in ready:
@@ -166,29 +166,28 @@ class _Book:
         for row in rows.splitlines():
             parts = row.strip().lstrip("/").split("|")
             if len(parts) == 5:
-                standing.add(parts[0])
-                for ip in parts[4].split():
-                    new, old = dict(zip(("container", "project", "node", "role"), parts)), self.holders.get(ip)
-                    self.holders[ip] = {**new, **({"link": old["link"]} if old and old["container"] == parts[0] and "link" in old else {})}
+                for at in parts[4].split():
+                    ip, _, mac = at.partition("/")
+                    if ip:
+                        standing.add((ip, mac.replace(":", "")))
+                        self.holders[(ip, mac.replace(":", ""))] = dict(zip(("container", "project", "node", "role"), parts))
         if whole:
-            for ip, who in list(self.holders.items()):
-                c = who["container"]
-                if c in standing:
-                    self.ended.pop(c, None)
-                elif now - self.ended.setdefault(c, now) > GRACE_S:
-                    del self.holders[ip]
-                    self.ended.pop(c, None)
+            for key in list(self.holders):
+                if key in standing:
+                    self.ended.pop(key, None)
+                elif now - self.ended.setdefault(key, now) > GRACE_S:
+                    del self.holders[key]
+                    self.ended.pop(key, None)
 
     def heard(self, line: str, now: float) -> None:
         """One line of the listener's, a session's text perhaps inside it. A flow from no container of this installation
         is not recorded: on a Linux host another's containers, or the user's own, are none of this."""
         try:
             row = json.loads(line)
-            if not (who := self.holders.get(row.get("src"))):
-                return
-            # …a holder is the link it was first read on: another's container took its address within its grace, in a third of
-            # a second, and went on the record under the one that left, a million packets lost with it (critic, ran)
-            if who.setdefault("link", row.get("link")) != row.get("link"):
+            # …by address and the MAC Docker gave that one start: by the address alone another's container took a freed one in a
+            # third of a second and went on this record, a million packets lost with it; by the link first read, a place's next
+            # container under its old name was silently off it (critics, ran)
+            if not (who := self.holders.get((row.get("src"), row.get("mac", "")))):
                 return
             if drops := row.get("drops"):
                 log.warning(f"the network's record lost {drops} packets of {who['container']}: its flood outran it, and what it sent then is not on the record")
@@ -212,7 +211,7 @@ record_path = network_record_path
 def forget(project: str) -> None:
     """A project gone: a new one of the name inherits none of its records."""
     for at in (record_path(project), file_record_path(project)):
-        for p in (at, at.with_suffix(".jsonl.1")):
+        for p in (at, at.with_suffix(".jsonl.1"), at.with_suffix(".lock")):
             p.unlink(missing_ok=True)
 
 
@@ -225,12 +224,16 @@ def said_apart(project: str) -> list:
     """What the record says of itself: each container that lost lines or passed its budget, and each gap. A row of these
     is where a session may have hidden, so a reader is told without reading every destination."""
     lost, cut, gaps, turned = collections.Counter(), set(), 0, 0
-    read = [(file_record_path(project).with_suffix(".jsonl.1")), file_record_path(project)]
-    files_said = [f"{row.get('session')}: {row.get('dir')}: " + ("what changed could not be read" if "unread" in row else "more changed than a reading holds")
-                  for p in read if p.exists() for row in map(json.loads, p.read_text(encoding="utf-8").splitlines()) if "unread" in row or "cut" in row]
+    said_files, bad = [], 0
+    for p in (file_record_path(project).with_suffix(".jsonl.1"), file_record_path(project)):
+        got, unread = rows_of(p)
+        bad += unread
+        said_files += [f"{r.get('session')}: {r.get('dir')}: " + ("what changed could not be read" if "unread" in r else "more changed than a reading holds")
+                       for r in got if "unread" in r or "cut" in r]
     for p in (record_path(project).with_suffix(".jsonl.1"), record_path(project)):
-        for line in p.read_text(encoding="utf-8").splitlines() if p.exists() else ():
-            row = json.loads(line)
+        got, unread = rows_of(p)
+        bad += unread
+        for row in got:
             lost[row.get("container")] += row.get("lost_packets", 0)
             cut |= {row["container"]} if "cut" in row else set()
             gaps += "gap" in row
@@ -239,7 +242,7 @@ def said_apart(project: str) -> list:
             + [f"{c}: past its {BUDGET} destinations, the rest not listed" for c in sorted(cut)]
             + ([f"{gaps} times the listener stood again: what passed before each may not be listed"] if gaps else [])
             + ([f"turned over {turned} times: older rows are gone"] if turned else [])
-            + list(dict.fromkeys(files_said)))
+            + list(dict.fromkeys(said_files)) + ([f"{bad} lines of the records could not be read"] if bad else []))
 
 
 def _image() -> "str | None":
@@ -256,7 +259,7 @@ def _work_stands() -> "list[str] | None":
 def _holders(ids: list) -> str:
     """Rows for `_Book.learn`."""
     labels = "|".join(f'{{{{index .Config.Labels "{k}"}}}}' for k in (PROJECT, NODE, ROLE))
-    got = run(["docker", "inspect", "-f", f"{{{{.Name}}}}|{labels}|{{{{range .NetworkSettings.Networks}}}}{{{{.IPAddress}}}} {{{{.GlobalIPv6Address}}}} {{{{end}}}}",
+    got = run(["docker", "inspect", "-f", f"{{{{.Name}}}}|{labels}|{{{{range .NetworkSettings.Networks}}}}{{{{.IPAddress}}}}/{{{{.MacAddress}}}} {{{{.GlobalIPv6Address}}}}/{{{{.MacAddress}}}} {{{{end}}}}",
                *ids], timeout=30, text=True)
     return got.stdout or ""
 
@@ -342,7 +345,7 @@ class _Record:
                 self.image = ex.image or self.image
                 self.up()
                 rows = _holders([ex.container])
-                if not any(r.split("|")[-1].strip() for r in rows.splitlines()):
+                if not any(a.split("/")[0] for r in rows.splitlines() for a in r.split("|")[-1].split()):
                     raise OSError(f"Docker gave no address for {ex.container}")
                 self.book.learn(rows)
                 self._sync()

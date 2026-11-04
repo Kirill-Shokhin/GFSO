@@ -3,10 +3,19 @@ and how a reading of many changed paths is said in a bounded line whatever a ses
 from __future__ import annotations
 
 import collections
+import contextlib
 import json
 import logging
 import os
+import time
 from pathlib import Path
+
+try:
+    import fcntl
+    msvcrt = None
+except ImportError:
+    fcntl = None
+    import msvcrt
 
 log = logging.getLogger(__name__)
 #: a record turns over at this size, its last turn kept: what a session asks for fills no disk, and what it turns out is said
@@ -19,15 +28,63 @@ def append(path: Path, row: dict, cap: "int | None" = None) -> None:
     """`row` on the record at `path`, turned over past `cap` with its last turn kept; a file a reader holds open just now
     goes on growing: a row is worth more than the size."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    turned = False
-    if path.exists() and path.stat().st_size >= (CAP if cap is None else cap):
+    with one_at_a_time(path.with_suffix(".lock")):
+        turned = False
+        if path.exists() and path.stat().st_size >= (CAP if cap is None else cap):
+            try:
+                os.replace(path, path.with_suffix(".jsonl.1"))
+                turned = True
+            except OSError as e:
+                log.warning(f"the record {path.name} did not turn over now ({e}): it goes on growing")
+        with path.open("a", encoding="utf-8") as f:
+            f.write((json.dumps({"at": row["at"], "turned": "what came before the last turn is gone"}) + "\n" if turned else "") + json.dumps(row) + "\n")
+
+
+def rows_of(path: Path) -> tuple:
+    """(the rows of the record at `path`, how many of its lines could not be read): one torn line stops no reader."""
+    rows, bad = [], 0
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if path.exists() else ():
         try:
-            os.replace(path, path.with_suffix(".jsonl.1"))
-            turned = True
-        except OSError as e:
-            log.warning(f"the record {path.name} did not turn over now ({e}): it goes on growing")
-    with path.open("a", encoding="utf-8") as f:
-        f.write((json.dumps({"at": row["at"], "turned": "what came before the last turn is gone"}) + "\n" if turned else "") + json.dumps(row) + "\n")
+            rows.append(json.loads(line))
+        except ValueError:
+            bad += 1
+    return rows, bad
+
+
+def _lock(f, block: bool) -> bool:
+    """This process holds `f`'s lock? Across processes, and across two opens in one."""
+    try:
+        if fcntl:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+            return True
+        while True:
+            try:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                return True
+            except OSError:
+                if not block:
+                    return False
+                time.sleep(0.02)
+    except OSError:
+        return False
+
+
+@contextlib.contextmanager
+def one_at_a_time(path: Path):
+    """No other process or thread holds `path` while this runs: two writers on Windows tore rows and lost them (critic, ran)."""
+    with open(path, "a+b") as f:
+        _lock(f, True)
+        yield
+
+
+def wait_to_be_the_one(path: Path):
+    """Back once this process alone holds `path`, for as long as it keeps what is returned: one watch to an installation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "a+b")
+    while not _lock(f, False):
+        time.sleep(5)
+    return f
 
 
 def said_of(entries: list) -> dict:
