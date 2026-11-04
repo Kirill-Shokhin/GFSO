@@ -128,10 +128,11 @@ def text_of(plan: str) -> str:
 
 
 def kept(text: str) -> Path:
-    """The plan file kept in the state directory under its content's hash — the system's own file, no node's place."""
-    path = data_dir() / "plans" / f"{hashlib.sha256(text.encode()).hexdigest()[:12]}.gfso"
+    """The plan file kept in the state directory under its content's hash — the system's own file, no node's place — its
+    bytes that text's on every platform: a text mode wrote CRLF on Windows, so what an answer held was not the file."""
+    path = data_dir() / "plans" / f"{hashlib.sha256(data := text.encode()).hexdigest()[:12]}.gfso"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    path.write_bytes(data)
     return path
 
 

@@ -1765,7 +1765,7 @@ def _once(key: tuple, write) -> dict:
             _PLANNING[key] = (Future(), None)
         future = _PLANNING[key][0]
     if not mine:
-        return future.result()
+        return dict(future.result())    # …each caller its own: the MCP door moves `say` out of what it is handed
     try:
         out = write()
     except BaseException as e:
@@ -1779,14 +1779,15 @@ def _once(key: tuple, write) -> dict:
         else:
             _PLANNING[key] = (future, time.monotonic())
     future.set_result(out)
-    return out
+    return dict(out)
 
 
 def plan(engine: Engine, request: str, model: Optional[str] = None, executor: Optional[str] = None,
          depth: int = 1, review_model: Optional[str] = None, _progress=None) -> dict:
     """Author a plan for `request` WITHOUT a project: the plan file (`.gfso`) — the goal, the split with its criteria,
     pinned checks, mappings, dependencies and register, the Level-2 review over it — for the customer to read whole.
-    Nothing executes and no project is made. Send a note with `refine_plan`; give the go with
+    Nothing executes and no project is made. The answer holds the file's whole `text` beside its `path`, unless it is
+    longer than PLAN_TEXT_MAX characters. Send a note with `refine_plan`; give the go with
     `auto_decompose(plan=<path>)`, which builds the project from the file as it stands. `executor` names the registered
     executor whose session the fit of each part is judged against."""
     model = model or engine.planner_model()
@@ -1811,7 +1812,8 @@ def refine_plan(engine: Engine, plan: str, note: str, model: Optional[str] = Non
                 review_model: Optional[str] = None, _progress=None) -> dict:
     """The customer's note on a plan file (a path or the text): one refine round with the note as its finding, by
     `model` (an older one may be named), and the review run again. The new file carries the note with its answer —
-    what the round changed in the plan, read off the plan itself. The old file stays as it was."""
+    what the round changed in the plan, read off the plan itself, and the answer holds it as `plan`'s does. The old file
+    stays as it was."""
     model = model or engine.planner_model()
 
     def write() -> dict:
@@ -1855,21 +1857,29 @@ def _the_go(engine: Engine, plan: str, request: str, spec) -> tuple[str, dict]:
     return p["goal"], p["spec"]
 
 
+#: The longest plan text an answer holds: a read of the file lies outside the person's folder, and a fresh client's auto
+#: mode stopped there on a prompt, with no one present before the go (measured). Past this, `path` stands alone.
+PLAN_TEXT_MAX = 60_000
+
+
 def _plan_written(text: str) -> dict:
-    """The plan file kept under the state directory by its content, with what the customer reads first."""
+    """The plan file kept under the state directory by its content, with what the customer reads first and, last in the
+    answer, the file's text to read it by. The text only reads: the note and the go take the file."""
     path = _planning.kept(text)
     p = _artifact.parse(text)
     r = p["review"]
     return {"path": str(path), "chars": len(text), "parts": [s["id"] for s in p["spec"].get("subtasks") or ()],
             "undecided_obligations": len(r.get("undecided_obligations") or ()),
             "covered": r.get("semantic_covered"), "notes": len(p["notes"]),
-            "how_to_read": "read the file whole (the [inputs] at its end are the checks' files, named by hash); "
+            "how_to_read": "read `text` whole, the file at `path` if there is none (the [inputs] at its end are the "
+                           "checks' files, named by hash); "
                            "a check whose `expect` its command cannot print will fail correct work: that is a note. "
                            "A note → refine_plan(plan=path, note); the go → auto_decompose(plan=path)",
             "say": "Write to the person now, before any other call: it splits into "
                    f"{', '.join(s['id'] for s in p['spec'].get('subtasks') or ()) or 'one piece of work'}; "
                    f"{len(r.get('undecided_obligations') or ())} of what the goal asks no check decides yet; and any "
-                   "decision in the file they never asked for."}
+                   "decision in the file they never asked for.",
+            **({"text": text} if len(text) <= PLAN_TEXT_MAX else {})}
 
 
 @functools.wraps(_tools.create_task)

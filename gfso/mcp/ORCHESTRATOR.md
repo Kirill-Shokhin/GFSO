@@ -36,9 +36,9 @@ You operate a GFSO task graph through the `gfso` tools; the graph is the source 
    auto_decompose(plan=path)  # the go
    ```
    A call answered with no result: the same `plan` again joins the one under way, at no second price.
-5. **The plan.** You are its customer and answer to the person for the result. READ `path` WHOLE. Give the person two
-   lines: what it splits into, what stays open, and any decision it made that they never asked for. Where it should
-   change, `refine_plan(plan=path, note)`, `model=` may name a stronger author. A refused go names why: that is the note.
+5. **The plan.** You are its customer and answer to the person for the result. READ `text` WHOLE, `path` if none. Give the person two
+   lines: what it splits into, what stays open, any decision it made they never asked for. To
+   change it, `refine_plan(plan=path, note)`, `model=` may name a stronger author. A refused go names why: that is the note.
 6. **The link.** Write `ui` again at the go, clickable. The go's `not_imported` names what the agents' copy lacks: say it.
 7. **The wait and the end.** Say: unattended, watch at the link, I report the end. Loop `next_steps(wait=600)` until
    `complete`, or `stuck` or a stop, which goes to the person with its `directive`; in `auto` you do not intervene. Report

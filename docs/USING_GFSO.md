@@ -80,8 +80,8 @@ the whole composition rests on: the parent passes exactly when its children do (
 unmapped criterion is a parent obligation nobody has agreed to carry.
 
 A plan can also exist before any project does, as a file of its own: `plan` authors and reviews a `.gfso` file with no project,
-`refine_plan` answers your note on it, and `auto_decompose(plan=<file>)` is the go, which builds the project from the file as it
-stands. The file is TOML you can read whole and edit by hand; its fields, and what `parse` checks in a file you edited, are in
+`refine_plan` answers your note on it (each answer holds the file's path and, unless it is very long, its text), and
+`auto_decompose(plan=<file>)` is the go, which builds the project from the file as it stands. The file is TOML you can read whole and edit by hand; its fields, and what `parse` checks in a file you edited, are in
 [`PLAN_FORMAT.md`](PLAN_FORMAT.md).
 
 Assign a node to someone else only when the work is really theirs. Ownership is load-bearing: a node

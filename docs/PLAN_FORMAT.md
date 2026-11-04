@@ -12,7 +12,8 @@ is read by the same `parse`, which first checks its form (`form`, below).
 
 The verbs: `plan(request, model)` authors and reviews a file with no project (`planning.author`); `refine_plan(plan,
 note, model)` answers a note (`planning.refine`); `auto_decompose(plan=file)` is the go (`tools_llm.auto_decompose`, which
-reads the file with `tools_llm._the_go`). `refine_plan` and the go take a path or the text.
+reads the file with `tools_llm._the_go`). `refine_plan` and the go take a path or the text. The answers of `plan` and
+`refine_plan` hold the file's `path` and, up to `tools_llm.PLAN_TEXT_MAX` characters, its whole `text`, to read it by.
 
 ## What the plan is, and what is not the plan
 
