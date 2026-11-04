@@ -1225,3 +1225,16 @@ def test_the_graph_libraries_do_not_block_the_page(client):
         "the remote scripts must not block the first paint — vendoring them is a separate, parked "
         "decision")
     assert "DOMContentLoaded" in _ui(client), "…and init has to wait for them, or it reports them missing"
+
+
+def test_a_page_file_the_browser_holds_is_not_sent_again(client):
+    first = client.get("/js/main.js")
+    assert first.status_code == 200 and first.headers["etag"]
+    again = client.get("/js/main.js", headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304 and not again.content
+    assert client.get("/js/main.js", headers={"If-None-Match": '"other"'}).status_code == 200
+
+
+def test_what_the_page_reads_comes_compressed(client):
+    r = client.get("/js/main.js", headers={"Accept-Encoding": "gzip"})
+    assert r.headers.get("content-encoding") == "gzip" and "import" in r.text

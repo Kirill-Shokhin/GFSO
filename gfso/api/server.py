@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from gfso import __version__
@@ -573,10 +574,10 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
     # === Graph ===
 
     @app.get("/api/graph")
-    def get_graph():
+    def get_graph(next: bool = True):
         """The whole project as the `get_graph` verb answers it — the page draws what every door reads (one shaping;
         a second one here drifted: `label` for the verb's `name`, no `awaiting`, no mode — ortho audit, D-F16)."""
-        return _tools.TOOLS["get_graph"](_e())
+        return _tools.TOOLS["get_graph"](_e(), with_next=next)   # `?next=0`: the page reads the frontier by `next_steps`; this read's own was 280 of its 300 ms
 
 def _mount_pages(app) -> None:
     """The page and its assets — the human door's own surface.
@@ -624,6 +625,40 @@ def _mount_pages(app) -> None:
 # EVERY PAGE FILE IS REVALIDATED: sent with no Cache-Control, a browser keeps a module by its own heuristic and reloads
 # showed an old view — the author saw two colours of FAIL cross in Progress a day after they were made one
 # (2026-10-27). `no-cache` makes every reload ask the server; the files are small and read from disk anyway.
+class _NotModified:
+    """A page file the browser already holds answers 304: `FileResponse` sends an etag and never reads it back, so every
+    reload re-downloaded the page over the phone's link."""
+    def __init__(self, app): self.app = app
+    async def __call__(self, scope, receive, send):
+        held = dict(scope.get("headers") or ()).get(b"if-none-match") if scope["type"] == "http" else None
+        if not held:
+            return await self.app(scope, receive, send)
+        same = False
+        async def answer(message):
+            """The response as it goes out: 304 and no body where the browser's copy is this one."""
+            nonlocal same
+            if message["type"] == "http.response.start":
+                headers = message.get("headers", [])
+                same = message["status"] == 200 and dict(headers).get(b"etag") == held
+                if same:
+                    message = {**message, "status": 304, "headers": [h for h in headers if h[0] != b"content-length"]}
+            elif same:
+                if message.get("more_body"):
+                    return
+                message = {"type": "http.response.body", "body": b""}
+            await send(message)
+        await self.app(scope, receive, answer)
+
+
+class _Compressed:
+    """What the page reads, compressed; the agents' door (`/mcp`, a stream) passes as it was."""
+    def __init__(self, app):
+        self.app, self.gzip = app, GZipMiddleware(app, minimum_size=1000, compresslevel=5)
+    async def __call__(self, scope, receive, send):
+        whole = scope["type"] == "http" and not scope["path"].startswith("/mcp")
+        await (self.gzip if whole else self.app)(scope, receive, send)
+
+
 def _page_file(path, media_type=None):
     return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-cache"})
 
@@ -1204,6 +1239,8 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     # exposes the whole tool registry, including a `signal` whose source the caller chooses and a
     # `validate_result` that spawns a model with shell access in a directory the caller names. With
     # `*`, any page the user happened to have open in a browser could drive that chain.
+    app.add_middleware(_NotModified)
+    app.add_middleware(_Compressed)
     app.add_middleware(CORSMiddleware, allow_origins=list(_door_origins()), allow_methods=["*"], allow_headers=["*"])
     # CORS only governs what a foreign page may READ back; it lets the request through. A page on a name
     # its DNS re-points at 127.0.0.1 is same-origin to the browser and passes CORS untouched, and a

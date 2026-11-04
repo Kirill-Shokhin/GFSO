@@ -1,6 +1,7 @@
 """SQLite StoragePort — persistent storage."""
 from __future__ import annotations
 
+from functools import lru_cache
 import json
 import logging
 import os
@@ -530,6 +531,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         })
 
     @staticmethod
+    @lru_cache(maxsize=1024)   # a frozen Spec per text: one `next_steps` decoded 49 tasks' 7308 times
     def _spec_from_json(raw: str) -> Spec:
         d = json.loads(raw)
         return Spec(

@@ -19,7 +19,7 @@ export async function loadGraph() {
     try { return await readGraph(); } finally { if (!--reading) heard.clear(); }
 }
 async function readGraph() {
-    const [gr, tr] = await Promise.all([api('/api/graph'), api('/api/tasks')]);
+    const [gr, tr] = await Promise.all([api('/api/graph?next=0'), api('/api/tasks')]);
     if (gr.status === 404) {
         S.missing = (await gr.json().catch(() => ({}))).detail || 'no such project';
         S.tasks = [];

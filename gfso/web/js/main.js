@@ -53,6 +53,20 @@ const later = (o = {}) => {
 };
 // what reads the run once the deck has rebuilt it
 const afterDeck = () => { annotate(); refreshHeader(); drawPlanning(); if (focus().select) resign(focus().select); };
+// A MOVE IS READ AT ONCE; moves arriving meanwhile share one more read: five at once read 21 times, a move every second never caught up (measured)
+let settling = false, again = null;
+const settle = async o => {
+    if (settling) { again = {graph: again?.graph || o.graph}; return; }
+    settling = true;
+    try { for (let cur = o; cur; cur = again) { again = null;
+        if (cur.graph) await refreshGraph();
+        await refreshQuality(); await refreshHeader();
+        // …AND THE OPEN PANEL IS RE-READ ON ANY TRANSITION: its checks are computed from the CHILDREN.
+        if (focus().select) { await selectTask(focus().select); paneled = Date.now(); }
+        await refreshDeck();                     // …the run read, the header drawn over it from the frontier just read
+        annotate(); drawHeader(); drawPlanning(); if (focus().select) resign(focus().select);
+    } } finally { settling = false; }
+};
 
 // THE COUNT OF WORK IN FLIGHT IS THE SERVER'S registry, not inferred from token ticks (an executor running
 // tools sends none; author, 2026-09-24). A run starting or ending elsewhere changes the picker's line.
@@ -193,11 +207,7 @@ const LIVE = {
         rebuildRun();                                  // …and what runs now is read again over the new state
         // A node that SETTLES changes more than its colour — how it closed is drawn on it — so terminal
         // transitions take the long way round, which is one read.
-        if (!restyle(d.task_id, d.new_state) || terminal(d.new_state) || d.new_state === 'ESCALATED') await refreshGraph();
-        await refreshQuality(); await refreshHeader();
-        // …AND THE OPEN PANEL IS RE-READ ON ANY TRANSITION: its checks are computed from the CHILDREN.
-        if (focus().select) { await selectTask(focus().select); paneled = Date.now(); }
-        refreshDeck().then(afterDeck);
+        settle({graph: !restyle(d.task_id, d.new_state) || terminal(d.new_state) || d.new_state === 'ESCALATED'});
     },
 };
 

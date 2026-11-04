@@ -6,14 +6,15 @@ export const spoken = t => unref(t).replace(/`([^`]*)`/g, '$1');
 
 export const hm = t => new Date(t).toTimeString().slice(0, 5);
 export const hms = t => new Date(t).toTimeString().slice(0, 8);
-export const dayLong = t => new Date(t).toLocaleDateString(LOCALE, {weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'});
-export const day = t => new Date(t).toLocaleDateString(LOCALE, {day: 'numeric', month: 'short'});
+const kept = o => { const f = new Intl.DateTimeFormat(LOCALE, o); return t => { const d = new Date(t); return isNaN(d) ? 'Invalid Date' : f.format(d); }; };   // a new formatter per call was 177 of Events' 273 ms on a phone
+export const dayLong = kept({weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'});
+export const day = kept({day: 'numeric', month: 'short'});
 export const moment = t => new Date(t).toLocaleString(LOCALE);
 // WHEN SOMETHING HAPPENED is said as the moment, never as an age: «13s ago» stood frozen until a reload, the moment stays
 // true (the author, 2026-10-31: «висит эта цифра до тех пор пока не обновишь страницу»); the day only when not today's
 // …against a day the reader already has (today by default; a launch's, in the project list)
 export const clockAt = (t, ref = Date.now()) => new Date(t).toDateString() === new Date(ref).toDateString() ? hm(t) : `${day(t)} ${hm(t)}`;
-export const when = t => new Date(t).toLocaleString(LOCALE, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+export const when = kept({month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
 // an ISO stamp as written, to the minute (`from` 5 drops the year, `to` 19 keeps the seconds)
 export const stamp = (iso, from = 0, to = 16) => String(iso).slice(from, to).replace('T', ' ');
 // an agent's id without the project's name it is registered under («gb-c-compiler-tnpe08584-exec-1» → «exec-1»): a prefix

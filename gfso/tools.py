@@ -1223,7 +1223,7 @@ def _awaiting(engine: Engine, t) -> Optional[str]:
     return None
 
 
-def get_graph(engine: Engine) -> dict:
+def get_graph(engine: Engine, with_next: bool = True) -> dict:
     """The whole graph: nodes (id, name, state, parent) + edges (parent-child and dependency). The bird's-eye
     view — use it to see overall progress / where the frontier is."""
     tasks = engine.all_tasks()
@@ -1258,7 +1258,7 @@ def get_graph(engine: Engine) -> dict:
     # page on a closed goal could not tell where the work was
     landed = engine.graph.setting("landed")
     return {"nodes": nodes, "edges": edges, "mode": engine.mode(), "landed": json.loads(landed) if landed else None,
-            **next_for(engine, _agent_id())}
+            **(next_for(engine, _agent_id()) if with_next else {})}
 
 
 def list_holes(engine: Engine, root_id: Optional[str] = None) -> dict:
