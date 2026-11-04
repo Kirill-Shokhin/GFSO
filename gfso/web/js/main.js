@@ -89,7 +89,7 @@ const ACT = {
     'child-suggest': author.suggestChildCriteria, 'child-criterion': author.addChildCriterion, 'child-risk': author.addChildAcceptedRisk,
 };
 // Esc closes whatever is open over the page: a popover, the reader, the goal form, the projects list
-document.addEventListener('keydown', e => { if (e.key !== 'Escape') return;
+document.addEventListener('keydown', e => { if (e.key !== 'Escape' || WATCHES) return;
     // …one at a time, the node's panel last: its × says Esc
     const over = document.querySelector('.hd-quality.open') || $('reader')?.hidden === false || $('goal-panel')?.hidden === false;
     document.querySelectorAll('.hd-quality.open').forEach(p => { p.classList.remove('open'); p.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', false); });
@@ -115,9 +115,8 @@ $('current-role').addEventListener('input', () => { rememberRole(myRole()); if (
 watch((st, key) => { if (key === 'select') st.select ? selectTask(st.select) : closeSidebar(); });
 // ON A PHONE THE BROWSER'S BACK IS THE WAY OUT A HAND REACHES FOR: it closes what is open, topmost first — a tip, a popover, the reader,
 // a panel, the deck — and with nothing open says once that the next one leaves (the author, 2026-10-31: «интуитивно жмешь кнопку назад
-// а не крестик»; 11-04: «любое движение привычное и вкладка у тебя слетела в пустую страницу»). Steps are laid under a finger's gesture:
-// the browser's Back skips an entry added without one, so one laid as Back is handled would let the next Back leave the page.
-const STEPS = 6;
+// а не крестик»; 11-04: «любое движение привычное и вкладка у тебя слетела в пустую страницу»).
+const STEPS = 12;
 let warned = 0;
 const closeTop = () => {
     if ($('ask-no')) return $('ask-no').click(), true;
@@ -136,21 +135,28 @@ const closeTop = () => {
     if (focus().select) return point('select', null), true;
     return !!PROJECT && foldDeck();
 };
-// a hand, not a width: a phone held sideways has one too. A step is laid on load, under each gesture, and again as Back is handled, so
-// the page's layers never outnumber its steps; only the last Back leaves.
+// A hand, not a width: a phone held sideways has one too. Back is not a history trick: Chrome's Back skips any entry a page laid without a gesture,
+// so steps re-laid as Back was handled let the second Back leave (the author, 11-04: «как и с любыми двумя панелями подряд»). The browser's own
+// answer is a close request: Back asks the open watcher, no history touched. Where it is missing, steps laid only under gestures, one per tap.
 const hand = () => phone() || TOUCH.matches;
-const lay = n => history.pushState({gfsoSteps: n + 1}, '');
-if (hand()) lay(history.state?.gfsoSteps || 0);
-addEventListener('pointerup', () => { const n = history.state?.gfsoSteps || 0; if (hand() && n < STEPS) lay(n); }, true);
-addEventListener('popstate', () => {
-    if (!hand()) return;
-    const n = history.state?.gfsoSteps || 0;
-    if (closeTop()) return lay(n);
-    if (Date.now() - warned < 3000) return history.go(-n - 1);
-    warned = Date.now(); lay(n);
+const say = () => { warned = Date.now();
     const note = document.body.appendChild(Object.assign(document.createElement('div'), {className: 'back-note', textContent: LEAVING}));
-    setTimeout(() => note.remove(), 3000);
-});
+    setTimeout(() => note.remove(), 3000); };
+const WATCHES = hand() && 'CloseWatcher' in window;
+if (WATCHES) {
+    let w = null;
+    const arm = () => { w = new CloseWatcher(); w.onclose = () => { w = null;
+        if (closeTop()) return arm();
+        if (Date.now() - warned < 3000) return history.back();
+        say(); arm(); }; };
+    arm();
+    addEventListener('pointerup', () => { if (!w) arm(); }, true);
+} else if (hand()) {
+    addEventListener('pointerup', () => { const n = history.state?.gfsoSteps || 0; if (n < STEPS) history.pushState({gfsoSteps: n + 1}, ''); }, true);
+    addEventListener('popstate', () => { if (closeTop()) return;
+        if (Date.now() - warned < 3000) return history.go(-(history.state?.gfsoSteps || 0) - 1);
+        say(); });
+}
 
 const NEWS = {
     // a stop or start made anywhere — the page, the CLI, MCP — is the engine's `pause` line: the header re-reads the run
