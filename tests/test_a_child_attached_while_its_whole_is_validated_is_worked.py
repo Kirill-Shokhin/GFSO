@@ -12,6 +12,7 @@ from gfso import issuer as I
 from gfso import tools as T
 from gfso.adapters import worktrees as W
 from gfso.adapters.llm.stub import StubLLM
+from gfso.core.graph.metrics import q_V_reversed
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import AgentId, Mode, Signal, SignalData, State, TaskId
 from gfso.delegate import Dispatcher, _auto_validate
@@ -71,7 +72,7 @@ def _until(pred, why, timeout=20.0):
         time.sleep(0.01)
 
 
-def _goal(e, tmp_path):
+def _goal(e, tmp_path, split=True):
     e.start()
     e.project_name = "p"
     agents = AgentRegistry(path=str(tmp_path / "agents.json"))
@@ -80,10 +81,13 @@ def _goal(e, tmp_path):
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
     e.set_mode(Mode.AUTO, None, AgentId("agent"))
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
-    T.TOOLS["decompose"](e, "root", [{"task_id": "root.kid", "covers": ["g"], "spec": {
-        "description": "a part", "criteria": [criterion("k", "K holds")]}}], accepted_risks=REGISTER)
+    if split:
+        T.TOOLS["decompose"](e, "root", [{"task_id": "root.kid", "covers": ["g"], "spec": {
+            "description": "a part", "criteria": [criterion("k", "K holds")]}}], accepted_risks=REGISTER)
     e.wait_idle()
-    Dispatcher(e, agents, runner=lambda *a: None)._publish_the_roster()      # …whose instrument signs for the issuer
+    once = Dispatcher(e, agents, runner=lambda *a: None)
+    once._publish_the_roster()                                               # …whose instrument signs for the issuer
+    e._events._on_transition.remove(once._on_bus)                            # …and no second dispatcher joining beside the test's
     return agents
 
 
@@ -147,19 +151,25 @@ class _Run:
     """An AUTO run in a git base with `l2_gate=1`: the dispatcher's own passes, its sessions fakes that write a file each,
     its validator fake, its issuer's turn real. `complete` said while the part's file is not in the base is a failure."""
 
-    def __init__(self, tmp_path, monkeypatch):
+    def __init__(self, tmp_path, monkeypatch, split=True):
         self.base = _repo(tmp_path / "ws")
         self.e = e = make_engine(llm=StubLLM(), validate_signals=True)
-        self.agents = _goal(e, self.base)
+        self.agents = _goal(e, self.base, split)
         e.set_settings({"l2_gate": "1"}, AgentId("agent"), "the gate as it stands by default; the suite's conftest has it off")
         self.lied, self.turned, self.tmp = [], False, tmp_path
         self.sessions = {"root.kid": ("kid.txt", "the part\n"), "root": ("root.txt", "the whole\n"),
                          "root.late": ("late.txt", "the late part\n")}
         monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=None, busy=_inflight, review=self._review, refine=None))
         monkeypatch.setattr(I, "settle", self._settle)
-        self.first = {}
+        self.first, self.verdicts, self.at_done, self.runs = {}, {}, [], 0
+        e.on_transition(self._at_done)                 # …ahead of the dispatcher's own: a reader before its join is marked
         self.d = Dispatcher(e, self.agents, poll=30, runner=self._execute, consent_runner=self._consent,
                             validator_runner=self._validate)
+
+    def _at_done(self, tid=None, old=None, new=None, signal=None):
+        if str(tid) == "root" and new == State.DONE:
+            self.at_done.append((self.e.graph.get_task(TaskId("root")).reopens, self.e.next_steps(TaskId("root")).get("complete"),
+                                 self.d._over(), self.in_base("late.txt")))
 
     def _review(self, e, node):
         """The record `review_decomposition` would write: no model here."""
@@ -183,6 +193,8 @@ class _Run:
 
     def _execute(self, e, tid, executor, agents):
         name, text = self.sessions[str(tid)]
+        self.runs += 1
+        text += f"{self.runs}\n"                       # …each session's tree its own, its report's words the same
         return run_executor(e, tid, executor, agents, _llm=_Executor(str(tid), {name: text}))
 
     def _consent(self, e, tid, executor, agents):
@@ -191,7 +203,9 @@ class _Run:
 
     def _validate(self, e, tid, agents, **k):
         row = [{"what": SEEN, "evidence": "printed NULL"}] if str(tid) == "root.kid" else []
-        return _auto_validate(e, tid, agents, _llm=_Validator(e, tid, outside=row, first=self.first.pop(str(tid), None)), **k)
+        said = self.verdicts.get(str(tid)) or ["PASS"]
+        return _auto_validate(e, tid, agents, _llm=_Validator(e, tid, verdict=said.pop(0) if len(said) > 1 else said[0], outside=row,
+                                                              first=self.first.pop(str(tid), None)), **k)
 
     def in_base(self, name):
         return (self.base / name).exists()
@@ -288,6 +302,50 @@ def test_a_part_that_landed_before_the_validation_began_is_delivered_too(tmp_pat
         _the_part_stands_in_the_base(run)
     finally:
         run.e.stop()
+
+
+def test_a_second_done_reads_landed_only_when_its_join_says_so(tmp_path, monkeypatch):
+    """Sampled in the bus at the DONE itself, ahead of the dispatcher marking its join: `_landed` was the bare id then, so
+    the reopened root read `complete` and over, with the base lacking what it was reopened for."""
+    run = _Run(tmp_path, monkeypatch)
+    real, armed = DG._signal, []
+
+    def signing(e, tid, sig, source, **kw):
+        if str(tid) == "root" and sig == Signal.PASS and not armed:
+            armed.append(1)
+            run.attach()
+        return real(e, tid, sig, source, **kw)
+
+    monkeypatch.setattr(DG, "_signal", signing)
+    try:
+        run.drive()
+        assert [s[0] for s in run.at_done] == [0, 1], run.at_done
+        assert run.at_done[1][1] is not True and run.at_done[1][2] is False, run.at_done
+        _the_part_stands_in_the_base(run)
+    finally:
+        run.e.stop()
+
+
+def test_a_reopened_pass_its_fresh_run_failed_stands_green_after_its_rework(tmp_path, monkeypatch):
+    """`false_positive` is q_V's history. Read as the node's present it held the root `refuted_passes` and NOT COMPLETE for
+    good, the directive saying its current verdict is FAIL, over a PASS of this generation that landed."""
+    run = _Run(tmp_path, monkeypatch, split=False)
+    run.sessions["root"] = ("root.txt", "the whole ")
+    run.verdicts["root"] = ["PASS", "FAIL", "PASS"]
+    e, root = run.e, TaskId("root")
+    try:
+        cleared, clear = threading.Event(), DG.clear_workspaces
+        monkeypatch.setattr(DG, "clear_workspaces", lambda *a: (clear(*a), cleared.set())[0])
+        run.drive(lambda: e.next_steps(root).get("complete") is True and cleared.is_set())
+        DG._earn_again(e, e.graph.get_task(root), "the test's reason")
+        e.wait_idle()
+        run.drive(lambda: e.graph.get_task(root).false_positive and e.next_steps(root).get("complete") is True
+                  and not e.joins.joining_nodes())
+        assert e.refuted_passes() == [] and e.next_steps()["complete"] is True, e.next_steps()
+        assert q_V_reversed(e._graph) == ["root"], "the history stands: that pass was found wrong"
+        assert run.in_base("root.txt") and (run.base / "root.txt").read_text().endswith(f"{run.runs}\n"), "the rework's tree landed"
+    finally:
+        e.stop()
 
 
 def test_landing_again_moves_the_accepted_branch(tmp_path):
@@ -410,6 +468,16 @@ def test_a_refuted_pass_under_auto_is_reopened_and_past_its_count_stands_said(tm
                 assert e.graph.get_state(TaskId("root")) == State.OFFERED and e.graph.get_task(TaskId("root")).reopens == 1
         finally:
             e.stop()
+
+
+def test_no_reopen_starts_beside_a_clearing_still_running(tmp_path, monkeypatch):
+    e, agents, d, _ = _closed_over_a_part(tmp_path, monkeypatch)
+    try:
+        monkeypatch.setattr(DG, "in_flight", lambda: [{"project": "p", "verb": "clear_workspaces"}])
+        d.dispatch_once()
+        assert e.graph.get_state(TaskId("root")) == State.DONE
+    finally:
+        e.stop()
 
 
 def test_a_holder_keeps_his_moves_and_is_named_them(tmp_path):

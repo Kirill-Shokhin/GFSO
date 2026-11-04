@@ -25,7 +25,7 @@ from gfso.core.graph.model import (GENERATION, cycle_children, dep_order_refutat
                                    logged_criteria, goal_deps_key)
 from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair
 from gfso.core.handlers.structural import run_structural
-from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_was_refuted
+from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_stands_refuted
 from gfso.core.graph.review import finding_keys, progress_baseline
 from gfso.core.graph.projection import build as build_projection, render as render_projection
 from gfso.core.protocol.fsm import available_signals, not_admissible_here, transition
@@ -2459,7 +2459,7 @@ class Engine:
             "overruled": bool(displaced and not displaced.get("by_hand") and rec.get("by_hand")),
             "overruled_verdict": (str(displaced.get("verdict")) if displaced else None),
             # standing at PASS while its own current record says FAIL — a green that is not green
-            "refuted": pass_was_refuted(self._graph, t),
+            "refuted": pass_stands_refuted(self._graph, t),
             # CLOSED BY THE CLOCK, not by anyone's verdict. v4.0 routed a timed-out VALIDATING to
             # DONE(auto_pass) and v4.1 removed it (§16.14) — the clock, answering for a silent party,
             # invents no verdict — so no route produces this any more and what the field reads is a

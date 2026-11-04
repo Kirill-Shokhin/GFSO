@@ -310,6 +310,30 @@ def test_live_a_roots_pass_lands_on_the_accepted_branch_and_the_users_tree_and_b
 
 
 @live
+@live
+def test_live_a_root_reopened_lands_its_new_tree_on_the_accepted_branch_and_the_users_main_stays(x, user, monkeypatch):
+    main, status = _git(user, "rev-parse", "main"), _git(user, "status", "--porcelain")
+    monkeypatch.setattr(WS, "execution_of", lambda engine, agents=None: x)
+    e, root = _engine(x), SimpleNamespace(id="root")
+    first = _joined(x)
+    e.accepted[0] = _inside(x, "rev-parse", "HEAD^{tree}")
+    assert WS.land_accepted(e, None, root) is None, e.said
+    assert _git(user, "rev-parse", "gfso/p/accepted") == first
+    x.session(str(x.base)).run(["sh", "-c", "echo late > late.txt && git add late.txt && "
+                                            "git -c user.name=g -c user.email=g@g commit -qm 'its second delivery'"],
+                               cwd=str(x.base), timeout=120).check_returncode()
+    second = _inside(x, "rev-parse", "HEAD")
+    e.accepted[0] = _inside(x, "rev-parse", "HEAD^{tree}")
+    assert WS.land_accepted(e, None, root) is None, e.said
+    assert second != first and _git(user, "rev-parse", "gfso/p/accepted") == second
+    assert _git(user, "rev-parse", "gfso/p/accepted^{tree}") == e.accepted[0], "the new tree, as its PASS accepted it"
+    assert _git(user, "show", "gfso/p/accepted:late.txt") == "late"
+    assert _git(user, "rev-parse", "main") == main and _git(user, "status", "--porcelain") == status, \
+        "the user's branch and working tree as they were"
+    assert not (user / "late.txt").exists()
+
+
+@live
 def test_live_a_project_from_before_keeps_its_clones_once_its_base_moves_in(tmp_path, monkeypatch):
     """A live project whose places stood on the host (copied in) or already in the volume, its base still the host's
     (no import record), restarted: its base imported with its node branches, every clone reading through it."""

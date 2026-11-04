@@ -182,6 +182,8 @@ that would establish one (E3) has shown so far, and what not, is in the README a
 - With no mode set the system answers disputes at a seam only; a dispute a node's own issuer raises is its holder's.
 
 ### Fixed
+- A part attached to a whole being validated is worked and in the result: its delivery is presented again. A settled node
+  whose claim stopped holding is reopened by the system once, else its verdict is said final.
 - What a validator tried on its own is filed as a refutation only where its report says it refuted; and a finding of its own
   stands while it is reproduced: a later validator whose report ran a shell and names that very command, what it printed and why
   the finding was wrong ends it, on the record (`findings_not_reproduced`), and `return_finding` brings it back. A finding the

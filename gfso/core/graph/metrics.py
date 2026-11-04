@@ -273,6 +273,13 @@ def pass_was_refuted(graph: Graph, t) -> bool:
     return bool(rec) and rec.get("verdict") == Verdict.FAIL and rec.get("reopens", 0) == t.reopens
 
 
+def pass_stands_refuted(graph: Graph, t) -> bool:
+    """Does this node stand refuted NOW — what a surface asks, where `pass_was_refuted` is q_V's history: a reopened pass its
+    fresh run failed was found wrong for good, and its rework's PASS on this generation is a green that is green."""
+    rec = graph.exec_verdict_record(t.id)
+    return not (rec and rec.get("verdict") == Verdict.PASS and rec.get("reopens", 0) == t.reopens) and pass_was_refuted(graph, t)
+
+
 def q_V(graph: Graph) -> Optional[float]:
     """Validation quality: 1 − |{t : V=pass, later found wrong}| / |{t : V=pass}|.
 

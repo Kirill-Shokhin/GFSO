@@ -1970,9 +1970,11 @@ class Dispatcher:
         """A DONE node the system issues whose claim no longer holds — an open child under it (Thm 1), or its own record
         refuting it — is reopened (`_earn_again`). Past its finality gate the verdict stands, and what is open under it is
         cancelled, said: else no one moves it, and `complete` could never be true or truthful. Holders keep these moves;
-        a stop starts nothing; a join or a verdict still coming is waited for."""
+        a stop starts nothing; a join, a clearing or a verdict still coming is waited for (a session started beside a
+        clearing had its place removed under it)."""
         e = self._engine
-        if e.paused():
+        here = e.project_name or DEFAULT_PROJECT
+        if e.paused() or any(w.get("project") == here and w.get("verb") == "clear_workspaces" for w in in_flight()):
             return
         refuted = set(e.refuted_passes())
         for t in e.all_tasks():
