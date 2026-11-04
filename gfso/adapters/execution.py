@@ -3007,13 +3007,27 @@ class PlaceContainer(ContainerExecution):
             for i in (r.stdout or "").split():
                 self.project.system_made(wanted[int(i) - 1])
 
+    def _say_the_bound(self) -> None:
+        """What the bound on new flows dropped of this session's, on its project's record as it goes: a program failing on a
+        refused send read as its own failure, and a flooder that hit the bound was named nowhere (critic, ran)."""
+        got = run(["docker", "exec", *SYS, "-u", "0", self.container, "iptables", "-L", "gfso-flows", "-v", "-n", "-x"], timeout=30, text=True)
+        if not got.returncode and (dropped := _flows_dropped(got.stdout)):
+            append(network_record_path(self.project_name), {"at": time.time(), "container": self.container, "flows_dropped": dropped})
+
     def stop(self) -> None:
         """This session's container and its commands', its client's with them: the way out is its project's."""
         if self.paired not in (None, self):
             self.paired.stop()
+        self._say_the_bound()
         self.commands.close()
         run(["docker", "rm", "-f", self.container], timeout=60)
         _STARTED.pop(self.container, None)
+
+
+def _flows_dropped(listing: str) -> int:
+    """New flows the seal's bound dropped, by what `iptables -L gfso-flows -v -x` lists; 0 where it lists none."""
+    m = re.search(r"^\s*(\d+)\s+\d+\s+DROP", listing or "", re.M)
+    return int(m[1]) if m else 0
 
 
 class _Call:

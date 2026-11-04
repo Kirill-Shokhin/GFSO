@@ -230,6 +230,29 @@ def test_only_a_server_starts_the_watches(monkeypatch):
     assert "watch_disk" not in src and "watch_ceiling" not in src
 
 
+def test_the_bound_s_refusals_are_read_from_its_listing_and_told(data):
+    listing = "Chain gfso-flows (1 references)\n    pkts      bytes target\n      10      290 RETURN  0 -- * * 0.0.0.0/0\n      37     1073 DROP  0 -- * * 0.0.0.0/0\n"
+    assert E._flows_dropped(listing) == 37 and E._flows_dropped("") == 0
+    N._append("p", {"at": 1.0, "container": "c", "flows_dropped": 37})
+    assert any("c: 37 new flows past its bound" in x for x in N.said_apart("p"))
+
+
+@docker
+def test_live_what_the_bound_refused_is_on_the_record_as_a_session_goes(data, monkeypatch, project):  # noqa: F811
+    monkeypatch.setenv("GFSO_NETWORK_RECORD", "off")
+    monkeypatch.setenv("GFSO_NEW_FLOWS", "1")
+    made(project, "a")
+    s = project.session(str(project.own / "a"))
+    try:
+        got = s.run(["python3", "-c", "import socket\nfor i in range(40):\n try:\n  socket.socket(socket.AF_INET,socket.SOCK_DGRAM).sendto(b'x',('192.0.2.70',5000+i))\n except OSError:\n  pass\n"],
+                    cwd=str(project.own / "a"), timeout=60)
+        assert got.returncode == 0, got.stderr
+    finally:
+        project.stop()
+    dropped = [r["flows_dropped"] for r in _rows(data, project.project_name) if "flows_dropped" in r]
+    assert dropped and sum(dropped) >= 20, dropped
+
+
 def test_a_reader_is_told_what_the_file_record_could_not_say(data):
     E_row = {"at": 1.0, "session": "s", "dir": "d"}
     N.append(N.file_record_path("p"), {**E_row, "cut": True})
