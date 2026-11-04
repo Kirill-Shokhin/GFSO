@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 from gfso.adapters import execution as E
-from gfso.adapters.execution import HOME, NODE, PROJECT, ROLE, LocalExecution, PlaceUnavailable, ceiling, component, executions, file_record_path, host_env, installation, run
+from gfso.adapters.execution import HOME, NODE, PROJECT, ROLE, LocalExecution, PlaceUnavailable, ceiling, executions, file_record_path, host_env, installation, network_record_path, run
 from gfso.adapters.records import append
 from gfso.config import data_dir, network_record_off
 
@@ -61,15 +61,15 @@ def name(b, at):
         at += b[at] + 1
     return ".".join(parts)[:253]
 class Link:
-    def __init__(self, k):
-        self.k, self.seen, self.ports, self.src, self.lost, self.cut = k, set(), {}, None, 0, False
+    def __init__(self, n, k):
+        self.n, self.k, self.seen, self.ports, self.src, self.lost, self.cut = n, k, set(), {}, None, 0, False
 links = {}
 changes = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, 0)
 changes.bind((0, 1))
 def tell(link):
     link.lost += struct.unpack("II", link.k.getsockopt(263, 6, 8))[1]
     if link.lost and link.src:
-        say(drops=link.lost, src=link.src)
+        say(drops=link.lost, src=link.src, link=link.n)
         link.lost = 0
 def close(n):
     try:
@@ -91,7 +91,7 @@ def scan():
                 k.setsockopt(socket.SOL_SOCKET, 26, struct.pack("HL", len(P), ctypes.addressof(code)))
                 k.bind((n, 3))
                 k.setblocking(False)
-                links[n] = Link(k)
+                links[n] = Link(n, k)
             except OSError:
                 pass
 scan()
@@ -116,14 +116,14 @@ def one(link):
         link.ports[host] = n = link.ports.get(host, 0) + 1
         if n > PORTS:
             if n == PORTS + 1:
-                say(src=src, proto=proto, to=dst, port=-1, asked="")
+                say(src=src, link=link.n, proto=proto, to=dst, port=-1, asked="")
             link.ports[host] = PORTS + 2
             return
     if len(link.seen) >= BUDGET:
         link.cut = True
-        return say(src=src, cut=BUDGET)
+        return say(src=src, link=link.n, cut=BUDGET)
     link.seen.add(key)
-    say(src=src, proto=proto, to=dst, port=port, asked=asked)
+    say(src=src, link=link.n, proto=proto, to=dst, port=port, asked=asked)
 while True:
     ready = select.select([changes, 0, *(l.k for l in links.values())], [], [], 10)[0]
     if 0 in ready:
@@ -168,7 +168,8 @@ class _Book:
             if len(parts) == 5:
                 standing.add(parts[0])
                 for ip in parts[4].split():
-                    self.holders[ip] = dict(zip(("container", "project", "node", "role"), parts))
+                    new, old = dict(zip(("container", "project", "node", "role"), parts)), self.holders.get(ip)
+                    self.holders[ip] = {**new, **({"link": old["link"]} if old and old["container"] == parts[0] and "link" in old else {})}
         if whole:
             for ip, who in list(self.holders.items()):
                 c = who["container"]
@@ -185,11 +186,16 @@ class _Book:
             row = json.loads(line)
             if not (who := self.holders.get(row.get("src"))):
                 return
+            # …a holder is the link it was first read on: another's container took its address within its grace, in a third of
+            # a second, and went on the record under the one that left, a million packets lost with it (critic, ran)
+            if who.setdefault("link", row.get("link")) != row.get("link"):
+                return
             if drops := row.get("drops"):
                 log.warning(f"the network's record lost {drops} packets of {who['container']}: its flood outran it, and what it sent then is not on the record")
                 _append(who["project"], {"at": now, "container": who["container"], "lost_packets": int(drops)})
                 return
             if cut := row.get("cut"):
+                log.warning(f"the network's record passed {int(cut)} destinations of {who['container']}: the rest are not on the record")
                 _append(who["project"], {"at": now, "container": who["container"], "cut": f"more than {int(cut)} destinations: the rest not listed"})
                 return
             _append(who["project"], {"at": now, **{k: who[k] for k in ("container", "node", "role")},
@@ -200,9 +206,7 @@ class _Book:
             log.warning(f"the network's record passed over a line it could not read ({e})")
 
 
-def record_path(project: str) -> Path:
-    """Where `project`'s record lies, in this installation's data, which no session mounts."""
-    return data_dir() / "network" / f"{component(project)}.jsonl"
+record_path = network_record_path
 
 
 def forget(project: str) -> None:

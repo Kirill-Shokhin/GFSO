@@ -734,14 +734,22 @@ def watch_disk() -> None:
 
 
 #: what a reading of a volume's directories for what changed says of each, at most `FILES_BYTES`: `\0\1<dir>\1<its clock>\0`, or
-#: `\2\0` where this image's `find` cannot, then `<type> <path>\0`. By the inode's change time, which no process of a user sets
+#: `\2\0` where this image's `find` cannot, then `<type> <path>\0`, `\3` last where the walk outran its time. By the inode's
+#: change time, which no process of a user sets
 _CHANGED = ('m=$1; t=$2; shift 2; while [ $# -gt 0 ]; do d=$1; s=$2; shift 2; printf \'\\0\\1%s\\1\' "$d"; date +%s.%N | tr -d "\\n"; printf \'\\0\'; '
             '[ -d "/v/$d" ] || continue; find "/v/$d" -maxdepth 0 -newerct @0 -printf "" 2>/dev/null || { printf \'\\2\\0\'; continue; }; '
             '[ "$s" = new ] && s=$(( $(date +%s) - 60 )); '
-            'timeout "$t" find "/v/$d" -xdev -ignore_readdir_race -newerct "@$s" -printf \'%y %P\\0\' 2>/dev/null | head -c "$m"; done')
+            '{ timeout "$t" find "/v/$d" -xdev -ignore_readdir_race -newerct "@$s" -printf \'%y %P\\0\' 2>/dev/null; '
+            '[ $? = 124 ] && printf \'\\3\'; } | head -c "$m"; done')
 FILES_BYTES = 4 * 2 ** 20
 #: (volume, subpath) → {"since", the clock the next reading reads from; "work", whose it is; "left", read once more, then dropped}
 _FILES: dict = {}
+_FILES_LOCK = threading.Lock()
+
+
+def network_record_path(project: str) -> Path:
+    """Where `project`'s record of where its sessions reached lies, in this installation's data, which no session mounts."""
+    return data_dir() / "network" / f"{component(project)}.jsonl"
 
 
 def file_record_path(project: str) -> Path:
@@ -767,8 +775,18 @@ def _files_changed(vol: str, since: dict, image: "str | None") -> dict:
         head, _, rest = part.partition(b"\0")
         sub, _, clock = head.partition(b"\1")
         said[sub.decode(errors="replace")] = None if rest.startswith(b"\2") else (
-            clock.decode(), [e for e in rest.decode(errors="replace").split("\0") if e[2:]], len(rest) >= FILES_BYTES)
+            clock.decode(), [e for e in rest.decode(errors="replace").split("\0") if e[2:]],
+            len(rest) >= FILES_BYTES or rest.endswith(b"\3"))
     return said
+
+
+def _note_files(ex) -> None:
+    """A session's directories known from its start: one that begins and ends between two readings is seen by neither (critic, ran)."""
+    if isinstance(ex, PlaceContainer):
+        for d in ex.writable():
+            with _FILES_LOCK:
+                _FILES.setdefault(ex.volume.key(d), {"since": "new"}).update(
+                    work=(ex.project_name, ex.node, ex.role, ex.container), image=ex.image, left=False)
 
 
 def _record_files(works: dict) -> None:
@@ -776,17 +794,19 @@ def _record_files(works: dict) -> None:
     from outside the session (the disk's watch): nothing a session does to its own containers, its memory or its processes
     reaches this, whichever way it wrote and whether or not it ran a command. Where, not who: the system's own writes there
     show too. A directory whose work left is read once more; one cut keeps its clock, so the next reading reads it again."""
-    for k, w in works.items():
-        for d in w["dirs"]:
-            _FILES.setdefault(d, {"since": "new"}).update(work=k, image=w["image"], left=False)
-    standing = {d for w in works.values() for d in w["dirs"]}
-    for d, f in _FILES.items():
-        f["left"] = d not in standing
-    for vol in {v for v, _ in _FILES}:
-        mine = {s: f for (v, s), f in _FILES.items() if v == vol}
+    with _FILES_LOCK:
+        for k, w in works.items():
+            for d in w["dirs"]:
+                _FILES.setdefault(d, {"since": "new"}).update(work=k, image=w["image"], left=False)
+        standing = {d for w in works.values() for d in w["dirs"]}
+        for d, f in _FILES.items():
+            f["left"] = d not in standing
+        now = dict(_FILES)
+    for vol in {v for v, _ in now}:
+        mine = {s: f for (v, s), f in now.items() if v == vol}
         if any(f["left"] for f in mine.values()) and run(["docker", "volume", "inspect", vol], timeout=60).returncode:
             for s in mine:                # …gone with its project: asking would have Docker make it again, empty
-                _FILES.pop((vol, s))
+                _FILES.pop((vol, s), None)
             continue
         try:
             said = _files_changed(vol, {s: f["since"] for s, f in mine.items()}, next(iter(mine.values()))["image"])
@@ -805,7 +825,7 @@ def _record_files(works: dict) -> None:
                 if not cut:
                     f["since"] = f"{float(clock) - 0.05:.3f}"
             if f["left"]:
-                _FILES.pop((vol, s))
+                _FILES.pop((vol, s), None)
 
 
 def _watch_disk(stop: threading.Event | None, every: float | None, scope: str, ledger: "DiskLedger | None" = None
@@ -824,7 +844,10 @@ def _watch_disk(stop: threading.Event | None, every: float | None, scope: str, l
             ledger.begin()
             works = _disk_works(scope)
             added = ledger.added(works, _disk_read(works))
-            _record_files(works)
+            try:
+                _record_files(works)
+            except Exception as e:      # …the record's failure costs no one's bound
+                log.warning(f"what changed on Docker's disk was not recorded now ({e})")
             with ledger.lock:
                 busy = set(ledger.busy)
             # …never while the system writes into one of its directories: its git would be ended halfway
@@ -1244,12 +1267,16 @@ at_exit(end_started)
 def end_leftovers() -> None:
     """At a server's start: the project containers of a server that is gone — their calls died with it, and each is
     started afresh on its project's first call. This installation's alone (`identity`) — and those of a build that set
-    no home, whichever installation's: a server started while another installation's older build runs ends its run."""
+    no home, whichever installation's: a server started while another installation's older build runs ends its run. Its
+    listener went with it while they ran on, so their projects' records say a gap (critic, ran: nothing did)."""
     if shutil.which("docker"):
-        got = run(["docker", "ps", "-a", "--filter", f"label={LABEL}", "--format", f'{{{{.ID}}}} {{{{.Label "{HOME}"}}}}'],
-                  timeout=60, text=True)
-        if ids := [i for i, *h in map(str.split, (got.stdout or "").splitlines()) if h in ([], [_home()])]:
+        got = run(["docker", "ps", "-a", "--filter", f"label={LABEL}", "--format",
+                   f'{{{{.ID}}}} {{{{.Label "{HOME}"}}}} {{{{.Label "{PROJECT}"}}}}'], timeout=60, text=True)
+        rows = [r.split(" ") + [""] * 2 for r in (got.stdout or "").splitlines()]
+        if ids := [r[0] for r in rows if r[1] in ("", _home())]:
             _keep_logs(ids)
+            for project in {r[2] for r in rows if r[1] == _home() and r[2]}:
+                append(network_record_path(project), {"at": time.time(), "gap": "a server went with its work standing: what that work did since may not be on the record"})
             run(["docker", "rm", "-f", *ids], timeout=120)
         run(["docker", "network", "prune", "-f", "--filter", f"label={HOME}={_home()}"], timeout=120)
 
@@ -2245,6 +2272,7 @@ def _run_and_admit(ex) -> None:
     if not ON_START and not network_record_off():    # …a list left empty admitted anything: `gfso run`, a reload worker (critic)
         raise PlaceUnavailable(ex.name, "nothing here keeps the record of where its sessions reach: nothing runs off it")
     watch_disk()                                     # …and the bound on its disk and the record of its files, wherever it started
+    _note_files(ex)
     for admit in ON_START:
         admit(ex)
 

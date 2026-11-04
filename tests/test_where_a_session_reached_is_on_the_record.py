@@ -29,6 +29,7 @@ docker = pytest.mark.skipif(subprocess.run(["docker", "version"], capture_output
 @pytest.fixture
 def data(monkeypatch, tmp_path):
     monkeypatch.setattr(N, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(E, "data_dir", lambda: tmp_path)
     return tmp_path
 
 
@@ -100,6 +101,38 @@ def test_a_freed_address_leaves_its_holder_and_the_next_user_s_flow_is_on_no_rec
     b.learn("", whole=True)
     b.heard(_flow(to="2.2.2.2"), 2.0)
     assert [r["to"] for r in _rows(data)] == ["1.1.1.1"]
+
+
+def test_a_stranger_on_a_freed_address_is_written_under_no_one(data):
+    """Attribution by the address alone: another installation's container took it within its holder's grace, and its
+    destinations and a million lost packets went on the record of the one that left (critic, ran)."""
+    b = _book()
+    b.heard(json.dumps({**json.loads(_flow(to="1.1.1.1")), "link": "vethA"}), 1.0)
+    b.learn("/a|p|n|executor|172.17.0.2 \n", whole=True)               # …a turn of the watch keeps what it knows
+    b.heard(json.dumps({**json.loads(_flow(to="1.1.1.2")), "link": "vethA"}), 2.0)
+    b.heard(json.dumps({**json.loads(_flow(to="6.6.6.6")), "link": "vethB"}), 3.0)
+    b.heard('{"drops": 1000000, "src": "172.17.0.2", "link": "vethB"}', 4.0)
+    assert [r.get("to") for r in _rows(data)] == ["1.1.1.1", "1.1.1.2"]
+    b.learn("/c|p|n|executor|172.17.0.2 \n")                           # …this installation's next, on its own link
+    b.heard(json.dumps({**json.loads(_flow(to="7.7.7.7")), "link": "vethC"}), 5.0)
+    assert _rows(data)[-1]["container"] == "c"
+
+
+def test_a_server_gone_with_its_work_standing_leaves_a_gap_on_the_record(data, monkeypatch):
+    home = E._home()
+    monkeypatch.setattr(E.shutil, "which", lambda _: "docker")
+    monkeypatch.setattr(E, "_keep_logs", lambda ids: None)
+    removed = []
+
+    def docker(args, **kw):
+        if args[1] == "ps":
+            return SimpleNamespace(returncode=0, stdout=f"a {home} p\nb other q\nc  \n")
+        removed.extend(args)
+        return SimpleNamespace(returncode=0, stdout="")
+    monkeypatch.setattr(E, "run", docker)
+    E.end_leftovers()
+    assert "a" in removed and "c" in removed and "b" not in removed
+    assert "gap" in _rows(data)[0] and not (data / "network" / "q.jsonl").exists()
 
 
 def test_the_next_holder_of_an_address_takes_it_at_once(data):

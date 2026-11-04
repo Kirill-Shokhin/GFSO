@@ -368,6 +368,25 @@ def test_live_what_a_client_wrote_itself_is_on_the_record_by_the_system(monkeypa
     assert all(r["node"] and r["session"] for r in rows)
 
 
+@live
+def test_live_a_session_between_two_readings_is_read_all_the_same(project):
+    """Begun and ended inside one tick of the watch, it stood in no reading, so none read its directories (critic, ran)."""
+    E._FILES.clear()
+    s = _place(project)
+    s.start()
+    at = s.to_inside(str(s.rw))
+    subprocess.run(["docker", "exec", s.container, "sh", "-c", f"echo z > {at}/short.txt"], check=True)
+    subprocess.run(["docker", "rm", "-f", s.container], capture_output=True)
+    E._record_files(E._disk_works(E._home()))
+    assert "short.txt" in E.file_record_path(project.project_name).read_text()
+
+
+def test_a_walk_past_its_time_is_said_cut(monkeypatch):
+    monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=b"\0\1s\x01100.5\0f a\0\3\0\1q\x01100.6\0f b\0"))
+    said = E._files_changed("v", {"s": "1", "q": "1"}, "i")
+    assert said["s"] == ("100.5", ["f a"], True) and said["q"] == ("100.6", ["f b"], False)
+
+
 def test_what_a_session_stamps_over_and_over_displaces_no_other_name():
     """The first 200 in the walk's order: 3000 files stamped each second hid every other write (critic, ran)."""
     said = said_of([f"f loud/{i}" for i in range(3000)] + ["f quiet/mine.txt"])
@@ -405,17 +424,16 @@ def test_a_volume_gone_with_its_project_is_not_made_again_by_asking(tmp_path, mo
 
 
 @live
-def test_live_a_command_holding_every_process_empties_no_record(monkeypatch, project):
-    """`docker exec` could not start, so the read and the mirror failed and `rm -f` followed: the record of its own commands
-    gone, on a session's say (critic, ran). What the listener printed takes no process there."""
-    monkeypatch.setenv("GFSO_CONTAINER_PIDS", "128")
+def test_live_a_container_that_can_start_no_process_empties_no_record(project):
+    """`docker exec` could not start — every pid held, on Docker Desktop, or the listener ended by its memory — so the read
+    and the mirror failed and `rm -f` followed: the record of its own commands gone, on a session's say (critic, ran).
+    Whether holding the pids stops an exec differs by host (the Linux runner's went on), so the container is ended here:
+    an exec fails on any host, and what the listener printed needs none."""
     s = _place(project)
     s.commands_env()
     _client(s, f"{shell.CLIENT} -c 'echo first'")
-    _client(s, f"{shell.CLIENT} -c 'for i in $(seq 200); do sleep 40 & done; sleep 30' >/dev/null 2>&1 &")
-    time.sleep(6)
-    held = subprocess.run(["docker", "exec", s.commands.name, "true"], capture_output=True)
-    assert held.returncode, "the control: no process could start there"
+    subprocess.run(["docker", "kill", s.commands.name], capture_output=True, check=True)
+    assert subprocess.run(["docker", "exec", s.commands.name, "true"], capture_output=True).returncode, "the control"
     assert any("first" in " ".join(r.get("argv", ())) for r in s.commands.record())
 
 
