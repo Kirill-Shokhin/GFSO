@@ -692,7 +692,7 @@ def _past_bound(added: dict, running: set, bound: tuple) -> list:
     return [k for k, (b, n) in added.items() if k in running and (b > bound[0] or n > bound[1])]
 
 
-_DISK_WATCH = threading.Event()
+_DISK_WATCH, _NO_WATCH_SAID = threading.Event(), threading.Event()
 #: the containers the disk's watch ended, by name, with what their work added: a judge's copy or build so ended is its
 #: delivery's FAIL, its cause said (`past_disk`)
 _DISK_ENDED: dict = {}
@@ -2298,6 +2298,9 @@ def _run_and_admit(ex) -> None:
     if not ON_START and not network_record_off():    # …a list left empty admitted anything: `gfso run`, a reload worker (critic)
         raise PlaceUnavailable(ex.name, "nothing here keeps the record of where its sessions reach: nothing runs off it")
     _note_files(ex)
+    if not _DISK_WATCH.is_set() and not _NO_WATCH_SAID.is_set():
+        _NO_WATCH_SAID.set()
+        log.warning("no server watches this work: no bound on what it writes to Docker's disk, no record of what it changed")
     for admit in ON_START:
         admit(ex)
 
