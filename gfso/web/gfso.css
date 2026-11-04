@@ -1565,6 +1565,8 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
     .hd-goal { flex-wrap: nowrap; align-items: center; column-gap: 10px; }
     .hd-goal .hd-root { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .hd-goal > .hd-left, .hd-run { flex-shrink: 0; }
+    .cy-fold:not(.kf) { width: var(--w); min-width: 0; padding: 2px 0 3px; overflow: hidden; font-size: var(--fs, 10px); }
+    .cy-fold .tally { font-size: inherit; }
     .cy-fold .cy-more { display: none; }   /* a phone's tag stays the width of its node: how many parts, how many of them ask */
     .cy-fold.asks, .cy-fold.asks .tally, .cy-fold.asks .tally b { color: var(--acc); border-color: var(--acc); }
     .hd-needs > .need { order: -1; }

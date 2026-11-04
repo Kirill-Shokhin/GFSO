@@ -268,13 +268,13 @@ function placeBadges() {
         const b = n.renderedBoundingBox(BODY), f = foldOf(id);
         // the folded parts hang under the node: their count, and those failing now in the accent
         // …each a count as every count on the page (`tally`: the figure at its line's size — critic 5); a click on it unfolds
-        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px;--w:${Math.round(b.x2 - b.x1)}px"${TIP.fold}>${tally(f.n, f.n > 1 ? 'parts' : 'part')}`
+        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px;${gluedTo(b)}"${TIP.fold}>${tally(f.n, f.n > 1 ? 'parts' : 'part')}`
             + (f.work.length ? `<i class="cy-live${f.work.some(x => now.on(x)) ? ' on' : ''}"${beat()}></i><span class="cy-more">${tally(f.work.length, 'at work')}</span>` : '')
             + '<span class="cy-more">' + (f.decide.length ? tally(f.decide.length, f.decide.length > 1 ? 'wait on a decision' : 'waits on a decision') : '')
             + (f.shut.length ? tally(f.shut.length, 'closed by FAIL') : '')
             + (f.byHand.length ? tally(f.byHand.length, 'closed by hand') : '')
             + (f.contested.length ? `<span class="acc">${tally(f.contested.length, 'contested')}</span>` : '')
-            + (f.failing.length ? `<span class="acc">${tally(f.failing.length, 'sent back')}</span>` : '') + '</span></div>' : openHere(id) ? `<div class="cy-fold open" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px;--w:${Math.round(b.x2 - b.x1)}px"${TIP.fold}>${tally(openHere(id), 'parts')}</div>` : '';
+            + (f.failing.length ? `<span class="acc">${tally(f.failing.length, 'sent back')}</span>` : '') + '</span></div>' : openHere(id) ? `<div class="cy-fold open" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px;${gluedTo(b)}"${TIP.fold}>${tally(openHere(id), 'parts')}</div>` : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
         const shut = closedByFail(taskOf(id));
@@ -287,6 +287,8 @@ function placeBadges() {
     }).join('');
 }
 // the run is read after the first drawing: an untouched view is framed again on what asks now
+// «▾ 12 parts» is some 5.6 of its letters' heights wide
+const gluedTo = b => { const w = Math.round(b.x2 - b.x1); return `--w:${w}px;--fs:${Math.min(10, (w - 4) / 5.6).toFixed(1)}px`; };
 export const annotate = () => { if (cy?.nodes().length && fresh) home(); placeBadges(); };
 // The canvas height the drawn graph needs for its labels to read (zoom ≈ 0.8), framing included.
 export const graphNeeds = () => cy && cy.nodes().length ? cy.elements().boundingBox().h * 0.8 + 70 : 0;

@@ -15,7 +15,7 @@ import * as author from './author.js';
 import * as goal from './goal.js';
 import {mountDeck, paint as paintDeck, onPipeline, onInflight, suggestHeight, foldDeck} from './deck.js';
 import {connectWS} from './live.js';
-import {askProjectName} from './overlays.js';
+import {askProjectName, clearNotice} from './overlays.js';
 import {mountHints, LEAVING} from './hints.js';
 import {untip} from './tip.js';
 import {drawPlanning} from './planning.js';
@@ -120,6 +120,12 @@ watch((st, key) => { if (key === 'select') st.select ? selectTask(st.select) : c
 const STEPS = 6;
 let warned = 0;
 const closeTop = () => {
+    if ($('ask-no')) return $('ask-no').click(), true;
+    const modal = document.querySelector('.modal-bg.active');
+    if (modal) return modal.classList.remove('active'), true;
+    if ($('new-project-box')) return $('new-project-box').remove(), true;
+    if ($('page-notice')) return clearNotice(), true;
+    if ($('inline-form')?.innerHTML) return $('inline-form').innerHTML = '', true;
     const tipBox = $('tooltip');
     if (tipBox?.classList.contains('visible')) return untip(), true;
     const pop = document.querySelector('.hd-quality.open');
