@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gfso.adapters import children, execution as E
+from gfso.adapters import children, door, execution as E
 from gfso import config as C
 from gfso.mcp import server as S
 from gfso.adapters import netrecord as N
@@ -236,8 +236,18 @@ def test_only_a_server_starts_the_watches(monkeypatch):
 def test_the_bound_s_refusals_are_read_from_its_listing_and_told(data):
     listing = "Chain gfso-flows (1 references)\n    pkts      bytes target\n      10      290 RETURN  0 -- * * 0.0.0.0/0\n      37     1073 DROP  0 -- * * 0.0.0.0/0\n"
     assert E._flows_dropped(listing) == 37 and E._flows_dropped("") == 0
+    assert E._flows_dropped(listing + listing) == 74, "every chain's"
     N._append("p", {"at": 1.0, "container": "c", "flows_dropped": 37})
-    assert any("c: 37 new flows past its bound" in x for x in N.said_apart("p"))
+    assert any("c: 37 packets past its bounds" in x for x in N.said_apart("p"))
+
+
+def test_one_address_holds_no_more_of_a_door_than_its_share():
+    """One session's 300 idle connections left its neighbours no door, no key asked (critic, ran)."""
+    s = door._Server.__new__(door._Server)
+    s.held = {}
+    assert all(s.verify_request(None, ("172.17.0.2", 1)) for _ in range(door.PER_CLIENT))
+    assert not s.verify_request(None, ("172.17.0.2", 1)), "past its share"
+    assert s.verify_request(None, ("172.17.0.3", 1)), "a neighbour's room is its own"
 
 
 @docker

@@ -246,7 +246,7 @@ def said_apart(project: str) -> list:
             gaps += "gap" in row
             turned += "turned" in row
     return ([f"{c}: {n} packets not read, what it sent then is not listed" for c, n in lost.items() if n]
-            + [f"{c}: {n} new flows past its bound, each send refused: a failure of what it ran may be this" for c, n in bound.items() if n]
+            + [f"{c}: {n} packets past its bounds, each send refused: a failure of what it ran may be this" for c, n in bound.items() if n]
             + [f"{c}: past its {BUDGET} destinations, the rest not listed" for c in sorted(cut)]
             + ([f"{gaps} times the listener stood again: what passed before each may not be listed"] if gaps else [])
             + ([f"turned over {turned} times: older rows are gone"] if turned else [])

@@ -46,6 +46,8 @@ CLIENT_TOOLS = (None, "custom")
 CLOSED_DENIED = ("mcp_servers", "container")
 #: how long a client may take to send a request — a held connection is one of the door's few threads
 WAIT = 60
+#: connections one address may hold at a door
+PER_CLIENT = 16
 #: the largest request body a door reads — the provider's own cap on a messages request
 MAX_BODY = 32 * 2 ** 20
 _lock = threading.Lock()
@@ -205,7 +207,27 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
 
 
 class _Server(socketserver.ThreadingMixIn, HTTPServer):
+    """A thread a connection, and no one address holding more than `PER_CLIENT`: one session's 300 idle connections left its
+    neighbours no door, with no key asked (critic, ran)."""
     daemon_threads = True
+    held: dict = {}
+    held_lock = threading.Lock()
+
+    def verify_request(self, request, client_address) -> bool:
+        """Room for this address?"""
+        with self.held_lock:
+            if self.held.get(client_address[0], 0) >= PER_CLIENT:
+                return False
+            self.held[client_address[0]] = self.held.get(client_address[0], 0) + 1
+            return True
+
+    def process_request_thread(self, request, client_address) -> None:
+        """Its room back when its connection ends."""
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            with self.held_lock:
+                self.held[client_address[0]] -= 1
 
 
 def _laid(wait: float = 120) -> dict:

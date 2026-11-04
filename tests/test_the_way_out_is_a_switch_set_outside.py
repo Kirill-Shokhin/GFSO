@@ -337,7 +337,7 @@ def test_an_open_switch_bounds_a_containers_new_flows_and_a_closed_one_needs_non
     assert "gfso-flows" not in closed and "gfso-udp" not in closed
     assert closed.index("-d 127.0.0.11 -j gfso-names") < closed.index("-o lo -j ACCEPT"), "before loopback is let through"
     assert seal.index("-d 127.0.0.11 -j gfso-names") < seal.index("-o lo -j ACCEPT")
-    assert "--limit 175/second" in seal and "-p udp -j gfso-udp" in seal
+    assert "--limit 175/second" in seal and "! -p tcp -j gfso-udp" in seal
     monkeypatch.setenv("GFSO_NEW_FLOWS", "999999")
     assert E.new_flows() == 10000
     assert "--limit 10000/second --limit-burst 10000" in E.WayOut.seal(_ex(tmp_path, {"mode": "open"}).way)

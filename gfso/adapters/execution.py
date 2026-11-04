@@ -1389,9 +1389,9 @@ class WayOut:
         # kernel has no way to count a flow's first packet alone (`connbytes`, measured absent)
         flows = (f"iptables -N gfso-flows && iptables -A gfso-flows -m limit --limit {new_flows()}/second --limit-burst {min(10000, 10 * new_flows())} -j RETURN && "
                  "iptables -A gfso-flows -j DROP && iptables -A OUTPUT -o lo -j ACCEPT && iptables -A OUTPUT -m conntrack --ctstate NEW -j gfso-flows && "
-                 # …and what leaves by UDP at all: an answered flow is not new, and passed the bound whole (critic, ran: 300 of 300)
+                 # …and all that leaves but TCP, which paces itself: an answered flow is not new, and passed the bound whole (critic, ran: 300 of 300)
                  f"iptables -N gfso-udp && iptables -A gfso-udp -m limit --limit {min(10000, 25 * new_flows())}/second --limit-burst 10000 -j RETURN && "
-                 "iptables -A gfso-udp -j DROP && iptables -A OUTPUT -p udp -j gfso-udp && ")
+                 "iptables -A gfso-udp -j DROP && iptables -A OUTPUT ! -p tcp -j gfso-udp && ")
         return (f'{resolver}{flows}{dns}iptables -A OUTPUT -d {HOST_NET} -j REJECT && gw=$({_GATEWAY_OF}) && [ -n "$gw" ] && '
                 f'iptables -A OUTPUT -d "$gw" -j REJECT && {own} && {shut} && {inbound}')
 
@@ -3016,7 +3016,8 @@ class PlaceContainer(ContainerExecution):
     def _say_the_bound(self) -> None:
         """What the bound on new flows dropped of this session's, on its project's record as it goes: a program failing on a
         refused send read as its own failure, and a flooder that hit the bound was named nowhere (critic, ran)."""
-        got = run(["docker", "exec", *SYS, "-u", "0", self.container, "iptables", "-L", "gfso-flows", "-v", "-n", "-x"], timeout=30, text=True)
+        got = run(["docker", "exec", *SYS, "-u", "0", self.container, "/bin/sh", "-c",
+                   "for c in gfso-flows gfso-udp gfso-names; do iptables -L $c -v -n -x 2>/dev/null; done"], timeout=30, text=True)
         if not got.returncode and (dropped := _flows_dropped(got.stdout)):
             append(network_record_path(self.project_name), {"at": time.time(), "container": self.container, "flows_dropped": dropped})
 
@@ -3031,9 +3032,8 @@ class PlaceContainer(ContainerExecution):
 
 
 def _flows_dropped(listing: str) -> int:
-    """New flows the seal's bound dropped, by what `iptables -L gfso-flows -v -x` lists; 0 where it lists none."""
-    m = re.search(r"^\s*(\d+)\s+\d+\s+DROP", listing or "", re.M)
-    return int(m[1]) if m else 0
+    """What the seal's bounds dropped, by what `iptables -L <chain> -v -x` lists of each; 0 where it lists none."""
+    return sum(int(n) for n in re.findall(r"^\s*(\d+)\s+\d+\s+DROP", listing or "", re.M))
 
 
 class _Call:
