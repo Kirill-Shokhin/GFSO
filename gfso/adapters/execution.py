@@ -33,7 +33,7 @@ from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MA
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
                          memory_ceiling, network_record_off, node_disk, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
-from gfso.adapters.records import append, said_of, wait_to_be_the_one
+from gfso.adapters.records import append, said_of
 from gfso.places import same_place
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, run_printing, spawn_kw
 
@@ -400,17 +400,7 @@ def watch_ceiling() -> None:
     Docker answers yet: it asks again each turn."""
     if not _WATCH.is_set():
         _WATCH.set()
-        threading.Thread(target=_the_one_watch, args=("ceiling", _watch_ceiling), name="gfso-ceiling", daemon=True).start()
-
-
-def _the_one_watch(name: str, watch, *args) -> None:
-    """`watch`, once no other process of this installation runs it: each with its own ledger and its own record of what it
-    ended, a second would charge a node with the system's writes and read another's end as a bound of its own (critic)."""
-    held = wait_to_be_the_one(data_dir() / f"{name}.watch")
-    try:
-        watch(*args)
-    finally:
-        held.close()
+        threading.Thread(target=_watch_ceiling, name="gfso-ceiling", daemon=True).start()
 
 
 def _own_of(ids: list) -> list:
@@ -743,7 +733,7 @@ def watch_disk() -> None:
     """The disk's watch, for this server's life (`_watch_disk`) over this installation's nodes, started once."""
     if not _DISK_WATCH.is_set():
         _DISK_WATCH.set()
-        threading.Thread(target=_the_one_watch, args=("disk", _watch_disk, None, None, _home()), name="gfso-disk", daemon=True).start()
+        threading.Thread(target=_watch_disk, args=(None, None, _home()), name="gfso-disk", daemon=True).start()
 
 
 #: what a reading of a volume's directories for what changed says of each, at most `FILES_BYTES`: `\0\1<dir>\1<its clock>\0`, or
@@ -790,7 +780,7 @@ def _files_changed(vol: str, since: dict, image: "str | None") -> dict:
         head, _, rest = part.partition(b"\0")
         sub, _, clock = head.partition(b"\1")
         said[sub.decode(errors="replace")] = None if rest.startswith(b"\2") else (
-            clock.decode(), [e for e in rest.decode(errors="replace").split("\0") if e[2:]],
+            clock.decode(), [e if e[2:] else "d ." for e in rest.rstrip(b"\3").decode(errors="replace").split("\0") if e],
             len(rest) >= FILES_BYTES or rest.endswith(b"\3"))
     return said
 
@@ -814,7 +804,7 @@ def _record_files(works: dict, asked: "float | None" = None) -> None:
     """S6's file half: what changed in every directory a session mounts writable, on its project's record on the host, read
     from outside the session (the disk's watch): nothing a session does to its own containers, its memory or its processes
     reaches this, whichever way it wrote and whether or not it ran a command. Where, not who: the system's own writes there
-    show too. A directory whose work left is read once more; one cut keeps its clock, so the next reading reads it again.
+    show too. A directory whose work left is read once more; one cut says so, and the next reads on from its clock.
     `asked`: when `works` was asked of Docker: what was noted since is not gone for being absent from it."""
     with _FILES_LOCK:
         for k, w in works.items():
@@ -845,8 +835,9 @@ def _record_files(works: dict, asked: "float | None" = None) -> None:
                 clock, entries, cut = got
                 if entries or cut:
                     append(file_record_path(project), {**row, **said_of(entries), **({"cut": True} if cut else {})})
-                if not cut:
-                    f["since"] = f"{float(clock) - 0.05:.3f}"
+                # …past a cut too: what stood would stop every later reading at the same place, and an honest install past the
+                # bound would say so every ten seconds and turn the record over (critic, ran). What it did not reach, it said
+                f["since"] = f"{float(clock) - 0.05:.3f}"
             if f["left"]:
                 _FILES.pop((vol, s), None)
 
@@ -1278,6 +1269,11 @@ def gateway_of(container: str) -> str:
 def end_started() -> None:
     """At this server's exit: its project containers, and every call in them — killing a `docker exec` client leaves
     its call running inside (probe P1), so the server's children would outlive it there and go on spending."""
+    if _DISK_WATCH.is_set() and _FILES:              # …what changed since the last reading: else on no record, and nothing said (critic, ran)
+        try:
+            _record_files(_disk_works(_home()))
+        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+            log.warning(f"what changed last on Docker's disk was not recorded ({e})")
     if ids := list(_STARTED):
         _keep_logs([*ids, *map(gateway_of, ids), *_DOORS])          # …a session's commands among `ids`
         run(["docker", "rm", "-f", *ids, *map(gateway_of, ids), *_DOORS], timeout=120)
@@ -2296,8 +2292,6 @@ def _run_and_admit(ex) -> None:
     ex.volume.require(ex.run_args())                 # …again: one made by Docker between the asking and the run
     if not ON_START and not network_record_off():    # …a list left empty admitted anything: `gfso run`, a reload worker (critic)
         raise PlaceUnavailable(ex.name, "nothing here keeps the record of where its sessions reach: nothing runs off it")
-    watch_disk()                                     # …and the bound on its disk and the record of its files, wherever it started
-    watch_ceiling()                                  # …and on the machine's memory: `gfso mcp` dispatches work with no server
     _note_files(ex)
     for admit in ON_START:
         admit(ex)

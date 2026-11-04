@@ -8,6 +8,7 @@ no container stood a listener; `gfso run` admitted nothing; fragments invented p
 CONTROLS: in `_Book.heard`, take the `try` off and the hostile lines stop the reader; `learn` without its grace and a freed
 address keeps its dead holder; `admit` passing on a failure and work runs off the record; the kernel filter back to TCP, UDP
 and ICMP and the live test's SCTP line goes; the filter's first two lines off and the inbound flood test goes red."""
+import inspect
 import json
 import os
 import subprocess
@@ -176,11 +177,29 @@ def test_a_root_s_end_carries_what_the_records_say_of_themselves(data, monkeypat
     assert "the_records_say" not in ended(False), "at the end: each poll would read the whole record"
 
 
+def test_a_reader_is_told_when_the_file_record_turned_or_named_less_than_changed(data, monkeypatch):
+    """Two turns lost a session's first writes and a reading of 452 named 200, each with nothing said (critic, ran)."""
+    monkeypatch.setattr(N, "append", N.append)
+    path = N.file_record_path("p")
+    N.append(path, {"at": 1.0, "x": 1})
+    N.append(path, {"at": 1.0, "x": 2}, 1)
+    assert any("turned over 1 times" in x for x in N.said_apart("p"))
+    N.append(path, {"at": 1.0, "session": "s", "dir": "d", "changed": ["f a"], "changed_n": 452})
+    assert any("s: d: more changed" in x for x in N.said_apart("p"))
+
+
+def test_only_a_server_starts_the_watches(monkeypatch):
+    """Started by any process's first container they stood in two at once, each its own ledger and its own record of what it
+    ended: a judge ended by the other read as its delivery's failure, and the holder's bound was not the server's (critic, ran)."""
+    src = inspect.getsource(E._run_and_admit)
+    assert "watch_disk" not in src and "watch_ceiling" not in src
+
+
 def test_a_reader_is_told_what_the_file_record_could_not_say(data):
     E_row = {"at": 1.0, "session": "s", "dir": "d"}
     N.append(N.file_record_path("p"), {**E_row, "cut": True})
     N.append(N.file_record_path("p"), {**E_row, "cut": True})
-    assert N.said_apart("p") == ["s: d: more changed than a reading holds"]
+    assert N.said_apart("p") == ["s: d: more changed than a reading names"]
 
 
 def test_a_server_gone_with_its_work_standing_leaves_a_gap_on_the_record(data, monkeypatch):

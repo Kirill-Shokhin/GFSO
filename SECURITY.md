@@ -130,13 +130,13 @@ and nothing of your disk is mounted into any of its containers:
   span counted, a command left running among them) — by the system's listener in that container, which no command
   can signal, read or ask for anything; the record is kept beside the door's log, and read from what the listener printed
   where its container can start no process. What changed on disk is a record of its own (`gfso network <project>` says where
-  it lies): every ten seconds, and once more after a session has gone, the system reads each directory a session mounts
+  it lies): every ten seconds, once more after a session has gone and once at the server's clean exit, a server reads each directory a session mounts
   writable, from a container of its own holding that volume read-only, past every mode, and writes on the host what changed
   there: by that change time, whichever way it was written, so what a client's own file tools wrote is on it, and nothing a
   session does to its own containers reaches it. It says where, not who: the system's own writes there show too. What is
   written and removed again between two readings leaves only its directory; each reading names 200 paths at most, the
-  quietest directories first, and counts the busiest; one that read its bound of 4 MiB of names says so and is read again;
-  the record turns over at 16 MiB as the network's does. Under an image whose `find` cannot say, it says that. Where a session reached by
+  quietest directories first, and counts the busiest; one that read its bound of 4 MiB of names says so, the rest of that reading unread; `gfso network` and the answer that a root is done name each such reading;
+  the record turns over at 16 MiB as the network's does. Only a server reads, as only a server keeps the disk's bound and the memory ceiling's watch: `gfso mcp` or `gfso run` working with no server keeps no such record, and their bounds are each container's own. Under an image whose `find` cannot say, it says that. Where a session reached by
 network is a record of its own, the same under every switch (`gfso network <project>` says where it lies): while an
 installation has work, a listener of the system's own for each process that starts its containers, on Docker's host network, holding only the right to read packets and
 sharing nothing with a session, writes for each container the destination of each new connection leaving it, whatever the protocol, and
@@ -147,7 +147,7 @@ before it left a container. Each container lists 2,000
 destinations, and past that says so, and 64 ports of one host, and past that says so; a project's record turns over at 16 MiB, keeping its last turn and saying so, and goes with the project.
 Under an allowlist it names the gateway, whose own log has the target. A flood costs its own container's lines alone: each container is read apart, and what arrives at one is not read.
 A session under `open` can still hide where it went, by sending faster than the listener reads or past its 2,000 destinations: what it cannot do is hide that it did. The packets lost and the limit passed are on the record under its name and in the server's log, `gfso network` names them, and so does the answer that says a root is done; the page does not yet. Such a session is not ended: `open` is the switch for work where a leak does not matter, and a measure that stops an honest upload would make it no longer open. Under the closed switches only new connections to the door and the gateway leave a container. NOT HELD: under `open`, one session opening new UDP flows as fast as it can stalled Docker Desktop's API for about 40 s and then ended its backend, and with it every project's containers (measured, twice); nothing bounds new flows yet, so on Docker Desktop one session under `open` can stop every other. Under a closed switch this path is shut. On a Linux host the listener reads the headers of every
-container there, and writes those of this installation alone. A container is known by its address and the MAC Docker gave that start, so another's container taking a freed address is written under no one. Two processes of one installation that both start containers each stand a listener and each write every row. A client that runs a shell beside itself
+container there, and writes those of this installation alone. A container is known by its address and the MAC Docker gave that start, so another's container taking a freed address is written under no one, on a Docker that gives each start a MAC of its own, as 29 does. Two processes of one installation that both start containers each stand a listener and each write every row. A client that runs a shell beside itself
   instead (it ignores, silently, a shell it does not accept) runs no command there, and the session
   is refused with that cause: the project stops. The client's own file tools may not write through
   `/proc` or `/dev`, nor into its own state. What the client's shell writes back into the client's container is the

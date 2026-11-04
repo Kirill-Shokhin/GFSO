@@ -228,8 +228,10 @@ def said_apart(project: str) -> list:
     for p in (file_record_path(project).with_suffix(".jsonl.1"), file_record_path(project)):
         got, unread = rows_of(p)
         bad += unread
-        said_files += [f"{r.get('session')}: {r.get('dir')}: " + ("what changed could not be read" if "unread" in r else "more changed than a reading holds")
-                       for r in got if "unread" in r or "cut" in r]
+        turned += sum("turned" in r for r in got)
+        gaps += sum("gap" in r for r in got)
+        said_files += [f"{r.get('session')}: {r.get('dir')}: " + ("what changed could not be read" if "unread" in r else "more changed than a reading names")
+                       for r in got if "unread" in r or "cut" in r or r.get("changed_n", 0) > len(r.get("changed", ()))]
     for p in (record_path(project).with_suffix(".jsonl.1"), record_path(project)):
         got, unread = rows_of(p)
         bad += unread

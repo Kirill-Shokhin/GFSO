@@ -381,6 +381,12 @@ def test_live_a_session_between_two_readings_is_read_all_the_same(project):
     assert "short.txt" in E.file_record_path(project.project_name).read_text()
 
 
+def test_a_change_at_the_top_of_a_directory_is_named(monkeypatch):
+    """Removing a file at its top changed only the top: dropped as nameless, no row (critic, ran)."""
+    monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=b"\0\1s\x01100.5\0d \0"))
+    assert E._files_changed("v", {"s": "1"}, "i")["s"][1] == ["d ."]
+
+
 def test_a_walk_past_its_time_is_said_cut(monkeypatch):
     monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=b"\0\1s\x01100.5\0f a\0\3\0\1q\x01100.6\0f b\0"))
     said = E._files_changed("v", {"s": "1", "q": "1"}, "i")
@@ -407,7 +413,7 @@ def test_a_reading_cut_keeps_its_clock_and_a_directory_left_is_read_once_more(tm
     E._record_files(works)
     E._record_files(works)
     E._record_files({})
-    assert since == ["new", "new", "199.950"], "a cut reading read again from where it stood"
+    assert since == ["new", "99.950", "199.950"], "a cut stops no later reading: it read on from its clock"
     assert not E._FILES, "gone after the reading its leaving owed"
     rows = [json.loads(x) for x in E.file_record_path("p").read_text().splitlines()]
     assert rows[0]["cut"] is True and [r["changed"] for r in rows] == [["f a"], ["f b"], ["f c"]]
@@ -435,7 +441,7 @@ def test_a_session_noted_after_the_list_was_asked_has_not_left_for_being_absent_
     E._FILES[("v", "s")] = {"since": "1", "work": ("p", "n", "r", "c"), "image": "i", "left": False, "noted": asked + 0.001}
     E._record_files({}, asked)
     assert E._FILES, "it started while the list was being read"
-    time.sleep(0.01)
+    time.sleep(0.05)
     E._record_files({})
     assert not E._FILES
 

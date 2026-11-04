@@ -51,40 +51,26 @@ def rows_of(path: Path) -> tuple:
     return rows, bad
 
 
-def _lock(f, block: bool) -> bool:
-    """This process holds `f`'s lock? Across processes, and across two opens in one."""
-    try:
-        if fcntl:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
-            return True
-        while True:
-            try:
-                f.seek(0)
-                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-                return True
-            except OSError:
-                if not block:
-                    return False
-                time.sleep(0.02)
-    except OSError:
-        return False
+def _lock(f) -> None:
+    """Back once this holds `f`'s lock, across processes and across two opens in one."""
+    if fcntl:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        return
+    while True:
+        try:
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError:
+            time.sleep(0.02)
 
 
 @contextlib.contextmanager
 def one_at_a_time(path: Path):
     """No other process or thread holds `path` while this runs: two writers on Windows tore rows and lost them (critic, ran)."""
     with open(path, "a+b") as f:
-        _lock(f, True)
+        _lock(f)
         yield
-
-
-def wait_to_be_the_one(path: Path):
-    """Back once this process alone holds `path`, for as long as it keeps what is returned: one watch to an installation."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    f = open(path, "a+b")
-    while not _lock(f, False):
-        time.sleep(5)
-    return f
 
 
 def said_of(entries: list) -> dict:
