@@ -9,7 +9,7 @@ import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuil
 import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
 import {drawHeader, drawQuality, toggleReports, stopRun, startRun} from './header.js';
 import {refreshProjects, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject, listOnly} from './projects.js';
-import {selectTask, closeSidebar, resign, openReader, closeReader} from './panel.js';
+import {selectTask, panelOpened, closeSidebar, resign, openReader, closeReader} from './panel.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
 import * as author from './author.js';
 import * as goal from './goal.js';
@@ -43,9 +43,8 @@ async function firstLoad() {
     const deck = Promise.all([run, asked, drawn]).then(() => { rebuildRun(); paintDeck(); });
     await Promise.all([drawn, asked]);
     suggestHeight(graphNeeds());
-    // `?task=` makes one node linkable, and the view is framed on the canvas its panel leaves
-    if (TASK) { point('select', TASK); await within(selectTask(TASK)); }
-    deck.then(afterDeck);
+    if (TASK) point('select', TASK);                   // `?task=` makes one node linkable
+    within(panelOpened()).then(() => deck).then(afterDeck);   // …the view framed on the canvas its panel leaves
 }
 S.reload = async () => { await refreshAll(); if (focus().select) await selectTask(focus().select); };
 const projects = () => refreshProjects().then(onInflight);

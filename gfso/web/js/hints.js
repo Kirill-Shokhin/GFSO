@@ -276,7 +276,7 @@ export const PANEL = {
     deadline: () => hover('Deadline', 'Red once it has passed'),
     earlier: hover('An earlier delivery', 'This verdict is about a delivery the current one replaced'),
     refused: note => hover('A later report was refused', note),
-    notRerun: rows => hover('This verdict did not re-run them', ...rows, 'Each with its reason under Verdict'),
+    lifted: rows => hover('No validation has to run these any more', ...rows, 'Each with its reason under Verdict'),
     // a ⊥ says WHY there is no value: the engine's reasons differ, and «not kept» is true only of an old round (critic)
     // …with what the validator found: once a later PASS stands, nothing else shows why this round failed (critic)
     round: (n, v, why, found) => hover(`${v || 'No value'}\tRound ${n}`, !v && cap(NO_VALUE[why]), v !== 'pass' && found),

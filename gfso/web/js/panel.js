@@ -60,29 +60,37 @@ function head({d, rounds}) {
 }
 
 // THE EXECUTION VERDICT in one line — what, who, when, what failed; its evidence is the reader's.
-// WHAT A VERDICT DID NOT RE-RUN: a PASS read without these reads as wide as one that ran everything that once failed (Thm 11).
-// The engine's three records, each said in its own words and counted once.
-const NOT_RERUN = [['checks_no_longer_run', 'check taken off by a ruling', 'checks taken off by a ruling'],
-                   ['findings_not_reproduced', 'finding a later validator did not reproduce', 'findings a later validator did not reproduce'],
-                   ['retired_after_refutation', 'finding its issuer ruled out', 'findings its issuer ruled out']];
-// one ruling on a part's check stands in the first record and the last: counted once, where it says the most
-const notRerun = vr => { const lifted = new Set((vr.checks_no_longer_run || []).map(r => `${r.criterion}\n${r.command}`));
-    return NOT_RERUN.map(([key, one, many]) => [(vr[key] || []).filter(r => key !== 'retired_after_refutation' || !lifted.has(`${r.criterion}\n${r.command}`)), one, many])
-        .filter(([rows]) => rows.length); };
-const notRerunMark = vr => { const kinds = notRerun(vr), n = kinds.reduce((sum, [rows]) => sum + rows.length, 0);
-    return n ? tally(n, 'not re-run', PANEL.notRerun(kinds.map(([rows, one, many]) => `${rows.length} ${rows.length > 1 ? many : one}`))) : ''; };
-const notRerunFull = (vr, id) => { const kinds = notRerun(vr);
-    return kinds.length ? section('What this verdict did not re-run', kinds.map(([rows, one, many]) => `<div class="verdict-evidence">${rows.length > 1 ? many : one}</div>`
-        + ul('item-list', rows.map(r => `<li><div class="verdict-body"><strong>${esc(r.criterion)}</strong>`
-            + (r.node && r.node !== id ? ` <span class="pn-who">in ${esc(nameOf(taskOf(r.node)) || r.node)}</span>` : '')
+// WHAT NO VALIDATION HAS TO RUN ANY MORE: the engine's three records, read as it means them: no longer demanded, which says
+// nothing of whether this verdict ran it, and it may have. A PASS read without them reads as wide as one still held to all
+// that once failed (Thm 11). What stopped being demanded is a command: one ruling across 17 criteria is one; a check taken
+// off stands in the first record and the last, and is said once.
+const LIFTED = [['checks_no_longer_run', 'check a ruling took off', 'checks a ruling took off'],
+                ['findings_not_reproduced', 'finding a later validator did not reproduce', 'findings a later validator did not reproduce'],
+                ['retired_after_refutation', 'finding its issuer ruled out', 'findings its issuer ruled out']];
+const lifted = vr => { const taken = new Set((vr?.checks_no_longer_run || []).map(r => `${r.criterion}\n${r.command}`));
+    return LIFTED.map(([key, one, many]) => { const by = new Map();
+        for (const r of vr?.[key] || []) {
+            if (key === 'retired_after_refutation' && taken.has(`${r.criterion}\n${r.command}`)) continue;
+            const k = r.command || r.id || r.criterion;
+            if (!by.has(k)) by.set(k, {...r, criteria: []});
+            by.get(k).criteria.push(r.criterion);
+        }
+        return [[...by.values()], one, many]; }).filter(([rows]) => rows.length); };
+const liftedMark = vr => { const kinds = lifted(vr), n = kinds.reduce((sum, [rows]) => sum + rows.length, 0);
+    return n ? `<button class="pn-link pn-lifted" data-action="read" data-facet="verdict"${PANEL.lifted(kinds.map(([rows, one, many]) => `${rows.length} ${rows.length > 1 ? many : one}`))}>${tally(n, 'lifted')}</button>` : ''; };
+const liftedFull = ({d, vr}) => { const kinds = lifted(vr);
+    return kinds.length ? section('No longer demanded of a validation', kinds.map(([rows, one, many]) => `<div class="verdict-evidence">${rows.length > 1 ? many : one}</div>`
+        + ul('item-list', rows.map(r => `<li><div class="verdict-body"><strong>${esc([...new Set(r.criteria)].join(', '))}</strong>`
+            + (r.node && r.node !== d.id ? ` <span class="pn-who">in ${esc(nameOf(taskOf(r.node)) || r.node)}</span>` : '')
             + (r.command ? `<div class="verdict-evidence"><code>${esc(r.command)}</code></div>` : '')
+            + (r.printed ? `<div class="verdict-evidence">printed: ${esc(trim(String(r.printed), 300))}</div>` : '')
             + (r.why ? `<div class="verdict-evidence">${esc(spoken(r.why))}</div>` : '')
             + `<div class="verdict-evidence">${esc([r.decided_by === 'system' ? 'the system' : r.by && agentName(r.by), r.at && stamp(r.at)].filter(Boolean).join(', '))}</div></div></li>`))).join('')) : ''; };
 
 function verdict({vr}) {
     if (vr?.verdict) return `<div class="pn-verdict ${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${glyph(vr.verdict)}<b>${vr.verdict}</b>`
         + `<span class="pn-who">${signer(vr)}</span>${vr.ts ? `<span class="pn-when">${when(vr.ts)}</span>` : ''}`
-        + notRerunMark(vr)
+        + liftedMark(vr)
         + `${vr.current === false ? `<span class="check-fail"${PANEL.earlier}>earlier</span>` : ''}`
         // a refused report LATER than this verdict asks for a look; an earlier one is history this verdict answered
         + `${vr.refused_report && at(vr.refused_report.ts) > at(vr.ts) ? `<span class="check-fail"${PANEL.refused(vr.refused_report.note)}>a later report refused</span>` : ''}${link('verdict', 'evidence')}</div>`;
@@ -193,8 +201,10 @@ const dispute = ({d}) => { const w = WHY[d.state], c = w && [...(d.audit || [])]
     return c ? `<div class="pn-verdict check-fail"><b>${w[1]}</b><span class="pn-who">${esc(trim(spoken(c.reason || ''), 200))}</span>${link('history', 'whole')}</div>` : ''; };
 const PARTS = [head, verdict, dispute, facets, criteria, actions];   // the prose chips above the list, always on screen
 
-let panelRead = 0;
-export async function selectTask(id) {
+let panelRead = 0, opening = Promise.resolve();
+export const panelOpened = () => opening;
+export const selectTask = id => opening = readPanel(id);
+async function readPanel(id) {
     const mine = ++panelRead;
     try {
         const soft = p => p.catch(() => null);
@@ -265,8 +275,8 @@ export const pinned = (c, key) => (c.check || []).length
 // report stands beside a verdict too (a later report refused), and is shown there as well (critic: hidden beside a PASS).
 const refusedOf = rr => !rr ? '' : `<div class="check-fail">${PANEL.refusedSaid}${esc(spoken(rr.note || 'the issuer decides'))}</div>`
     + (rr.why_it_is_not_a_verdict ? `<div class="verdict-evidence">${esc(spoken(rr.why_it_is_not_a_verdict))}</div>` : '');
-function verdictFull({d, vr}) {
-    if (vr?.verdict) return notRerunFull(vr, d.id) + section('Verdict on the work',
+function verdictFull({vr}) {
+    if (vr?.verdict) return section('Verdict on the work',
         `<div class="${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${vr.verdict} — ${signer(vr)}`
         + `${vr.current === false ? ' <span class="check-fail">(validated an EARLIER delivery)</span>' : ''}</div>`
         + (vr.independence ? `<div class="verdict-evidence"${PANEL.signed}>${esc(spoken(vr.independence))}</div>` : '')
@@ -364,7 +374,7 @@ const list = (k, title) => ({d}) => section(title, ul('facet-list', (d[k] || [])
 export const FACETS = [
     {id: 'desc', label: 'Description', n: ({d}) => !!d.description,
      body: ({d}) => section('Description', `<div class="rd-text">${esc(d.description)}</div>`)},
-    {id: 'verdict', label: 'Verdict', n: ({vr}) => vr?.verdict || (vr?.refused_report && '⊥'), body: verdictFull},
+    {id: 'verdict', label: 'Verdict', n: ({vr}) => vr?.verdict || (vr?.refused_report && '⊥'), body: x => verdictFull(x) + liftedFull(x)},
     {id: 'scope', label: 'Scope', n: ({d}) => (d.scope || []).length, body: list('scope', 'Scope — boundary exclusions')},
     {id: 'risks', label: 'AcceptedRisk', n: ({d}) => (d.accepted_risks || []).length, body: list('accepted_risks', 'AcceptedRisk')},
     {id: 'components', label: 'Risk components', n: ({d}) => (d.risk_components || []).length, body: list('risk_components', 'Risk components')},
