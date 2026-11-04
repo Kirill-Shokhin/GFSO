@@ -289,6 +289,17 @@ def validation_batch() -> int:
         return VALIDATION_BATCH
 
 
+def network_record_off() -> bool:
+    """Has this installation said it runs off the record of where its sessions reach (`netrecord`, SECURITY.md)?"""
+    if os.environ.get("GFSO_NETWORK_RECORD") == "off":
+        return True
+    # …or in the file: `gfso mcp` never takes it into its environment, and the refusal names that file
+    try:
+        return json.loads((data_dir() / "serve.json").read_text(encoding="utf-8")).get("GFSO_NETWORK_RECORD") == "off"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def local_agents(declared: str = "") -> bool:
     """May this host run the work the system dispatches — executors' sessions, nobody watching their commands
     (`LocalExecution.agents_refused`)? Only on its user's word, `GFSO_LOCAL_AGENTS=allow`: unattended work runs in a

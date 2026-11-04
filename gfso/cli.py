@@ -20,6 +20,7 @@ from importlib.resources import files
 from gfso.adapters.children import bind_this_process, end_this_process, open_outside
 from gfso.adapters import resources
 from gfso.adapters.execution import component, end_leftovers, export_places, watch_ceiling, watch_disk
+from gfso.adapters.netrecord import record_path, watch_network
 from gfso.adapters.storage.sqlite import settings_of
 from gfso.adapters.llm import credentials, registry
 from gfso.adapters.llm.conformance import assess, report
@@ -231,6 +232,8 @@ def _add_provider_parser(sub) -> None:
     credp.add_argument("--order", metavar="A,B,…", default=None, help="the order the pointer moves in when a limit "
                                                                       "refuses the one in force")
     credp.add_argument("--remove", action="store_true", help="remove NAME (`--name`), else every credential of it")
+    netp = sub.add_parser("network", help="Where the record lies of what a project's sessions reached by network, under every switch.")
+    netp.add_argument("project")
     expp = sub.add_parser("export-places", help="Write a project's places — kept in its execution's volume, on no host "
                                                 "directory — under DIR/<project>, each node's clone readable without "
                                                 "the base or the volume")
@@ -294,6 +297,8 @@ def _dispatch(args) -> None:
         sys.exit(_credential(args))
     elif args.command == "export-places":
         sys.exit(_export_places(args))
+    elif args.command == "network":
+        print(record_path(args.project))
 
 
 def _export_places(args) -> int:
@@ -467,6 +472,7 @@ def _down():
 
 def _mcp(args):
     bind_this_process()          # the stdio server spawns `claude` children too
+    watch_network()
     install_mcp_env(db_path=args.db_path, llm=args.llm, model=args.model)
     # LEFT: `gfso.mcp.stdio` needs the optional `mcp` SDK, and importing it raises the whole HTTP
     # stack (fastapi + uvicorn + `gfso.api.server`) that the other subcommands do not pay for.
@@ -481,6 +487,7 @@ def _serve(args):
     end_leftovers()              # …and the project containers of the server that stood here before
     watch_ceiling()              # …and who pays when every installation's containers together reach the ceiling
     watch_disk()                 # …and who pays when Docker's disk fills
+    watch_network()              # …and where each session reached
     resources.watch()            # …and what it holds in Docker read on its own schedule, so a page gets it at once
     # …and its projects that stood stay stopped until their Start; a reload worker inherits it, a stdio MCP process not
     mark_the_server()

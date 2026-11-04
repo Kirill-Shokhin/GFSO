@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from gfso.adapters import worktrees as W
 from gfso.adapters.worktrees import base_of
+from gfso.adapters.netrecord import forget
 from gfso.adapters.execution import (IMPORTED, ContainerExecution, LocalExecution, component, drop_volumes,
                                      network_of, stricter)
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
@@ -461,6 +462,7 @@ def drop_execution(project: str) -> None:
         ex.stop()
         hold_places(ex.files, False)
     drop_volumes(project)
+    forget(project)
 
 
 def project_llm(engine, model: str, agents: "AgentRegistry | None" = None):

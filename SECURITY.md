@@ -129,9 +129,19 @@ and nothing of your disk is mounted into any of its containers:
   process of the agent can set; a deletion named by its directory; any process of the place in that
   span counted, a command left running among them; what the client's own Write and Edit tools wrote
   between commands is in the client's stream, not here) — by the system's listener in that container, which no command
-  can signal, read or ask for anything; the record is kept beside the door's log. It records no
-network traffic: only an allowlist's gateway logs what it opened, and under `open` nothing records
-where a session connected. A client that runs a shell beside itself
+  can signal, read or ask for anything; the record is kept beside the door's log. Where a session reached by
+network is a record of its own, the same under every switch (`gfso network <project>` says where it lies): while an
+installation has work, one listener of the system's own on Docker's host network, holding only the right to read packets and
+sharing nothing with a session, writes for each container the destination of each new connection, whatever the protocol, and
+the first name of each plain DNS query over UDP (over TCP, or encrypted, only the address). It changes no traffic, and a container's code starts only
+once the listener stands and knows its address, so a first packet is on it; where it cannot stand at a start the project stops with the cause,
+unless the installation said `GFSO_NETWORK_RECORD=off`. One that dies later is raised again and the gap said on the record; sessions already running go on meanwhile. It holds addresses, ports and names, not what passed; nothing the kernel refused
+before it left a container. Each container lists 2,000
+destinations, and past that says so; a project's record turns over at 16 MiB, keeping its last turn, and goes with the project.
+Under an allowlist it names the gateway, whose own log has the target. The packets a UDP flood outran it by are said on the
+record, and such a flood blinds it for that time for every project. On a Linux host the listener reads the headers of every
+container there, and writes those of this installation alone; a user's container taking a freed address within ten seconds
+is written under the one that left it. Files a client's own Write and Edit tools write are in its stream, not here. A client that runs a shell beside itself
   instead (it ignores, silently, a shell it does not accept) runs no command there, and the session
   is refused with that cause: the project stops. The client's own file tools may not write through
   `/proc` or `/dev`, nor into its own state. What the client's shell writes back into the client's container is the

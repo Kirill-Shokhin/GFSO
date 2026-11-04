@@ -204,7 +204,7 @@ LIVE_GROUPS = {
     "landing": ("the_base_is_imported_and_its_result_lands_as_a_branch", "lfs_files_come_in_whole_and_leave_as_pointers",
                 "what_is_refused_before_it_is_touched"),
     "commands": ("a_sessions_commands_run_apart_from_its_client", "a_chat_providers_commands_run_apart"),
-    "network": ("the_way_out_is_a_switch_set_outside",),
+    "network": ("the_way_out_is_a_switch_set_outside", "where_a_session_reached_is_on_the_record"),
     "bounds": ("a_container_holds_no_more_than_its_bounds", "what_a_program_prints_is_bounded_in_the_server"),
     "git": ("the_systems_git_runs_in_the_place_it_reads", "the_system_reads_a_place_where_its_agent_cannot_lead_it_out",
             "a_container_runs_a_call_with_the_hosts_paths_mapped"),

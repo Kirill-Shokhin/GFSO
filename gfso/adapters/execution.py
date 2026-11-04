@@ -380,6 +380,8 @@ def _units(ids: list) -> dict:
     return out
 
 
+#: what must know of a container of work before any code of an agent's runs in it (`netrecord`)
+ON_START: list = []
 _WATCH = threading.Event()
 #: the containers the watch ended, by name: what ran in them was ended by a neighbour's pressure, not by what it ran
 _WATCH_ENDED: set = set()
@@ -2139,6 +2141,17 @@ class _SystemWrites:
             self._remove_tree(path)
 
 
+def _run_and_admit(ex) -> None:
+    """The container of `ex` running, its volumes asked again, and known to what watches it, before any agent's code runs."""
+    if (got := run(ex.run_args(), timeout=120, text=True)).returncode:
+        if down := ex.storage_down(got.stderr):     # …a new directory failing to mount (case 15)
+            raise PlaceUnavailable(ex.name, down)
+        raise subprocess.CalledProcessError(got.returncode, "docker run", got.stdout, got.stderr)
+    ex.volume.require(ex.run_args())                 # …again: one made by Docker between the asking and the run
+    for admit in ON_START:
+        admit(ex)
+
+
 class ContainerExecution(_SystemWrites, ExecutionPort):
     python = "python3"
     #: does a session's CLI run here, its state mounted? Not in the project's container: every session runs in its
@@ -2275,11 +2288,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
             try:
                 self.volume.require(self.run_args())              # …before Docker makes a missing one, empty
                 self._open_the_way()
-                if (got := run(self.run_args(), timeout=120, text=True)).returncode:
-                    if down := self._storage_down(got.stderr):     # …a new directory failing to mount (case 15)
-                        raise PlaceUnavailable(self.name, down)
-                    raise subprocess.CalledProcessError(got.returncode, "docker run", got.stdout, got.stderr)
-                self.volume.require(self.run_args())    # …again: one made by Docker between the asking and the run
+                _run_and_admit(self)
             except PlaceUnavailable:
                 self.stop()
                 raise
@@ -2323,7 +2332,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
     #: dispatched work refused over a base that has no places (`_no_places`)
     agents_refused = lambda self: _no_places(self.base)  # noqa: E731
 
-    def _storage_down(self, why: str):
+    def storage_down(self, why: str):
         """`why` an I/O error AND the system's own probe of the storage failing: a place down — never the words alone,
         which a session's output or a link of its own to `/proc/self/mem` can print."""
         return _STORAGE.search(why or "") and self.unavailable(storage=True)
@@ -2363,7 +2372,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         except subprocess.TimeoutExpired:
             self._end_inside(call)
             raise
-        if done.returncode and (down := self._storage_down(done.stderr)):
+        if done.returncode and (down := self.storage_down(done.stderr)):
             raise PlaceUnavailable(self.name, down)
         return subprocess.CompletedProcess(args, done.returncode, self.to_outside(done.stdout or ""),
                                            self.to_outside(done.stderr or ""))
@@ -2510,7 +2519,7 @@ class ContainerFiles(FilesPort):
             if done.returncode and _GONE.search(why) and not again:
                 _STARTED.pop(at.container, None)
                 continue
-            if done.returncode and (_DOWN.search(why) or (down := self.ex._storage_down(why))):
+            if done.returncode and (_DOWN.search(why) or (down := self.ex.storage_down(why))):
                 raise PlaceUnavailable(at.name, why if _DOWN.search(why) else down)
             if done.returncode >= 125 or (done.returncode and _GONE.search(why)):
                 raise OSError(f"{op} {args[0]} did not run in {at.container} (exit {done.returncode}): {why[-300:]}")
