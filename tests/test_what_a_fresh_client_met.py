@@ -68,3 +68,9 @@ def test_a_go_and_a_new_project_say_it_too():
     assert "unattended" in _with_ui_link("auto_decompose", {"root_id": "root"}, "p")["say"]
     said = _with_ui_link("use_project", {"active": "p"}, "p")["say"]
     assert "claude-haiku-5-5" in said and "gfso/p/accepted" in said
+
+
+def test_what_is_said_stands_first_in_the_answer():
+    """Last in a long answer, it went unsaid: nothing on the plan before a go in 6 runs of 6."""
+    assert next(iter(_with_ui_link("auto_decompose", {"root_id": "root", "log": "long"}, "p"))) == "say"
+    assert next(iter(_with_ui_link("next_steps", {"steps": [], "complete": True}, "p"))) == "say"

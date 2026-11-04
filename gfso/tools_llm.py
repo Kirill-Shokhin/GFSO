@@ -1859,8 +1859,10 @@ def _plan_written(text: str) -> dict:
             "how_to_read": "read the file whole (the [inputs] at its end are the checks' files, named by hash); "
                            "a check whose `expect` its command cannot print will fail correct work: that is a note. "
                            "A note → refine_plan(plan=path, note); the go → auto_decompose(plan=path)",
-            "say": "before the go, in the chat, two lines: what it splits into, what stays open, any decision they "
-                   "never asked for"}
+            "say": "Write to the person now, before any other call: it splits into "
+                   f"{', '.join(s['id'] for s in p['spec'].get('subtasks') or ()) or 'one piece of work'}; "
+                   f"{len(r.get('undecided_obligations') or ())} of what the goal asks no check decides yet; and any "
+                   "decision in the file they never asked for."}
 
 
 @functools.wraps(_tools.create_task)
