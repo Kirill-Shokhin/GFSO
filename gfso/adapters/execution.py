@@ -763,10 +763,11 @@ def file_record_path(project: str) -> Path:
 def _end_cut(name: str) -> None:
     """The container of a `docker run` cut by its time. Cut while Docker makes it, it appears after a removal that answered
     0 (13 of 80 cuts at 50–100 ms, within 1.5 s), holding its mounts: removed again until that time has passed; later still,
-    a server's next start sweeps it (`end_leftovers`)."""
+    a server's next start sweeps it (`end_leftovers`). Every caller is already raising the cut, which this must not replace."""
     for wait in (0, 0.5, 1, 2):
         time.sleep(wait)
-        run(["docker", "rm", "-f", name], timeout=60)
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):    # …a slow Docker is what cuts: the next removal is owed,
+            run(["docker", "rm", "-f", name], timeout=15)                # …all four in the minute one used to take, under a lock
 
 
 def release_rounds(ex, place: str) -> None:

@@ -726,6 +726,7 @@ class Dispatcher:
         self._dirty = threading.Event()   # set by every transition → the loop re-evaluates the frontier
         self._rejoined_once = False       # the start-up sweep of passed roots the base does not hold (`_rejoin`)
         self._retry_at: dict[str, tuple[float, float]] = {}   # a refused root join: (next try, its delay)
+        self._to_clear: set[str] = set()  # landed roots whose places wait for a verdict still coming (`_clear_places`)
         # a root that has a place owes a join, and is complete only once it landed (`Joins.root_landed`)
         self._engine.joins.set_join_owed(lambda t: (w := _place_of(self._engine, self._agents, t)) is not None
                                    and made(self._engine, w[1]))
@@ -1374,6 +1375,7 @@ class Dispatcher:
         if getattr(self._engine, "_dispatch_quiesce", 0):
             return []      # a wholesale build/rebuild is mid-burst — dispatch on the settled graph only
         self._publish_the_roster()
+        self._clear_what_waited()
         if self._engine.paused() or self._over():
             self._rest()
             return []      # the user's STOP: nothing new starts; running sessions finish and their signals land
@@ -1919,12 +1921,33 @@ class Dispatcher:
             self._engine.joins.mark_joining(tid, False, unjoined=why or None)
             self._dirty.set()
         if is_root and why is None and t.state == State.DONE:
-            try:                                        # the places go once the root landed; a refusal here is
-                with _inflight("clear_workspaces", self._engine, tid):      # …still its work: no rest under it (`_rest`)
-                    clear_workspaces(self._engine, self._agents, t)   # tidying, never "did not land" (critic r4, J4)
-            except Exception as e:                      # noqa: BLE001
-                log.warning(f"delegate: {tid} landed; its places were not cleared: {e}")
+            self._clear_places(t)
         self._released(tid)
+
+    def _clear_places(self, root) -> None:
+        """The root landed: its places go, unless a verdict is still coming (a signature can land before it, and it is what
+        refutes the signed node) — then the next pass after that verdict's end asks again (`_clear_what_waited`). The clearing
+        ends every session of the project, rounds included, so any node's validation holds it; a restart keeps nothing of
+        either, and `_rejoin`'s first pass comes back here over a place still standing."""
+        if any(self._engine.claims.validation_in_flight(t.id) for t in self._engine.all_tasks()):
+            self._to_clear.add(str(root.id))
+            return
+        self._to_clear.discard(str(root.id))
+        try:                                            # the places go once the root landed; a refusal here is
+            with _inflight("clear_workspaces", self._engine, root.id):      # …still its work: no rest under it (`_rest`)
+                clear_workspaces(self._engine, self._agents, root)   # tidying, never "did not land" (critic r4, J4)
+        except Exception as e:                          # noqa: BLE001
+            log.warning(f"delegate: {root.id} landed; its places were not cleared: {e}")
+
+    def _clear_what_waited(self) -> None:
+        """Each pass, a stop or a goal's end included: clear what a verdict held, if the root it held still stands landed. A
+        root reopened, or joining again, meanwhile is its next join's to clear (`_join`)."""
+        for tid in self._to_clear.copy():
+            t = self._engine.graph.get_task(TaskId(tid))
+            if t is not None and t.state == State.DONE and self._engine.joins.root_landed(t):
+                self._clear_places(t)
+            else:
+                self._to_clear.discard(tid)
 
     def _released(self, tid) -> None:
         """A node that ended — passed and joined, or cancelled — holds no container any more: its place's, its client's
