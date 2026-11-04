@@ -87,7 +87,7 @@ that would establish one (E3) has shown so far, and what not, is in the README a
 - `docs/e3_rows.csv`: every counted row of the pre-registered table, with its build, contract, time, cost and second number.
 
 ### Changed
-- The answer of `plan` and `refine_plan` holds the file's whole `text` beside its `path`, up to 60,000 characters, so a client
+- The answer of `plan` and `refine_plan` holds the file's whole `text` beside its `path`, up to 47,000 characters, so a client
   reads the plan with no prompt about a read outside the person's folder, which stalled an absent person's path before the go.
   The file, now the text's exact bytes on every platform, stays what a note and the go take. A call joining one under way keeps
   the `say` an earlier answer's door had moved away.
