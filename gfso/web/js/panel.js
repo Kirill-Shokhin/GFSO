@@ -78,7 +78,7 @@ const lifted = vr => { const taken = new Set((vr?.checks_no_longer_run || []).ma
         }
         const rows = [...by.values()], n = rows.length;
         return {rows, kind: n > 1 ? many : one, means: n > 1 ? them : it}; }).filter(k => k.rows.length); };
-const liftedMark = vr => { const kinds = lifted(vr), n = kinds.reduce((sum, k) => sum + k.rows.length, 0);
+const liftedMark = vr => { const kinds = lifted(vr), n = new Set(kinds.flatMap(k => k.rows.map(r => r.command || r.id || r.criterion))).size;
     return n ? `<button class="pn-link pn-lifted" data-action="read" data-facet="verdict" data-to="rd-lifted"${PANEL.lifted(kinds.map(k => `${k.rows.length} ${k.kind}: ${k.means}`))}>${tally(n, 'lifted')}</button>` : ''; };
 const ruling = r => (r.printed ? `<div class="verdict-evidence">printed: ${esc(trim(String(r.printed), 300))}</div>` : '')
     + (r.why ? `<div class="verdict-evidence">${esc(spoken(r.why))}</div>` : '')
