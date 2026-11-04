@@ -483,6 +483,10 @@ def _mcp(args):
 
 def _serve(args):
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(message)s")
+    # …a second `serve` typed by hand ended every project's work before it failed to bind (critic, read), and wrote a gap
+    if serverctl.port_open(LOOPBACK if args.host in ("0.0.0.0", "::") else args.host, args.port):
+        sys.exit(f"gfso serve: {args.host}:{args.port} is already served, and its work goes on: `gfso down` first, or "
+                 "choose another `--port`.")
     # The server's descendants — executors, validators, their probes — die with it, however it ends.
     bind_this_process()
     end_leftovers()              # …and the project containers of the server that stood here before

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from gfso import cli as C
 from gfso import tools as T
 from gfso.adapters import execution as E
 from gfso.adapters.llm.stats import is_limit, is_unauthorized
@@ -124,3 +125,12 @@ def test_a_docker_slow_to_answer_still_ends_the_host_side_of_a_call(monkeypatch)
     with pytest.raises(subprocess.TimeoutExpired):
         me.end(call)
     assert ended == [call.client]
+
+
+def test_a_second_serve_ends_nothing_of_the_one_that_stands(monkeypatch):
+    """`end_leftovers` ran before the bind: a `gfso serve` typed beside a live server ended every project's containers."""
+    monkeypatch.setattr(C.serverctl, "port_open", lambda host, port: True)
+    monkeypatch.setattr(C, "end_leftovers", lambda: pytest.fail("the standing server's work was ended"))
+    with pytest.raises(SystemExit) as out:
+        C._serve(SimpleNamespace(log_level="info", host="127.0.0.1", port=8000))
+    assert "already served" in str(out.value)
