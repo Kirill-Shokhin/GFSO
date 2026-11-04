@@ -29,8 +29,10 @@ export const decide = (nodes, tooSmall) => {
 // The same drawing on the same canvas measures the same, so a load of a plan this viewer has seen lays the whole out no more:
 // on a phone that layout was a second of the load. False: measure, and `decide` answers.
 let measured = null;
+// its hash: the drawing itself is 15 kB a plan in a store no one empties, and a collision costs a look, never a word
+const hashed = text => [...text].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) | 0, text.length);
 export const decidedBefore = (g, canvas) => {
-    measured = JSON.stringify([g.nodes.map(n => [n.id, n.name]), g.edges.map(e => [e.source, e.target, e.type]), canvas]);
+    measured = hashed(JSON.stringify([g.nodes.map(n => [n.id, n.name]), g.edges.map(e => [e.source, e.target, e.type]), canvas]));
     const was = kept(`fold:${S.project}`, JSON.parse);
     if (was?.measured !== measured) return false;
     folding = was.folding;

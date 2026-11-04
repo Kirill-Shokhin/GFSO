@@ -1244,3 +1244,11 @@ def test_the_page_reads_the_graph_without_the_frontier_it_reads_elsewhere(client
     whole, read = client.get("/api/graph").json(), client.get("/api/graph?next=0")
     assert read.status_code == 200 and "next" not in read.json()
     assert read.json()["nodes"] == whole["nodes"] and read.json()["edges"] == whole["edges"]
+
+
+def test_no_read_a_move_starts_holds_the_later_moves(client):
+    """A read that never answers holds the moves after it past `within` and no longer: the page said «nothing needs you»
+    over a red call, in silence, with one hung read of the run (critic over 674dfbd)."""
+    main = client.get("/js/main.js").text
+    body = main[main.index("const settle = async"):main.index("// THE COUNT OF WORK IN FLIGHT")]
+    assert re.findall(r"await within\(\w+\(", body) and not re.findall(r"await (?!within\()\w+\(", body), body

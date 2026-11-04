@@ -61,11 +61,11 @@ const settle = async o => {
     if (settling) { again = {graph: again?.graph || o.graph}; return; }
     settling = true;
     try { for (let cur = o; cur; cur = again) { again = null;
-        if (cur.graph) await refreshGraph();
-        await within(refreshQuality()); await refreshHeader();
+        if (cur.graph) await within(refreshGraph());
+        await within(refreshQuality()); await within(refreshHeader());
         // …AND THE OPEN PANEL IS RE-READ ON ANY TRANSITION: its checks are computed from the CHILDREN.
         if (focus().select) { await within(selectTask(focus().select)); paneled = Date.now(); }
-        await refreshDeck();                     // …the run read, the header drawn over it from the frontier just read
+        await within(refreshDeck());             // …the run read, the header drawn over it from the frontier just read
         annotate(); S.frontier ? drawHeader() : refreshHeader(); drawPlanning();   // a frontier read that failed is asked again
         if (focus().select) resign(focus().select);
     } } finally { settling = false; }
