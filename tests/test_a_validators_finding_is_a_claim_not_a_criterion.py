@@ -115,8 +115,13 @@ def test_a_line_that_only_names_the_finding_does_not_end_it():
     for wrapped in (f"echo not run: {BROKEN}", f": {BROKEN}", f"true || {BROKEN}", f"{BROKEN}_other"):
         _record(e, _says_not_refuting(command=wrapped))
         assert _standing(e) == {f["id"]}, wrapped
-    _record(e, _says_not_refuting(command=f"cd delivery && {BROKEN}"))
+    _record(e, _says_not_refuting(command=f'cd "my dir" && {BROKEN}'))
     assert _standing(e) == set()
+    e.stop()
+    filed = _finding("g", f"cd delivery && {BROKEN}", SAID)
+    e = _one_root_with(filed)
+    _record(e, _entry(id=filed["id"], command=f"cd delivery && {BROKEN}", printed=OUT, not_refuting="never required"))
+    assert _standing(e) == set(), "filed with its `cd`, run as filed"
     e.stop()
 
 
@@ -139,9 +144,13 @@ def test_the_systems_own_mark_is_not_the_reports_word_on_its_other_probes():
     pin = Criteria(name="g", description="d", check=(Probe(behaviour="b", command="check g", expect="it holds", exact=True),))
     own = {"behaviour": "b", "command": "./cat bigfile", "expect": "the whole file"}
     pid = probe_id("g", {"command": "check g"})
-    seen = with_engine_observations([{"criterion": "g", "verdict": "pass", "evidence": "x", "probe": [own]}], [pin], None,
-                                    {pid: {"out": "stub", "matched": False}})
-    assert "./cat bigfile" in {p["command"] for p in refuting_probes(seen)["g"]}
+    sees = lambda verdict, *probes: refuting_probes(with_engine_observations(
+        [{"criterion": "g", "verdict": verdict, "evidence": "x", "probe": list(probes)}], [pin], None,
+        {pid: {"out": "stub", "matched": False}}))["g"]
+    assert {p["command"] for p in sees("fail", own)} == {"./cat bigfile", "check g"}
+    assert {p["command"] for p in sees("pass", own)} == {"check g"}, "what the report passed refuted nothing: 1,414 findings once"
+    assert {p["command"] for p in sees("fail", own, {**own, "command": "named", "held": False, "system_saw": True})} == {
+        "named", "check g"}, "a report does not speak as the system"
     said = [{"criterion": "g", "verdict": "fail", "evidence": "x", "probe": [own, {**own, "command": "other", "held": False}]}]
     assert {p["command"] for p in refuting_probes(said)["g"]} == {"other"}, "the report's own word still stands"
 

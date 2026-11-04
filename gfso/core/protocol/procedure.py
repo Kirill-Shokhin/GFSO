@@ -856,6 +856,8 @@ def without_past_builds(regression: Mapping) -> dict[str, list[dict]]:
 SYSTEMS_ACT = "systems_act"
 #: on a probe the system marked `held: false` by running it itself, not by the report's word
 SYSTEM_SAW = "system_saw"
+#: on an entry the report passed and the system's own run of a pin failed: what the report ran under it refuted nothing
+OVER_A_PASS = "over_a_pass"
 
 
 def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, object]] = (),
@@ -891,7 +893,8 @@ def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, 
         # kept: the validator says `held` only of a part's pinned check, never of its own probes
         for p in probes:
             if (not _norm(p.get("command", "")) or probe_held(p.get("held")) is True or p.get("share") == "pass"
-                    or p.get(SYSTEMS_ACT) or p.get(NOT_REFUTING) or (named and probe_held(p.get("held")) is None)):
+                    or p.get(SYSTEMS_ACT) or p.get(NOT_REFUTING) or (named and probe_held(p.get("held")) is None)
+                    or (e.get(OVER_A_PASS) and not p.get(SYSTEM_SAW))):
                 continue
             # …AS RUN, with this round's inputs directories NAMED rather than spelled: normalizing a multi-line
             # program onto one line left a command no shell runs, and the round's directory is gone the next round
@@ -914,7 +917,11 @@ def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, 
 #: what a report's probe says of a standing finding it re-ran as filed: why it refutes no criterion, beside what it printed
 NOT_REFUTING = "not_refuting"
 #: …run as filed: from the directory it was asked to run in, and nothing else around it
-_IN_A_DIRECTORY = re.compile(r"^(?:cd \S+ && )+")
+_IN_A_DIRECTORY = re.compile(r"""^(?:cd (?:"[^"]*"|'[^']*'|\S+) && )+""")
+
+
+def _in_any_directory(command) -> str:
+    return _IN_A_DIRECTORY.sub("", _norm(command))
 
 
 def plan_pins(plan: Mapping[str, Sequence[Criteria]]) -> list[tuple[str, Probe]]:
@@ -935,11 +942,11 @@ def findings_not_reproduced(per_criterion: Sequence[Mapping], regression: Mappin
         for f in (regression or {}).get(name, ()):
             if any(runs_pin(f, i, p) for i, p in pins):
                 continue
-            filed = _norm(f.get("as_run") or f.get("command"))
+            filed = _in_any_directory(f.get("as_run") or f.get("command"))
             for p in probes_of(e):
                 if (p.get(NOT_REFUTING) and _norm(p.get("printed")) and p.get("ran") is not False
                         and probe_held(p.get("held")) is not False and f.get("id") in _reported_ids(name, [p], dirs)
-                        and filed and filed == _IN_A_DIRECTORY.sub("", _norm(tokenized(str(p.get("command", "")), dirs)))):
+                        and filed and filed == _in_any_directory(tokenized(str(p.get("command", "")), dirs))):
                     out.append((name, f["id"], {"why": str(p[NOT_REFUTING]), "printed": str(p["printed"])}))
                     break
     return out
@@ -1290,8 +1297,11 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
     pinned = {probe_id(c.name, p): p for cs in [criteria or ()] + list((parts or {}).values()) for c in cs
               for p in (c.check or ()) if _norm(p.command)}
     exact = {pid: o for pid, o in (observed or {}).items() if pid in pinned and pinned[pid].exact}
+    def _the_reports(e: Mapping) -> dict:    # …the system's marks alone: a report cannot ⊥ its own FAIL, nor speak as the system
+        e = {k: v for k, v in e.items() if k not in (PAST_BOUND, PAST_WHOLE, OVER_A_PASS)}
+        return {**e, "probe": [{k: v for k, v in q.items() if k != SYSTEM_SAW} for q in probes_of(e)]} if probes_of(e) else e
     if not exact:
-        return [{k: v for k, v in e.items() if k not in (PAST_BOUND, PAST_WHOLE)} for e in per_criterion or ()]
+        return [_the_reports(e) for e in per_criterion or ()]
 
     def _copies(seen: dict) -> dict:   # every id one observation is of (`same_probe`)
         seen_as = {same_probe(pinned[pid]): o for pid, o in seen.items()}
@@ -1305,14 +1315,14 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
     named = lambda q: next((pid for pid in off if str(q.get("id", "")).strip() in (pid, pid.split("#")[-1])), None)
     out = []
     for e in per_criterion or ():
-        e = {k: v for k, v in e.items() if k not in (PAST_BOUND, PAST_WHOLE)}   # …the system's mark alone: a report cannot ⊥ its own FAIL
+        e = _the_reports(e)
         probes = [{**q, "held": False, SYSTEM_SAW: True} if named(q) else q for q in probes_of(e)]
         on = list(dict.fromkeys(rests.get(_norm(e.get("criterion")), ())))
         if hit := [pid for pid in on if pid in off]:
             why = [f"the system ran pinned check {pid} itself and it printed {off[pid].get('out', '')!r}, not the "
                    f"whole output it pins, {pinned[pid].expect!r}" for pid in hit]
             cited = {named(q) for q in probes}
-            e = {**e, "verdict": "fail", "evidence": " | ".join(why + [str(e["evidence"])] if e.get("evidence") else why),
+            e = {**e, **({OVER_A_PASS: True} if spoken_verdict(e.get("verdict")) != "fail" else {}), "verdict": "fail", "evidence": " | ".join(why + [str(e["evidence"])] if e.get("evidence") else why),
                  "divergences": [*why, *(e.get("divergences") or ())],
                  "probe": probes + [{"id": pid, "behaviour": pinned[pid].behaviour, "command": pinned[pid].command,
                                      "expect": pinned[pid].expect, "held": False, SYSTEM_SAW: True} for pid in hit if pid not in cited]}

@@ -875,7 +875,9 @@ def return_finding(engine: Engine, task_id: str, finding: str, why: str, agent: 
         return {"error": "a returned finding says why"}
     if not engine.return_finding(TaskId(task_id), finding, agent or "person", why):
         return {"error": f"no finding {finding} on {task_id} stands as not reproduced"}
-    return {"returned": finding}
+    t = engine.graph.get_task(TaskId(task_id))
+    return {"returned": finding, **({"note": "demanded of the next PASS: this node has none coming until it is reopened"}
+                                    if t is not None and t.state in (State.DONE, State.ABANDONED) else {})}
 
 
 def dispute_finding(engine: Engine, task_id: str, criterion: Union[str, list], why: str) -> dict:

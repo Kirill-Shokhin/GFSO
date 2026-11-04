@@ -1247,11 +1247,14 @@ class Engine:
         again = self._as_filed(task_id, refuting_probes(per_criterion, dirs))
         # …a check the plan still runs is no ruling's subject: its PASS refused for what it printed, and its FAIL read as
         # filed again, no verdict could stand (critic over 9971bef)
-        task = self._graph.get_task(task_id)
-        pins = plan_pins({"": task.spec.criteria if task else (), **self.parts_procedure(task_id)})
+        task, parts = self._graph.get_task(task_id), self.parts_procedure(task_id)
+        same = lambda a, b: " ".join(str(a).split()) == b
         out = {}
         for e in per_criterion:
             ps = again.get(name := " ".join(str(e.get("criterion", "")).split()), ())
+            # …this criterion's: a check lifted from it may still run under another
+            pins = plan_pins({"": [c for c in (task.spec.criteria if task else ()) if same(c.name, name)],
+                              **{k: v for k, v in parts.items() if same(k, name)}})
             if (ps and spoken_verdict(e.get("verdict")) == "fail" and all((name, p["id"]) in ruled for p in ps)
                     and not any(runs_pin(p, i, pin) for p in ps for i, pin in pins)):
                 out[str(e.get("criterion"))] = ("its refutation rests only on findings its issuer ruled outside this "

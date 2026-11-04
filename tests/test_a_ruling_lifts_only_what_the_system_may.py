@@ -196,6 +196,18 @@ def test_a_ruling_that_left_its_pin_running_does_not_void_that_pins_fail(tmp_pat
     e.stop()
 
 
+def test_a_check_lifted_from_this_criterion_is_its_rulings_subject_though_another_runs_it(tmp_path):
+    e, mid = _deep([_pin("routes", STUB, STUB_SAYS), _pin("kept", KEPT, KEPT_SAYS)])
+    ids = _disputed(e, ("m", _finding("m")), tid="mid")
+    _rule(e, tmp_path, ids, mid, str(e.graph.issuer_of(mid)))
+    parts = e.parts_procedure
+    e.parts_procedure = lambda tid: {**parts(tid), "other": list(parts(tid).get("m", ())) + [dc.replace(next(iter(parts(tid)["m"])), check=(
+        dc.replace(next(iter(parts(tid)["m"])).check[0], command=STUB, expect=STUB_SAYS),))]}
+    assert list(e._refiled_rulings(mid, [{"criterion": "m", "verdict": "fail", "evidence": "x", "probe": [
+        {"id": ids[0], "behaviour": "b", "command": STUB, "expect": STUB_SAYS, "held": False}]}], ())) == ["m"]
+    e.stop()
+
+
 def test_the_record_says_what_no_longer_runs_and_a_whole_above_does_not_read_unnarrowed(tmp_path):
     e, mid = _deep([_pin("routes", STUB, STUB_SAYS), _pin("kept", KEPT, KEPT_SAYS)])
     assert e.claim_drift(ROOT)["narrowed"] is False

@@ -355,10 +355,10 @@ def _decided_nothing(engine, task_id, answer: dict) -> str:
             f"{i} names " + (" and ".join(c) + " — name the one you rule on by its full id" if len(c) > 1 else
                              "a finding the dispute did not name — rule only on what it named" if c else
                              "no standing finding")
-            for i, c in unresolved.items()) + ". Where the disputed probe is not demanded, REJECT the dispute saying so")
+            for i, c in unresolved.items()) + ". Where the disputed probe is not demanded, REJECT the dispute saying so" + _LAST_CHECK)
     return ("your acceptance changed no criterion as it will stand and retired no standing finding, so it decided "
             "nothing. Where the disputed probe is not demanded — no standing finding carries it — the dispute has "
-            "nothing to take back: REJECT it saying so, and the executor delivers")
+            "nothing to take back: REJECT it saying so, and the executor delivers" + _LAST_CHECK)
 
 
 def _own_split(engine, task) -> str:
@@ -1776,6 +1776,11 @@ def _unlaid(x, dirs: list):
     if isinstance(x, list):
         return [_unlaid(v, dirs) for v in x]
     return {k: _unlaid(v, dirs) for k, v in x.items()} if isinstance(x, dict) else x
+
+
+#: A plan's check no ruling may lift, as a criterion's last, false on correct work: the one move that changes it.
+_LAST_CHECK = (". Where it IS demanded, as a check of the plan a ruling may not lift, and you ran it false on correct work, "
+               "ACCEPT with that criterion replaced by one whose check holds")
 
 
 def _ran_a_shell(ran: dict) -> bool:

@@ -1,5 +1,6 @@
 """A goal over holds nothing on the person's machine: a run's whole set of containers stood idle past its root's DONE, for as
 long as the project was left unstopped (a row, measured: 18 containers). Its volumes stay; a reopen starts them again."""
+import subprocess
 from contextlib import suppress
 from types import SimpleNamespace as N
 
@@ -14,14 +15,18 @@ class _Works(Exception):
     pass
 
 
-def _dispatcher(monkeypatch, states, joining=(), unjoined=()):
-    e, stops = make_engine(), []
+def _dispatcher(monkeypatch, states, joining=(), unjoined=(), landed=True):
+    e, stops, running = make_engine(), [], []
     tasks = [N(id=f"t{i}", state=s) for i, s in enumerate(states)]
     monkeypatch.setattr(e, "all_tasks", lambda: tasks)
     monkeypatch.setattr(e.joins, "joining_nodes", lambda: list(joining))
     monkeypatch.setattr(e.joins, "unjoined_roots", lambda: dict.fromkeys(unjoined, "why"))
+    monkeypatch.setattr(e.joins, "root_landed", lambda t: landed)
+    monkeypatch.setattr(e.graph, "get_parent", lambda tid: None)
+    monkeypatch.setattr(DG, "in_flight", lambda: running)
     monkeypatch.setattr(DG, "execution_of", lambda *a: N(stop=lambda: stops.append(1)))
     d = Dispatcher(e, N())
+    d.running = running
     monkeypatch.setattr(d, "_publish_the_roster", lambda: None)
     monkeypatch.setattr(d, "_rejoin", lambda: setattr(d, "_rejoined_once", True))
 
@@ -54,6 +59,37 @@ def test_what_may_still_run_keeps_them(monkeypatch):
         d._rejoined_once = True
         d.dispatch_once()
         assert stops == [], (states, joining, unjoined)
+
+
+def test_a_done_whose_join_is_not_marked_yet_keeps_them(monkeypatch):
+    """Readable before the bus marks its join: stopped here, the join then starts them and nothing ends them (critic)."""
+    d, _, stops = _dispatcher(monkeypatch, [State.DONE], landed=False)
+    d._rejoined_once = True
+    d.dispatch_once()
+    assert stops == []
+
+
+def test_what_ran_since_and_a_stop_that_failed_are_asked_again(monkeypatch):
+    d, _, stops = _dispatcher(monkeypatch, [State.DONE])
+    d._rejoined_once = True
+    d.dispatch_once()
+    d.running.append({"project": d._engine.project_name or DG.DEFAULT_PROJECT})
+    d.dispatch_once()
+    d.running.clear()
+    d.dispatch_once(), d.dispatch_once()
+    assert stops == [1, 1], "a verb that moved no node may have started one"
+    d, _, stops = _dispatcher(monkeypatch, [State.DONE])
+    d._rejoined_once = True
+    tries = []
+
+    def stop():
+        tries.append(1)
+        if len(tries) == 1:
+            raise subprocess.TimeoutExpired("docker", 60)
+
+    monkeypatch.setattr(DG, "execution_of", lambda *a: N(stop=stop))
+    d.dispatch_once(), d.dispatch_once(), d.dispatch_once()
+    assert tries == [1, 1]
 
 
 def test_a_start_asks_first_whether_the_result_landed(monkeypatch):

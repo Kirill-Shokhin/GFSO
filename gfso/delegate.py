@@ -1947,19 +1947,25 @@ class Dispatcher:
     def _over(self) -> bool:
         """Every node settled and the result landed — asked only once a start has read what its last process left
         (`_rejoin`): a parent's acceptance settles none of its children (§11.3), so a root's DONE alone is not this."""
-        joins = self._engine.joins
+        joins, graph = self._engine.joins, self._engine.graph
         return (self._rejoined_once and not joins.joining_nodes() and not joins.unjoined_roots()
-                and bool(tasks := self._engine.all_tasks()) and all(t.state in (State.DONE, State.ABANDONED) for t in tasks))
+                and bool(tasks := self._engine.all_tasks()) and all(t.state in (State.DONE, State.ABANDONED) for t in tasks)
+                # …a DONE readable before its join is marked: `root_landed` reads that as being joined
+                and all(joins.root_landed(t) for t in tasks if t.state == State.DONE and graph.get_parent(t.id) is None))
 
     def _rest(self) -> None:
         """The containers of a project that nothing of will run ended once, when nothing of it runs any more — stopped
         (`run_state`'s `stopped`) or its goal over (`_over`), else they stood idle on the person's machine for as long as
         it was left: its work stands in its volumes, and its next start makes them again over them (`ExecutionPort.stop`)."""
-        if self._rested or any(w.get("project") == (self._engine.project_name or DEFAULT_PROJECT) for w in in_flight()):
+        # …asked again after what runs now, which may start one (a verb that moves no node), and after a stop that failed
+        if any(w.get("project") == (self._engine.project_name or DEFAULT_PROJECT) for w in in_flight()):
+            self._rested = False
             return
-        self._rested = True
+        if self._rested:
+            return
         try:
             execution_of(self._engine).stop()
+            self._rested = True
         except (OSError, ValueError, subprocess.SubprocessError) as e:
             log.warning(f"the stopped project's containers could not be ended: {e}")
 
