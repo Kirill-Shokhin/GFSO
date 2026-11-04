@@ -3877,7 +3877,7 @@ single-edit near-misses per task were made by an agent told nothing of plans or 
 
 ### 13.52 The user's path on a clean install, and what the planner's speed changes cost: real clients reach a root's `PASS` on small tasks and one of four parts; the changes won no minutes on E2 and left more open by a common reader (2026-11-04)
 
-**Real clients, clean install.** Fresh Claude Code clients (Sonnet 5.5), a clean configuration, a task told in words, every
+**Real clients, clean install, build `6e4a906`.** Fresh Claude Code clients (Sonnet 5.5), a clean configuration, a task told in words, every
 role of the system on Haiku 5.5, the network `open`, through the server's real door on its own port. Runs before the
 configuration was truly clean are not counted: an isolated configuration directory alone still loads the global
 instructions file.
@@ -3895,6 +3895,7 @@ instructions file.
 - What a client tells the person lies in its thinking blocks, shown on the interactive screen as a summary. A `-p` run shows
   none of it, so a count over text blocks reads silence that was not there.
 - Larger tasks on this path are not shown here.
+- No fresh client ran on the code after that build. On the later code, the same bridge with a script as the customer (`auto`, Haiku 5.5, `open`): a small task, build `8bef929`, root `PASS` in 736 s; a task of three parts, build `6ac62e4`, root `PASS` in 2058 s, $0.27, plan 13 min, `main` untouched, 91 of its tests passing on the accepted branch, no FAIL, one BLOCK on an order a part needed. After each, its containers ended within two minutes of the last node settling; on the row below, of an earlier build, 18 stood until the project was stopped.
 
 **The system's own plan on a larger task, the same contract as the bare arm** (`GB_coreutils_tnzimp748`, build `7a8480c`, AUTO, every
 role but the harness's customer on Haiku 5.5, addendum served; a debugging row, one, no bare arm beside it and not counted in
