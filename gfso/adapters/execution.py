@@ -1374,8 +1374,11 @@ class WayOut:
                            *(f"{to_own} -p tcp --dport {port} --sport {EPHEMERAL} -m conntrack --ctstate NEW -j ACCEPT"
                              for port in (self.door_port, *(() if self.network[0] == "open" else (egress.PORT,)))),
                            f"{to_own} -j REJECT"))
+        # …Docker's own resolver is on its loopback, past every other rule here, under every switch (critic, ran: 60 of 60 under `off`)
+        resolver = (f"iptables -N gfso-names && iptables -A gfso-names -m limit --limit {new_flows()}/second --limit-burst {min(10000, 10 * new_flows())} -j RETURN && "
+                    "iptables -A gfso-names -j DROP && iptables -A OUTPUT -o lo -d 127.0.0.11 -j gfso-names && ")
         if self.network[0] != "open":
-            return f"{own} && {inbound}"
+            return f"{resolver}{own} && {inbound}"
         # …its resolvers answer names (on Linux often the router's, a private address); every other private address is
         # shut, after the host and the gateway themselves
         dns = ("for n in $(awk '/^nameserver [0-9.]+$/{print $2}' /etc/resolv.conf); do iptables -A OUTPUT -d $n -p "
@@ -1385,8 +1388,11 @@ class WayOut:
         # (critic, measured). An unanswered UDP stream stays NEW on every packet, so one past the rate is limited too: this
         # kernel has no way to count a flow's first packet alone (`connbytes`, measured absent)
         flows = (f"iptables -N gfso-flows && iptables -A gfso-flows -m limit --limit {new_flows()}/second --limit-burst {min(10000, 10 * new_flows())} -j RETURN && "
-                 "iptables -A gfso-flows -j DROP && iptables -A OUTPUT -o lo -j ACCEPT && iptables -A OUTPUT -m conntrack --ctstate NEW -j gfso-flows && ")
-        return (f'{flows}{dns}iptables -A OUTPUT -d {HOST_NET} -j REJECT && gw=$({_GATEWAY_OF}) && [ -n "$gw" ] && '
+                 "iptables -A gfso-flows -j DROP && iptables -A OUTPUT -o lo -j ACCEPT && iptables -A OUTPUT -m conntrack --ctstate NEW -j gfso-flows && "
+                 # …and what leaves by UDP at all: an answered flow is not new, and passed the bound whole (critic, ran: 300 of 300)
+                 f"iptables -N gfso-udp && iptables -A gfso-udp -m limit --limit {min(10000, 25 * new_flows())}/second --limit-burst 10000 -j RETURN && "
+                 "iptables -A gfso-udp -j DROP && iptables -A OUTPUT -p udp -j gfso-udp && ")
+        return (f'{resolver}{flows}{dns}iptables -A OUTPUT -d {HOST_NET} -j REJECT && gw=$({_GATEWAY_OF}) && [ -n "$gw" ] && '
                 f'iptables -A OUTPUT -d "$gw" -j REJECT && {own} && {shut} && {inbound}')
 
     def open(self) -> None:

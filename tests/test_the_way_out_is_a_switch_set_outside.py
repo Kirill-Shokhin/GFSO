@@ -333,7 +333,11 @@ def test_an_open_switch_bounds_a_containers_new_flows_and_a_closed_one_needs_non
     seal = _ex(tmp_path).way.seal()
     assert seal.index("-j gfso-flows") < seal.index("--dport 53"), "a flood of names to the resolver is a flood of flows"
     assert "--limit 7/second --limit-burst 70" in seal and "connbytes" not in seal, "absent from Docker Desktop's kernel: it would stop every start"
-    assert "gfso-flows" not in _ex(tmp_path, {"mode": "off"}).way.seal()
+    closed = _ex(tmp_path, {"mode": "off"}).way.seal()
+    assert "gfso-flows" not in closed and "gfso-udp" not in closed
+    assert closed.index("-d 127.0.0.11 -j gfso-names") < closed.index("-o lo -j ACCEPT"), "before loopback is let through"
+    assert seal.index("-d 127.0.0.11 -j gfso-names") < seal.index("-o lo -j ACCEPT")
+    assert "--limit 175/second" in seal and "-p udp -j gfso-udp" in seal
     monkeypatch.setenv("GFSO_NEW_FLOWS", "999999")
     assert E.new_flows() == 10000
     assert "--limit 10000/second --limit-burst 10000" in E.WayOut.seal(_ex(tmp_path, {"mode": "open"}).way)
