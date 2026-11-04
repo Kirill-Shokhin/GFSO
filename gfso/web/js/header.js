@@ -62,7 +62,7 @@ async function goal() {
     if (!root) return GOAL && S.missing ? '<span class="hd-phrase">A new project — it exists once its goal is created</span>'
         // …nor is a link opened before its project is: the server's sentence spoke to an agent, in red, of a normal wait
         : `<span class="hd-phrase">${S.missing ? 'This project does not exist yet — the page comes alive when it does'
-            : procs().some(w => PROC_KIND[w.verb] === 'plan') ? 'The goal is being planned' : 'No goal yet'}</span>`;
+            : procs().some(w => PROC_KIND[w.verb] === 'plan') ? 'The goal is being planned' : S.run?.cost.byKind.plan ? 'A plan is written, its work not started' : 'No goal yet'}</span>`;
     // …and how THIS project's mode was set: by whom, when, the model the system's own roles run on, its settings
     const m = S.graph.mode, st = m?.settings || {};
     // …each a capitalised head in words, its moment as the page says moments, an on/off as on/off (audit A10)
@@ -194,7 +194,8 @@ export async function drawHeader() {
         // the engine's `mine`, as it is: under AUTO it marks the customer's own rulings on the root (a user's dispute)
         const own = (f.steps || []).filter(x => x.mine);
         const mine = own.filter(x => !shown(taskOf(x.task_id))), me = myRole() || 'you', blocked = f.blocked_by || [];
-        chips = (f.stuck ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
+        const answering = S.graph.mode?.mode === 'auto' && procs().some(w => PROC_KIND[w.verb] === 'issuer');
+        chips = (f.stuck && !answering ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
                                 spoken(f.directive || '') || H.stuck, '', 'stuck') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
                    mine.map(x => `${x.action} ${named(x.task_id)}`)) + chips;

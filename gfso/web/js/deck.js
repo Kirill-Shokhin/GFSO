@@ -54,7 +54,7 @@ function strip() {
     const more = '<span class="dk-more"></span>';
     // the sessions are said only where they are not one per node at work (one carrying a whole part, a node worked
     // elsewhere): «1 at work · 1 session» read as the line repeating itself (the author, 2026-10-27)
-    const now_ = live.length ? `<span class="dk-now">${tally(live.length, 'at work')}${mine.length && mine.length !== live.length ? tally(mine.length, mine.length > 1 ? 'sessions' : 'session') : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
+    const now_ = live.length ? `<span class="dk-now${live.length === 1 && mine.length <= 1 ? ' dk-one' : ''}">${tally(live.length, 'at work')}${mine.length && mine.length !== live.length ? tally(mine.length, mine.length > 1 ? 'sessions' : 'session') : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
         : '<span class="dk-now dk-idle">Nothing at work</span>';
     // sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one) —
     // the red rounds badge's rule; a count of every FAIL ever never went away on a green run (critic)

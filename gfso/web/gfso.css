@@ -1409,6 +1409,8 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
     .hd-goal .hd-root { flex: 1 0 100%; max-width: none; text-align: left; padding-left: 0; }
     .hd-needs { order: 5; flex: 1 0 100%; justify-content: flex-start; overflow-x: auto; }
     .dk-chips { max-width: calc(100% - 80px); flex: 0 0 auto; }   /* the strip's room less its count; what else stands on the line scrolls: red first, then this */
+    .dk-now.dk-one { display: none; }   /* one chip: its pulse says at work, the name has the room */
+    .dk-now.dk-one + .dk-chips { max-width: 100%; }
     .dk-live { min-width: 0; }
     .dk-strip.fit .dk-live, .dk-live { overflow: hidden; }
     .dk-strip.fit .dk-live em, .dk-live em { flex: 0 1 auto; min-width: 5ch; white-space: nowrap; }
@@ -1575,3 +1577,12 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
     border: 1px solid var(--ink-soft); color: var(--ink); font: 600 10px/10px var(--font-body); text-align: center; }
 .cy-shut svg { width: 17px; height: 17px; border-radius: 50%; background: var(--bg); border: 1px solid var(--ink-soft); }
 .cy-shut .mk-fail { stroke: var(--ink); stroke-width: 1.3; stroke-linecap: round; fill: none; }
+
+/* a short screen: the panel's rows close up so a root with all its roles still fits, nothing else changes */
+@media (max-height: 860px) {
+    .pn-grid { row-gap: 2px; padding: 6px 0; line-height: 1.25; }
+    .pn-verdict { margin-top: 4px; }
+    .sidebar { padding-top: 14px; padding-bottom: 8px; }
+    .sidebar-header { margin-bottom: 6px; }
+    .cr-row > summary { padding-top: 3px; padding-bottom: 3px; }
+}
