@@ -2567,8 +2567,11 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         if isinstance(proc, _Call) and proc.execution is not self:
             return proc.execution.end(proc)               # in the container the call ran in, a session's own
         if isinstance(proc, _Call):
-            self._end_inside(proc.call)
-            proc = proc.client
+            try:
+                self._end_inside(proc.call)
+            finally:      # …a Docker slow to answer left the client standing and whoever reads it waiting: 24 min of `plan`
+                LocalExecution().end(proc.client)
+            return
         LocalExecution().end(proc)
 
     def _end_inside(self, call: str) -> None:

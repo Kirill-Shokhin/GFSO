@@ -1,8 +1,12 @@
 """What real user-agents met on a clean install, kept: each of these stopped one, or told it something untrue."""
 import json
+import subprocess
 from types import SimpleNamespace
 
+import pytest
+
 from gfso import tools as T
+from gfso.adapters import execution as E
 from gfso.decompose.loop import FOLD_SCHEMA, _audit_fold
 from gfso.mcp.server import _with_ui_link
 
@@ -96,3 +100,19 @@ def test_what_is_said_stands_first_in_the_answer():
     """Last in a long answer, it went unsaid: nothing on the plan before a go in 6 runs of 6."""
     assert next(iter(_with_ui_link("auto_decompose", {"root_id": "root", "log": "long"}, "p", _engine()))) == "say"
     assert next(iter(_with_ui_link("next_steps", {"steps": [], "complete": True}, "p", _engine(BRANCH)))) == "say"
+
+
+def test_a_docker_slow_to_answer_still_ends_the_host_side_of_a_call(monkeypatch):
+    """`docker exec`'s client stood after its call was gone, and `plan` waited on it for 24 min (F3): ended either way."""
+    ended = []
+    monkeypatch.setattr(E.LocalExecution, "end", lambda self, proc: ended.append(proc))
+    me = E.ContainerExecution.__new__(E.ContainerExecution)
+
+    def slow(call):
+        raise subprocess.TimeoutExpired("docker", 60)
+    monkeypatch.setattr(me, "_end_inside", slow, raising=False)
+    call = E._Call.__new__(E._Call)
+    call.client, call.call, call.execution = object(), "c", me
+    with pytest.raises(subprocess.TimeoutExpired):
+        me.end(call)
+    assert ended == [call.client]

@@ -87,6 +87,10 @@ that would establish one (E3) has shown so far, and what not, is in the README a
 - `docs/e3_rows.csv`: every counted row of the pre-registered table, with its build, contract, time, cost and second number.
 
 ### Changed
+- On a phone the page's header is three rows whatever the names' lengths, a folded part's tag stays on its node, and the
+  browser's Back closes what is open layer by layer before it warns once of leaving. The page's door compresses what it sends
+  (not `/mcp`), answers 304 for a file the browser holds and reads the graph without the next steps where the page does not
+  ask for them.
 - A split into one part is authored as the leaf it is: its criteria are the node's own, so a small task is not validated
   twice over.
 - The log says who decided, apart from who signed: `by_system` on an audit row marks a move the system made in a role's
@@ -178,6 +182,8 @@ that would establish one (E3) has shown so far, and what not, is in the README a
 - With no mode set the system answers disputes at a seam only; a dispute a node's own issuer raises is its holder's.
 
 ### Fixed
+- A call in a container whose ending meets a Docker slow to answer still ends its client on the host; left standing, it held
+  whoever read it, a `plan` for 24 minutes.
 - `gfso setup` brings a registration naming another installation to this one, and says where a directory's own entry goes
   before it; `gfso doctor` reads the door by its name and its connection, not by the letters `gfso` anywhere in the list.
 - A verb longer than three minutes is answered over MCP: the bridge took a silence for a dead session, told the agent the
