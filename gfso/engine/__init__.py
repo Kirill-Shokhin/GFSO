@@ -1239,6 +1239,7 @@ class Engine:
         pins = {(r["criterion"], r["finding"]): r["expect"] for r in self.checks_no_longer_run(task_id) if r["node"] == str(task_id)}
 
         def filed(name, p):
+            """The finding as filed: under its own id where its expectation is not the one ruled out."""
             key = (name, p.get("id"))
             if key not in ruled or not p.get("expect") or same_expectation(p["expect"], pins.get(key) or ruled[key].get("expect")):
                 return p
