@@ -186,7 +186,7 @@ export async function initGraph() {
     const release = () => { cy.autounselectify(false); pressed = null; const s = focus().select; if (s) cy.getElementById(s).select(); };
     addEventListener('pointerdown', () => { if (++fingers > 1 && pressed?.id) release(); }, true);
     const ended = e => { fingers = Math.max(0, fingers - 1); const p = pressed; if (!p?.id) return;
-        if (e.type === 'pointerup' && Math.hypot(e.clientX - p.x, e.clientY - p.y) < 8) toggled(p.id);
+        if (e.type === 'pointerup' && !p.held && Math.hypot(e.clientX - p.x, e.clientY - p.y) < 8) toggled(p.id);
         setTimeout(release, 400); };
     addEventListener('pointerup', ended, true); addEventListener('pointercancel', ended, true);
     cy.on('dbltap', 'node', evt => opening(evt.target.id()));
@@ -197,7 +197,7 @@ export async function initGraph() {
         return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; });
     // …a finger's long press reads its tip the same way: the tag lets it through to the canvas too
     $('cy').addEventListener('contextmenu', e => { const t = TOUCH.matches && tagAt(e);
-        if (t?.dataset.tip) { e.preventDefault(); const [head, ...rows] = t.dataset.tip.split('\n'); tip(card(head, rows), e); } });
+        if (t?.dataset.tip) { e.preventDefault(); if (pressed) pressed.held = true; const [head, ...rows] = t.dataset.tip.split('\n'); tip(card(head, rows), e); } });
     $('cy').addEventListener('pointerdown', e => { if (fingers > 1) return; pressed = {x: e.clientX, y: e.clientY, id: tagAt(e)?.dataset.node};
         if (pressed.id) cy.autounselectify(true); }, true);
     // …the background's: the plan as first drawn, its parts folded again

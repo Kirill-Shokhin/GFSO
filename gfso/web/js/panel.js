@@ -71,7 +71,7 @@ const liftedKey = r => `${r.check?.split('/')[0] ?? ''}\n${r.command || r.id || 
 const lifted = vr => { const checks = vr?.checks_no_longer_run || [], taken = new Set(checks.flatMap(r => [`${r.criterion}\n${r.command}`, r.finding]));
     return LIFTED.map(([key, one, many, it, them]) => { const by = new Map();
         for (const r of vr?.[key] || []) {
-            if (key === 'retired_after_refutation' && (taken.has(`${r.criterion}\n${r.command}`) || taken.has(r.id))) continue;
+            if (key === 'retired_after_refutation' && (taken.has(`${r.criterion}\n${r.command}`) || (r.id && taken.has(r.id)))) continue;
             const k = liftedKey(r);
             if (!by.has(k)) by.set(k, {...r, criteria: new Set(), said: new Map()});
             by.get(k).criteria.add(r.criterion);

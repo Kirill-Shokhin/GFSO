@@ -198,8 +198,10 @@ export async function drawHeader() {
         // …a turn on what is stuck or above it: one elsewhere answers nothing here, and a stuck with no node named stays a call
         const above = id => { const up = []; for (let t = taskOf(id); t; t = t.parent_id && taskOf(t.parent_id)) up.push(t.id); return up; };
         const answering = S.graph.mode?.mode === 'auto' && procs().some(w => PROC_KIND[w.verb] === 'issuer' && blocked.some(id => above(id).includes(w.task_id)));
-        // …and a closed goal has nothing left to intervene in, whatever it says of itself (a critic: red «1 stuck» beside CANCELLED)
-        chips = (f.stuck && !answering && !goalWord(rootOf(S.tasks)) ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
+        // …under AUTO a goal settled undelivered has its way back the system's (the engine: «made without you»), so no red beside
+        // CANCELLED; elsewhere the chip carries the way out, and a DONE whose work did not land is stuck by the engine's word
+        const roots = S.tasks.filter(t => !t.parent_id), settled = S.graph.mode?.mode === 'auto' && roots.length && roots.every(t => terminal(t.state) && !delivered(t));
+        chips = (f.stuck && !answering && !settled ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
                                 spoken(f.directive || '') || H.stuck, '', 'stuck') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
                    mine.map(x => `${x.action} ${named(x.task_id)}`)) + chips;

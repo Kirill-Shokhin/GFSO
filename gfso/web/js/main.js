@@ -27,8 +27,7 @@ import {said} from './run.js';
 let graphRead = () => {};
 const refreshGraph = singleFlight(async () => {
     try { const ok = await loadGraph(); graphRead(); rebuildRun(); await drawGraph(ok); } catch (e) { console.error('refreshGraph:', e); } });
-// …a read that never answers leaves a header with what it has: its name and state, the chips from the graph
-const refreshHeader = singleFlight(async () => { await within(loadFrontier()); await within(loadReports()); await drawHeader(); });
+const refreshHeader = singleFlight(async () => { await loadFrontier(); await loadReports(); await drawHeader(); });
 const refreshQuality = singleFlight(async () => { await loadMetrics(); drawQuality(); });
 const runRead = singleFlight(loadRun);
 const refreshDeck = singleFlight(async () => { await runRead(); paintDeck(); });
@@ -40,12 +39,14 @@ async function firstLoad() {
     await Promise.race([read, drawn]);
     goal.labelGoalButton();
     // …the run is built on the frontier (what waits on what), so it is painted once both have answered
-    // …a read that never answers holds neither past its bound; a frontier come late is painted when it comes
-    let painted = false;
-    const repaint = () => { rebuildRun(); paintDeck(); };
-    const header = refreshHeader().then(() => { if (painted) repaint(); });
-    const run = runRead(), asked = Promise.all([within(refreshQuality()), within(header)]);
-    const deck = Promise.all([run, asked, drawn]).then(() => { repaint(); painted = true; });
+    // …a read that never answers holds none of it past its bound: a header with what it has, its name and state, the chips
+    // from the graph; what comes late is painted when it comes
+    let painted = false, heard = false;
+    const repaint = () => { rebuildRun(); paintDeck(); }, late = () => { if (painted) repaint(); };
+    const header = refreshHeader().then(() => { heard = true; late(); });
+    const run = runRead(); run.then(late);
+    const asked = Promise.all([within(refreshQuality()), within(header).then(() => heard || drawHeader())]);
+    const deck = Promise.all([within(run), asked, drawn]).then(() => { repaint(); painted = true; });
     await Promise.all([drawn, asked]);
     suggestHeight(graphNeeds());
     if (TASK) point('select', TASK);                   // `?task=` makes one node linkable
