@@ -6,7 +6,7 @@ import {banner} from './overlays.js';
 import {tip, untip, TOUCH} from './tip.js';
 import {point, watch, focus, rebring} from './store.js';
 import {failingNow, failedOf} from './run.js';
-import {TIP, waitWords, failedWords} from './hints.js';
+import {card, TIP, waitWords, failedWords} from './hints.js';
 import {css, beat} from './draw.js';
 import {childrenOf, ancestorsIn} from './tree.js';
 import {planChanged, decide, decidedBefore, foldInto, isHidden, unfold, refold, refoldOne, openHere, foldOf, asking} from './fold.js';
@@ -195,6 +195,9 @@ export async function initGraph() {
     // tag across a phone's width could not be panned from (critic 8)
     const tagAt = e => [...$('cy').querySelectorAll('.cy-fold')].find(t => { const r = t.getBoundingClientRect();
         return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; });
+    // …a finger's long press reads its tip the same way: the tag lets it through to the canvas too
+    $('cy').addEventListener('contextmenu', e => { const t = TOUCH.matches && tagAt(e);
+        if (t?.dataset.tip) { e.preventDefault(); const [head, ...rows] = t.dataset.tip.split('\n'); tip(card(head, rows), e); } });
     $('cy').addEventListener('pointerdown', e => { if (fingers > 1) return; pressed = {x: e.clientX, y: e.clientY, id: tagAt(e)?.dataset.node};
         if (pressed.id) cy.autounselectify(true); }, true);
     // …the background's: the plan as first drawn, its parts folded again

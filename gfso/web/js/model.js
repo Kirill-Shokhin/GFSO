@@ -4,7 +4,7 @@
 import {S, procs, myRole, begun} from './state.js';
 import {api, getJSON, post} from './api.js';
 import {buildRun, busyNow} from './run.js';
-import {contested, isVerdict} from './vocab.js';
+import {contested, isVerdict, terminal} from './vocab.js';
 
 // A STATE THE FEED PUSHED WHILE A READ WAS OUT outlives that read: the read may have left before the transition and come
 // back after it — a node BLOCKED at 05:21:20 read EXECUTING for three minutes (a live row). The feed is the order of events.
@@ -39,6 +39,10 @@ async function readGraph() {
 export async function loadReports() {
     try { S.reports = S.tasks.length ? (await (await post('/api/run/tech_reports', {})).json()).reports || [] : []; }
     catch (e) { /* a read: the last answer stands */ }
+    // what the system's own records say of a run, where a run's end is read: a session that hid where it went cannot hide that
+    // it did (SECURITY.md). A server before this read says nothing.
+    if (S.runState?.state === 'stopped' || S.tasks.some(t => !t.parent_id && terminal(t.state)))
+        try { S.recordsSay = (await getJSON('/api/records_say')).said || []; } catch (e) { /* the last answer stands */ }
 }
 export async function loadMetrics() { try { S.metrics = await getJSON('/api/metrics'); } catch (e) { /* the last numbers stand */ } }
 
@@ -82,7 +86,7 @@ export async function loadRun() {
         await currentVerdicts(audit);
         read = {audit, calls: usage.calls_detail || []};
         rebuildRun();
-    } catch (e) { S.run = null; read = null; }
+    } catch (e) { /* the last read stands: without it the strip told what runs from the states alone, «at work» beside Stopped */ }
 }
 export const rebuildRun = () => { if (read) S.run = buildRun({nodes: S.graph.nodes, edges: S.graph.edges, tasks: S.tasks, ...read,
     pipeline: S.pipeline, verdicts, waiting: S.waiting, steps: S.steps, procs: procs(), auto: S.graph.mode?.mode === 'auto'}); };

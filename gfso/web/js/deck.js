@@ -34,7 +34,8 @@ const ticks = new Map();                               // `source|node` → {nod
 const doingOf = w => doing(w.verb, PROC_KIND[w.verb]);
 function strip() {
     const run = S.run, at = nowOf(), mine = at.procs;
-    const work = at.work, name = t => trim(nameOf(t), 26), runs = t => !!at.on(t.id);
+    // …with no run read at all, only the server's processes say what runs: states alone said «at work» beside Stopped (critic)
+    const work = run ? at.work : new Set(mine.map(w => w.task_id)), name = t => trim(nameOf(t), 26), runs = t => !!at.on(t.id);
     // what a process runs on first: a session hidden under "+2" behind the leaves it carries told nothing (critic)
     const busy = S.tasks.filter(t => work.has(t.id)).sort((a, b) => runs(b) - runs(a));
     // waiting on the issuer's decision — a verdict being validated is work, not a wait, so VALIDATING is left out

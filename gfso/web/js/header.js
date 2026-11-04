@@ -146,14 +146,14 @@ export async function startRun() {
 // they stop and move nothing — so a quiet chip, and none at all while there is none.
 // Laid out beside the quality chip as a list one click opens — each report whole, its node one click away.
 function drawReports() {
-    const reports = S.reports;
-    const seen = `${reports.length}|${reports.at(-1)?.at || ''}|${new Date().toDateString()}`;
+    const reports = S.reports, said = S.recordsSay || [], n = reports.length + said.length;
+    const seen = `${reports.length}|${reports.at(-1)?.at || ''}|${said.join()}|${new Date().toDateString()}`;
     if ($('hd-reports').dataset.seen === seen) return;
     $('hd-reports').dataset.seen = seen;
-    $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${tally(reports.length, (phone() ? '' : 'tech ') + (reports.length > 1 ? 'reports' : 'report'))}</button>`
-        + H.reports([...reports].reverse().map(r => ({head: r.role || 'the system',
+    $('hd-reports').innerHTML = !n ? '' : `<button class="hd-q" data-action="reports">${tally(n, (phone() ? '' : 'tech ') + (n > 1 ? 'reports' : 'report'))}</button>`
+        + H.reports([...said.map(line => ({head: "the system's own records", val: '', link: '', means: line})), ...[...reports].reverse().map(r => ({head: r.role || 'the system',
             val: `<span class="hq-when">${esc(when(r.at))}</span>`,
-            link: r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : '', means: r.text})));
+            link: r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : '', means: r.text}))]);
 }
 export const toggleReports = () => $('hd-reports').classList.toggle('open');
 
@@ -198,7 +198,8 @@ export async function drawHeader() {
         // …a turn on what is stuck or above it: one elsewhere answers nothing here, and a stuck with no node named stays a call
         const above = id => { const up = []; for (let t = taskOf(id); t; t = t.parent_id && taskOf(t.parent_id)) up.push(t.id); return up; };
         const answering = S.graph.mode?.mode === 'auto' && procs().some(w => PROC_KIND[w.verb] === 'issuer' && blocked.some(id => above(id).includes(w.task_id)));
-        chips = (f.stuck && !answering ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
+        // …and a closed goal has nothing left to intervene in, whatever it says of itself (a critic: red «1 stuck» beside CANCELLED)
+        chips = (f.stuck && !answering && !goalWord(rootOf(S.tasks)) ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
                                 spoken(f.directive || '') || H.stuck, '', 'stuck') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
                    mine.map(x => `${x.action} ${named(x.task_id)}`)) + chips;

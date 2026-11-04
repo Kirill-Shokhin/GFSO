@@ -42,6 +42,7 @@ from gfso.engine.verdicts import observations
 from gfso.tools_llm import validate_internal_on as _validate_internal_on, mode_staffing
 from gfso.adapters.children import end_this_process, reap as reap_children
 from gfso.adapters import resources as _resources
+from gfso.adapters.netrecord import said_apart
 from gfso import config as _config
 from gfso.adapters.llm import credentials as _credentials, registry as _providers
 from gfso.config import LOOPBACK as _LOOPBACK, DEFAULT_PROJECT
@@ -350,6 +351,11 @@ def _mount_ledgers(app, _e, _req_project, _scope_name) -> None:
         e: Engine = _e()
         tid = TaskId(task_id) if task_id else None
         return [audit_to_out(a) for a in e.audit_log(tid)]
+
+    @app.get("/api/records_say")
+    def get_records_say():
+        """What the system's own records say of this project's run (`netrecord.said_apart`), as an agent is told it at the end."""
+        return {"said": said_apart(_e().project_name)}
 
     # === Pipeline observation history (persisted; ticks excluded at the writer) ===
 

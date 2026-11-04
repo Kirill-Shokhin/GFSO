@@ -1260,3 +1260,9 @@ def test_the_panel_reads_what_a_verdict_did_not_re_run_under_the_names_the_verb_
     panel = client.get("/js/panel.js").text
     for name in ("checks_no_longer_run", "findings_not_reproduced", "retired_after_refutation"):
         assert f'out["{name}"]' in verb and f"'{name}'" in panel, name
+
+
+def test_the_page_reads_what_the_systems_records_say_of_a_run(client):
+    got = client.get("/api/records_say")
+    assert got.status_code == 200 and isinstance(got.json()["said"], list)
+    assert "/api/records_say" in client.get("/js/model.js").text

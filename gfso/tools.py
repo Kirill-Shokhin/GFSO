@@ -751,7 +751,7 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
            "ts": (rec or {}).get("ts")}
     # …AND WHAT IT NO LONGER RE-RAN BY ITS ISSUER'S RULING: a PASS read without it reads as wide as one that re-ran all
     if _ret := engine.retired_findings(TaskId(task_id)):
-        out["retired_after_refutation"] = [{**{k: r.get(k) for k in ("criterion", "id", "by", "why", "command", "at")},
+        out["retired_after_refutation"] = [{**{k: r.get(k) for k in ("criterion", "id", "by", "why", "command", "expect", "at")},
                                             "decided_by": "system" if r.get("by_system") else "person"} for r in _ret]
     # …AND WHAT A VALIDATOR RE-RAN AND DID NOT REPRODUCE: no later PASS re-runs it
     if _unrep := engine.findings_not_reproduced(TaskId(task_id)):

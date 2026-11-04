@@ -67,18 +67,19 @@ function head({d, rounds}) {
 const LIFTED = [['checks_no_longer_run', 'check a ruling took off', 'checks a ruling took off', 'it no longer runs under the criteria named; the part it belongs to still holds it', 'they no longer run under the criteria named; the parts they belong to still hold them'],
                 ['findings_not_reproduced', 'finding a later validator did not reproduce', 'findings a later validator did not reproduce', 'no later validation demands it', 'no later validation demands them'],
                 ['retired_after_refutation', 'finding its issuer ruled out', 'findings its issuer ruled out', 'the same finding filed again refutes nothing; its check may still run', 'the same findings filed again refute nothing; their checks may still run']];
-const lifted = vr => { const taken = new Set((vr?.checks_no_longer_run || []).map(r => `${r.criterion}\n${r.command}`));
+const liftedKey = r => `${r.check?.split('/')[0] ?? ''}\n${r.command || r.id || r.criterion}\n${r.expect ?? ''}`;
+const lifted = vr => { const checks = vr?.checks_no_longer_run || [], taken = new Set(checks.flatMap(r => [`${r.criterion}\n${r.command}`, r.finding]));
     return LIFTED.map(([key, one, many, it, them]) => { const by = new Map();
         for (const r of vr?.[key] || []) {
-            if (key === 'retired_after_refutation' && taken.has(`${r.criterion}\n${r.command}`)) continue;
-            const k = r.command || r.id || r.criterion;
+            if (key === 'retired_after_refutation' && (taken.has(`${r.criterion}\n${r.command}`) || taken.has(r.id))) continue;
+            const k = liftedKey(r);
             if (!by.has(k)) by.set(k, {...r, criteria: new Set(), said: new Map()});
             by.get(k).criteria.add(r.criterion);
             if (!by.get(k).said.has(r.why)) by.get(k).said.set(r.why, r);
         }
         const rows = [...by.values()], n = rows.length;
         return {rows, kind: n > 1 ? many : one, means: n > 1 ? them : it}; }).filter(k => k.rows.length); };
-const liftedMark = vr => { const kinds = lifted(vr), n = new Set(kinds.flatMap(k => k.rows.map(r => r.command || r.id || r.criterion))).size;
+const liftedMark = vr => { const kinds = lifted(vr), n = new Set(kinds.flatMap(k => k.rows.map(liftedKey))).size;
     return n ? `<button class="pn-link pn-lifted" data-action="read" data-facet="verdict" data-to="rd-lifted"${PANEL.lifted(kinds.map(k => `${k.rows.length} ${k.kind}: ${k.means}`))}>${tally(n, 'lifted')}</button>` : ''; };
 const ruling = r => (r.printed ? `<div class="verdict-evidence">printed: ${esc(trim(String(r.printed), 300))}</div>` : '')
     + (r.why ? `<div class="verdict-evidence">${esc(spoken(r.why))}</div>` : '')
