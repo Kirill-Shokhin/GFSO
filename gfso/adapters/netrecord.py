@@ -226,7 +226,7 @@ def said_apart(project: str) -> list:
     """What the record says of itself: each container that lost lines or passed its budget, and each gap. A row of these
     is where a session may have hidden, so a reader is told without reading every destination."""
     lost, bound, cut, gaps, turned = collections.Counter(), collections.Counter(), set(), 0, 0
-    said_files, bad, fewer = [], 0, 0
+    said_files, bad, fewer, refused = [], 0, 0, {}
     for p in (file_record_path(project).with_suffix(".jsonl.1"), file_record_path(project)):
         got, unread = rows_of(p)
         bad += unread
@@ -243,11 +243,14 @@ def said_apart(project: str) -> list:
             lost[row.get("container")] += row.get("lost_packets", 0)
             bound[row.get("container")] += row.get("flows_dropped", 0)
             cut |= {row["container"]} if "cut" in row else set()
+            # …each row the door's log so far, read whole as its doors close: the latest is the count
+            refused[row.get("door")] = max(refused.get(row.get("door"), 0), row.get("door_refused", 0))
             gaps += "gap" in row
             turned += "turned" in row
     return ([f"{c}: {n} packets not read, what it sent then is not listed" for c, n in lost.items() if n]
             + [f"{c}: {n} packets past its bounds, each send refused: a failure of what it ran may be this" for c, n in bound.items() if n]
             + [f"{c}: past its {BUDGET} destinations, the rest not listed" for c in sorted(cut)]
+            + [f"{d}: its model door refused {n} connections past one address's share: a model call that failed may be this" for d, n in refused.items() if n]
             + ([f"{gaps} times the listener stood again: what passed before each may not be listed"] if gaps else [])
             + ([f"turned over {turned} times: older rows are gone"] if turned else [])
             + (held := list(dict.fromkeys(said_files)))[:SAID] + ([f"and {len(held) - SAID} more such"] if len(held) > SAID else [])

@@ -31,7 +31,7 @@ from pathlib import Path
 from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, WORK_PATH, ExecutionPort,
                              FilesPort, PlaceUnavailable, base_named, nodes_dir, place_name)
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
-                         memory_ceiling, network_record_off, new_flows, node_disk, executions, executions_path, host_env, subprocess_env)
+                         memory_ceiling, network_record_off, new_flows, HELD_FLOWS, node_disk, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
 from gfso.adapters.records import append, said_of
 from gfso.places import same_place
@@ -934,10 +934,11 @@ def _log_out(names, mirror: Path) -> str:
     return kept + "".join(out(n) for n in names)
 
 
-def _mirror(names, mirror: Path) -> None:
+def _mirror(names, mirror: Path) -> str:
     if text := _log_out(names, mirror):
         mirror.parent.mkdir(parents=True, exist_ok=True)
         mirror.write_text(text, encoding="utf-8")
+    return text
 
 
 def _keep_logs(names) -> None:
@@ -1393,7 +1394,8 @@ class WayOut:
                              for port in (self.door_port, *(() if self.network[0] == "open" else (egress.PORT,)))),
                            f"{to_own} -j REJECT"))
         # …Docker's own resolver is on its loopback, past every other rule here, under every switch (critic, ran: 60 of 60 under `off`)
-        resolver = (f"iptables -N gfso-names && iptables -A gfso-names -m limit --limit {new_flows()}/second --limit-burst {min(10000, 10 * new_flows())} -j RETURN && "
+        burst = min(10000, 6 * new_flows())
+        resolver = (f"iptables -N gfso-names && iptables -A gfso-names -m limit --limit {new_flows()}/second --limit-burst {burst} -j RETURN && "
                     "iptables -A gfso-names -j DROP && iptables -A OUTPUT -o lo -d 127.0.0.11 -j gfso-names && ")
         if self.network[0] != "open":
             return f"{resolver}{own} && {inbound}"
@@ -1403,13 +1405,21 @@ class WayOut:
                "udp --dport 53 -j ACCEPT && iptables -A OUTPUT -d $n -p tcp --dport 53 -j ACCEPT || exit 1; done && ")
         shut = " && ".join(f"iptables -A OUTPUT -d {n} -j REJECT" for n in PRIVATE_NETS)
         # ...one session's new flows, as fast as it could open them, stopped Docker Desktop's backend and every project with it
-        # (critic, measured). An unanswered UDP stream stays NEW on every packet, so one past the rate is limited too: this
-        # kernel has no way to count a flow's first packet alone (`connbytes`, measured absent)
-        flows = (f"iptables -N gfso-flows && iptables -A gfso-flows -m limit --limit {new_flows()}/second --limit-burst {min(10000, 10 * new_flows())} -j RETURN && "
-                 "iptables -A gfso-flows -j DROP && iptables -A OUTPUT -o lo -j ACCEPT && iptables -A OUTPUT -m conntrack --ctstate NEW -j gfso-flows && "
+        # (critic, measured), and each flow let through is a socket of that HOST process: eight containers at a burst of 2000
+        # held 15,407 of Windows' 16,384 ports and other programs on the machine could bind none (measured): `NEW_FLOWS`.
+        # An unanswered UDP stream stays NEW on every packet, so one past the rate is limited too: this kernel has no way to
+        # count a flow's first packet alone (`connbytes`, measured absent). Apart by protocol, one's flood not spending the other's
+        flows = (f"iptables -N gfso-flows && iptables -A gfso-flows -m limit --limit {new_flows()}/second --limit-burst {burst} -j RETURN && "
+                 "iptables -A gfso-flows -j DROP && iptables -A OUTPUT -o lo -j ACCEPT && iptables -A OUTPUT -p tcp -m conntrack --ctstate NEW -j gfso-flows && "
+                 f"iptables -N gfso-dgrams && iptables -A gfso-dgrams -m limit --limit {max(1, 3 * new_flows() // 10)}/second --limit-burst {burst} -j RETURN && "
+                 "iptables -A gfso-dgrams -j DROP && iptables -A OUTPUT ! -p tcp -m conntrack --ctstate NEW -j gfso-dgrams && "
                  # …and all that leaves but TCP, which paces itself: an answered flow is not new, and passed the bound whole (critic, ran: 300 of 300)
-                 f"iptables -N gfso-udp && iptables -A gfso-udp -m limit --limit {min(10000, 25 * new_flows())}/second --limit-burst 10000 -j RETURN && "
-                 "iptables -A gfso-udp -j DROP && iptables -A OUTPUT ! -p tcp -j gfso-udp && ")
+                 f"iptables -N gfso-udp && iptables -A gfso-udp -m limit --limit {min(10000, 100 * new_flows())}/second --limit-burst 10000 -j RETURN && "
+                 "iptables -A gfso-udp -j DROP && iptables -A OUTPUT ! -p tcp -j gfso-udp && "
+                 # …and the connections it holds, ports of the host too until they end: a rate alone reached all of them in minutes.
+                 # By nft where its image has it: `connlimit` is absent from iptables on this kernel (measured), a declared image may lack nft
+                 f"if command -v nft >/dev/null; then nft add table ip gfso && nft 'add chain ip gfso out {{ type filter hook output priority 0; }}' && "
+                 f"nft 'add rule ip gfso out oifname != \"lo\" ip protocol tcp ct state new ct count over {HELD_FLOWS} counter reject with tcp reset' || exit 1; fi && ")
         return (f'{resolver}{flows}{dns}iptables -A OUTPUT -d {HOST_NET} -j REJECT && gw=$({_GATEWAY_OF}) && [ -n "$gw" ] && '
                 f'iptables -A OUTPUT -d "$gw" -j REJECT && {own} && {shut} && {inbound}')
 
@@ -1480,6 +1490,7 @@ class Door:
             *labelled(self.way.name, self.way.project), *grouped(self.way.container, "door"),
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", *_SMALL,
             "--sysctl", "net.ipv4.ip_forward=0", "--tmpfs", f"{door.RUN}:size=64k,mode=1777",
+            "-e", "MALLOC_ARENA_MAX=1",           # …each thread's arena reserves address space, and the door's is bounded: `door.main`
             *(["--network", self.way.net, "--network-alias", name] if closed else [])],
             Path(door.__file__), [upstream, f"{OWN}/door.log", name if closed else "0.0.0.0", "1" if closed else "0",
                                   str(self.way.door_port)],
@@ -1518,7 +1529,8 @@ class Door:
     def close(self) -> None:
         """Every door of the project, its log kept in the mirror, and the credentials they hold."""
         if names := [n for n, _ in self.held.values()]:
-            _mirror(names, self.log())
+            if full := _mirror(names, self.log()).count(door.FULL):
+                append(network_record_path(self.way.project), {"at": time.time(), "door": self.way.container, "door_refused": full})
             run(["docker", "rm", "-f", *names], timeout=60)
             _DOORS.difference_update(names)
         self.held = {}
@@ -3034,8 +3046,11 @@ class PlaceContainer(ContainerExecution):
     def _say_the_bound(self) -> None:
         """What the bound on new flows dropped of this session's, on its project's record as it goes: a program failing on a
         refused send read as its own failure, and a flooder that hit the bound was named nowhere (critic, ran)."""
-        got = run(["docker", "exec", *SYS, "-u", "0", self.container, "/bin/sh", "-c",
-                   "for c in gfso-flows gfso-udp gfso-names; do iptables -L $c -v -n -x 2>/dev/null; done"], timeout=30, text=True)
+        try:
+            got = run(["docker", "exec", *SYS, "-u", "0", self.container, "/bin/sh", "-c",
+                       "for c in gfso-flows gfso-dgrams gfso-udp gfso-names; do iptables -L $c -v -n -x 2>/dev/null; done; nft list table ip gfso 2>/dev/null; true"], timeout=30, text=True)
+        except subprocess.TimeoutExpired:      # …a Docker that hangs loses this line, not the removal after it (critic, stubbed)
+            return
         if not got.returncode and (dropped := _flows_dropped(got.stdout)):
             append(network_record_path(self.project_name), {"at": time.time(), "container": self.container, "flows_dropped": dropped})
 
@@ -3050,8 +3065,8 @@ class PlaceContainer(ContainerExecution):
 
 
 def _flows_dropped(listing: str) -> int:
-    """What the seal's bounds dropped, by what `iptables -L <chain> -v -x` lists of each; 0 where it lists none."""
-    return sum(int(n) for n in re.findall(r"^\s*(\d+)\s+\d+\s+DROP", listing or "", re.M))
+    """What the seal's bounds dropped, by what `iptables -L <chain> -v -x` and `nft list` list of each; 0 where they list none."""
+    return sum(int(n) for n in re.findall(r"^\s*(\d+)\s+\d+\s+DROP|counter packets (\d+)", listing or "", re.M) for n in n if n)
 
 
 class _Call:

@@ -11,6 +11,7 @@ and ICMP and the live test's SCTP line goes; the filter's first two lines off an
 import inspect
 import json
 import os
+import socket
 import subprocess
 import threading
 import time
@@ -237,6 +238,7 @@ def test_the_bound_s_refusals_are_read_from_its_listing_and_told(data):
     listing = "Chain gfso-flows (1 references)\n    pkts      bytes target\n      10      290 RETURN  0 -- * * 0.0.0.0/0\n      37     1073 DROP  0 -- * * 0.0.0.0/0\n"
     assert E._flows_dropped(listing) == 37 and E._flows_dropped("") == 0
     assert E._flows_dropped(listing + listing) == 74, "every chain's"
+    assert E._flows_dropped(listing + "    ip protocol tcp ct state new ct count over 1024 counter packets 5 bytes 300 reject with tcp reset\n") == 42, "nft's bound too"
     N._append("p", {"at": 1.0, "container": "c", "flows_dropped": 37})
     assert any("c: 37 packets past its bounds" in x for x in N.said_apart("p"))
 
@@ -246,8 +248,64 @@ def test_one_address_holds_no_more_of_a_door_than_its_share():
     s = door._Server.__new__(door._Server)
     s.held = {}
     assert all(s.verify_request(None, ("172.17.0.2", 1)) for _ in range(door.PER_CLIENT))
-    assert not s.verify_request(None, ("172.17.0.2", 1)), "past its share"
+    assert not s.verify_request(socket.socket(), ("172.17.0.2", 1)), "past its share"
     assert s.verify_request(None, ("172.17.0.3", 1)), "a neighbour's room is its own"
+
+
+def test_a_door_past_its_share_says_so_to_the_client_and_on_its_log(tmp_path):
+    """A bare close read as a network fault: a real client gave up with no cause on any record (critic, ran)."""
+    s = door._Server.__new__(door._Server)
+    s.held, s.log = {"172.17.0.2": door.PER_CLIENT}, str(tmp_path / "door.log")
+    a, b = socket.socketpair()
+    b.settimeout(2)
+    assert not s.verify_request(a, ("172.17.0.2", 1))
+    assert b.recv(99).startswith(b"HTTP/1.1 429 ")
+    assert door.FULL in (tmp_path / "door.log").read_text()
+    assert s.verify_request(socket.socket(), ("172.17.0.3", 1)), "another's room"
+
+
+def test_a_thread_that_will_not_start_gives_its_address_its_room_back(monkeypatch):
+    """At the door's process limit the count went up and stayed: an address locked out for the door's life (critic, ran)."""
+    s = door._Server.__new__(door._Server)
+    s.held, s.block_on_close = {}, False
+    monkeypatch.setattr(threading.Thread, "start", lambda self: (_ for _ in ()).throw(RuntimeError("can't start new thread")))
+    assert s.verify_request(None, ("172.17.0.2", 1))
+    with pytest.raises(RuntimeError):
+        s.process_request(None, ("172.17.0.2", 1))
+    assert s.held["172.17.0.2"] == 0
+
+
+def test_a_docker_that_hangs_on_the_bound_s_line_costs_the_line_not_the_removal(monkeypatch):
+    """The exec past its time raised out of `stop`: no `docker rm`, and the sessions after it stood (critic, stubbed)."""
+    def hung(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 30)
+    monkeypatch.setattr(E, "run", hung)
+    E.PlaceContainer._say_the_bound(SimpleNamespace(container="c", project_name="p"))
+
+
+def test_a_door_closing_puts_what_it_refused_on_its_project_s_record(data, monkeypatch, tmp_path):
+    monkeypatch.setattr(E, "_log_out", lambda *a: f"172.17.0.2 {door.FULL}\n172.17.0.2 POST /v1/messages 200\n172.17.0.2 {door.FULL}\n")
+    monkeypatch.setattr(E, "run", lambda *a, **k: None)
+    d = E.Door(SimpleNamespace(home=tmp_path, container="c", project="p"))
+    d.held = {"x": ("door-1", "k")}
+    d.close()
+    assert any("c: its model door refused 2 connections" in x for x in N.said_apart("p"))
+
+
+def test_a_torn_line_that_reads_as_a_number_stops_no_reader(data):
+    """`123` in a record raised out of `said_apart`, and the page read the 500 as records saying nothing (critic)."""
+    at = N.record_path("p")
+    at.parent.mkdir(parents=True, exist_ok=True)
+    at.write_text('123\n{"at": 1.0, "container": "c", "flows_dropped": 2}\n', encoding="utf-8")
+    said = N.said_apart("p")
+    assert any("c: 2 packets" in x for x in said) and any("1 lines of the records could not be read" in x for x in said)
+
+
+def test_what_a_door_refused_is_said_once_at_its_latest_count(data):
+    N._append("p", {"at": 1.0, "door": "d", "door_refused": 3})
+    N._append("p", {"at": 2.0, "door": "d", "door_refused": 7})
+    said = [x for x in N.said_apart("p") if "model door" in x]
+    assert len(said) == 1 and "refused 7 connections" in said[0]
 
 
 @docker

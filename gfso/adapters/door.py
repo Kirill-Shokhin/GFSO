@@ -15,6 +15,7 @@ spending the model through it, as its client does. Every request is one line app
 the session's reach, written as it happens — a passed one when its answer starts; past `LOG_CAP` refusals are no longer
 written, so a flood of them cannot erase or crowd out what was passed, while every passed request still is. Stdlib
 only — it runs on the execution's own image, which must have `python3`."""
+import contextlib
 import http.client
 import json
 import os
@@ -24,7 +25,11 @@ import ssl
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+with contextlib.suppress(ImportError):      # …POSIX's: the door runs in a container, its tests may not
+    import resource
 
 #: where the system lays the credential for the door to read once (a tmpfs of the door's container)
 RUN = "/gfso-door-run"
@@ -48,8 +53,12 @@ CLOSED_DENIED = ("mcp_servers", "container")
 WAIT = 60
 #: connections one address may hold at a door
 PER_CLIENT = 16
+#: what the log says of a connection past that
+FULL = "refused: past its share of connections"
 #: the largest request body a door reads — the provider's own cap on a messages request
 MAX_BODY = 32 * 2 ** 20
+#: the address space a door may take, under its container's 256 MiB (`_SMALL`), and a thread's stack in it
+MEMORY, STACK, READER_STACK = 240 * 2 ** 20, 2 ** 19, 16 * 2 ** 20
 _lock = threading.Lock()
 _full: list = []
 
@@ -136,9 +145,25 @@ def canonical(body):
     """The request as this door reads it — a JSON object, decoded strictly, no key given twice — or None."""
     try:
         got = json.loads((body or b"{}").decode("utf-8"), object_pairs_hook=_once)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return None
     return got if isinstance(got, dict) else None
+
+
+def _judged(keyed: bool, command: str, path: str, body, closed: bool) -> tuple:
+    """(why it is refused or None, what goes upstream: exactly what was read, no second parse there). On `_READER`, whose
+    stack is the depth a body's nesting reaches in the C parser: on a connection's thin one a million brackets ended the door
+    (measured); one at a time, what parsing the largest bodies holds in memory is one body's."""
+    status = refused(keyed, command, path, body, closed)
+    if status or not body:
+        return status, body
+    try:
+        return None, json.dumps(canonical(body)).encode()
+    except RecursionError:
+        return "refused: no JSON object", None
+
+
+_READER = ThreadPoolExecutor(1)
 
 
 def _relay(h, r) -> None:
@@ -169,15 +194,13 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
             # …the key and the size before the body is read: any container on the bridge, keyless, ran four 400 MB bodies
             # into memory at once and the door was killed, its address free for the next container to take (critic)
             body = self.rfile.read(n) if keyed and 0 < n <= MAX_BODY else None
-            status = (refused(keyed, self.command, path, body, closed) if not n or body is not None
-                      else "refused: not this door's key" if not keyed else "refused: the body is over its cap")
+            status, body = (_READER.submit(_judged, keyed, self.command, path, body, closed).result() if not n or body is not None
+                            else ("refused: not this door's key" if not keyed else "refused: the body is over its cap", None))
             try:
                 if status:
                     _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {status}")
                     status = "said"
                     return self.send_error(403)
-                if body:
-                    body = json.dumps(canonical(body)).encode()      # …exactly what was read: no second parse upstream
                 headers = {k: v for k, v in self.headers.items() if k.lower() not in DROPPED}
                 headers[name] = value_of.format(cred["value"])
                 up = http.client.HTTPSConnection(upstream, 443, context=tls, timeout=600)
@@ -198,7 +221,16 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
                 if status != "said":
                     _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {status}")
 
-        do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _pass
+        def _within_memory(self):
+            """A request the door has no memory for is refused by a status its client retries."""
+            try:
+                self._pass()
+            except MemoryError:
+                _say(log, f"{self.client_address[0]} {self.command} refused: no memory for it")
+                with contextlib.suppress(OSError, MemoryError):
+                    self.send_error(503)
+
+        do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _within_memory
 
         def log_message(self, *a):
             """Nothing: the door writes its own log, one line a request."""
@@ -212,22 +244,40 @@ class _Server(socketserver.ThreadingMixIn, HTTPServer):
     daemon_threads = True
     held: dict = {}
     held_lock = threading.Lock()
+    log = os.devnull
 
     def verify_request(self, request, client_address) -> bool:
-        """Room for this address?"""
+        """Room for this address? Past it, said to the client as a status its model client waits on and retries (a bare close
+        read as a network fault, and it gave up with no cause anywhere: critic, ran), and on the log."""
         with self.held_lock:
-            if self.held.get(client_address[0], 0) >= PER_CLIENT:
-                return False
-            self.held[client_address[0]] = self.held.get(client_address[0], 0) + 1
-            return True
+            room = self.held.get(client_address[0], 0) < PER_CLIENT
+            if room:
+                self.held[client_address[0]] = self.held.get(client_address[0], 0) + 1
+        if not room:
+            _say(self.log, f"{client_address[0]} {FULL}")
+            with contextlib.suppress(OSError):
+                request.sendall(b"HTTP/1.1 429 Too Many Requests\r\nretry-after: 5\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+        return room
+
+    def _leave(self, client_address) -> None:
+        with self.held_lock:
+            self.held[client_address[0]] -= 1
+
+    def process_request(self, request, client_address) -> None:
+        """…and a thread that would not start gives its room back: at the door's process limit an address's retries filled
+        its count for the door's life, the next container on that address inheriting it (critic, ran)."""
+        try:
+            super().process_request(request, client_address)
+        except RuntimeError:
+            self._leave(client_address)
+            raise
 
     def process_request_thread(self, request, client_address) -> None:
         """Its room back when its connection ends."""
         try:
             super().process_request_thread(request, client_address)
         finally:
-            with self.held_lock:
-                self.held[client_address[0]] -= 1
+            self._leave(client_address)
 
 
 def _laid(wait: float = 120) -> dict:
@@ -245,7 +295,15 @@ def _laid(wait: float = 120) -> dict:
 
 def main(upstream: str, log: str, listen: str, closed: str, port: str) -> None:
     """Serve on `listen`'s address and `port` until the container is removed."""
-    _Server((socket.gethostbyname(listen), int(port)), handler(upstream, _laid(), log, closed == "1")).serve_forever()
+    # …under its container's memory, so a request too large for what is left fails alone and the door stays: eight keyed bodies of
+    # the largest size at once had the kernel end it, every client of its project with it (measured). Thin stacks: address space counts them
+    threading.stack_size(READER_STACK)
+    _READER.submit(int).result()
+    threading.stack_size(STACK)
+    resource.setrlimit(resource.RLIMIT_AS, (MEMORY, MEMORY))
+    server = _Server((socket.gethostbyname(listen), int(port)), handler(upstream, _laid(), log, closed == "1"))
+    server.log = log
+    server.serve_forever()
 
 
 if __name__ == "__main__":

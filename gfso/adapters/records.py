@@ -45,8 +45,12 @@ def rows_of(path: Path) -> tuple:
     rows, bad = [], 0
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if path.exists() else ():
         try:
-            rows.append(json.loads(line))
+            row = json.loads(line)
         except ValueError:
+            row = None
+        if isinstance(row, dict):        # …a torn line can read as a number: every reader takes objects
+            rows.append(row)
+        else:
             bad += 1
     return rows, bad
 

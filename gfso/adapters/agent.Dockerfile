@@ -7,9 +7,10 @@ FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce
 
 ENV DEBIAN_FRONTEND=noninteractive
 # git and git-lfs: the place's repository and the system's checkouts; python3: the system's own programs in the place
-# and its door and gateway; iptables: the switch on the way out (`ContainerExecution`, mode open)
+# and its door and gateway; iptables: the switch on the way out (`ContainerExecution`, mode open); nftables: the bound on
+# the connections one container holds (`WayOut.seal`), which this kernel has for nft alone
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bash coreutils ca-certificates curl git git-lfs procps iptables \
+        bash coreutils ca-certificates curl git git-lfs procps iptables nftables \
         build-essential python3 python3-pip python3-venv python-is-python3 \
     && rm -rf /var/lib/apt/lists/*
 
