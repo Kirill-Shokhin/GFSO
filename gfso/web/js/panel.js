@@ -64,9 +64,9 @@ function head({d, rounds}) {
 // out leaves its check running, and none says this verdict skipped anything: it may have run it. A PASS read without them
 // reads as wide as one still held to all that once failed (Thm 11). Each is one command however many criteria it stood
 // under, with every reason given for it; a check taken off stands in the first record and the last, and is said once.
-const LIFTED = [['checks_no_longer_run', 'check a ruling took off', 'checks a ruling took off', 'no validation runs it now', 'no validation runs them now'],
+const LIFTED = [['checks_no_longer_run', 'check a ruling took off', 'checks a ruling took off', 'it no longer runs under the criteria named; the part it belongs to still holds it', 'they no longer run under the criteria named; the parts they belong to still hold them'],
                 ['findings_not_reproduced', 'finding a later validator did not reproduce', 'findings a later validator did not reproduce', 'no later validation demands it', 'no later validation demands them'],
-                ['retired_after_refutation', 'finding its issuer ruled out', 'findings its issuer ruled out', 'filed again it refutes nothing; its check may still run', 'filed again they refute nothing; their checks may still run']];
+                ['retired_after_refutation', 'finding its issuer ruled out', 'findings its issuer ruled out', 'the same finding filed again refutes nothing; its check may still run', 'the same findings filed again refute nothing; their checks may still run']];
 const lifted = vr => { const taken = new Set((vr?.checks_no_longer_run || []).map(r => `${r.criterion}\n${r.command}`));
     return LIFTED.map(([key, one, many, it, them]) => { const by = new Map();
         for (const r of vr?.[key] || []) {
@@ -87,7 +87,9 @@ const liftedFull = ({d, vr}) => { const kinds = lifted(vr);
     return kinds.length ? `<div id="rd-lifted">` + section('Lifted', kinds.map(k => `<div class="verdict-evidence">${k.kind}: ${k.means}</div>`
         + ul('item-list', k.rows.map(r => `<li><div class="verdict-body"><strong>${esc([...r.criteria].join(', '))}</strong>`
             + (r.node && r.node !== d.id ? ` <span class="pn-who">in ${esc(nameOf(taskOf(r.node)) || r.node)}</span>` : '')
+            + (r.check?.includes('/') ? ` <span class="pn-who">a check of ${esc(nameOf(taskOf(r.check.split('/')[0])) || r.check.split('/')[0])}</span>` : '')
             + (r.command ? `<div class="verdict-evidence"><code>${esc(r.command)}</code></div>` : '')
+            + (r.expect ? `<div class="verdict-evidence">expected: ${esc(trim(String(r.expect), 300))}</div>` : '')
             + [...r.said.values()].map(ruling).join('') + `</div></li>`))).join('')) + `</div>` : ''; };
 
 function verdict({vr}) {
@@ -414,7 +416,9 @@ function render() {
 export function openReader(facet, toggle = false, to = '') {
     tab = facet && !(toggle && facet === tab) ? facet : null;
     tab && cur ? render() : closeReader();
-    if (to) $(to)?.scrollIntoView();
+    // …below the reader's own sticky head, or the heading and sentence that say what the list is stand under it
+    const there = to && $(to);
+    if (there) { there.style.scrollMarginTop = `${box().querySelector('.rd-top').offsetHeight}px`; there.scrollIntoView(); }
 }
 // The panel hands over each node it reads; an open reader follows it.
 export function showReader(ctx) {
