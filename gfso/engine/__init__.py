@@ -1256,7 +1256,7 @@ class Engine:
             pins = plan_pins({"": [c for c in (task.spec.criteria if task else ()) if same(c.name, name)],
                               **{k: v for k, v in parts.items() if same(k, name)}})
             if (ps and spoken_verdict(e.get("verdict")) == "fail" and all((name, p["id"]) in ruled for p in ps)
-                    and not any(runs_pin(p, i, pin) for p in ps for i, pin in pins)):
+                    and not any(runs_pin({**p, "expect": p.get("expect") or pin.expect}, i, pin) for p in ps for i, pin in pins)):
                 out[str(e.get("criterion"))] = ("its refutation rests only on findings its issuer ruled outside this "
                                                 f"criterion ({', '.join(p['id'] for p in ps)}) — filed again, they are "
                                                 f"not a refutation")

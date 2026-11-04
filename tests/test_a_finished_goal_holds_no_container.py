@@ -11,6 +11,9 @@ from gfso.delegate import Dispatcher
 from tests.support import make_engine
 
 
+_IN_FLIGHT = DG.in_flight
+
+
 class _Works(Exception):
     pass
 
@@ -59,6 +62,20 @@ def test_what_may_still_run_keeps_them(monkeypatch):
         d._rejoined_once = True
         d.dispatch_once()
         assert stops == [], (states, joining, unjoined)
+
+
+def test_clearing_the_places_is_work_still_running(monkeypatch):
+    """The join's mark cleared, its places going: a rest then stopped the container they were going through (critic)."""
+    d, tasks, _ = _dispatcher(monkeypatch, [State.DONE])
+    monkeypatch.setattr(DG, "in_flight", _IN_FLIGHT)
+    seen = []
+    monkeypatch.setattr(d._engine.graph, "get_task", lambda tid: tasks[0])
+    monkeypatch.setattr(DG, "join_whole", lambda *a: None)
+    monkeypatch.setattr(DG, "land_accepted", lambda *a: None)
+    monkeypatch.setattr(DG, "clear_workspaces", lambda *a: seen.extend(DG.in_flight()))
+    monkeypatch.setattr(d, "_released", lambda tid: None)
+    d._join("t0")
+    assert [w for w in seen if w.get("verb") == "clear_workspaces" or "clear_workspaces" in str(w)], seen
 
 
 def test_a_done_whose_join_is_not_marked_yet_keeps_them(monkeypatch):

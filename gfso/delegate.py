@@ -1920,7 +1920,8 @@ class Dispatcher:
             self._dirty.set()
         if is_root and why is None and t.state == State.DONE:
             try:                                        # the places go once the root landed; a refusal here is
-                clear_workspaces(self._engine, self._agents, t)   # tidying, never "did not land" (critic r4, J4)
+                with _inflight("clear_workspaces", self._engine, tid):      # …still its work: no rest under it (`_rest`)
+                    clear_workspaces(self._engine, self._agents, t)   # tidying, never "did not land" (critic r4, J4)
             except Exception as e:                      # noqa: BLE001
                 log.warning(f"delegate: {tid} landed; its places were not cleared: {e}")
         self._released(tid)
@@ -1932,6 +1933,9 @@ class Dispatcher:
         other's (SECURITY.md)."""
         t = self._engine.graph.get_task(TaskId(tid))
         if t is None or t.state not in (State.DONE, State.ABANDONED) or str(tid) in self._engine.joins.joining_nodes():
+            return
+        # …a verdict still coming over a node already signed: its round is what refutes it (the goal's end takes them)
+        if self._engine.claims.validation_in_flight(t.id):
             return
         # …the place's own node alone: a scope's member works in its top's place, and its PASS ended the containers
         # the scope's rework was running in (critic B8)

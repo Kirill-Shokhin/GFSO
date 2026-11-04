@@ -193,7 +193,8 @@ def _link_and_say(name: str, out: dict, project, engine) -> None:
             out["say"] += " Tell them too what the system's own records say of this run: `the_records_say`."
         if said_of := [str(t.id) for t in engine.all_tasks()
                        if engine.checks_no_longer_run(t.id) or engine.findings_not_reproduced(t.id)]:
-            out["say"] += (f" And what its PASS did not re-run: `get_verdict` of {', '.join(said_of[:5])}, its "
+            more = f" and {len(said_of) - 5} more" if len(said_of) > 5 else ""
+            out["say"] += (f" And what its PASS did not re-run: `get_verdict` of {', '.join(said_of[:5])}{more}, its "
                            "`checks_no_longer_run` and `findings_not_reproduced`.")
     if name not in _UI_LINK_VERBS or "ui" in out:
         return

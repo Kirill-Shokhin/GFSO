@@ -270,11 +270,12 @@ def record_not_reproduced(storage, task, marks: Iterable[tuple], by: str, at: st
     """The ledger with each of `marks` (`procedure.findings_not_reproduced`) written on its finding — unless the same report
     filed it again, or a person returned it — and the mark gone from each finding `found` filed: reproduced, it stands."""
     stored = ledger_read(storage, task.id, REGRESSION, {}) or {}
-    again = {(k, p.get("id")) for k, ps in found.items() for p in ps}
+    # …by its id or a citation of it: a re-run under other words is that finding (`merge_regression`), not filed anew
+    again = {(k, str(x).split("#")[-1]) for k, ps in found.items() for p in ps for x in (p.get("id"), p.get("cited")) if x}
     said = {(k, i): m for k, i, m in marks}
     for k, ps in stored.items():
         for p in ps:
-            if (k, p.get("id")) in again:
+            if (k, str(p.get("id")).split("#")[-1]) in again:
                 p.pop(NOT_REPRODUCED, None)
             elif (k, p.get("id")) in said and not p.get(RETURNED):
                 p[NOT_REPRODUCED] = {**said[(k, p.get("id"))], "by": by, "at": at, "text": _criterion_now(k, task)}

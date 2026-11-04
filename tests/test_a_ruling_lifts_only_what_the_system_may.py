@@ -188,6 +188,8 @@ def test_a_ruling_that_left_its_pin_running_does_not_void_that_pins_fail(tmp_pat
     ids = _disputed(e, ("m", _finding("m")), tid="mid")
     _rule(e, tmp_path, ids, mid, str(e.graph.issuer_of(mid)))
     assert STUB in _pins(e, "m", mid) and fail(mid, ids) == {}
+    assert e._refiled_rulings(mid, [{"criterion": "m", "verdict": "fail", "evidence": "x", "probe": [
+        {"id": ids[0], "behaviour": "b", "command": STUB, "held": False}]}], ()) == {}, "said with no expectation, the same check"
     e.stop()
     e, mid = _deep([_pin("routes", STUB, STUB_SAYS), _pin("kept", KEPT, KEPT_SAYS)])
     ids = _disputed(e, ("m", _finding("m")), tid="mid")

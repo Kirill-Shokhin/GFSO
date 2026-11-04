@@ -9,12 +9,13 @@ import gfso.delegate as DL
 from gfso.core.types import State, TaskId
 
 
-def _dispatcher(monkeypatch, state, joining=(), scope=None):
+def _dispatcher(monkeypatch, state, joining=(), scope=None, validating=False):
     released = []
     task = SimpleNamespace(id=TaskId("a"), state=state)
     monkeypatch.setattr(DL, "session_scope", lambda e, a, t: scope)
     engine = SimpleNamespace(graph=SimpleNamespace(get_task=lambda tid: task),
-                             joins=SimpleNamespace(joining_nodes=lambda: list(joining)))
+                             joins=SimpleNamespace(joining_nodes=lambda: list(joining)),
+                             claims=SimpleNamespace(validation_in_flight=lambda tid: validating))
     monkeypatch.setattr(DL, "_place_of", lambda e, a, t: ("a", "/places/a", "gfso/a"))
     monkeypatch.setattr(DL, "made", lambda e, w: True)
     monkeypatch.setattr(DL, "execution_of", lambda e, a=None: SimpleNamespace(release=released.append))
@@ -51,6 +52,13 @@ def test_its_rounds_go_with_it_and_no_other_nodes(monkeypatch, tmp_path):
     E.release_rounds(ex, str(place))
     assert stopped == ["round"]
     E.release_rounds(SimpleNamespace(), str(place))
+
+
+def test_a_validation_still_running_over_it_keeps_them(monkeypatch):
+    """A signature can land before the instrument's verdict: cut, the refutation of a closed PASS dies with its round."""
+    d, released = _dispatcher(monkeypatch, State.DONE, validating=True)
+    d._released("a")
+    assert released == []
 
 
 def test_a_node_still_joining_or_at_work_keeps_them(monkeypatch):

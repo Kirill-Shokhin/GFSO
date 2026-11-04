@@ -125,6 +125,18 @@ def test_a_line_that_only_names_the_finding_does_not_end_it():
     e.stop()
 
 
+def test_a_finding_ended_and_then_reproduced_under_its_id_stands_again():
+    """Reworded, citing its id: not filed anew, and it read as not reproduced with a FAIL on it (critic)."""
+    f = _finding("g", BROKEN, SAID)
+    e = _one_root_with(f)
+    _record(e, _says_not_refuting())
+    assert _standing(e) == set()
+    _record(e, _entry(id=f["id"], command=f"{BROKEN} # reworded", held=False))
+    assert _standing(e) == {f["id"]}
+    assert not T.get_verdict(e, "root").get("findings_not_reproduced")
+    e.stop()
+
+
 def test_a_report_that_ran_no_shell_ends_no_finding():
     f = _finding("g", BROKEN, SAID)
     e = _one_root_with(f)
