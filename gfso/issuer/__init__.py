@@ -2154,7 +2154,7 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
                 or question == "split" else "cannot go on")
         why = (f"the plan the user gave {said} at {task_id} ({question}: "
                f"{what_contact_refuted(engine, task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans "
-               f"it: hand a corrected plan as a new goal (`refine_plan` on its file, then `auto_decompose(plan=path)` on a new project; or `auto_decompose` with `spec`), or `set_mode` "
+               f"it: hand a corrected plan as a new goal (`auto_decompose` with `spec`, closed as this one; or `refine_plan` on its file, then `auto_decompose(plan=path)` on a new project, which contact may then repair),or `set_mode` "
                f"(with `user_said`) to hold the plan yourself; `start_project` alone stops it here again")
         engine.pause("system", why)
         return {"status": "users", "why": why}
@@ -2197,7 +2197,8 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
     # 29 calls in 27 min (tracker, 2026-11-03); and so is one its issuer twice asked to rule out, which he may not there
     if question == "dispute" and out["status"] in ("unparsed", "users") and engine.users_plan():
         why = (f"the plan the user gave cannot go on at {task_id}: its executor disputes a check, and only the user "
-               f"changes a check of that plan: {str(engine.challenge_reason(task_id) or '')[:300]}")
+               f"changes a check of that plan, by handing a corrected plan as a new goal (`auto_decompose` with `spec`): "
+               f"{str(engine.challenge_reason(task_id) or '')[:300]}")
         engine.pause("system", why)
         return {"status": "users", "why": why}
     return out

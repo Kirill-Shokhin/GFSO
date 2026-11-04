@@ -447,9 +447,10 @@ def _regression_line(p: dict, dirs: dict, workdir: Optional[str], engine, at: Op
             f"unless the contract pins this very check — re-run it as written and report it under this id) — "
             f"{p.get('behaviour')}: run `{cmd}` {orphan}"
             f"(recorded then: «{p.get('expect')}», which may be what was required or what was "
-            f"seen — decide from what it prints now against the criterion's own requirement. Where what it prints refutes "
-            f"nothing the criterion requires, do not fail on it: say on this probe `printed` and `not_refuting`, why; "
-            f"it is then demanded no more, and that stays on the record)")
+            f"seen — decide from what it prints now against the criterion's own requirement. Where the work now does what it "
+            f"asked, say `held: true`: it stays demanded, so a later rework cannot undo that unseen. Where the finding itself "
+            f"was wrong, what it demands never being what the criterion requires, do not fail on it: say on this probe "
+            f"`printed` and `not_refuting`, why; it is then demanded no more, and that stays on the record)")
 
 
 #: The one optional field every role's answer carries for a TECH REPORT (`Engine.tech_report`): said small, so it is

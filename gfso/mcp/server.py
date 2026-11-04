@@ -191,6 +191,10 @@ def _link_and_say(name: str, out: dict, project, engine) -> None:
             "first to build on this." if where.get("branch") else f"where the result lies, `{where.get('path')}`, and {link}."))
         if "the_records_say" in out:
             out["say"] += " Tell them too what the system's own records say of this run: `the_records_say`."
+        if any(engine.checks_no_longer_run(t.id) or engine.findings_not_reproduced(t.id) for t in engine.all_tasks()
+               if engine.graph.get_parent(t.id) is None):
+            out["say"] += (" And what this PASS did not re-run, from the same verdict: `checks_no_longer_run`, "
+                           "`findings_not_reproduced`; the person can bring a finding back (`return_finding`).")
     if name not in _UI_LINK_VERBS or "ui" in out:
         return
     out["ui"] = link

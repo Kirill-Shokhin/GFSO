@@ -183,12 +183,13 @@ that would establish one (E3) has shown so far, and what not, is in the README a
 
 ### Fixed
 - What a validator tried on its own is filed as a refutation only where its report says it refuted; and a finding of its own
-  stands while it is reproduced: a later validator that runs it as filed, shows what it printed and says why it refutes no
-  criterion ends it, on the record (`findings_not_reproduced`), and `return_finding` brings it back. A plan's criteria and its
-  pinned checks are not such findings.
+  stands while it is reproduced: a later validator whose report ran a shell and names that very command, what it printed and why
+  the finding was wrong ends it, on the record (`findings_not_reproduced`), and `return_finding` brings it back. A finding the
+  work has since met stays demanded. A plan's criteria and its pinned checks are not such findings.
 - On a plan the system wrote, under `auto`, a part's check that holds only while a sibling's work is missing can be ruled out
-  by the system's issuer once it has run it, under the criteria it names and never the last check of one; the part stays as
-  it settled and the verdict names what no longer runs (`checks_no_longer_run`). A plan handed in stops instead.
+  by the system's issuer after a session that ran commands over the delivery, under the criteria it names and never the last
+  check of one; the part stays as it settled and the verdict names what no longer runs (`checks_no_longer_run`). A check a ruling
+  left running stays demanded and its `FAIL` stands. A plan handed in stops instead.
 - A call in a container whose ending meets a Docker slow to answer still ends its client on the host; left standing, it held
   whoever read it, a `plan` for 24 minutes.
 - `gfso setup` brings a registration naming another installation to this one, and says where a directory's own entry goes

@@ -176,6 +176,26 @@ def test_no_ruling_takes_a_criterions_last_check_at_any_depth(tmp_path):
     e.stop()
 
 
+def test_a_ruling_that_left_its_pin_running_does_not_void_that_pins_fail(tmp_path):
+    """The pin runs and fails, so a PASS is refused; read as the ruling's subject the FAIL was ⊥ too: no verdict could be
+    recorded (critic over 9971bef). A check that still runs is no ruled finding; lifted, it is."""
+    def fail(tid, ids):
+        return e._refiled_rulings(tid, [{"criterion": "m", "verdict": "fail", "evidence": "x", "probe": [
+            {"id": ids[0], "behaviour": "b", "command": STUB, "expect": STUB_SAYS, "held": False}]}], ())
+
+    e, mid = _deep([_pin("routes", STUB, STUB_SAYS)])
+    _strip_pins(e, "mid", "m")
+    ids = _disputed(e, ("m", _finding("m")), tid="mid")
+    _rule(e, tmp_path, ids, mid, str(e.graph.issuer_of(mid)))
+    assert STUB in _pins(e, "m", mid) and fail(mid, ids) == {}
+    e.stop()
+    e, mid = _deep([_pin("routes", STUB, STUB_SAYS), _pin("kept", KEPT, KEPT_SAYS)])
+    ids = _disputed(e, ("m", _finding("m")), tid="mid")
+    _rule(e, tmp_path, ids, mid, str(e.graph.issuer_of(mid)))
+    assert STUB not in _pins(e, "m", mid) and list(fail(mid, ids)) == ["m"], "a check lifted stays the ruling's subject"
+    e.stop()
+
+
 def test_the_record_says_what_no_longer_runs_and_a_whole_above_does_not_read_unnarrowed(tmp_path):
     e, mid = _deep([_pin("routes", STUB, STUB_SAYS), _pin("kept", KEPT, KEPT_SAYS)])
     assert e.claim_drift(ROOT)["narrowed"] is False

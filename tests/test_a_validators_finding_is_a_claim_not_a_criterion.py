@@ -19,8 +19,8 @@ import json
 import pytest
 
 import gfso.tools as T
-from gfso.core.protocol.procedure import refuting_probes
-from gfso.core.types import AgentId, RevisionReason, TaskId
+from gfso.core.protocol.procedure import probe_id, refuting_probes, with_engine_observations
+from gfso.core.types import AgentId, Criteria, Probe, RevisionReason, TaskId
 from tests.support import criterion
 from tests.test_a_check_of_the_plan_is_not_the_goal import ROOT, STUB, STUB_SAYS, _finding, _pin, _settled, _standing, _whole
 from tests.test_the_mode_decides_who_holds_what import Mode, _admit, _engine, _kid
@@ -106,6 +106,44 @@ def test_the_executor_has_no_hand_in_it_nor_a_hand_record():
     _record(e, _says_not_refuting())
     assert _standing(e) == set()
     e.stop()
+
+
+def test_a_line_that_only_names_the_finding_does_not_end_it():
+    """As a substring each of these ended `./cat -vT f`, none running it (critic over 01d7579); a `cd` before it is its run."""
+    f = _finding("g", BROKEN, SAID)
+    e = _one_root_with(f)
+    for wrapped in (f"echo not run: {BROKEN}", f": {BROKEN}", f"true || {BROKEN}", f"{BROKEN}_other"):
+        _record(e, _says_not_refuting(command=wrapped))
+        assert _standing(e) == {f["id"]}, wrapped
+    _record(e, _says_not_refuting(command=f"cd delivery && {BROKEN}"))
+    assert _standing(e) == set()
+    e.stop()
+
+
+def test_a_report_that_ran_no_shell_ends_no_finding():
+    f = _finding("g", BROKEN, SAID)
+    e = _one_root_with(f)
+    e.record_exec_verdict(ROOT, "FAIL", ["g"], "val-1", per_criterion=[{**x, "verdict": "fail"} for x in _says_not_refuting()],
+                          tools_used={"Read": 3})
+    e.wait_idle()
+    assert _standing(e) == {f["id"]}
+    e.record_exec_verdict(ROOT, "FAIL", ["g"], "val-1", per_criterion=[{**x, "verdict": "fail"} for x in _says_not_refuting()],
+                          tools_used={"Bash": 1})
+    e.wait_idle()
+    assert _standing(e) == set()
+    e.stop()
+
+
+def test_the_systems_own_mark_is_not_the_reports_word_on_its_other_probes():
+    """Its observation marks a pin `held: false`; read as the report's, a true refutation beside it was not filed (critic)."""
+    pin = Criteria(name="g", description="d", check=(Probe(behaviour="b", command="check g", expect="it holds", exact=True),))
+    own = {"behaviour": "b", "command": "./cat bigfile", "expect": "the whole file"}
+    pid = probe_id("g", {"command": "check g"})
+    seen = with_engine_observations([{"criterion": "g", "verdict": "pass", "evidence": "x", "probe": [own]}], [pin], None,
+                                    {pid: {"out": "stub", "matched": False}})
+    assert "./cat bigfile" in {p["command"] for p in refuting_probes(seen)["g"]}
+    said = [{"criterion": "g", "verdict": "fail", "evidence": "x", "probe": [own, {**own, "command": "other", "held": False}]}]
+    assert {p["command"] for p in refuting_probes(said)["g"]} == {"other"}, "the report's own word still stands"
 
 
 def test_only_a_run_as_filed_with_its_output_and_its_why_ends_it():

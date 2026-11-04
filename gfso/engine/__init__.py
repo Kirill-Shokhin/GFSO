@@ -32,7 +32,7 @@ from gfso.core.protocol.fsm import available_signals, not_admissible_here, trans
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, probes_of, probes_that_expected_nothing,
                                           verdict_report_defects, probe_labels, unrun_probes)
-from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_not_reproduced, same_expectation, BOUND_SPENT,PAST_BOUND, PAST_WHOLE, admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
+from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_not_reproduced, plan_pins, runs_pin, same_expectation, BOUND_SPENT,PAST_BOUND, PAST_WHOLE, admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
                                           refuting_probes, merge_regression, probe_id, layable_over, unrerunnable,
                                           unaccounted_for, orphaned_regression,
                                           claim_digest)
@@ -1194,7 +1194,9 @@ class Engine:
         # …AND ONLY GROWS UNTIL ITS ISSUER RULES ONE OUT (`findings`) — each with the text it refuted as the run
         # VALIDATED it, the one he rules on, not the spec standing when the record lands
         if per_criterion:
-            self._file_findings(task_id, task, per_criterion, inputs_dirs, validator_id, by_hand)
+            self._file_findings(task_id, task, per_criterion, inputs_dirs, validator_id,
+                                # …no shell on the ledger, no finding run: it ends none
+                                by_hand or (tools_used is not None and not any(str(k).split("(")[0].strip() == "Bash" for k in tools_used)))
         # …placed where the run READ it: an instrument hands in the position its claim took when it began
         # (`ValidationClaim.log_at`) — a footing that moved while it ran is after its record; a hand record reads now
         store_verdict(self._storage, task_id, task, verdict, failed_criteria, validator_id,
@@ -1209,9 +1211,9 @@ class Engine:
                       if task is not None and verdict == Verdict.FAIL else {})
         return {"verdict": verdict, "failed_criteria": list(failed_criteria or ())}
 
-    def _file_findings(self, task_id: TaskId, task, per_criterion: list, dirs, validator_id, by_hand: bool) -> None:
+    def _file_findings(self, task_id: TaskId, task, per_criterion: list, dirs, validator_id, ends_none: bool) -> None:
         """What this report refuted joins the node's findings; what it re-ran as filed and did not reproduce leaves the
-        demand, read only from an independent validator's report: the executor has no hand in it (`findings`)."""
+        demand, read only from an independent validator's report that ran a shell: the executor has no hand in it (`findings`)."""
         found = self._as_filed(task_id, refuting_probes(per_criterion, dirs, texts={
             **{c.name: c.description for c in (task.spec.criteria if task else ())},
             **{n: v[0] for n, v in self._validated_versions(task_id).items()}}))
@@ -1223,7 +1225,7 @@ class Engine:
         if task is None:
             return
         plan = {"": task.spec.criteria, **self.parts_procedure(task_id)}
-        marks = ([] if by_hand or str(validator_id) == str(task.assignee) else
+        marks = ([] if ends_none or str(validator_id) == str(task.assignee) else
                  _findings_not_reproduced(per_criterion, self._stored_regression(task_id), plan, dirs))
         record_not_reproduced(self._storage, task, marks, str(validator_id), datetime.now().isoformat(timespec="seconds"), found)
 
@@ -1243,10 +1245,15 @@ class Engine:
         re-opened the dispute the ruling closed; so it is no refutation, and the record treats it as unobserved."""
         ruled = {(r.get("criterion"), r.get("id")) for r in self.retired_findings(task_id)}
         again = self._as_filed(task_id, refuting_probes(per_criterion, dirs))
+        # …a check the plan still runs is no ruling's subject: its PASS refused for what it printed, and its FAIL read as
+        # filed again, no verdict could stand (critic over 9971bef)
+        task = self._graph.get_task(task_id)
+        pins = plan_pins({"": task.spec.criteria if task else (), **self.parts_procedure(task_id)})
         out = {}
         for e in per_criterion:
             ps = again.get(name := " ".join(str(e.get("criterion", "")).split()), ())
-            if ps and spoken_verdict(e.get("verdict")) == "fail" and all((name, p["id"]) in ruled for p in ps):
+            if (ps and spoken_verdict(e.get("verdict")) == "fail" and all((name, p["id"]) in ruled for p in ps)
+                    and not any(runs_pin(p, i, pin) for p in ps for i, pin in pins)):
                 out[str(e.get("criterion"))] = ("its refutation rests only on findings its issuer ruled outside this "
                                                 f"criterion ({', '.join(p['id'] for p in ps)}) — filed again, they are "
                                                 f"not a refutation")
