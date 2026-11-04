@@ -222,7 +222,8 @@ def rulings(storage, entries: list, task_id) -> list[dict]:
                      "at": e.timestamp.isoformat(timespec="seconds"), "why": e.justification or e.reason or "",
                      "text": in_force.get(found[i][0]), "lapsed": None,
                      "seen": found[i][1].get("seen") or found[i][1].get("as_run"),
-                     "as_run": found[i][1].get("as_run"), "expect": found[i][1].get("expect")}
+                     "as_run": found[i][1].get("as_run"), "expect": found[i][1].get("expect"),
+                     "by_system": e.by_system, "ts": e.timestamp.isoformat()}
                     for i in dict.fromkeys(e.retire_findings) if i in found]
     return out
 

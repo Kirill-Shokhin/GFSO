@@ -501,7 +501,7 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
                          "settled, this node's validation stops demanding that check under those criteria, and a later "
                          "change of a criterion's text ends the ruling. Where the work broke it, reject."
                          if (own := engine.plans_own_findings(task_id)) else "")
-                      if is_auto_root(engine.graph, engine.graph.get_task(task_id)) else
+                      if is_auto_root(engine.graph, engine.graph.get_task(task_id)) or engine.users_plan() else
                       "\n\nA finding stays demanded until you rule it outside its criterion as written: accept, naming "
                       "in `retire_findings` the id of a finding the dispute named by its id. Nothing else retires one "
                       "— not a reworded criterion, not a conceded pinned probe — and a later change of that "
@@ -1825,6 +1825,10 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
                              justification=str(answer.get("justification", "")) or "the contract stands")
         engine.emit_info("issuer", f"{task_id}: dispute {'REJECTED' if ok else 'reject REFUSED'} by {issuer_id}")
         return {"task_id": str(task_id), "status": "rejected" if ok else "refused", "why": why}
+    # …AND A PLAN HANDED IN IS CLOSED AT EVERY DEPTH: ruled below its root the finding went and the check stayed, a loop;
+    # the run stops with the signal instead (`settle`)
+    if retire and engine.users_plan():
+        return {"task_id": str(task_id), "status": "users", "why": _USERS_DISPUTE.format(task_id, ", ".join(retire))}
     if retire and (asked := engine.users_dispute(task_id)):
         # …THE RULING, NOT THE DISPUTE, IS THE USER'S: the system still rejects it or adds to the contract — a rejection
         # is read first, a stray ruling beside it ignored. Barred from every move, the root sat CHALLENGED on a dispute

@@ -7,9 +7,9 @@ whole, `with_engine_observations`) and stood as 17 findings. The executor disput
 the ruling and could only reject, the pin could not be revised (a DONE child) and a child added beside it did not lift it,
 so the root reworked to its ceiling. Retiring the finding alone stops nothing: the pin still runs.
 
-CONTROLS: read `users_dispute` for the ruling in `answer_the_challenge`, or drop `without_ruled_pins` from
-`validation.parts_procedure`, and the first test goes red; drop the handed-in check there, or "users" from `settle`'s
-stop, and the handed-in test goes red; let `runs_pin` take the command alone, or `plans_own_findings` skip the task's own
+CONTROLS: read `users_dispute` for the ruling in `answer_the_challenge`, or drop `without_pins` from
+`validation.parts_procedure`, and the first test goes red; drop the handed-in check from `_system_may_lift`, or "users" from `settle`'s
+stop, and the handed-in test goes red; let `runs_pin` take the command alone, or `findings_a_ruling_could_lift` skip the task's own
 pins or its pinless criteria, and the goal test goes red. Each test holds its own pair: every one fails on the code before.
 """
 from __future__ import annotations
@@ -136,18 +136,15 @@ def test_a_ruling_lifts_a_pin_under_the_criterion_it_names_and_for_as_long_as_it
 
 def test_what_names_the_goal_stays_the_persons_beside_a_pin_the_system_rules_out(tmp_path):
     """Asked to rule on all at once: the plan's check lands; the validator's own finding, the same command read his own
-    way, a pin that is a copy of the root's own, and a pin that alone decides a pinless criterion stay demanded."""
-    e = _whole([_pin("g", "./g", "ok"), _pin("h", "./h", "ok"), _pin("copied", KEPT, KEPT_SAYS), criterion("bare")])
-    t = e.graph.get_task(ROOT)                    # …a criterion with no procedure of its own, as a stored contract may be
-    e._graph.save_task(dc.replace(t, spec=dc.replace(t.spec, criteria=tuple(
-        dc.replace(c, check=()) if c.name == "bare" else c for c in t.spec.criteria))))
+    way, and a pin that is a copy of the root's own stay demanded."""
+    e = _whole([_pin("g", "./g", "ok"), _pin("h", "./h", "ok"), _pin("copied", KEPT, KEPT_SAYS)])
     found = [("g", _finding("g")), ("g", _finding("g", OWN, "exit=0")), ("h", _finding("h", STUB, "rc=0, its real output")),
-             ("g", _finding("g", KEPT, KEPT_SAYS)), ("bare", _finding("bare"))]
+             ("g", _finding("g", KEPT, KEPT_SAYS))]
     ids = _disputed(e, *found)
     out, _ = _rule(e, tmp_path, ids)
     assert out["status"] == "accepted", out
     assert _standing(e) == set(ids[1:]), "the system ruled on the user's goal, or not on its own check"
-    assert STUB not in _pins(e, "g") and STUB in _pins(e, "bare"), "a ruling lifted what it did not land on"
+    assert STUB not in _pins(e, "g") and STUB in _pins(e, "h"), "a ruling lifted what it did not land on"
     # …and asked of those alone, the answer is the user's, by name, the question's door open to him
     assert T.signal(e, "root", "ACCEPT", str(e.graph.get_task(ROOT).assignee))["accepted"]
     assert T.signal(e, "root", "CHALLENGE", str(e.graph.get_task(ROOT).assignee), reason=", ".join(ids[1:]))["accepted"]
@@ -166,7 +163,7 @@ def test_a_dispute_of_the_plans_check_alone_asks_the_person_nothing_and_his_door
     assert "keep waiting" in step["directive"] and "THE USER'S QUESTION" not in step["directive"], step
     out = LOCKED["signal"](e, "root", "ACCEPT_CHALLENGE", "agent", retire_findings=ids, justification="not my goal")
     e.wait_idle()
-    assert out["accepted"] and _fails_seen(e) == set(), out
+    assert out["accepted"] and _standing(e) == set() and STUB in _pins(e, "g"), "the person's ruling keeps the part's check"
     e.stop()
 
 

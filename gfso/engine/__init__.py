@@ -32,7 +32,7 @@ from gfso.core.protocol.fsm import available_signals, not_admissible_here, trans
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, probes_of, probes_that_expected_nothing,
                                           verdict_report_defects, probe_labels, unrun_probes)
-from gfso.core.protocol.procedure import (BOUND_SPENT, PAST_BOUND, PAST_WHOLE, admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
+from gfso.core.protocol.procedure import (same_expectation, BOUND_SPENT,PAST_BOUND, PAST_WHOLE, admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
                                           refuting_probes, merge_regression, probe_id, layable_over, unrerunnable,
                                           unaccounted_for, orphaned_regression,
                                           claim_digest)
@@ -62,6 +62,7 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here,
                          session_fit as _session_fit, scope_top as _scope_top,
                          scope_members as _scope_members, split_owed as _split_owed,
+                         checks_no_longer_run as _checks_no_longer_run,
                          parts_procedure as _parts_procedure, plans_own_findings as _plans_own_findings,
                          settled_procedure as _settled_procedure,
                          observation_binds as _observation_binds,
@@ -1191,9 +1192,9 @@ class Engine:
         # the contract stays an issuer's act (`edit_criteria`), and `claim_drift` shows it.
         # …AND ONLY GROWS UNTIL ITS ISSUER RULES ONE OUT (`findings`) — each with the text it refuted as the run
         # VALIDATED it, the one he rules on, not the spec standing when the record lands
-        if per_criterion and (_found := refuting_probes(per_criterion, inputs_dirs, texts={
+        if per_criterion and (_found := self._as_filed(task_id, refuting_probes(per_criterion, inputs_dirs, texts={
                 **{c.name: c.description for c in (task.spec.criteria if task else ())},
-                **{n: v[0] for n, v in self._validated_versions(task_id).items()}})):
+                **{n: v[0] for n, v in self._validated_versions(task_id).items()}}))):
             ledger_write(self._storage, task_id, REGRESSION, merge_regression(self._stored_regression(task_id), _found))
             # …and the files their commands name in the round, as they stand now that its runs ended: a re-run lays
             # them from here (`lay_probe_files`), never from the round
@@ -1217,7 +1218,7 @@ class Engine:
         A retired finding filed again is that ruling's subject, not a fresh observation — counted as a FAIL, it
         re-opened the dispute the ruling closed; so it is no refutation, and the record treats it as unobserved."""
         ruled = {(r.get("criterion"), r.get("id")) for r in self.retired_findings(task_id)}
-        again = refuting_probes(per_criterion, dirs)
+        again = self._as_filed(task_id, refuting_probes(per_criterion, dirs))
         out = {}
         for e in per_criterion:
             ps = again.get(name := " ".join(str(e.get("criterion", "")).split()), ())
@@ -1226,6 +1227,24 @@ class Engine:
                                                 f"criterion ({', '.join(p['id'] for p in ps)}) — filed again, they are "
                                                 f"not a refutation")
         return out
+
+    def _as_filed(self, task_id: TaskId, found: dict) -> dict:
+        """`found` (`refuting_probes`) with each finding that carries a ruled id but expects something else under its own id:
+        the command is the ruled one, the claim is not, and read as filed again it was ⊥ — no validator could refute the
+        work by the command a ruling took (critic over 9c51566). What the ruled check itself pinned, a line of it included,
+        is the ruling's subject still."""
+        ruled = {(r["criterion"], r["id"]): r for r in self.retired_findings(task_id)}
+        if not ruled:
+            return found
+        pins = {(r["criterion"], r["finding"]): r["expect"] for r in self.checks_no_longer_run(task_id) if r["node"] == str(task_id)}
+
+        def filed(name, p):
+            key = (name, p.get("id"))
+            if key not in ruled or not p.get("expect") or same_expectation(p["expect"], pins.get(key) or ruled[key].get("expect")):
+                return p
+            cmd = str(p.get("as_run") or p.get("command") or "")
+            return {**p, "id": probe_id(name, {"command": f"{cmd} {p['expect']}"}), "cited": ""}
+        return {name: [filed(name, p) for p in ps] for name, ps in found.items()}
 
     def _validated_versions(self, task_id: TaskId) -> dict:
         """{criterion: version} as it stood at the node's last DELIVER — what a verdict validates.
@@ -1854,7 +1873,9 @@ class Engine:
             # …AND THE CRITERIA WHOSE REFUTATIONS ITS ISSUER RULED OUT: a PASS over them no longer re-runs what once
             # failed them — the claim moved after a refutation as surely as by a rewording, so `narrowed` reads ⊥ too
             "retired_after_refutation": (_retired := sorted({r["criterion"] for r in self.retired_findings(task_id)})),
-            "narrowed": True if _structural else (None if _moved_after or _retired else False),
+            # …at any depth: a check lifted below this node is one its PASS, and every PASS above it, no longer runs
+            "checks_no_longer_run": (_lifted := self.checks_no_longer_run(task_id)),
+            "narrowed": True if _structural else (None if _moved_after or _retired or _lifted else False),
             "risks_dropped": sorted(_risks0 - _risksN),
             "authored": {"at": entries[0].timestamp.isoformat(sep=" ", timespec="seconds"),
                          "criteria": sorted(first)},
@@ -2028,6 +2049,11 @@ class Engine:
         """The findings on this node that speak for a check of the plan the system wrote, not for the goal: the system's
         issuer may rule on these at an AUTO root (`validation.plans_own_findings`). The user's door stays open on them."""
         return _plans_own_findings(self._graph, self._audit, self._graph.get_task(task_id))
+
+    def checks_no_longer_run(self, task_id: TaskId) -> list[dict]:
+        """Each part's check a ruling took off a criterion here or below (`validation.checks_no_longer_run`)."""
+        t = self._graph.get_task(task_id)
+        return _checks_no_longer_run(self._graph, self._audit, t) if t is not None else []
 
     def challenge_reason(self, task_id: TaskId) -> Optional[str]:
         """The reason the standing CHALLENGE carried — the issuer cannot answer what he cannot read."""

@@ -1019,29 +1019,68 @@ def pinned_run(p: Mapping, pinned: Mapping[str, str], criterion: str = "") -> st
                  if inputs_token(w) in cmd and _norm(cmd.replace(inputs_token(w), INPUTS_TOKEN)) == _norm(c)), None)
 
 
+def same_expectation(said: str, pinned: str) -> bool:
+    """Is `said` what `pinned` expects, whole or one whole line of it? A substring is not: `rc=1` in `rc=10`, `ok` in
+    `not ok` (critic over 9c51566). A finding's expectation is stored on one line (`refuting_probes`), so several lines
+    of a pin are compared only as all of them."""
+    said = _norm(said)
+    return bool(said) and (said == _norm(pinned) or said in {_norm(line) for line in str(pinned or "").splitlines()})
+
+
 def runs_pin(finding: Mapping, pid: str, pin: Probe) -> bool:
     """Does this finding say only what pinned check `pin` (id `pid`) says — its command, over its own inputs directory,
-    and an expectation that is the pin's or a part of it? The same command with an expectation of the validator's own,
-    or none said, is his reading of the work, not the pin's."""
-    said = _norm(finding.get("expect"))
-    return bool(said) and said in _norm(pin.expect) and _norm(pin.command) == _norm(
+    and the pin's expectation? The same command with an expectation of the validator's own, or none said, is his
+    reading of the work, not the pin's."""
+    return same_expectation(finding.get("expect"), pin.expect) and _norm(pin.command) == _norm(
         str(finding.get("as_run") or finding.get("command") or "").replace(inputs_token(pid), INPUTS_TOKEN))
 
 
-def without_ruled_pins(parts: Mapping[str, Sequence[Criteria]], rulings: Iterable[Mapping]) -> dict:
-    """`parts` (`{criterion: its parts' criteria}`) less each pinned check a ruling in force retired under that criterion
-    — only there: a ruling speaks to its criterion (`without_retired`), and the part's own contract stays as it settled."""
-    ruled: dict[str, list] = {}
-    for r in rulings or ():
-        ruled.setdefault(_norm(r.get("criterion")), []).append(r)
+def _pins_lifted(crits: Sequence[Criteria], ruled: Iterable[Mapping], keeps_own: bool) -> set[str]:
+    """The ids of the pinned checks in `crits` that `ruled` run (each within what it says stood then, `then`, where said)
+    and their copies — or none where the criterion, with no pin of its own (`keeps_own`), would keep no check at all."""
+    pins = [(probe_id(c.name, p), p) for c in crits for p in c.check or () if _norm(p.command)]
+    gone = {same_probe(p) for i, p in pins for r in ruled
+            if runs_pin(r, i, p) and ("then" not in r or same_probe(p) in r["then"])}
+    return {i for i, p in pins if same_probe(p) in gone} if keeps_own or any(same_probe(p) not in gone for _, p in pins) else set()
+
+
+def _pinned_criteria(criteria: Iterable[Criteria]) -> set[str]:
+    return {_norm(c.name) for c in criteria or () if any(_norm(p.command) for p in c.check or ())}
+
+
+def pins_ruled_out(parts: Mapping[str, Sequence[Criteria]], rulings: Iterable[Mapping], own: Iterable[Criteria]) -> dict[str, set[str]]:
+    """{criterion of the whole: the ids of its parts' pinned checks these rulings take off it} — ONE decision of what a
+    ruling lifts: under the criterion it names only, and never a criterion's last check."""
+    pinned = _pinned_criteria(own)
     out = {}
     for name, crits in (parts or {}).items():
-        mine = ruled.get(_norm(name), ())
-        kept = (replace(c, check=tuple(p for p in c.check or ()
-                                       if not any(runs_pin(r, probe_id(c.name, p), p) for r in mine))) for c in crits)
+        mine = [r for r in rulings or () if _norm(r.get("criterion")) == _norm(name)]
+        if mine and (ids := _pins_lifted(crits, mine, _norm(name) in pinned)):
+            out[name] = ids
+    return out
+
+
+def without_pins(parts: Mapping[str, Sequence[Criteria]], gone: Mapping[str, set]) -> dict:
+    """`parts` less `gone` (`pins_ruled_out`). The part's own contract stays as it settled."""
+    out = {}
+    for name, crits in (parts or {}).items():
+        kept = (replace(c, check=tuple(p for p in c.check or () if probe_id(c.name, p) not in gone.get(name, ()))) for c in crits)
         if left := tuple(c for c in kept if c.check):
             out[name] = left
     return out
+
+
+def findings_a_ruling_could_lift(regression: Mapping, parts: Mapping[str, Sequence[Criteria]], own: Sequence[Criteria]) -> list[str]:
+    """The ids of the findings in `regression` that only say a pinned check of a part THEIR criterion rests on does not
+    hold, a check none of `own` pins, and whose ruling that criterion's last check would not hold back."""
+    mine = [(probe_id(c.name, p), p) for c in own or () for p in c.check or () if _norm(p.command)]
+    named = [{**f, "criterion": k} for k, fs in (regression or {}).items() for f in fs
+             if not any(runs_pin(f, i, p) for i, p in mine)]
+    lifted = pins_ruled_out(parts, named, own)
+    pins = {name: [(i, p) for c in crits for p in c.check or () if (i := probe_id(c.name, p)) in lifted.get(name, ())]
+            for name, crits in (parts or {}).items()}
+    return [f["id"] for f in named for name, ps in pins.items()
+            if _norm(name) == _norm(f["criterion"]) and any(runs_pin(f, i, p) for i, p in ps)]
 
 
 def unrun_regression(regression: Mapping, per_criterion: Sequence[Mapping],

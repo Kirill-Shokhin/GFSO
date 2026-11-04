@@ -751,7 +751,11 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
            "ts": (rec or {}).get("ts")}
     # …AND WHAT IT NO LONGER RE-RAN BY ITS ISSUER'S RULING: a PASS read without it reads as wide as one that re-ran all
     if _ret := engine.retired_findings(TaskId(task_id)):
-        out["retired_after_refutation"] = [{k: r.get(k) for k in ("criterion", "id", "by", "why")} for r in _ret]
+        out["retired_after_refutation"] = [{**{k: r.get(k) for k in ("criterion", "id", "by", "why", "command", "at")},
+                                            "decided_by": "system" if r.get("by_system") else "person"} for r in _ret]
+    # …AND WHICH PARTS' CHECKS NO LONGER RUN, here or below: a finding retired leaves the check running, this does not
+    if _gone := engine.checks_no_longer_run(TaskId(task_id)):
+        out["checks_no_longer_run"] = _gone
     if criterion:
         out.update(_criterion_in_full(engine, task_id, rec, criterion))
     # …AND SAY IT WHEN THE STATE AND THE RECORD DISAGREE. A node can stand at PASS while this very
