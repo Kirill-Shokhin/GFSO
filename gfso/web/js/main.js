@@ -24,12 +24,26 @@ import {said} from './run.js';
 
 // THE REFRESHES, each a read of the page's model (model.js) and then the drawing of what it read. SERIALISED (api.js
 // singleFlight): a WebSocket transition and an ordinary refresh interleaving cleared the canvas under each other.
+let graphRead = () => {};
 const refreshGraph = singleFlight(async () => {
-    try { const ok = await loadGraph(); rebuildRun(); await drawGraph(ok); } catch (e) { console.error('refreshGraph:', e); } });
+    try { const ok = await loadGraph(); graphRead(); rebuildRun(); await drawGraph(ok); } catch (e) { console.error('refreshGraph:', e); } });
 const refreshHeader = singleFlight(async () => { await loadFrontier(); await loadReports(); await drawHeader(); });
 const refreshQuality = async () => { await loadMetrics(); drawQuality(); };
 const refreshDeck = singleFlight(async () => { await loadRun(); paintDeck(); });
 const refreshAll = async () => { await refreshGraph(); goal.labelGoalButton(); await refreshQuality(); await refreshHeader(); };
+// A LOAD READS WHILE IT DRAWS: the rest needs the graph's read, not its drawing, which held every read behind it for over a
+// second on a phone. What frames the canvas over the deck still waits for both.
+async function firstLoad() {
+    const read = new Promise(go => { graphRead = go; }), drawn = refreshGraph();
+    await Promise.race([read, drawn]);
+    goal.labelGoalButton();
+    // …the run is built on the frontier (what waits on what), so it is painted once both have answered
+    const run = loadRun(), asked = Promise.all([refreshQuality(), refreshHeader()]);
+    const deck = Promise.all([run, asked]).then(() => { rebuildRun(); paintDeck(); });
+    await Promise.all([drawn, asked]);
+    suggestHeight(graphNeeds());
+    deck.then(afterDeck);
+}
 S.reload = async () => { await refreshAll(); if (focus().select) await selectTask(focus().select); };
 const projects = () => refreshProjects().then(onInflight);
 // NEWS ON THE NARRATION re-reads, once a burst of it has settled, as much as its widest line asked: the run always; the
@@ -65,9 +79,11 @@ const settle = async o => {
         await within(refreshQuality()); await within(refreshHeader());
         // …AND THE OPEN PANEL IS RE-READ ON ANY TRANSITION: its checks are computed from the CHILDREN.
         if (focus().select) { await within(selectTask(focus().select)); paneled = Date.now(); }
-        await within(refreshDeck());             // …the run read, the header drawn over it from the frontier just read
-        annotate(); S.frontier ? drawHeader() : refreshHeader(); drawPlanning();   // a frontier read that failed is asked again
-        if (focus().select) resign(focus().select);
+        // …the run read, the header drawn over it from the frontier just read, whenever it lands: the bound holds only the queue
+        await within(refreshDeck().then(() => {
+            annotate(); S.frontier ? drawHeader() : refreshHeader(); drawPlanning();   // a frontier read that failed is asked again
+            if (focus().select) resign(focus().select);
+        }));
     } } finally { settling = false; }
 };
 
@@ -228,13 +244,14 @@ async function init() {
         return refreshHeader();                        // …and the header still comes: it is a local read
     }
     // YOUR OWN ID IS THE SERVER'S, not the placeholder `pm` registered nowhere — and what you typed wins.
+    const asked = getJSON('/api/runtime'), checks = loadCheckMap();
     try {
-        const rt = await getJSON('/api/runtime'), box = $('current-role');
+        const rt = await asked, box = $('current-role');
         S.agentId = rt?.agent_id || '';
         if (rt && rt.agent_id && (!box.value || box.value === 'pm')) box.value = rt.agent_id;
         box.value = rememberedRole() || box.value;
     } catch (e) { /* the box keeps what it had; the engine still refuses a stranger */ }
-    await loadCheckMap();
+    await checks;
     mountDeck();
     // A DISPLAY CLOCK, not a poll: while something runs, the ages it shows ("validating · 2m") and the open bars grow
     // with time and with nothing pushed — a session busy with tools streams no tokens. Minutes are the coarsest unit
@@ -244,9 +261,7 @@ async function init() {
     // …and a figure in seconds is set each second, in place (dom.js `since`): nothing is redrawn, nothing read
     setInterval(ages, 1e3);
     await initGraph();
-    await refreshAll();
-    suggestHeight(graphNeeds());
-    refreshDeck().then(afterDeck);
+    await firstLoad();
     if (TASK) point('select', TASK);                   // `?task=` makes one node linkable
     if (GOAL && !S.tasks.length) goal.openGoal();     // a new project's first act: its goal
     // the picker's name is its own read, so a feed that cannot open does not leave it blank

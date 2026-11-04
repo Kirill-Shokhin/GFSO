@@ -2,7 +2,7 @@
 // the ledger. Each read writes S (state.js) and draws nothing; the views render what S holds, and main.js orders the
 // reads and the drawings.
 import {S, procs, myRole, begun} from './state.js';
-import {api, getJSON, post, task, taskUrl} from './api.js';
+import {api, getJSON, post} from './api.js';
 import {buildRun, busyNow} from './run.js';
 import {contested, isVerdict} from './vocab.js';
 
@@ -94,9 +94,10 @@ export const runIsOpen = () => !!read && busyNow(procs(), S.run?.sessions);
 async function currentVerdicts(audit) {
     const seen = {};
     for (const a of audit) if (isVerdict(a)) seen[a.task_id] = (seen[a.task_id] || 0) + 1;
-    await Promise.all(Object.entries(seen).filter(([id, n]) => verdicts[id]?.n !== n).map(async ([id, n]) => {
-        try { verdicts[id] = {n, ...(await task(id, '/verdict'))}; } catch (e) { /* the log's reading stands */ }
-        // every verdict the node got, each with its own per-criterion record (a server before it answers 404: none)
-        try { const h = await api(taskUrl(id, '/verdicts')); if (h.ok && verdicts[id]) verdicts[id].history = await h.json(); } catch (e) { /* none */ }
-    }));
+    const ids = Object.keys(seen).filter(id => verdicts[id]?.n !== seen[id]);
+    if (!ids.length) return;
+    try {
+        const r = await post('/api/verdicts', ids);
+        if (r.ok) for (const [id, v] of Object.entries(await r.json())) verdicts[id] = {n: seen[id], ...v};
+    } catch (e) { /* the log's reading stands */ }
 }
