@@ -1238,3 +1238,9 @@ def test_a_page_file_the_browser_holds_is_not_sent_again(client):
 def test_what_the_page_reads_comes_compressed(client):
     r = client.get("/js/main.js", headers={"Accept-Encoding": "gzip"})
     assert r.headers.get("content-encoding") == "gzip" and "import" in r.text
+
+
+def test_the_page_reads_the_graph_without_the_frontier_it_reads_elsewhere(client):
+    whole, read = client.get("/api/graph").json(), client.get("/api/graph?next=0")
+    assert read.status_code == 200 and "next" not in read.json()
+    assert read.json()["nodes"] == whole["nodes"] and read.json()["edges"] == whole["edges"]
