@@ -396,7 +396,7 @@ _HEADS = {HELD: "Your last delivery was NOT handed in — lift this before you d
           BUILT: "How the validation built your last delivery before any check ran — DELIVER's `build` when given (\"\" = "
                  "nothing to build), else `make` where the tree has a Makefile at its root, else nothing",
           UNCOPIED: "Your last delivery FAILED unvalidated: no copy of the tree DELIVER recorded could be made for its "
-                    "judge, so no check ran — lift this before you deliver again"}
+                    "validation, so no check ran — lift this before you deliver again"}
 
 
 def _last_delivery_text(engine, nodes: list) -> str:

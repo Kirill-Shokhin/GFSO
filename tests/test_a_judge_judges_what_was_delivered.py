@@ -680,7 +680,7 @@ def test_live_a_delivery_no_copy_can_be_made_of_fails_and_its_executors_next_pac
     try:
         assert judge.seen == [] and out.get("verdict") == "FAIL" and out["failed_criteria"] == ["one"], out.get("verdict_defects")
         said = P._last_delivery_text(e, [e.graph.get_task(TaskId("big"))])
-        assert "FAILED unjudged" in said and "object x is missing" in said, said
+        assert "FAILED unvalidated" in said and "object x is missing" in said, said
         assert e.regression_probes(TaskId("big")) == {}, "the system's own copy left a finding standing"
     finally:
         e.stop()
