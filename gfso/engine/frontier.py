@@ -398,7 +398,7 @@ class NodeSteps:
                        f"system never rules: tell the person in a line. Only if they rule, send their answer: "
                        f"ACCEPT_CHALLENGE with `retire_findings` naming what they rule out, or REJECT_CHALLENGE "
                        f"with why the goal asks for it."
-                       if (_asked := self.engine.users_dispute(t.id)) else
+                       if (_asked := self.engine.users_dispute(t.id)) and not self.engine.paused() else
                        f"This is YOURS and nothing moves until you close it: ACCEPT_CHALLENGE with the new spec if "
                        f"the dispute is right (the node returns to OFFERED and its executor consents afresh), or "
                        f"REJECT_CHALLENGE with the justification if the contract stands."))

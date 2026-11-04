@@ -82,22 +82,24 @@ def mcp_registered() -> tuple[bool | None, str]:
         if line is None:
             return False, "not registered — run `gfso setup`"
         if "Failed to connect" in line:
-            return False, "registered, and it does not start — run `gfso setup`"
+            return False, "registered, and it did not connect just now (a stopped server does not; a session starts it)"
         return True, "registered"
     except Exception as ex:
         return None, f"could not ask the CLI ({type(ex).__name__})"
 
 
-def _door_entry(exe: str) -> tuple[str, str]:
-    """The scope the client reads the door from in this directory and the command it starts; empty where it cannot tell."""
+def _door_entry(exe: str) -> tuple[str, str, dict]:
+    """The scope the client reads the door from in this directory, the command it starts and its environment; empty where
+    it cannot tell. Asking starts the entry, and one that never answers takes the client's own half a minute."""
     try:
         out = subprocess.run([exe, "mcp", "get", "gfso"], capture_output=True, text=True, encoding="utf-8",
-                             errors="replace", timeout=30, env=_config.child_env(GFSO_NO_RECONCILE="1"))
+                             errors="replace", timeout=90, env=_config.child_env(GFSO_NO_RECONCILE="1"))
     # the registration stands either way; this only asks whether it is this installation's
     except Exception:
-        return "", ""
+        return "", "", {}
     fields = dict(l.strip().split(": ", 1) for l in out.stdout.splitlines() if ": " in l)
-    return fields.get("Scope", ""), fields.get("Command", "")
+    held = out.stdout.partition("Environment:")[2].split("\n\n")[0].splitlines()
+    return fields.get("Scope", ""), fields.get("Command", ""), dict(l.strip().split("=", 1) for l in held if "=" in l)
 
 
 def _same_path(a, b) -> bool:
@@ -479,17 +481,23 @@ def _register_door(exe: str) -> bool:
                             f"could not register ({out.stderr.strip()[:200]}); "
                             f"run `claude mcp add --scope user gfso -- "
                             f"{console_script()} connect` yourself"))
-    scope, command = _door_entry(exe) if door else ("", "")
-    if command and not _same_path(command, console_script()):
-        where = scope.split()[0].lower()
-        if where == "user":      # …this command means this installation: a person's check would run on the old one
-            subprocess.run([exe, "mcp", "remove", "gfso", "-s", "user"], capture_output=True, timeout=120)
-            door = subprocess.run(add, capture_output=True, timeout=120).returncode == 0
-            print(f"agent door: it started {command}; " + ("it now starts this installation" if door else
-                  "and could not be changed: run the command above yourself"))
-        else:
-            print(f"agent door: in this directory its own entry goes first and starts {command}, not this "
-                  f"installation: `claude mcp remove gfso -s {where}` to use yours here")
+    scope, command, env = _door_entry(exe) if door else ("", "", {})
+    if not command or (_same_path(command, console_script()) and (not url or env.get("GFSO_SHARED_URL") == url)):
+        return door
+    where = scope.split()[0].lower()
+    if where != "user":
+        print(f"agent door: in this directory its own entry goes first and starts {command}, not this "
+              f"installation: `claude mcp remove gfso -s {where}` to use yours here")
+        return door
+    # …this command means this installation, on this address: a person's check would run on the old one. What else the
+    # person set on the entry stays
+    keep = {**env, **({"GFSO_SHARED_URL": url} if url else {})}
+    again = ["mcp", "add", "--scope", "user", "gfso", *[x for k, v in keep.items() for x in ("-e", f"{k}={v}")], "--",
+             str(console_script()), "connect"]
+    subprocess.run([exe, "mcp", "remove", "gfso", "-s", "user"], capture_output=True, timeout=120)
+    door = subprocess.run([exe, *again], capture_output=True, timeout=120).returncode == 0
+    print(f"agent door: it started {command}; " + ("it now starts this installation" if door else
+          f"it could not be registered again, and has no entry now: `claude {' '.join(again)}`"))
     return door
 
 

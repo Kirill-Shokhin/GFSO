@@ -174,6 +174,32 @@ def test_a_server_on_another_address_is_named_in_the_entry(monkeypatch, capsys):
     assert add[add.index("-e") + 1] == "GFSO_SHARED_URL=http://127.0.0.1:18000/mcp" and add.index("-e") > add.index("gfso")
 
 
+def test_a_replaced_entry_keeps_what_the_person_set_on_it(monkeypatch, capsys):
+    held = _entry("User config (all projects)", "C:/old/gfso.exe") + "  Environment:\n    GFSO_HOME=C:/mine\n\nTo remove\n"
+    _, calls = _setup_with(monkeypatch, capsys, add=EXISTS, get=held)
+    assert "GFSO_HOME=C:/mine" in [c for c in calls if c[1:3] == ["mcp", "add"]][-1], calls
+
+
+def test_an_entry_on_another_address_comes_to_this_one(monkeypatch, capsys):
+    """Only a first add wrote the address: a later `setup` left the client on the old server under "already registered"."""
+    monkeypatch.setenv("GFSO_SHARED_URL", "http://127.0.0.1:18000/mcp")
+    _, calls = _setup_with(monkeypatch, capsys, add=EXISTS, get=_entry("User config (all projects)", D.console_script()))
+    assert "GFSO_SHARED_URL=http://127.0.0.1:18000/mcp" in [c for c in calls if c[1:3] == ["mcp", "add"]][-1], calls
+
+
+def test_an_entry_that_could_not_come_back_says_the_command(monkeypatch, capsys):
+    calls = []
+
+    def run(argv, **kw):
+        calls.append(argv)
+        out = _entry("User config (all projects)", "C:/old/gfso.exe") if argv[1:3] == ["mcp", "get"] else ""
+        return type("R", (), {"returncode": 1 if argv[1:3] == ["mcp", "add"] else 0, "stdout": out,
+                              "stderr": EXISTS[1] if len(calls) == 1 else "boom"})
+    monkeypatch.setattr(D.subprocess, "run", run)
+    assert D._register_door("claude") is False
+    assert "claude mcp add --scope user gfso" in capsys.readouterr().out
+
+
 def test_a_users_entry_naming_this_installation_is_left_alone(monkeypatch, capsys):
     """An entry may carry the person's own environment: only one that starts something else is replaced."""
     _, calls = _setup_with(monkeypatch, capsys, add=EXISTS, get=_entry("User config (all projects)", D.console_script()))

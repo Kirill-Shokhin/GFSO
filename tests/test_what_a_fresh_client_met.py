@@ -1,4 +1,5 @@
 """What real user-agents met on a clean install, kept: each of these stopped one, or told it something untrue."""
+import json
 from types import SimpleNamespace
 
 from gfso import tools as T
@@ -58,19 +59,40 @@ def test_a_wait_reports_what_it_waited():
     assert out["waited_seconds"] < 600
 
 
+def _engine(landed=None, mode="auto"):
+    return SimpleNamespace(graph=SimpleNamespace(setting=lambda key: landed and json.dumps(landed)),
+                           mode=lambda: {"mode": mode} if mode else None)
+
+
+BRANCH = {"branch": "gfso/p/accepted", "sha": "s", "path": "/r"}
+
+
 def test_the_end_says_what_the_person_is_told():
     """A run ended in one sentence: no verdict, no branch, no link, no way to see the result."""
-    out = _with_ui_link("next_steps", {"complete": True}, "p")
-    assert "get_verdict" in out["say"] and "gfso/p/accepted" in out["say"] and "git worktree add" in out["say"]
+    said = _with_ui_link("next_steps", {"complete": True}, "p", _engine(BRANCH))["say"]
+    assert "get_verdict" in said and "gfso/p/accepted" in said and "git worktree add" in said
 
 
-def test_a_go_and_a_new_project_say_it_too():
-    assert "unattended" in _with_ui_link("auto_decompose", {"root_id": "root"}, "p")["say"]
+def test_the_end_says_only_where_the_result_landed():
+    """`complete` of a part mid-run, or a run with no container, told the person a branch that was not there."""
+    assert "say" not in _with_ui_link("next_steps", {"complete": True}, "p", _engine())
+    said = _with_ui_link("next_steps", {"complete": True}, "p", _engine({"path": "/r/.gfso-accepted-p"}))["say"]
+    assert ".gfso-accepted-p" in said and "branch" not in said
+
+
+def test_a_go_says_it_runs_only_where_it_does():
+    """A go that built nothing, its error beside `root_id`, told a client to wait; `solo` is no unattended run."""
+    assert "unattended" in _with_ui_link("auto_decompose", {"root_id": "root"}, "p", _engine())["say"]
+    assert "say" not in _with_ui_link("auto_decompose", {"root_id": "root", "error": "no answer"}, "p", _engine())
+    assert "say" not in _with_ui_link("auto_decompose", {"root_id": "root"}, "p", _engine(mode="solo"))
+
+
+def test_a_new_project_says_the_scheme_and_the_branch():
     said = _with_ui_link("use_project", {"active": "p"}, "p")["say"]
     assert "claude-haiku-5-5" in said and "gfso/p/accepted" in said
 
 
 def test_what_is_said_stands_first_in_the_answer():
     """Last in a long answer, it went unsaid: nothing on the plan before a go in 6 runs of 6."""
-    assert next(iter(_with_ui_link("auto_decompose", {"root_id": "root", "log": "long"}, "p"))) == "say"
-    assert next(iter(_with_ui_link("next_steps", {"steps": [], "complete": True}, "p"))) == "say"
+    assert next(iter(_with_ui_link("auto_decompose", {"root_id": "root", "log": "long"}, "p", _engine()))) == "say"
+    assert next(iter(_with_ui_link("next_steps", {"steps": [], "complete": True}, "p", _engine(BRANCH)))) == "say"

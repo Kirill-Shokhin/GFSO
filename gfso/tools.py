@@ -2541,7 +2541,7 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
         s["performed_by"] = by = held or str(owner or "")
         s["mine"] = by == me or not by
         # …AND A RULING THE USER MAY MAKE IS NOT A MOVE THE GRAPH WAITS ON: the system answers that dispute itself
-        if s["mine"] and s.get("action") == Action.RESOLVE and _t is not None and engine.users_dispute(_t.id):
+        if s["mine"] and s.get("action") == Action.RESOLVE and _t is not None and engine.users_dispute(_t.id)                 and not engine.paused():
             s["optional"] = True
         if held and not s["mine"] and (owner == me or not owner):
             s["parallel_ok"] = False

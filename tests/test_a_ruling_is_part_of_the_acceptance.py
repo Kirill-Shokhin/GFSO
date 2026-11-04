@@ -88,6 +88,20 @@ def test_a_ruling_on_the_users_own_goal_is_the_users_question(tmp_path):
     e.stop()
 
 
+def test_a_customer_waits_on_the_systems_answer_only_while_the_run_runs():
+    """Running, the system answers and the client goes on waiting (it stopped a run to ask, fresh install, 2026-11-04);
+    stopped, nothing moves but by the person, and "keep waiting" beside `run: stopped` was untrue."""
+    e = _engine(Mode.AUTO)
+    _auto_root(e)
+    _challenged_with_a_finding(e, "root", "g")
+    (step,) = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "root"]
+    assert step["optional"] and "keep waiting" in step["directive"], step
+    e.pause("system", "the plan the user gave cannot go on")
+    (step,) = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "root"]
+    assert not step.get("optional") and "keep waiting" not in step["directive"], step
+    e.stop()
+
+
 def test_the_system_still_rejects_an_auto_roots_dispute_naming_a_finding(tmp_path):
     """G13's shape: "these findings cannot be fixed" names them by id; the goal asks for them, so the system's answer is
     the rejection, and the root goes back to work instead of waiting on a user who is not there."""

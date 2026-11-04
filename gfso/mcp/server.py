@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
+import json
 import typing
 import weakref
 from pathlib import Path
@@ -135,6 +136,7 @@ _PINNED_ACTOR = {"signal": ("source",), "revise": ("agent",),
 # offered only if the model happened to remember one; here it rides back with the act itself.
 from gfso import tools as _T
 from gfso.serverctl import UI_LINK_VERBS as _UI_LINK_VERBS, ui_link as _ui_link   # ONE list, both doors
+from gfso.workspaces import LANDED
 from gfso.config import HEARTBEAT_SECONDS as _HEARTBEAT
 
 
@@ -154,7 +156,7 @@ def _brief(listing: dict, active: str, keep: int = 12) -> dict:
     return {"active": active, "projects_recent": recent, "projects_total": len(names)}
 
 
-def _with_ui_link(name: str, out, project=None):
+def _with_ui_link(name: str, out, project=None, engine=None):
     """Attach the local UI address to an entry verb's result (dict results only — `project` returns
     markdown and keeps its shape). Best-effort: a link is a convenience, never a reason to fail a
     call. The UI is tab-per-project (`?project=`), so the link points at the graph just acted on.
@@ -162,21 +164,25 @@ def _with_ui_link(name: str, out, project=None):
     told them neither (run B, 2026-11-04). What is said stands first: last in a long answer, it went unsaid."""
     if not isinstance(out, dict):
         return out
-    _link_and_say(name, out, project)
+    _link_and_say(name, out, project, engine)
     return {"say": out.pop("say"), **out} if "say" in out else out
 
 
-def _link_and_say(name: str, out: dict, project) -> None:
+def _link_and_say(name: str, out: dict, project, engine) -> None:
+    """What the person is told, only where it is so: the end by where the result landed (a part's `complete`, a run with
+    no container, a base with no git say otherwise or nothing), the go only where it built work no one holds."""
     try:
         link = _ui_link(project or out.get("active"))
     # the docstring's contract: a link is a convenience, and the verb's result is already correct without it
     except Exception:
         return
-    if name == "next_steps" and out.get("complete"):
-        out["say"] = ("Write to the person now: the root's verdict (`get_verdict(\"root\")`), the branch "
-                      f"`gfso/{project or '<project>'}/accepted` with their own untouched, {link}, and the one command "
-                      "that shows the result (`git worktree add`: a checkout refuses over uncommitted files); a next "
-                      "task starts from their HEAD: merge first to build on this.")
+    landed = engine.graph.setting(LANDED) if engine is not None and name == "next_steps" and out.get("complete") else None
+    if landed:
+        where = json.loads(landed)
+        out["say"] = ("Write to the person now: the root's verdict (`get_verdict(\"root\")`), " + (
+            f"the branch `{where['branch']}` with their own untouched, {link}, and the one command that shows the result "
+            "(`git worktree add`: a checkout refuses over uncommitted files); a next task starts from their HEAD: merge "
+            "first to build on this." if where.get("branch") else f"where the result lies, `{where.get('path')}`, and {link}."))
     if name not in _UI_LINK_VERBS or "ui" in out:
         return
     out["ui"] = link
@@ -185,7 +191,7 @@ def _link_and_say(name: str, out: dict, project) -> None:
                       "role on claude-haiku-5-5, the most tested and cheap, say if another suits; only what is committed "
                       f"enters; their branch is not touched and the result comes as branch "
                       f"`gfso/{out.get('active') or '<project>'}/accepted`.")
-    if name == "auto_decompose" and out.get("root_id"):
+    if name == "auto_decompose" and out.get("root_id") and not out.get("error") and engine is not None             and (engine.mode() or {}).get("mode") == "auto":
         out["say"] = (f"Write to the person now, before any other call: {link}; it runs unattended, they can watch there, "
                       "you report the end. Then loop `next_steps(wait=600)`.")
 
@@ -259,7 +265,7 @@ def _bind(engine_or_registry, fn):
             return {"error": str(e)}
         call = functools.partial(fn, engine, *args, **kwargs)
         out = await (_with_progress(ctx, f"[{fn.__name__}]", call) if long else anyio.to_thread.run_sync(call))
-        return _with_ui_link(fn.__name__, out, project or engine.project_name)
+        return _with_ui_link(fn.__name__, out, project or engine.project_name, engine)
 
     wrapper.__signature__ = sig.replace(
         parameters=params, return_annotation=hints.get("return", sig.return_annotation))
