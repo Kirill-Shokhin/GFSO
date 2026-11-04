@@ -52,7 +52,7 @@ decomposed node is a hole the engine will show you, not a clean bill.
 ## 2. Build the graph
 
 From an agent session these are MCP tools; from a shell the same verbs are `gfso run <tool> …`; in
-the UI they are the Decompose and Edit Node panels. Same engine, same audit log, whichever door.
+the UI they are the Decompose and Edit forms. Same engine, same audit log, whichever door.
 
 ```
 create_task("api", {"name": "…", "description": "…", "criteria": [
@@ -191,20 +191,20 @@ registered — a guard against accidents, not an owner check; a role registered 
 removed by anyone). The answer lists your live nodes the role was carrying or had issued.
 
 Where the project dir is the top of a git repository with a commit, each node an executor runs gets a
-place of its own: a worktree beside it (`../.gfso-nodes-<dir>/<project>/<node>`, a space or other shell-unsafe
+place of its own: a repository of its own, a clone sharing the project dir's objects, beside it (`../.gfso-nodes-<dir>/<project>/<node>`, a space or other shell-unsafe
 character of `<dir>` escaped there as `~xx`; branch `gfso/<project>/<node>`), made when its first session starts from where its parent stood when the node
 entered the split, with its producers by their Dep edges, and reused on rework: a
 sibling's work it needs is an edge in the plan, or a BLOCK that makes one. Its delivery is committed there, its validation reads it there — never a sibling's half-edited
-file — and when it PASSes its branch is merged into its parent's place (the parent's worktree once it
+file — and when it PASSes its branch is merged into its parent's place (the parent's own once it
 has one, else the project dir). A merge that conflicts is aborted and left to the whole: the parent's
 session is told which branches did not join, and integrating them is its work. When the root PASSes,
-the worktrees whose branches joined are removed; the others stay and are named. A project dir that is
+the places whose branches joined are removed; the others stay and are named. A project dir that is
 not a repository is shared by every executor as it stands, and the log says so once.
 
-**What a judge judges.** A delivery's validation — each of its batches, the system's own run of the exact
+**What a validation reads.** A delivery's validation — each of its batches, the system's own run of the exact
 checks, an issuer's contact — runs in a copy that is a checkout of the commit DELIVER recorded and nothing else:
 files the executor's `.gitignore` hides, binaries and environments it built, anything changed in its place after
-DELIVER are not in it. Under a container execution the judge's container mounts three directories — its own round
+DELIVER are not in it. Under a container execution the validation's container mounts three directories — its own round
 or batch (holding the copy), a temp of its own, and read-only what the system laid for it from its record — and
 not the project dir, the node's temp or place, another batch, or an earlier round, so a delivered link or build
 step reaches nothing the executor can still change; the container ends when the run does, with whatever the run
@@ -212,8 +212,8 @@ left running. Where each input comes from: the copy's objects are streamed from 
 git the system makes and hashed again against their ids (no size limit but the disk); Git LFS files are checked
 out as their content, from objects streamed from the place's and the base's LFS stores and kept only where their
 sha256 is the pointer's; a standing finding's probe files are recorded by the system as the finding is filed and
-laid from that record for its re-run, which starts from a fresh copy of them in the judge's batch; pinned inputs
-come from the contract. What the result needs built is built there by the system, in the judge's container,
+laid from that record for its re-run, which starts from a fresh copy of them in the validation's batch; pinned inputs
+come from the contract. What the result needs built is built there by the system, in the validation's container,
 before any check: DELIVER's `build` when the executor gave one (`""` = nothing to build), else `make` where the
 delivered tree has a Makefile at its root, else nothing; the executor's DELIVER instructions ask it to declare one.
 A build that fails, or still runs after 10 minutes, is the delivery's FAIL with its output as the cause, and no
@@ -260,7 +260,7 @@ when you choose; a later root's PASS moves that branch (its reflog keeps where i
 refused while the branch is checked out in any worktree of yours. A project dir with no git lands its result
 beside it, in `../.gfso-accepted-<dir>/<project>/`. So two projects on one project dir no longer see each other's
 accepted work until you merge their branches. `perform="in_chat"` is refused under a container execution: work your own agent does
-on this host is not in the volume, and only what stands there is judged. To read the places, write them out:
+on this host is not in the volume, and only what stands there is validated. To read the places, write them out:
 `gfso export-places <project> <dir>` puts them under `<dir>/<project>/` — the volume found by the project's
 own record in the installation's data directory, whatever roster the shell points at —, each node's repository whole
 (it no longer borrows objects from the project dir) and inert: no repository carries the config or hooks
@@ -282,8 +282,8 @@ products belong in `.gitignore`: a delivery commits everything else it finds, in
 plan omitted appears in the graph, and `q_Dep` counts it.
 
 What all this costs is on the record: `/api/usage` totals the model calls per project, split by the
-role that made them — decomposer, plan review, validator, executor. The UI shows it in the observation
-window, beside the runs it is made of — and a graph worked by people has no calls and shows nothing
+role that made them — decomposer, plan review, validator, executor. The UI shows it in the run deck's Spend
+view, beside the runs it is made of — and a graph worked by people has no calls and shows nothing
 there, which is the point: the quality metrics describe the graph, the spend describes one way of
 working it.
 
@@ -459,7 +459,7 @@ Three are for using it; the rest are for running it, and you can ignore them unt
 | `gfso down` | Stop the one server. |
 | `gfso connect` | The MCP stdio door an agent client runs. You do not type this; a client does. |
 | `gfso projects [-n N] [--match S]` | The project graphs this server holds, most recently worked in first — the name is what `project=` takes, and the isolation boundary of the whole product. |
-| `gfso log [-f]` | The observation panel in the terminal: signals, verdicts and dispatches as they land. |
+| `gfso log [-f]` | The log in the terminal: signals, verdicts and dispatches as they land. |
 | `gfso mcp` | A standalone MCP server with an engine of its own, for a client that must not share. Not the normal door; `connect` is. |
 | `gfso serve` | Run the server in *this* process — the primitive `up` calls. |
 

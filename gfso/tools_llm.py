@@ -1265,7 +1265,7 @@ def _unjudged(parts: list, e: Exception) -> tuple:
     probe = {"command": e.command if built else "the system's checkout of the commit DELIVER recorded",
              "expect": "exit 0" if built else "the tree DELIVER recorded, read back whole", SYSTEMS_ACT: True}
     return ({str(t.id): [{"criterion": c.name, "verdict": "fail", "evidence": str(e),
-                          "behaviours": ["the delivered tree builds in the judge's copy" if built else
+                          "behaviours": ["the delivered tree builds in the validation's copy" if built else
                                          "the tree DELIVER recorded is copied whole for its judge"],
                           "probe": [probe]} for c in crits] for t, _, crits in parts},
             {str(t.id): {"verdict": Verdict.FAIL, "failed_criteria": [c.name for c in crits], "seams": "",
@@ -1857,7 +1857,10 @@ def _plan_written(text: str) -> dict:
             "undecided_obligations": len(r.get("undecided_obligations") or ()),
             "covered": r.get("semantic_covered"), "notes": len(p["notes"]),
             "how_to_read": "read the file whole (the [inputs] at its end are the checks' files, named by hash); "
-                           "a note → refine_plan(path, note); the go → auto_decompose(plan=path)"}
+                           "a check whose `expect` its command cannot print will fail correct work: that is a note. "
+                           "A note → refine_plan(plan=path, note); the go → auto_decompose(plan=path)",
+            "say": "before the go, in the chat, two lines: what it splits into, what stays open, any decision they "
+                   "never asked for"}
 
 
 @functools.wraps(_tools.create_task)

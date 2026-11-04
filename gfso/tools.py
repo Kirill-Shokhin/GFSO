@@ -2540,6 +2540,9 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
         held = engine.mode_holder(s.get("task_id"), role, ruling=s.get("action") == Action.RESOLVE)
         s["performed_by"] = by = held or str(owner or "")
         s["mine"] = by == me or not by
+        # …AND A RULING THE USER MAY MAKE IS NOT A MOVE THE GRAPH WAITS ON: the system answers that dispute itself
+        if s["mine"] and s.get("action") == Action.RESOLVE and _t is not None and engine.users_dispute(_t.id):
+            s["optional"] = True
         if held and not s["mine"] and (owner == me or not owner):
             s["parallel_ok"] = False
             s["directive"] = (f"NOT YOURS — the project's mode gives this move to {held}, and the door refuses it "
@@ -2845,7 +2848,7 @@ def _mine_to_do(out: dict) -> bool:
     too, precisely so a supervisor can see the graph working. What a waiting caller is waiting for is
     a step of their own.
     """
-    return bool(out.get("complete")) or any(s.get("mine") for s in (out.get("steps") or ()))
+    return bool(out.get("complete")) or any(s.get("mine") and not s.get("optional") for s in (out.get("steps") or ()))
 
 
 def _waited(engine: Engine, root_id: Optional[str], actor: Optional[str], seconds: float) -> dict:
@@ -2856,15 +2859,16 @@ def _waited(engine: Engine, root_id: Optional[str], actor: Optional[str], second
     worse surface than one that returns "nothing yet", and a transport with its own ceiling would
     cut it anyway.
     """
-    deadline = engine.now() + min(float(seconds), WAIT_MAX_SECONDS)
+    began = engine.now()
+    deadline = began + min(float(seconds), WAIT_MAX_SECONDS)
     while engine.now() < deadline:
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - engine.now())))
         out = _mark_mine(engine, engine.next_steps(TaskId(root_id) if root_id else None), actor)
         if _mine_to_do(out):
-            out["waited_seconds"] = round(min(float(seconds), WAIT_MAX_SECONDS), 1)
+            out["waited_seconds"] = round(engine.now() - began, 1)
             return out
     out = _mark_mine(engine, engine.next_steps(TaskId(root_id) if root_id else None), actor)
-    out["waited_seconds"] = round(min(float(seconds), WAIT_MAX_SECONDS), 1)
+    out["waited_seconds"] = round(engine.now() - began, 1)
     out["waited_note"] = ("nothing became actionable in that time — the graph may be working "
                           "(`in_flight`) or waiting on a person (`waiting`). Both are in this answer.")
     return out

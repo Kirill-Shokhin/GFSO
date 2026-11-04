@@ -6,15 +6,15 @@ Notable changes to the reference implementation. The format follows
 
 The **canon** (`docs/applied_gfso_v4_en.md`) is versioned separately from this package and carries
 its own Changelog section; where a release re-anchors the code to a canon version, that is stated
-below. Nothing in this file states a measured effect of using GFSO on real work: the experiment that
-would establish one (E3) is open, and what has been run so far is a calibration tier with its own
-stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earlier ones.
+below. Nothing in this file states a measured effect of using GFSO on real work: what the experiment
+that would establish one (E3) has shown so far, and what not, is in the README and
+`docs/EVIDENCE_LOG.md` §13, with §3/§9/§11 for the earlier ones.
 
 ## [Unreleased]
 
 ### Added
 - A plan is a file of its own before any project exists: `plan(request, model)` authors and reviews it with no project,
-  `refine_plan(file, note, model)` answers a customer's note by what the round changed and reviews it again, and
+  `refine_plan(plan, note, model)` answers a customer's note by what the round changed and reviews it again, and
   `auto_decompose(plan=file)` is the go, which builds the project from the file as it stands or refuses it naming why,
   never repaired by a model behind the customer's back. A refine round sent a refused file repairs those refusals first.
   The format is `gfso-plan/1`, a `.gfso` TOML file whose form is checked at every level (`docs/PLAN_FORMAT.md`). The plan's
@@ -22,14 +22,14 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   the system's.
 - Each session's work holds a disk bound of its own, over what it adds to the directories its containers write and to their
   layers: `GFSO_NODE_DISK` (20 GiB) and `GFSO_NODE_FILES` (1,000,000). Past it its containers are removed and its
-  directories kept; a judge's build so ended fails its delivery with the bound named; what the system itself writes there
+  directories kept; a validation's build so ended fails its delivery with the bound named; what the system itself writes there
   counts for no session. An executor's or a consent session that left no answer while its place's own directories hold
   more than the bound parks the node at once with that cause, spending no retry: the page's step offers cancelling it, the
   machine issuer is told that is its one move, and where only the user can lift it (an AUTO root, a part of a plan they
   handed in) the run stops saying so. `SECURITY.md` says what this does not hold.
 - For developers: the default test suite runs no container and takes about two minutes, its temporary files in `.tmp` at
-  the main tree's top. Live tests run only with `--live`, one at a time, or `--live-owed <ref>` for what a change owes by a
-  table of paths, and a real container started outside them fails its test. CI runs them in Docker on the product's own
+  the main tree's top. Live tests run only with `--live`, or `--live-group <name>` for what a change is about, one at a time,
+  and a real container started outside them fails its test. CI runs them in Docker on the product's own
   image, red when none passes.
 - Any model provider: a model spec `provider/model` per role (`ollama/…`, `deepseek/…`, `openrouter/…` and other
   OpenAI-compatible presets, a user's own by `GFSO_PROVIDER_<NAME>_*`, a third party's class by the entry-point group
@@ -91,7 +91,8 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   twice over.
 - The log says who decided, apart from who signed: `by_system` on an audit row marks a move the system made in a role's
   name, as an answer to a dispute at a root under `auto`, signed by the goal's issuer as the seam requires. A customer's go
-  and a party's own signal carry no mark; a row written before the mark reads false.
+  and a party's own signal carry no mark; a row written before the mark reads false. The page names the system as the
+  mover of such a row, its signer only the name it signs under.
 - The attached agent's whole path stands in the first 4000 characters of its instructions, where a client cuts them.
 - The plan gate's re-check asks whether a pinned check probes what an obligation's own words name; another disguise of what
   a check refuses is that check's residue. A leaf's obligations are said once and not repaired at authoring, and a place
@@ -177,6 +178,8 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 - With no mode set the system answers disputes at a seam only; a dispute a node's own issuer raises is its holder's.
 
 ### Fixed
+- `gfso setup` brings a registration naming another installation to this one, and says where a directory's own entry goes
+  before it; `gfso doctor` reads the door by its name and its connection, not by the letters `gfso` anywhere in the list.
 - A verb longer than three minutes is answered over MCP: the bridge took a silence for a dead session, told the agent the
   server had restarted, and the agent's resend paid for the whole plan again. It now asks its session; a call waits under the
   client's own ceiling and is answered past it, and the same `plan` asked again joins the one under way or reads the one written.
@@ -230,7 +233,7 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 - An executor's dispute after a rework that changed its place is ruled in a copy of the place as it stands, instead of
   waiting for a copy of the delivered commit that could never be made.
 - A standing finding whose command enters the delivery (`cd <place> && …`) or reads `/dev/stdin` is re-run over the
-  judge's copy, not shown as gone or raw; an issuer shown standing findings is told where their files are laid.
+  validation's copy, not shown as gone or raw; an issuer shown standing findings is told where their files are laid.
 - A pinned input is laid down byte for byte; a multi-line expectation reads as one line, joined by ⏎.
 - A chat-wire provider keeps a conversation the next round can send, learns a local model's window once loaded, reads
   llama.cpp's overflow as one and never takes a `<think>` draft for the answer.
@@ -246,7 +249,7 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   only with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`; without it the project stops with the cause named. Work
   the person does in their own chat runs as before. A container runs none over a base that is no git repository with a
   commit, which has no places of its own.
-- In a container execution nothing of the host disk is mounted: places, judges' copies, temps and the sessions' CLI state
+- In a container execution nothing of the host disk is mounted: places, validations' copies, temps and the sessions' CLI state
   live in per-project Docker volumes, the base is the user's HEAD imported into them, and the root's accepted result
   lands as the branch `gfso/<project>/accepted`, a whole verified commit, the user's working tree untouched. The answer
   that starts the work says what of the repository the copy lacks; Git LFS files travel as content and land as pointers.
@@ -255,19 +258,19 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
   write; the system's checks and git run in their own copy's or place's container. Containers are named role first.
 - A provider's credential is held by the project's model door, never by a session's process; the door reads no request
   body before its key or past the provider's cap.
-- A judge checks out the commit the delivery recorded from objects hashed again on its own side, every other input laid
+- A validation checks out the commit the delivery recorded from objects hashed again on its own side, every other input laid
   from the system's record; Git LFS files are judged on their content; a copy of a place not yet delivered has a git of
   its own. Every program the system hands Python by `-c` in an agent's tree runs with `-I`.
 - A place's model client runs in a container apart from the one the system's commands over the place run in: only the
   client's mounts the place's CLI state, it has no git, each call loads no setting source, and its file tools may not write
-  under its home. A judge's copy is built in a container mounting no client's state, ended before the judge's client starts
+  under its home. A validation's copy is built in a container mounting no client's state, ended before the validation's client starts
   in a fresh one.
-- What a judge compares a delivery with is the system's own and read-only, and each exact check starts in a container of
+- What a validation compares a delivery with is the system's own and read-only, and each exact check starts in a container of
   its own over its inputs laid afresh.
 - The action record is out of a command's reach: every call the system makes into a container resolves through the system's
   directories first and an absolute shell. Each command's end line names what changed in the place while it ran, by a time
   no process of the agent sets.
-- Under every switch nothing reaches into a session's or a judge's container; on its own network a session opens only TCP
+- Under every switch nothing reaches into a session's or a validation's container; on its own network a session opens only TCP
   to its project's door and gateway, and `open` goes outward only, private, tailnet and link-local addresses and IPv6 shut.
 - The model door reads each body as one strict JSON object, refuses any other, sends on its own re-serialization, and
   passes no file nor container the account holds.
@@ -276,7 +279,7 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 - Every container is bounded in memory and processes (4 GiB, 4096 by default; `GFSO_CONTAINER_MEMORY`,
   `GFSO_CONTAINER_PIDS`), and all of the system's containers on a Docker together in three quarters of its memory. Past 85%
   of that ceiling a running server ends the containers of the one node's work furthest over its share, before the kernel
-  chooses; a judge's copy, build or exact check so ended is no verdict on its delivery.
+  chooses; a validation's copy, build or exact check so ended is no verdict on its delivery.
 - What the server reads of a place as a file or a directory it reads to 64 MiB, past that not read.
 - The reader of the places a plan is made from works beside the base with a model-client state of its own.
 - The server answers only its own host names (`gfso serve --host`, `GFSO_ALLOWED_HOSTS`), refuses cross-site writes,
@@ -286,6 +289,11 @@ stated boundaries — `docs/EVIDENCE_LOG.md` §13, and §3/§9/§11 for the earl
 - The page runs no script but its own and its pinned library's, by a Content-Security-Policy under its escaping. A Linux
   Docker Engine whose internal network leaks name lookups (CVE-2024-29018) is refused at setup and at every start, as a
   Docker Desktop below its floor is.
+- Where each session reached by network is on a record the system writes, the same under every network switch
+  (`gfso network <project>`): a listener of the system's own, sharing nothing with a session, writes each container's
+  destinations and the names it asked, and a container's code starts only once it stands. A flood from one container costs
+  that container's lines and says so under its name. `GFSO_NETWORK_RECORD=off` runs without it; `SECURITY.md` says what it
+  does not see.
 
 ## [0.2.0] — 2026-10-15
 

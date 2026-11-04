@@ -19,6 +19,7 @@ iteration count of the search↔audit refinement (the depth-of-working-through d
 """
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -339,7 +340,16 @@ def _audit_fold(llm: LLMProviderPort, request: str, state_md: str, holes: str,
             "an empty patch.") + executor_line(executor)
     if fast:
         user += "\n\n" + AUDIT_FAST
-    return llm.complete_structured(AUDIT_PROMPT, user, FOLD_SCHEMA)
+    patch = llm.complete_structured(AUDIT_PROMPT, user, FOLD_SCHEMA)
+    # …THE SCHEMA'S TOP KEYS HOLD ON AN ANSWER WHOSE PARTS NAME NOTHING: no repair round can address a part with no id, and
+    # the plan was refused minutes later as "left None, None" (fresh install, 2 of 9 plans, 2026-11-04)
+    if nameless := [x for x in patch.get("add_subtasks") or () if not (isinstance(x, dict) and x.get("id"))]:
+        keys = sorted(nameless[0]) if isinstance(nameless[0], dict) else type(nameless[0]).__name__
+        logging.getLogger(__name__).warning(f"fold: {len(nameless)} part(s) with no id, the first carrying {keys}: asked again")
+        patch = llm.complete_structured(AUDIT_PROMPT, user + f"\n\nYour last answer gave {len(nameless)} entries of "
+                                        "`add_subtasks` with no `id`. Each entry is a whole part: id, name, description, "
+                                        "criteria; root criteria go in `add_root_criteria`.", FOLD_SCHEMA)
+    return patch
 
 
 def _apply_removals(s: dict, patch: dict, ops: list) -> None:

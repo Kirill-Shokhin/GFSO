@@ -69,7 +69,7 @@ Guards are simple predicates on graph state, read off `GuardContext` (`iteration
                                                  # REVISION (§12.3 Inv-1): re-ASSIGN same id, no cascade; excluded: IDLE, CANCELLING, terminals
 (DONE|ABANDONED, ASSIGN,
    ¬consumed ∧ reopens<max)      → OFFERED        [MutateGraph(REOPEN), MutateGraph, RunChecks, Dispatch]
-                                                 # R′ REOPEN (§12.10): a gated re-ASSIGN, NOT a 13th signal — see below
+                                                 # R′ REOPEN (§12.14): a gated re-ASSIGN, NOT a 13th signal — see below
 ```
 
 Terminal states: DONE (with reason: pass/auto — acceptance only, §8.3) and ABANDONED (V=⊥). **ESCALATED
@@ -79,7 +79,7 @@ rather than by a clock, and it admits his three answers — re-ASSIGN (raise the
 criteria, one act by Inv-1), CANCEL (close it, cascading the live subtree), and its own timeout, which
 closes it through CANCELLING — silence must close rather than drift toward a pass, and must take
 the live subtree with it, which escalation never touched. **DONE and ABANDONED
-are QUASI-terminal (R′, §12.10):** a re-ASSIGN out of them is admitted under a DOUBLE gate — (i) the
+are QUASI-terminal (R′, §12.14):** a re-ASSIGN out of them is admitted under a DOUBLE gate — (i) the
 finality-gate: the terminal is not CONSUMED, read off the log from the moment it settled and, once
 logged, standing (§12.14) — the parent has not DELIVERed since (a later FAIL does not give the child back),
 no Dep-consumer has stood in work on the result since, no re-admission since has given a criterion it is
@@ -231,7 +231,7 @@ class Dispatch:
 
 ```
 
-`EmitSignal` stays in the `Effect` union but no FSM row emits one: escalation is reached by a repeated timeout, and the one signal the system generates for itself — the cascade CANCEL — is put on the queue by the loop (below), not returned as an effect.
+`EmitSignal` stays in the `Effect` union but no FSM row emits one: escalation is reached by a timeout, and the one signal the system generates for itself — the cascade CANCEL — is put on the queue by the loop (below), not returned as an effect.
 
 ## Runtime: Event Loop
 
@@ -285,7 +285,7 @@ def timeout_monitor(graph, queue):
 **Properties of the loop:**
 - `graph.apply()` returns affected child task_ids, not signals; the engine loop (`gfso/engine/loop.py`) puts a CANCEL on the queue for each. Signal generation stays out of the graph.
 - `handlers.run_checks()` returns results. Stored in graph for Dispatch payload and metrics.
-- `handlers.recommend()` returns recommendation. Stored in graph for Dispatch payload.
+- `handlers.recommend()` returns recommendation, stored in graph for Dispatch payload; no FSM row emits `Recommend` now.
 - `fsm.transition()` takes guard context as third argument.
 
 ## Module Structure (current layout; the layer rules are ENFORCED by tests/test_layering.py)
@@ -431,7 +431,7 @@ itself, not a pre-contact check level.
 | Prompts | Ours, fixed — our IP | User's, custom |
 | Graph access | Receives hydrated GraphContext | No graph access |
 | Replaceable | No (or at own risk) | Yes, fully pluggable |
-| Effect type | Recommend | Dispatch |
+| Effect type | Recommend (no FSM row emits it now) | Dispatch |
 | Paper section | §17.1 (AI layer) | §10.3 (agent-agnostic role filler) |
 
 Both use LLMProviderPort (in core/types/ports.py). Different roles, different locations, shared provider.
@@ -507,8 +507,7 @@ project's own setting on `set_mode`.
   first, in the ANSWER states (OFFERED, CHALLENGED, BLOCKED); **T_validate alone**, counted from
   DELIVER, in VALIDATING; the state's own bound only in the PROTOCOL states (CANCELLING,
   ESCALATED). The per-state bounds are protocol parameters — defaults in `config._STATE_BOUND_DEFAULTS`,
-  each overridable by `GFSO_BOUND_<STATE>` — and they are ON, because a bound that can be switched off
-  is not a bound. Every entry into OFFERED carries a live deadline: `GFSO_DEFAULT_DEADLINE_S` (24 h)
+  each overridable by `GFSO_BOUND_<STATE>`, `0` removing one. Every entry into OFFERED carries a live deadline: `GFSO_DEFAULT_DEADLINE_S` (24 h)
   is written into a packet the issuer left undated, inside the parent's own deadline and marked
   `deadline_supplied`, so CHECK-3 does not read the engine's default as the issuer's ordering claim.
   `GFSO_STATE_TIMEOUT` remains as the opt-in age clock over ALL states (0 = off); the clock-binding
@@ -528,7 +527,7 @@ project's own setting on `set_mode`.
 | Remove | Effect on system |
 |---|---|
 | core/handlers/constraint.py | CHECK-7-8 skipped. CHECK-1-6 still work |
-| core/handlers/recommend.py | Recommend becomes no-op. Protocol + graph + checks still work |
+| core/handlers/recommend.py | Nothing changes: no FSM row emits Recommend. Protocol + graph + checks still work |
 | adapters/llm/ | System + Agent LLM degraded to stubs. Everything else works |
 | adapters/agents/human.py | Nothing to hand a node to: dispatch to a person is what this port does (delegation to an LLM executor is `delegate.py`, not an agent adapter) |
 | engine/ | Use core/ as pure library. Call protocol.transition() + mutations.apply() directly |
@@ -567,7 +566,7 @@ Any actor (human via UI, agent via MCP/CLI) mutates the graph through the SAME c
 | add_dependency (declared) | a declared edge record; no signal — with `check`, a re-`ASSIGN` of the **consumer** adding the criterion that reads the producer | Dep is a primitive beside T (§2.7): the edge carries its glue and is no criterion of its consumer; a split's admission writes its declared edges (§15.1) |
 | map_criterion | a re-admission of the parent's split (§11.5), no child signal | binds an existing child to a parent criterion — the mapping is the split's (§2.4); logged as the admission it is |
 | reassign | re-`ASSIGN` with a new executor | Del change per Inv-1 (q_Del) |
-| **reopen** | re-`ASSIGN` out of DONE/ABANDONED → OFFERED | R′ (§12.15): double-gated (finality of consumption ∧ max_reopens); verdict re-earned, never resurrected; consumed terminal = finally locked (recover by re-decomposition) |
+| **reopen** | re-`ASSIGN` out of DONE/ABANDONED → OFFERED | R′ (§12.14): double-gated (finality of consumption ∧ max_reopens); verdict re-earned, never resurrected; consumed terminal = finally locked (recover by re-decomposition) |
 | **abandon** | `CANCEL` → CANCELLING → `CONFIRM_CANCEL` → ABANDONED | two-step handshake (§12.6); **cascades CANCEL to subtree**; never deleted (§17.1) |
 
 **Surface-don't-destroy** (canon §12.6). abandon = `CANCEL` → opens the handshake and cascades the
@@ -637,7 +636,7 @@ method + ONE registry entry → it appears on all three at once, zero per-adapte
 ```
 
 - `runtime.build_engine_from_env` = the shared CORE constructor (one Engine from `GFSO_DB_PATH`).
-  Every setting it reads is owned by `gfso/config.py` — the one module that touches the environment
+  Every setting it reads is owned by `gfso/config.py`, where the engine reads the environment
   (`GFSO_L2_GATE` stays a direct read at its enforcement point, deliberately): the provider, storage and model tiers, paths, and the measured dials — `GFSO_VALIDATION_BATCH`
   (how many probes one validator run owes at most — pinned, the parts' pinned ones each once, regression lines —
   and so how much of a validation runs in parallel; a criterion owing more is split between runs and read as their

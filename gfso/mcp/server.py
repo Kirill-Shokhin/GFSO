@@ -157,15 +157,32 @@ def _brief(listing: dict, active: str, keep: int = 12) -> dict:
 def _with_ui_link(name: str, out, project=None):
     """Attach the local UI address to an entry verb's result (dict results only — `project` returns
     markdown and keeps its shape). Best-effort: a link is a convenience, never a reason to fail a
-    call. The UI is tab-per-project (`?project=`), so the link points at the graph just acted on."""
-    if name not in _UI_LINK_VERBS or not isinstance(out, dict) or "ui" in out:
+    call. The UI is tab-per-project (`?project=`), so the link points at the graph just acted on.
+    The go and the end also say what the person is told: left to the instructions read at the start, a fresh client
+    told them neither (run B, 2026-11-04)."""
+    if not isinstance(out, dict):
+        return out
+    if name == "next_steps" and out.get("complete"):
+        out["say"] = ("Report to the person now: the root's verdict (`get_verdict(\"root\")`), the branch "
+                      f"`gfso/{project or '<project>'}/accepted` with their own untouched, {_ui_link(project)}, and the one command "
+                      "that shows the result (`git worktree add`: a checkout refuses over uncommitted files); a next "
+                      "task starts from their HEAD: merge first to build on this.")
+    if name not in _UI_LINK_VERBS or "ui" in out:
         return out
     try:
         out["ui"] = _ui_link(project or out.get("active"))
     # the docstring's contract: a link is a convenience, and the verb's result is already correct
     # without it
     except Exception:
-        pass
+        return out
+    if name == "use_project" and not out.get("mode"):
+        out["say"] = (f"Write {out['ui']} in the chat now, and in a line each: the scheme (`auto`, every role on "
+                      "claude-haiku-5-5: the most tested, and cheap); only what is committed enters, so name what "
+                      f"stays out; their branch is not touched and the result comes as branch "
+                      f"`gfso/{out.get('active') or '<project>'}/accepted`.")
+    if name == "auto_decompose" and out.get("root_id"):
+        out["say"] = (f"Write {out['ui']} in the chat now and tell the person: it runs unattended, they can watch there, "
+                      "you report the end. Then loop `next_steps(wait=600)`.")
     return out
 
 

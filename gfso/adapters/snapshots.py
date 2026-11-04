@@ -62,7 +62,7 @@ class _Place:
 
 #: a judge's copy or build the machine's memory watch ended near the shared ceiling: a neighbour's pressure, no verdict
 #: on the delivery — asked again (`execution.ended_by_watch`)
-WATCHED = "the judge's copy was ended by the machine's memory watch near the shared ceiling, not by the delivery"
+WATCHED = "the validation's copy was ended by the machine's memory watch near the shared ceiling, not by the delivery"
 
 
 class NotTheDelivery(Exception):

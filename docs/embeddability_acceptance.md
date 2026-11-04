@@ -40,7 +40,7 @@ The embedder makes THIS suite green without modifying anything under `gfso/core/
 ## Protocol
 
 1. The suite is IMPLEMENTED: `tests/acceptance_embeddability/` (the host contract lives in its
-   conftest docstring). Without a host it skips with the named reason; against an attempt,
+   conftest docstring). With no `GFSO_EMBED_HOST` it runs the reference host; against an attempt,
    `GFSO_EMBED_HOST=<host.py> pytest tests/acceptance_embeddability` is the verdict.
 2. The embedder (fresh context) writes the host + adapters only from public docs.
 3. Verdict = the suite's exit code. Questions the embedder had to ask are logged as doc-gaps —
@@ -48,7 +48,7 @@ The embedder makes THIS suite green without modifying anything under `gfso/core/
 
 ## The embedder's wiring reference (from the first acceptance run's doc-gap log)
 
-The first fresh-agent run went 6/6 green with zero stuck points — but logged 9 places where
+A fresh agent's run logged 9 places where
 the docs alone were not enough and the library source had to be read. The SCHEMAS are pointed
 at, not duplicated (a copied field list is a mirror that rots); the SEMANTIC rules below were
 genuinely undocumented:
@@ -82,12 +82,12 @@ decomposer's (§9.2), never the parent's packet. A child ASSIGN that no admissio
 gate, so a host does not assemble the act itself.
 
 **Semantic rules a from-scratch host must reproduce:**
-- **Verdict staleness**: the verifier≠executor gate compares the recorded exec-verdict's
-  `iteration` against the node's current iteration — a rework stales the verdict; record shape
-  = `{verdict, failed_criteria, validator, iteration, ts}` (see `Engine.record_reviewer_verdict`
+- **Verdict staleness**: the verifier≠executor gate compares the generation the recorded
+  exec-verdict was stamped with, `(iteration, reopens, revisions)`, against the node's current one —
+  a rework, a reopen or a revision stales the verdict (see `Engine.record_reviewer_verdict`
   and `engine/validation.py`).
-- **Timeout dedup**: the trigger fires once per `(task_id, state)` and re-arms when the state
-  changes — that is what makes repeated-timeout → ESCALATED work (see
+- **Timeout dedup**: the trigger fires once per visit of a state, `(task_id, state, state_entered_at)`,
+  a state change restamping the entry; every wait goes to ESCALATED on its first timeout (see
   `engine/loop.py::timeout_monitor`).
 - **Checks refresh on Dep mutations**: RECORD_DEP/ADJUDICATE_DEP must refresh the seam-parents'
   CACHED checks, or a contact-discovered cycle stays recorded-but-invisible in `graph_holes`
@@ -96,7 +96,7 @@ gate, so a host does not assemble the act itself.
 ## Status
 
 - [x] Suite implemented (red against an empty attempt)
-- [x] Fresh-agent run executed (2026-07-12: 6/6 green first pass, 0 stuck points, 0 author questions; 9 doc-gaps logged)
+- [x] Fresh-agent run executed
 - [x] Doc-gaps triaged → the wiring reference above (semantics documented, schemas pointed at)
 - [x] **Checked on every run, not only when a volunteer host exists.** A reference host ships beside
       the suite (`tests/acceptance_embeddability/reference_host.py`) and is its default subject: a

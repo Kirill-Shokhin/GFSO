@@ -78,10 +78,30 @@ def mcp_registered() -> tuple[bool | None, str]:
                              env=_config.child_env(GFSO_NO_RECONCILE="1"))
         if out.returncode != 0:
             return None, f"`claude mcp list` exited {out.returncode}"
-        return ("gfso" in out.stdout), ("registered" if "gfso" in out.stdout else
-                                        "not registered — run `gfso setup`")
+        line = next((l for l in out.stdout.splitlines() if l.startswith("gfso:")), None)
+        if line is None:
+            return False, "not registered — run `gfso setup`"
+        if "Failed to connect" in line:
+            return False, "registered, and it does not start — run `gfso setup`"
+        return True, "registered"
     except Exception as ex:
         return None, f"could not ask the CLI ({type(ex).__name__})"
+
+
+def _door_entry(exe: str) -> tuple[str, str]:
+    """The scope the client reads the door from in this directory and the command it starts; empty where it cannot tell."""
+    try:
+        out = subprocess.run([exe, "mcp", "get", "gfso"], capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=30, env=_config.child_env(GFSO_NO_RECONCILE="1"))
+    # the registration stands either way; this only asks whether it is this installation's
+    except Exception:
+        return "", ""
+    fields = dict(l.strip().split(": ", 1) for l in out.stdout.splitlines() if ": " in l)
+    return fields.get("Scope", ""), fields.get("Command", "")
+
+
+def _same_path(a, b) -> bool:
+    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
 
 
 def _assets_ok() -> tuple[bool, str]:
@@ -349,11 +369,16 @@ def desktop_entry() -> dict:
     not JSON, and the block offered for pasting could not be parsed by the application it was for.
     """
     env = {"GFSO_HOME": str(serverctl.home())}
-    if os.environ.get("GFSO_SHARED_URL"):
+    if url := _door_url():
         # Desktop inherits no shell environment, so an address that is not the default has to be
         # written into the entry or its `gfso connect` would go on talking to :8000.
-        env["GFSO_SHARED_URL"] = os.environ["GFSO_SHARED_URL"]
+        env["GFSO_SHARED_URL"] = url
     return {"command": str(console_script()), "args": ["connect"], "env": env}
+
+
+def _door_url() -> str:
+    """The address a door's entry must name; empty on the default."""
+    return os.environ.get("GFSO_SHARED_URL", "")
 
 
 def console_script() -> Path:
@@ -428,6 +453,46 @@ def install_execution() -> str:
     return f"agent image: {tag}; " + declare_default(tag)
 
 
+def _register_door(exe: str) -> bool:
+    """Register the agent door for this user, naming this installation; whether a new session has it."""
+    # --scope user, deliberately. `claude mcp add` defaults to the project the caller stands
+    # in, and this door is not a property of one repository: registered locally, it is
+    # invisible from every other directory — measured, while a `claude mcp list` run inside
+    # the source tree reported it connected.
+    # ASKED BY ADDING, never by `mcp list`: the list names no scope, so a local entry read as this
+    # one and no user's was added; the add refuses only that scope's own entry, and starts no server.
+    # The ABSOLUTE console script, not the bare name: a user-scoped registration is used
+    # from every directory and from clients that do not share this PATH — `pip install
+    # --user` on Windows puts Scripts\ off PATH entirely, and a venv the user later leaves
+    # takes the name with it. The entry would then name a command that does not resolve,
+    # and the session would simply have no gfso tools, silently.
+    # …a server on another address is told by the entry: a client started without the variable would go to the default
+    url = _door_url()
+    add = [exe, "mcp", "add", "--scope", "user", "gfso", *(["-e", f"GFSO_SHARED_URL={url}"] if url else []), "--",
+           str(console_script()), "connect"]
+    out = subprocess.run(add, capture_output=True, text=True, encoding="utf-8",
+                         errors="replace", timeout=120)
+    door = out.returncode == 0 or "already exists" in out.stdout + out.stderr
+    print("agent door: " + ("registered for your user, so it is there in every directory"
+                            if out.returncode == 0 else
+                            "already registered for your user" if door else
+                            f"could not register ({out.stderr.strip()[:200]}); "
+                            f"run `claude mcp add --scope user gfso -- "
+                            f"{console_script()} connect` yourself"))
+    scope, command = _door_entry(exe) if door else ("", "")
+    if command and not _same_path(command, console_script()):
+        where = scope.split()[0].lower()
+        if where == "user":      # …this command means this installation: a person's check would run on the old one
+            subprocess.run([exe, "mcp", "remove", "gfso", "-s", "user"], capture_output=True, timeout=120)
+            door = subprocess.run(add, capture_output=True, timeout=120).returncode == 0
+            print(f"agent door: it started {command}; " + ("it now starts this installation" if door else
+                  "and could not be changed: run the command above yourself"))
+        else:
+            print(f"agent door: in this directory its own entry goes first and starts {command}, not this "
+                  f"installation: `claude mcp remove gfso -s {where}` to use yours here")
+    return door
+
+
 def setup(desktop: bool = False) -> int:
     """Register the agent door, bring the one server up, open the UI, then report. Idempotent."""
     try:
@@ -445,28 +510,7 @@ def setup(desktop: bool = False) -> int:
         print("Claude Code CLI not found, so the agent door was not registered. After installing it:")
         print(f"  claude mcp add --scope user gfso -- {console_script()} connect")
     else:
-        # --scope user, deliberately. `claude mcp add` defaults to the project the caller stands
-        # in, and this door is not a property of one repository: registered locally, it is
-        # invisible from every other directory — measured, while a `claude mcp list` run inside
-        # the source tree reported it connected.
-        # ASKED BY ADDING, never by `mcp list`: the list names no scope, so a local entry read as this
-        # one and no user's was added; the add refuses only that scope's own entry, and starts no server.
-        # The ABSOLUTE console script, not the bare name: a user-scoped registration is used
-        # from every directory and from clients that do not share this PATH — `pip install
-        # --user` on Windows puts Scripts\ off PATH entirely, and a venv the user later leaves
-        # takes the name with it. The entry would then name a command that does not resolve,
-        # and the session would simply have no gfso tools, silently.
-        out = subprocess.run([exe, "mcp", "add", "--scope", "user", "gfso", "--",
-                              str(console_script()), "connect"],
-                             capture_output=True, text=True, encoding="utf-8",
-                             errors="replace", timeout=120)
-        door = out.returncode == 0 or "already exists" in out.stdout + out.stderr
-        print("agent door: " + ("registered for your user, so it is there in every directory"
-                                if out.returncode == 0 else
-                                "already registered for your user" if door else
-                                f"could not register ({out.stderr.strip()[:200]}); "
-                                f"run `claude mcp add --scope user gfso -- "
-                                f"{console_script()} connect` yourself"))
+        door = _register_door(exe)
 
     # Claude Desktop is a separate application with a configuration file of its own, so it is
     # written ONLY when named: `--desktop`. Otherwise the block is printed and the user decides.
@@ -493,7 +537,10 @@ def setup(desktop: bool = False) -> int:
     print()
     code = doctor()
     if door and code == 0:       # …a client reads its servers at its start: a session already open has no gfso tools
-        print("\nA new Claude Code session has the door; one already open does not. Say the task there.")
+        print("\nWhat it is: a task said in words becomes a plan whose checks are fixed before the work; agents in Docker "
+              "carry it out unattended, someone other than the executor signs each verdict, and the result comes as a "
+              "branch, the person's own untouched. The new session's tools explain the rest."
+              "\nA new Claude Code session has the door; one already open does not. Say the task there.")
     return code
 
 

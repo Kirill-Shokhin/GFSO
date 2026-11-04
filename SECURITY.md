@@ -8,7 +8,7 @@ word, `GFSO_LOCAL_AGENTS=allow`, which puts it on your machine, with none of wha
   every session can read: clean a secret out of the history first. What is uncommitted does not enter, and the project's log says so.
   The root's accepted result comes back as the branch `gfso/<project>/accepted`, your working tree and branches untouched.
 - No agent process holds your provider's credential: one small container does, and it passes the model's messages alone.
-- No session reads another node's files but by the plan's edges, nor reaches the log of signals and verdicts, and no one judges its own
+- No session reads another node's files but by the plan's edges, nor reaches the log of signals and verdicts, and no one validates its own
   delivery: the check is on a copy of the commit delivered, in a container of its own.
 
 The switch is yours, per execution or per project, and the default is `open`:
@@ -19,8 +19,8 @@ The switch is yours, per execution or per project, and the default is `open`:
 
 Under `off` your code still goes to the model's provider, as far as an agent sends it there, on your account. It stays with you only
 where every role, the system's own too (`set_mode(system_model=, planner_model=)`), names a local model. Not promised: a boundary
-against an escape from Docker or its kernel, which every project shares (no VM per task); a check a judge writes itself, which the
-delivered code it runs can reach, where only a pinned one is out of its reach; a model judge's reading, which what it reads can argue with, where only a pinned check decides by itself; anything for what runs on your machine, namely the work your
+against an escape from Docker or its kernel, which every project shares (no VM per task); a check a validation writes itself, which the
+delivered code it runs can reach, where only a pinned one is out of its reach; a model validator's reading, which what it reads can argue with, where only a pinned check decides by itself; anything for what runs on your machine, namely the work your
 own agent does in its chat, the validator of that work, and the reader of a plan's documents. What the agents wrote reaches that
 agent of yours as text, in what a check printed and in a plan's words, past every container: it is told to take these as data, which
 a model can be argued out of, measured on one plain instruction alone (a cheap model followed it in none of six tries, told or not); a result is read before it is run
@@ -65,7 +65,7 @@ a server started without it is restarted). Without that, the first such round st
 the cause named, nothing of the node having run or been consented to, and the project stays
 stopped until the word is given or an execution is declared; a mode that would dispatch such work
 is not set as ready. Work your own agent does in its chat, the validator that
-judges it, and the reader of a plan's documents a goal you hand `auto_decompose` names (read-only tools)
+checks it, and the reader of a plan's documents a goal you hand `auto_decompose` names (read-only tools)
 run on your machine as before: a person asked for them. With the word, dispatched work runs on
 your machine unattended, with what is said below for a session with no execution.
 Docker is part of the installation: `gfso setup` builds the agents' image from the file the package
@@ -77,7 +77,7 @@ its work is set — not where the project already runs in another, its work is d
 server has the word above. `gfso doctor`, `gfso setup` and every container execution hold a Docker Desktop older than 4.44.3 not usable: before it a
 container reached Docker's own API unauthenticated (CVE-2025-9074), and every boundary below stands on Docker
 holding; no container of the system's mounts Docker's socket. What you declare in an execution's `env_file` reaches
-every container of the project, judges' included: only a provider's credential is refused there, by its name. The
+every container of the project, validations' included: only a provider's credential is refused there, by its name. The
 system's own calls take the system's directories first on PATH, so no program a command laid is what they run. A build, a
 check and a chat API provider's command take the image's PATH, a build and a check with what lies under the home last, so no
 program delivered code laid there replaces one a later step of the check runs by name (one a declared image keeps under its
@@ -89,7 +89,7 @@ it. Enhanced Container Isolation is neither required nor checked, and Docker Des
 yours to check. A role registered with an execution (`register_agent(execution=)`,
 declared in `data/executions.json`) runs its project's work in Docker, with the host's network shut,
 and nothing of your disk is mounted into any of its containers:
-- The project's work lives in Docker volumes of its own: the agents' places, the judges' copies, the
+- The project's work lives in Docker volumes of its own: the agents' places, the validations' copies, the
   temps, the system's own copies and every session's model-client state. Your repository enters
   once per root: your own git bundles its committed HEAD, and the project's copy is cloned inside
   with none of your configuration or hooks; what did not come in (uncommitted or untracked files,
@@ -118,7 +118,7 @@ and nothing of your disk is mounted into any of its containers:
   comes by the joins the system makes into its place, by the plan alone: a place starts from where its whole stood
   when the part entered its split, a sibling's work reaching it by a Dep edge, not by the order the parts happened to
   start in. What it reads as the base is a copy holding what was imported (hard links: a file the system writes in place in the base, which git does not, shows there too), never a delivery, whose
-  objects reach a place when it joins there; a project made before this keeps, readable by id alone, what its base already held.
+  objects reach a place when it joins there; a project made before 0.3.0 keeps, readable by id alone, what its base already held.
 - The commands a session's Claude Code client runs (its Bash tool) do not run beside the client. The
   client's shell is one the system lays where no agent process writes, and it sends each command to
   a container of its own beside the session's: the same place mounted, the same network and switch,
@@ -153,9 +153,9 @@ is written under the one that left it. Files a client's own Write and Edit tools
   the container of the place that repository stands in, chosen by the system's own record of the
   place, never by what stands there, which mounts no model client's state: what that repository's configuration
   tells git to run reaches nothing its agent did not already reach. Commits move between repositories as bundles.
-- No one who judges a delivery works in its executor's place: a validation and an issuer's
+- No one who validates a delivery works in its executor's place: a validation and an issuer's
   contact, a root's included, each run in a container of their own copy of it, each batch of a
-  validation in its own, and the place's validation scratch is read-only to its executor. A judge's
+  validation in its own, and the place's validation scratch is read-only to its executor. A validation's
   container mounts exactly three directories: its own round or batch, writable, holding its copy;
   a temp of its own; and, read-only, the directory the system laid for it from its record beside
   that round or batch. Nothing else — not the base, not its node's temp, not the place, not another
@@ -178,10 +178,10 @@ is written under the one that left it. Files a client's own Write and Edit tools
     system, by their sha256, as the finding is filed. A later round's re-run lays them from that record
     into its read-only directory, and the command it is shown copies them into a fresh directory of
     its batch before it runs.
-  - A pinned probe's inputs are laid from the contract into the judge's own batch, as the system's
+  - A pinned probe's inputs are laid from the contract into the validation's own batch, as the system's
     own and read-only: the code run beside them may add files there, never change, move or remove a
-    pinned one, nor any directory above them up to the root the judge's container writes. A probe
-    that edits an input in place fails; it edits a copy it made (none of 4,987 recorded judges'
+    pinned one, nor any directory above them up to the root the validation's container writes. A probe
+    that edits an input in place fails; it edits a copy it made (none of 4,987 recorded validations'
     commands did otherwise). The system's own exact checks each run in a container started anew —
     every process and file an earlier one left gone with it — over a copy of the built delivery of
     their own and their inputs laid afresh in a directory no earlier check or build could know the
@@ -189,24 +189,24 @@ is written under the one that left it. Files a client's own Write and Edit tools
     inputs each run. A check whose copy the built delivery makes impossible (a path past the
     system's limit) FAILs the delivery with that cause, as a checkout it makes impossible does; the
     copies' making and removal are not counted against the observation's time. A check that does not
-    finish within its own bound is not observed, the judge's own reading deciding it.
+    finish within its own bound is not observed, the validation's own reading deciding it.
   A copy the delivery itself makes impossible — an object missing or rewritten, a commit not carrying
-  the recorded tree, a nested repository or submodule — is not judged: the delivery FAILs with that
+  the recorded tree, a nested repository or submodule — is not validated: the delivery FAILs with that
   cause, which the executor's next packet states, and nothing of it stands for later rounds; an
   issuer asked about it is told the cause and rules on it. A copy that fails for any other cause (a
-  Docker error, a timeout, a full disk) gives no verdict, and the judge is asked again. A delivery
+  Docker error, a timeout, a full disk) gives no verdict, and the validation is asked again. A delivery
   holding a nested repository or a submodule is refused when it is delivered, with what lifts it.
   An issuer's contact, whatever it asks, rules on the same checkout of the recorded commit.
   A standing finding whose file the record could not keep (not there when it was filed, or past the
-  record's size limit) is shown to the judge, not demanded.
-- A judge's container ends when its run ends, with every process the run left behind; a node's
+  record's size limit) is shown to the validator, not demanded.
+- A validation's container ends when its run ends, with every process the run left behind; a node's
   place, client and commands containers end once it passed and joined, or was cancelled.
 - Every container the system makes holds at most 4 GiB of memory, with no swap past it, and 4096 processes
   (`GFSO_CONTAINER_MEMORY`, `GFSO_CONTAINER_PIDS`; the door and the gateway hold 256 MiB and 256). Past its memory
   the kernel ends the container's largest process: a runaway that is one program fails alone, exit 137, as its own
   failure, and the session or check it ran in goes on; one made of many smaller processes (a parallel build) can make
   the session's own model client the largest, and that session then ends with no answer and is asked again. Past its
-  processes a new one is refused until some end. Nothing else runs in a judge's copy while it is made and its files
+  processes a new one is refused until some end. Nothing else runs in a validation's copy while it is made and its files
   checked, so a copy whose reading its bound ended is the delivery's FAIL, the bound named as the cause. A build that
   takes the Git LFS objects its checkout wrote as content fails the delivery the same way: which they were is read
   before any build runs. The copy writes files a chunk at a time, save a Git LFS file at its checkout, which git reads
@@ -223,7 +223,7 @@ is written under the one that left it. Files a client's own Write and Edit tools
   hidden in a memfd is ended and its neighbour left running (measured). The price: an honest work over its share
   while the rest stand near the ceiling is ended too, though the sum might never have reached it. Past the ceiling itself, for a runaway faster
   than two seconds or with no server watching, the kernel ends the largest process among all of them, which can be an
-  honest one; that session then ends with no answer and is asked again. A judge's copy or build the watch ended is no
+  honest one; that session then ends with no answer and is asked again. A validation's copy or build the watch ended is no
   verdict on its delivery and is made again; one the kernel ended at the copy's own bound or at the ceiling reads as
   ended by its own bound, and its delivery FAILs with that cause. The limit is written at a
   start, and again at a later one past five minutes, by a container of the system's own that runs no agent's code: a
@@ -233,9 +233,9 @@ is written under the one that left it. Files a client's own Write and Edit tools
   anew with no limit) the sum stands unbounded, and each failed write is said in the server's log. It needs Docker's
   cgroups as cgroupfs v2 (Docker Desktop's); under a systemd cgroup driver no group is used, the log says so, and each
   container is bounded alone.
-- What the delivery needs built is built in that copy, in the judge's container under its network
+- What the delivery needs built is built in that copy, in the validation's container under its network
   switch, before any check: the command the delivery declares (`build`), else `make` where the
-  delivered tree has a Makefile at its root, else nothing — the delivered code, run by the judge's
+  delivered tree has a Makefile at its root, else nothing — the delivered code, run by the validation's
   side, with a bounded time, in the batch's own container, which mounts no model client's state. Every process the build leaves running ends with it, before any check,
   and a delivered file it changed is put back as delivered; what it adds beside them stays. A build
   that fails is the delivery's FAIL, with its output, and nothing of it stands for later rounds:
@@ -251,19 +251,19 @@ What one session can still reach:
 - A delivery with no recorded commit — a project dir that is no git repository, a DELIVER sent by an
   agent through the door rather than by the system's executor — is copied as it stands, ignored files
   and builds included, and nothing is built.
-- Disk has no quota on Docker Desktop: a place, a judge's copy and a container's own layer stand on
+- Disk has no quota on Docker Desktop: a place, a validation's copy and a container's own layer stand on
   Docker's disk, shared by every project. Each session's work — a node's executor's, and each round
-  or batch of its judges and checks apart — has a bound of its own instead: what it adds, over every
+  or batch of its validations and checks apart — has a bound of its own instead: what it adds, over every
   directory its containers mount writable (its place, its round, its temp, its CLI state) and their
   own layers (bytes, and the paths a layer changed), `GFSO_NODE_DISK` (default 20 GiB) and
   `GFSO_NODE_FILES` (default 1,000,000). It counts from where the system left each directory when it
   made it and from nothing for a container made since; what the system itself writes there — a
   commit, a child's work carried into the base and the bundle that carries it, a join into a parent's
-  place, a judge's copy, a check's copy and inputs, their removal — is no node's: the directory is
+  place, a validation's copy, a check's copy and inputs, their removal — is no node's: the directory is
   measured just before and after each such write and the difference taken out, and a session is
   never ended while the system writes into one of its directories. Every 10 seconds the server reads its own
   installation's sessions; one past its bound has its containers removed, their layers with them,
-  its directories kept, and the server's log says so; a judge's build so ended FAILs the delivery,
+  its directories kept, and the server's log says so; a validation's build so ended FAILs the delivery,
   the bound named. What a place's directories hold stays charged, so an executor whose place stays
   past its bound parks its node at once, the cause said to its issuer: every later session there
   would be ended again, and what lifts it is cancelling the node or a server restart, which counts
@@ -292,15 +292,15 @@ What one session can still reach:
   a pipe was not measured). A command cannot read the client's task-output files nor its
   model-client state; its Read tool can. A working directory a command leaves outside the place does
   not carry to the next command.
-- A judge runs the delivered code in its own container: while its run lasts, that code can rewrite
-  what the judge itself writes in its batch — the build included — and what the judge's later commands
-  load (its shell's setup, its home), so a check the judge writes and runs itself is in the
+- A validation runs the delivered code in its own container: while its run lasts, that code can rewrite
+  what the validation itself writes in its batch — the build included — and what the validation's later commands
+  load (its shell's setup, its home), so a check the validation writes and runs itself is in the
   code's reach; a check that must be trusted is pinned, and the system runs it in a container of its
   own on a fresh copy. It can also add files beside a pinned probe's
-  inputs that a later step of the same command, or a later command of the judge, reads where it
+  inputs that a later step of the same command, or a later command of the validation, reads where it
   lists or searches that directory (a `GNUmakefile` beside a pinned `Makefile`), and a finding's files
   once the re-run has copied them out of the read-only directory and before it reads them. A file the
-  delivered code rewrote in the judge's batch before its run ended is recorded as it then stood when
+  delivered code rewrote in the validation's batch before its run ended is recorded as it then stood when
   a finding over it is filed.
 - A finding filed before the system recorded probe files has its files recorded at its first re-run,
   from its round as it stands then; one whose round is already gone is shown, not demanded.
@@ -309,7 +309,7 @@ Under a container execution a node performed in your own chat (`perform="in_chat
 work stands on your disk, where no container reads it.
 
 Without an execution, and with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`, sessions run as you, on your machine, with nothing between them and the rest
-of it: a judge's copy is still the recorded commit where a scratch for it can be made, but nothing
+of it: a validation's copy is still the recorded commit where a scratch for it can be made, but nothing
 is read-only to it, no container ends with its run, and a validation with no scratch runs in the
 place itself.
 
@@ -328,11 +328,11 @@ project has work in it, only with your own words asking for the change):
   lookups, CVE-2024-29018, is refused at setup and at every start, as a Docker Desktop below its floor is): the container stands on an internal Docker network of its own with no route out, and none of its agent's processes holds a
   capability to make one. Each closed project takes one of Docker's address pools; past their
   number a start fails.
-- Under every switch nothing reaches INTO a session's or a judge's container, and nothing passes
+- Under every switch nothing reaches INTO a session's or a validation's container, and nothing passes
   directly between two of them (under `open` two may still relay through a server on the internet): before any call, root there admits only its own loopback and the answers to
   connections it opened, and on its own network it opens nothing but TCP to its project's door and
   gateway, from a port the kernel picks — two containers each sending to the other were each other's
-  «answers» under the first rule alone. So no node's session reaches what another node's judge runs
+  «answers» under the first rule alone. So no node's session reaches what another node's validation runs
   from a delivery, nor any other node's session.
 - `allowlist`, a custom mode beside the two above (with the internet, or without it), kept minimal, adds one gateway container, the only way out. It opens a connection only to a host
   you named, on 443, when the TLS handshake names that host; what the session then sends inside

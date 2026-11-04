@@ -527,7 +527,7 @@ Each chain names its view, its nodes and where the canon states it; the claims a
 - **The mirrors** (View 4): projections of the canon; the code's names, `architecture.md`.
 - **E2** (View 3): the experiment in `EVIDENCE_LOG`; the generation method §19.3; the value's open measurement §20.10.
 
-## Edge ledger (the grounding — for the critic)
+## Edge ledger (the grounding)
 
 > The obvious spine edges (A1→T, JS→T1, FM-i→BASIS etc.) are omitted — they are Ch. 1–8 verbatim.
 > Below: the nontrivial / added edges, each with its § and the claim it rests on, named or quoted.

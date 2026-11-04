@@ -274,8 +274,11 @@ def pytest_sessionstart(session):
         if run != root and _dead(run / OWNER):
             shutil.rmtree(run, ignore_errors=True)
     for left in _TMP.iterdir():       # …what tests made and left beside it, a day on: no run lasts that long
-        if left.name != root.parent.name and left != LIVE_LOCK and not left.name.startswith("gfso-suite-") \
-                and time.time() - left.stat().st_mtime > 86400:
+        try:
+            old = time.time() - left.stat().st_mtime > 86400
+        except FileNotFoundError:     # a neighbour's running suite removed its own under this walk
+            continue
+        if old and left.name != root.parent.name and left != LIVE_LOCK and not left.name.startswith("gfso-suite-"):
             shutil.rmtree(left, ignore_errors=True) if left.is_dir() else left.unlink(missing_ok=True)
 
 

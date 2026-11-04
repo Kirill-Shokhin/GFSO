@@ -166,7 +166,7 @@ BASE = {
     # including `APPDATA`, which is the OS's variable and not this product's configuration.
     # 6 (2026-10-30, S6): `shell.client` forwards the environment its CLI gave it to where the command runs — a
     # program of its own inside a container, which no `gfso.config` reaches; what it reads is the CLI's, not a setting
-    "C5_env_read_outside_config": 6,     # floor 1: GFSO_L2_GATE at its enforcement point
+    "C5_env_read_outside_config": 5,     # floor 1: GFSO_L2_GATE at its enforcement point
                                          # (S4, 2026-08-22: provider/billing/storage/llm/model,
                                          #  the runtime panel and the roster path have owners)
 }

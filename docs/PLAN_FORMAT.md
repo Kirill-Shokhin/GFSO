@@ -10,9 +10,9 @@ The file is TOML (`gfso/decompose/artifact.py`). The module is the format's whol
 notes, executor)` writes it, `parse(text)` reads it back, and the contract is `parse(render(x)) == x`. A hand-edited file
 is read by the same `parse`, which first checks its form (`form`, below).
 
-The verbs: `plan(request, model)` authors and reviews a file with no project (`planning.author`); `refine_plan(file,
+The verbs: `plan(request, model)` authors and reviews a file with no project (`planning.author`); `refine_plan(plan,
 note, model)` answers a note (`planning.refine`); `auto_decompose(plan=file)` is the go (`tools_llm.auto_decompose`, which
-reads the file with `tools_llm._the_go`). All three take a path or the text.
+reads the file with `tools_llm._the_go`). `refine_plan` and the go take a path or the text.
 
 ## What the plan is, and what is not the plan
 

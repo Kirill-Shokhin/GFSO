@@ -100,15 +100,18 @@ def test_setup_refuses_a_foreign_holder_instead_of_waiting_it_out(monkeypatch, c
 NEW_SESSION = "A new Claude Code session has the door"
 
 
-def _setup_with(monkeypatch, capsys, exe="claude", add=(0, "")) -> tuple[str, list]:
+def _setup_with(monkeypatch, capsys, exe="claude", add=(0, ""), get="") -> tuple[str, list]:
     """What `setup` prints, and the calls it made of a fake CLI whose `mcp list` shows `gfso` — as it does inside a project
-    holding a local-scope entry, the list naming no scope — and whose `mcp add` ends as `add` says."""
+    holding a local-scope entry, the list naming no scope — whose `mcp add` ends as `add` says until an entry is removed,
+    and whose `mcp get` prints `get`."""
     calls = []
 
     def run(argv, **kw):
         calls.append(argv)
-        rc, err = add if argv[1:3] == ["mcp", "add"] else (0, "")
-        return type("R", (), {"returncode": rc, "stdout": "gfso: gfso connect - connected", "stderr": err})
+        removed = any(c[1:3] == ["mcp", "remove"] for c in calls)
+        rc, err = add if argv[1:3] == ["mcp", "add"] and not removed else (0, "")
+        out = get if argv[1:3] == ["mcp", "get"] else "gfso: gfso connect - connected"
+        return type("R", (), {"returncode": rc, "stdout": out, "stderr": err})
 
     monkeypatch.setattr(D.shutil, "which", lambda name: exe)
     monkeypatch.setattr(D.subprocess, "run", run)
@@ -144,6 +147,55 @@ def test_a_users_entry_already_there_is_said_as_that(monkeypatch, capsys):
 def test_no_door_is_promised_where_none_was_registered(monkeypatch, capsys, exe, add):
     out, _ = _setup_with(monkeypatch, capsys, exe, add)
     assert NEW_SESSION not in out, out
+
+
+EXISTS = (1, "MCP server gfso already exists in user config")
+
+
+def _entry(scope, command):
+    return f"gfso:\n  Scope: {scope}\n  Status: x\n  Type: stdio\n  Command: {command}\n  Args: connect\n"
+
+
+def test_a_users_entry_naming_another_installation_comes_to_this_one(monkeypatch, capsys):
+    """`already exists` read as the door, while the entry started a removed venv or the developer's server: a person's
+    "clean install" then ran on what it was meant to replace."""
+    out, calls = _setup_with(monkeypatch, capsys, add=EXISTS, get=_entry("User config (all projects)", "C:/old/gfso.exe"))
+    assert ["claude", "mcp", "remove", "gfso", "-s", "user"] in calls, calls
+    added = [c for c in calls if c[1:3] == ["mcp", "add"]]
+    assert len(added) == 2 and added[-1][-2:] == [str(D.console_script()), "connect"], calls
+    assert "C:/old/gfso.exe" in out and NEW_SESSION in out, out
+
+
+def test_a_server_on_another_address_is_named_in_the_entry(monkeypatch, capsys):
+    """A client started without the variable went to the default port, past the server set up here."""
+    monkeypatch.setenv("GFSO_SHARED_URL", "http://127.0.0.1:18000/mcp")
+    _, calls = _setup_with(monkeypatch, capsys)
+    add = next(c for c in calls if c[1:3] == ["mcp", "add"])
+    assert add[add.index("-e") + 1] == "GFSO_SHARED_URL=http://127.0.0.1:18000/mcp" and add.index("-e") > add.index("gfso")
+
+
+def test_a_users_entry_naming_this_installation_is_left_alone(monkeypatch, capsys):
+    """An entry may carry the person's own environment: only one that starts something else is replaced."""
+    _, calls = _setup_with(monkeypatch, capsys, add=EXISTS, get=_entry("User config (all projects)", D.console_script()))
+    assert not any(c[1:3] == ["mcp", "remove"] for c in calls), calls
+
+
+def test_a_directorys_own_entry_is_said_not_removed(monkeypatch, capsys):
+    """Here it goes before the user's, and it is the directory's, not this command's, to drop."""
+    out, calls = _setup_with(monkeypatch, capsys, get=_entry("Local config (private to you in this project)", "C:/old/gfso.exe"))
+    assert not any(c[1:3] == ["mcp", "remove"] for c in calls), calls
+    assert "claude mcp remove gfso -s local" in out and NEW_SESSION in out, out
+
+
+@pytest.mark.parametrize("listing, expected", [
+    ("my-gfso-tools: python -c pass - ✓ Connected", False),
+    ("gfso: /gone/gfso.exe connect - ✘ Failed to connect", False),
+    ("other: gfso connect - ✓ Connected\ngfso: gfso.exe connect - ✓ Connected", True),
+])
+def test_the_doctor_reads_the_door_by_its_name_and_its_connection(monkeypatch, listing, expected):
+    monkeypatch.setattr(D.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(D.subprocess, "run", lambda argv, **kw: type("R", (), {"returncode": 0, "stdout": listing}))
+    assert D.mcp_registered()[0] is expected
 
 
 def test_a_database_from_a_newer_gfso_is_refused_by_name(tmp_path):

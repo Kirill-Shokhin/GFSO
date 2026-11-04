@@ -389,16 +389,19 @@ class NodeSteps:
             # it was — the ownerless gap this whole revision exists against, one state over.
             cand = (2, t, Action.RESOLVE,
                     f"'{t.id}' ({nm}) is CHALLENGED — its executor disputes the contract: "
-                    f"\"{(self.engine.challenge_reason(t.id) or '')[:400]}\". This is YOURS and nothing "
-                    f"moves until you close it: ACCEPT_CHALLENGE with the new spec if the dispute is "
-                    f"right (the node returns to OFFERED and its executor consents afresh), or "
-                    f"REJECT_CHALLENGE with the justification if the contract stands."
-                    # …AND AT AN AUTO ROOT, A RULING ON A FINDING IS THE USER'S ALONE: the system never makes it
-                    + (f" | THE USER'S QUESTION: it asks to rule {', '.join(_asked)} outside the user's goal, and "
-                       f"under AUTO the system never rules on it — ask the user, and send their answer: "
+                    f"\"{(self.engine.challenge_reason(t.id) or '')[:400]}\". "
+                    # …AND AT AN AUTO ROOT THE SYSTEM ANSWERS THE DISPUTE, only a ruling on a finding is the user's
+                    # (`Engine.users_dispute`): told "nothing moves until you close it", a customer stopped the whole
+                    # run to ask the person what the system closed a minute later (fresh install, run B, 2026-11-04)
+                    + (f"The system answers this dispute by itself and the work goes on: keep waiting. | THE USER'S "
+                       f"QUESTION, optional: it asks to rule {', '.join(_asked)} outside the user's goal, which the "
+                       f"system never rules: tell the person in a line. Only if they rule, send their answer: "
                        f"ACCEPT_CHALLENGE with `retire_findings` naming what they rule out, or REJECT_CHALLENGE "
-                       f"with why the goal asks for it. Unanswered, the clock escalates it."
-                       if (_asked := self.engine.users_dispute(t.id)) else ""))
+                       f"with why the goal asks for it."
+                       if (_asked := self.engine.users_dispute(t.id)) else
+                       f"This is YOURS and nothing moves until you close it: ACCEPT_CHALLENGE with the new spec if "
+                       f"the dispute is right (the node returns to OFFERED and its executor consents afresh), or "
+                       f"REJECT_CHALLENGE with the justification if the contract stands."))
         elif t.state == State.EXECUTING and kids and all(_passed(k) for k in kids):
             cand = self._aggregate_or_repair(t, nm, crits)
         elif t.state == State.CANCELLING:

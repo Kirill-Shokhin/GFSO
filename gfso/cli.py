@@ -200,7 +200,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_status_parser(sub)
     _add_projects_parser(sub)
 
-    logp = sub.add_parser("log", help="The observation field in the terminal — same persisted lines "
+    logp = sub.add_parser("log", help="The log in the terminal — same persisted lines "
                                       "the UI panel shows (per project)")
     logp.add_argument("--project", default=None,
                       help="project name (default: the active one); `project=<name>` also accepted, "

@@ -387,21 +387,21 @@ def _scope_node_block(engine, i: int, t, top, inside: frozenset, seen: dict | No
             f"{_observed_section((seen or {}).get(str(t.id), []), '###')}")
 
 
-#: what is said of a node's last delivery — `reports` held it, or handed it in; its judge built it
+#: what is said of a node's last delivery — `reports` held it, or handed it in; its validation built it
 #: (`tools_llm._validation_pass`) — the latest per node deciding
-HELD, DELIVERED, BUILT, UNCOPIED = ("delivery held — ", "executor DELIVERED", "the judge's build — ",
-                                    "the judge's copy — ")
+HELD, DELIVERED, BUILT, UNCOPIED = ("delivery held — ", "executor DELIVERED", "the validation's build — ",
+                                    "the validation's copy — ")
 #: the heading each is said to the executor under; a hand-in is said under none
 _HEADS = {HELD: "Your last delivery was NOT handed in — lift this before you deliver again",
-          BUILT: "How the judge built your last delivery before any check ran — DELIVER's `build` when given (\"\" = "
+          BUILT: "How the validation built your last delivery before any check ran — DELIVER's `build` when given (\"\" = "
                  "nothing to build), else `make` where the tree has a Makefile at its root, else nothing",
-          UNCOPIED: "Your last delivery FAILED unjudged: no copy of the tree DELIVER recorded could be made for its "
+          UNCOPIED: "Your last delivery FAILED unvalidated: no copy of the tree DELIVER recorded could be made for its "
                     "judge, so no check ran — lift this before you deliver again"}
 
 
 def _last_delivery_text(engine, nodes: list) -> str:
     """The last word on the record about the last delivery of each of `nodes`: why it was held (`reports`) — the
-    executor's to lift by its own moves (§12.16 ii) —, or how its judge built it and, where that failed, its output; said
+    executor's to lift by its own moves (§12.16 ii) —, or how its validation built it and, where that failed, its output; said
     to the executor — the issuer reads the same line."""
     last: dict = {}
     for r in engine.pipeline_log():

@@ -32,13 +32,13 @@ You operate a GFSO task graph through the `gfso` tools; the graph is the source 
    register_agent("<project>-exec-2", "llm-executor", model="claude-haiku-5-5", workdir=W)
    register_agent("<project>-val",  "llm-validator", model="claude-haiku-5-5", workdir=W)
    set_mode("auto", system_model="claude-haiku-5-5")  # for `off`: network={"mode": "off"} in this call
-   plan(request)              # minutes; name in `request` the files that define the work
+   plan(request)              # minutes; the person's own words, no requirement of yours; name the files that define the work
    auto_decompose(plan=path)  # the go
    ```
    A call answered with no result: the same `plan` again joins the one under way, at no second price.
 5. **The plan.** You are its customer and answer to the person for the result. READ `path` WHOLE. Give the person two
    lines: what it splits into, what stays open, and any decision it made that they never asked for. Where it should
-   change, `refine_plan(path, note)`, `model=` may name a stronger author. A refused go names why: that is the note.
+   change, `refine_plan(plan=path, note)`, `model=` may name a stronger author. A refused go names why: that is the note.
 6. **The link.** Write `ui` again at the go, clickable. The go's `not_imported` names what the agents' copy lacks: say it.
 7. **The wait and the end.** Say: unattended, watch at the link, I report the end. Loop `next_steps(wait=600)` until
    `complete`, or `stuck` or a stop, which goes to the person with its `directive`; in `auto` you do not intervene. Report

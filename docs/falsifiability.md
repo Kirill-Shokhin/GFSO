@@ -838,7 +838,7 @@ to be strengthened (named premise / built instrument), never softened.
    refinement (does not block E1; logged).
 5. **C-claims awaiting deployment (Prop 3,4,6,7,8; §19.5).** Every conditional guarantee above
    is currently corroborated only mechanically/adjacently; none has a direct deployment test.
-   The premises are all named; the empirical hooks are real but unrun (E3/§20.10; E2 ran — decomposition
+   The premises are all named; the empirical hooks are real and run only in part (E3/§20.10; E2 ran — decomposition
    convergence only, see §11 of the evidence log).
 6. **Decomposition-method quality (§20.2, §4.5).** EXTERNALIZE does **not** guarantee a seam's faithfulness
    (§4.5, §20.2). **E2 closed the generation procedure** (bare-SEARCH ⊕ gfso-AUDIT → `decompose()`,
