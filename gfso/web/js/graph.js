@@ -288,8 +288,8 @@ function placeBadges() {
     }).join('');
 }
 // the run is read after the first drawing: an untouched view is framed again on what asks now
-// «▾ 12 parts» is some 5.6 of its letters' heights wide
-const gluedTo = b => { const w = Math.round(b.x2 - b.x1); return `--w:${w}px;--fs:${Math.min(10, (w - 4) / 5.6).toFixed(1)}px`; };
+// …drawn in the graph's own units and scaled with it, width, type and height alike: a type fitted to the width alone moved apart from the node's (the author, 11-04)
+const gluedTo = b => { const z = cy.zoom(); return `--w:${((b.x2 - b.x1) / z).toFixed(1)}px;--z:${z.toFixed(3)}`; };
 export const annotate = () => { if (cy?.nodes().length && fresh) home(); placeBadges(); };
 // The canvas height the drawn graph needs for its labels to read (zoom ≈ 0.8), framing included.
 export const graphNeeds = () => cy && cy.nodes().length ? cy.elements().boundingBox().h * 0.8 + 70 : 0;

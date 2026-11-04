@@ -521,7 +521,7 @@ body:has(.hd-q.acc) .hd-quiet { display: none; }
 .cy-fold.open::before { content: '\25B4\00A0'; }   /* open: its press folds it back */
 .cy-fold.kf::before { content: none; }
 /* glued to its node at any zoom: its width, a type that fits; what asks by its colour, the counts in its tip (the author, 11-04) */
-.cy-fold:not(.kf) { width: var(--w); min-width: 0; padding: 2px 0 3px; overflow: hidden; font-size: var(--fs, 10px); }
+.cy-fold:not(.kf) { width: var(--w); min-width: 0; padding: 3px 0 4px; overflow: hidden; font-size: 11px; transform: translateX(-50%) scale(var(--z, 1)); transform-origin: top center; }
 .cy-fold .tally { font-size: inherit; }
 .cy-fold.asks, .cy-fold.asks .tally, .cy-fold.asks .tally b { color: var(--acc); border-color: var(--acc); }
 @media (pointer: coarse) { .cy-fold { pointer-events: none; } }
