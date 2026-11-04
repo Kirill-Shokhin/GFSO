@@ -51,6 +51,30 @@ def rows_of(path: Path) -> tuple:
     return rows, bad
 
 
+_HELD: dict = {}
+
+
+def hold_the_home(home, patience: float = 5.0) -> bool:
+    """This process is the one server of `home` until it ends, the OS dropping the lock however it does; False where
+    another holds it past `patience`, the time a server just told to stop takes to go."""
+    f = open(Path(home) / "serve.lock", "a+b")
+    end = time.time() + patience
+    while True:
+        try:
+            if fcntl:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            _HELD[str(home)] = f
+            return True
+        except OSError:
+            if time.time() >= end:
+                f.close()
+                return False
+            time.sleep(0.2)
+
+
 def _lock(f) -> None:
     """Back once this holds `f`'s lock, across processes and across two opens in one."""
     if fcntl:

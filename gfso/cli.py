@@ -21,6 +21,7 @@ from gfso.adapters.children import bind_this_process, end_this_process, open_out
 from gfso.adapters import resources
 from gfso.adapters.execution import component, end_leftovers, export_places, file_record_path, watch_ceiling, watch_disk
 from gfso.adapters.netrecord import record_path, said_apart
+from gfso.adapters.records import hold_the_home
 from gfso.adapters.storage.sqlite import settings_of
 from gfso.adapters.llm import credentials, registry
 from gfso.adapters.llm.conformance import assess, report
@@ -485,8 +486,10 @@ def _serve(args):
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(message)s")
     # …a second `serve` typed by hand ended every project's work before it failed to bind (critic, read), and wrote a gap
     if serverctl.port_open(LOOPBACK if args.host in ("0.0.0.0", "::") else args.host, args.port):
-        sys.exit(f"gfso serve: {args.host}:{args.port} is already served, and its work goes on: `gfso down` first, or "
-                 "choose another `--port`.")
+        sys.exit(f"gfso serve: {args.host}:{args.port} is already served, and its work goes on: `gfso down` first.")
+    # …and on another port it ended this home's containers all the same (`end_leftovers`): one server to a home
+    if not hold_the_home(data_dir()):
+        sys.exit(f"gfso serve: a server of {data_dir()} is running, and its work goes on: `gfso down` first.")
     # The server's descendants — executors, validators, their probes — die with it, however it ends.
     bind_this_process()
     end_leftovers()              # …and the project containers of the server that stood here before

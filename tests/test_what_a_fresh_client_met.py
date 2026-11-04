@@ -1,6 +1,7 @@
 """What real user-agents met on a clean install, kept: each of these stopped one, or told it something untrue."""
 import json
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ from gfso import cli as C
 from gfso import tools as T
 from gfso.adapters import execution as E
 from gfso.adapters.llm.stats import is_limit, is_unauthorized
+from gfso.adapters.records import hold_the_home
 from gfso.decompose.loop import FOLD_SCHEMA, _audit_fold
 from gfso.mcp.server import _with_ui_link
 
@@ -125,6 +127,27 @@ def test_a_docker_slow_to_answer_still_ends_the_host_side_of_a_call(monkeypatch)
     with pytest.raises(subprocess.TimeoutExpired):
         me.end(call)
     assert ended == [call.client]
+
+
+def test_a_home_is_held_by_one_process_until_it_ends(tmp_path):
+    """On another port a second `serve` ended this home's containers all the same. Told apart by a lock the OS drops."""
+    code = "import sys; from gfso.adapters.records import hold_the_home as h; print(h(sys.argv[1]))"
+    assert hold_the_home(tmp_path) is True
+    held = subprocess.run([sys.executable, "-c", code, str(tmp_path)], capture_output=True, text=True, check=True)
+    assert held.stdout.strip() == "False"
+    free = tmp_path / "other"
+    free.mkdir()
+    gone = subprocess.run([sys.executable, "-c", code, str(free)], capture_output=True, text=True, check=True)
+    assert gone.stdout.strip() == "True" and hold_the_home(free) is True, "a dead holder's lock stood"
+
+
+def test_a_second_serve_on_another_port_ends_nothing(monkeypatch):
+    monkeypatch.setattr(C.serverctl, "port_open", lambda host, port: False)
+    monkeypatch.setattr(C, "hold_the_home", lambda home: False)
+    monkeypatch.setattr(C, "end_leftovers", lambda: pytest.fail("the standing server's work was ended"))
+    with pytest.raises(SystemExit) as out:
+        C._serve(SimpleNamespace(log_level="info", host="127.0.0.1", port=18000))
+    assert "is running" in str(out.value) and "--port" not in str(out.value)
 
 
 def test_a_second_serve_ends_nothing_of_the_one_that_stands(monkeypatch):
