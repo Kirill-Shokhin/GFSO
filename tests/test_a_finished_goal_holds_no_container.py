@@ -22,7 +22,9 @@ class _Works(Exception):
 
 def _dispatcher(monkeypatch, states, joining=(), unjoined=(), landed=True):
     e, stops, running = make_engine(), [], []
-    tasks = [N(id=f"t{i}", state=s, iteration=0, reopens=0, revisions=0) for i, s in enumerate(states)]
+    tasks = [N(id=f"t{i}", state=s, iteration=0, reopens=0, revisions=0, done_reason=None, false_positive=False,
+               assignee="agent")
+             for i, s in enumerate(states)]
     monkeypatch.setattr(e, "all_tasks", lambda: tasks)
     monkeypatch.setattr(e.joins, "joining_nodes", lambda: list(joining))
     monkeypatch.setattr(e.joins, "unjoined_roots", lambda: dict.fromkeys(unjoined, "why"))

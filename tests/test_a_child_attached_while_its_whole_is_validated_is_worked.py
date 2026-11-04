@@ -1,20 +1,26 @@
 """A machine signed an AUTO root's PASS while the issuer's answer to a child's `outside` row attached a new part: the gate
 admits that PASS at a seam (§12.8), so the root stood DONE over `root.late`, its places cleared under the part's session,
-no step offered on it, its only settling exit a cancel — then `complete`. A parent is the AND of its active children."""
-import dataclasses
+its only settling exit a cancel — then `complete`, the base without the part. A parent is the AND of its active children:
+the delivery is re-presented while it is VALIDATING, and a DONE whose claim no longer holds earns it again by REOPEN."""
 import json
 import threading
 import time
 from types import SimpleNamespace as N
 
+from gfso import delegate as DG
 from gfso import issuer as I
 from gfso import tools as T
+from gfso.adapters import worktrees as W
+from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import AgentId, Mode, Signal, SignalData, State, TaskId
 from gfso.delegate import Dispatcher, _auto_validate
-from gfso import delegate as DG
+from gfso.inflight import _inflight
 from gfso.roster import AgentRegistry
+from gfso.sessions import run_executor
+from tests import test_one_session_carries_a_scope as S
 from tests.support import REGISTER, criterion, instrument_passes, make_engine
+from tests.test_a_node_works_in_its_own_place import _Executor, _git, _repo
 
 SEEN = "a subquery in NOT IN (SELECT …) gives NULL"
 LATE = {"move": "add_child", "justification": "the goal's SQL has subqueries", "child": {
@@ -31,10 +37,10 @@ class _Validator:
 
     def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
         self.calls.append({"duration_ms": 1, "output_tokens": 1})
+        tid = TaskId(self.tid)
+        crits, parts = self.e.graph.get_task(tid).spec.criteria, self.e.parts_procedure(tid)   # …as its packet read them
         if self.first:
             self.first()
-        tid, parts = TaskId(self.tid), self.e.parts_procedure(TaskId(self.tid))
-        crits = self.e.graph.get_task(tid).spec.criteria
         failed = [c.name for c in crits] if self.verdict == "FAIL" else []
         return "```json\n" + json.dumps({"verdict": self.verdict, "failed_criteria": failed, "outside": self.outside, "per_criterion": [
             {"criterion": c.name, "verdict": self.verdict.lower(), "evidence": "ran it", "behaviours": [f"{c.name} holds"],
@@ -65,9 +71,7 @@ def _until(pred, why, timeout=20.0):
         time.sleep(0.01)
 
 
-def _delivered_whole(tmp_path):
-    """An AUTO root VALIDATING, its one part DONE, the part's verdict carrying an `outside` row: asked of the root's issuer."""
-    e = make_engine(validate_signals=True, state_timeout=0)
+def _goal(e, tmp_path):
     e.start()
     e.project_name = "p"
     agents = AgentRegistry(path=str(tmp_path / "agents.json"))
@@ -80,6 +84,13 @@ def _delivered_whole(tmp_path):
         "description": "a part", "criteria": [criterion("k", "K holds")]}}], accepted_risks=REGISTER)
     e.wait_idle()
     Dispatcher(e, agents, runner=lambda *a: None)._publish_the_roster()      # …whose instrument signs for the issuer
+    return agents
+
+
+def _delivered_whole(tmp_path):
+    """An AUTO root VALIDATING, its one part DONE, the part's verdict carrying an `outside` row: asked of the root's issuer."""
+    e = make_engine(validate_signals=True, state_timeout=0)
+    agents = _goal(e, tmp_path)
     _through_a_seam(e, agents, "root.kid", outside=[{"what": SEEN, "evidence": "printed NULL"}])
     _deliver(e, "root")
     assert I.open_questions(e) == [(TaskId("root"), "outside")], I.open_questions(e)
@@ -102,24 +113,26 @@ def _through_a_seam(e, agents, tid, **kw):
 
 def _the_race(e, agents, monkeypatch, verdict="PASS"):
     """One pass starts the root's validation and the issuer's turn; the turn lands its child while the validator runs."""
-    landed, out = threading.Event(), {}
+    running, landed, out = threading.Event(), threading.Event(), {}
 
     def settle(engine, ag, task_id, question, actor, verbs):
         if "turn" in out:
             return {"status": "gone"}
+        running.wait(20)      # …a turn landing before the pass reads the frontier leaves no VALIDATE step in that pass
         out["turn"] = I.issuer_turn(engine, task_id, question, actor, _llm=_Issuer(LATE))
         e.wait_idle()
         landed.set()
         return out["turn"]
 
     monkeypatch.setattr(I, "settle", settle)
-    v = _Validator(e, "root", verdict=verdict, first=lambda: landed.wait(20))
+    v = _Validator(e, "root", verdict=verdict, first=lambda: (running.set(), landed.wait(20)))
 
     def validator(engine, task_id, ag, **k):
         out["validated"] = _auto_validate(engine, task_id, ag, _llm=v, **k)
         return out["validated"]
 
-    d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None, validator_runner=validator)
+    d = Dispatcher(e, agents, poll=30, max_concurrent=2, runner=lambda *a: None, consent_runner=lambda *a: None,
+                   validator_runner=validator)
     started = d.dispatch_once()
     assert "validate:root" in started, started
     _until(lambda: "validated" in out, f"the validation did not end: {out}")
@@ -128,68 +141,344 @@ def _the_race(e, agents, monkeypatch, verdict="PASS"):
     return d, out
 
 
-def test_a_part_attached_while_the_validator_ran_is_not_signed_over(tmp_path, monkeypatch):
-    e, agents = _delivered_whole(tmp_path)
+# ── the real route: git, the plan gate on, sessions and joins for real ──
+
+class _Run:
+    """An AUTO run in a git base with `l2_gate=1`: the dispatcher's own passes, its sessions fakes that write a file each,
+    its validator fake, its issuer's turn real. `complete` said while the part's file is not in the base is a failure."""
+
+    def __init__(self, tmp_path, monkeypatch):
+        self.base = _repo(tmp_path / "ws")
+        self.e = e = make_engine(llm=StubLLM(), validate_signals=True)
+        self.agents = _goal(e, self.base)
+        e.set_settings({"l2_gate": "1"}, AgentId("agent"), "the gate as it stands by default; the suite's conftest has it off")
+        self.lied, self.turned, self.tmp = [], False, tmp_path
+        self.sessions = {"root.kid": ("kid.txt", "the part\n"), "root": ("root.txt", "the whole\n"),
+                         "root.late": ("late.txt", "the late part\n")}
+        monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=None, busy=_inflight, review=self._review, refine=None))
+        monkeypatch.setattr(I, "settle", self._settle)
+        self.first = {}
+        self.d = Dispatcher(e, self.agents, poll=30, runner=self._execute, consent_runner=self._consent,
+                            validator_runner=self._validate)
+
+    def _review(self, e, node):
+        """The record `review_decomposition` would write: no model here."""
+        e._graph._storage.store_critique(TaskId(node), json.dumps({
+            "node_id": node, "gate_passed": True, "semantic_covered": True, "criteria_verdicts": [], "conflicts": [],
+            "model": "test", "ts": "2026-07-19 00:00:00"}))
+        t = e.graph.get_task(TaskId(node))
+        t.verified = True
+        e._graph.save_task(t)
+        return {"stats": [{"cost_usd": 0}]}
+
+    def _settle(self, e, agents, tid, question, actor, verbs):
+        if question == "plan" and I.review_due(e, tid):
+            return I._review(e, tid, verbs)
+        return {"status": "gone"}       # …the `outside` question is the test's to answer, at the moment it is about (`attach`)
+
+    def attach(self):
+        assert I.issuer_turn(self.e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))["status"] == "applied"
+        self.e.wait_idle()
+        self.turned = True
+
+    def _execute(self, e, tid, executor, agents):
+        name, text = self.sessions[str(tid)]
+        return run_executor(e, tid, executor, agents, _llm=_Executor(str(tid), {name: text}))
+
+    def _consent(self, e, tid, executor, agents):
+        T.signal(e, str(tid), "ACCEPT", executor)
+        return {"status": "accepted"}
+
+    def _validate(self, e, tid, agents, **k):
+        row = [{"what": SEEN, "evidence": "printed NULL"}] if str(tid) == "root.kid" else []
+        return _auto_validate(e, tid, agents, _llm=_Validator(e, tid, outside=row, first=self.first.pop(str(tid), None)), **k)
+
+    def in_base(self, name):
+        return (self.base / name).exists()
+
+    def done(self):
+        complete = self.e.next_steps(TaskId("root")).get("complete")
+        if complete is True and not self.in_base("late.txt"):
+            self.lied.append({t.id: t.state.name for t in self.e.all_tasks()})
+        return complete is True and not self.e.joins.joining_nodes()
+
+    def drive(self, until=None, rounds=400):
+        S._drive(self.e, self.d, until or self.done, rounds, pause=0.02)
+        states = {str(t.id): t.state.name for t in self.e.all_tasks()}
+        assert (until or self.done)(), f"not reached: {states}, base {sorted(p.name for p in self.base.iterdir())}"
+
+    def state(self, tid="root"):
+        return self.e.graph.get_state(TaskId(tid))
+
+
+def _the_part_stands_in_the_base(run):
+    assert run.lied == [], f"`complete` said over a base without the part: {run.lied}"
+    assert run.in_base("late.txt") and run.in_base("kid.txt")
+    assert run.e.next_steps()["complete"] is True and run.e.next_steps(TaskId("root"))["complete"] is True
+    assert _git(run.base, "log", "--format=%s", "-1").startswith("gfso: root joins the base")
+
+
+def test_a_part_attached_while_the_validator_ran_reaches_the_base(tmp_path, monkeypatch):
+    run = _Run(tmp_path, monkeypatch)
     try:
-        d, out = _the_race(e, agents, monkeypatch)
-        assert e.graph.get_state(TaskId("root")) != State.DONE and out["validated"] == "rejected", out
-        rec = e.get_exec_verdict(TaskId("root"))
-        assert rec["superseded_verdict"] == "PASS" and rec["per_criterion"], "the verdict stays on the record, not signed"
+        run.first["root"] = run.attach
+        run.drive()
+        assert run.turned and run.e.graph.get_task(TaskId("root")).reopens == 0, "held at the signature, no reopen spent"
+        _the_part_stands_in_the_base(run)
+    finally:
+        run.e.stop()
+
+
+def test_a_part_attached_past_the_re_ask_reaches_the_base_through_a_reopen(tmp_path, monkeypatch):
+    """The window between the reading and the signature: the root closes over the part, lands without it, and earns its
+    verdict again by §12.14; the places stand through it (a clearing took a session's uncommitted work)."""
+    run = _Run(tmp_path, monkeypatch)
+    real, armed = DG._signal, []
+
+    def signing(e, tid, sig, source, **kw):
+        if str(tid) == "root" and sig == Signal.PASS and not armed:
+            armed.append(1)
+            run.attach()
+        return real(e, tid, sig, source, **kw)
+
+    monkeypatch.setattr(DG, "_signal", signing)
+    cleared, clear = [], DG.clear_workspaces
+    monkeypatch.setattr(DG, "clear_workspaces", lambda e, a, t: (
+        cleared.append({k.id: k.state.name for k in e.all_tasks()}), clear(e, a, t))[1])
+    try:
+        run.drive()
+        assert armed and run.e.graph.get_task(TaskId("root")).reopens == 1
+        _the_part_stands_in_the_base(run)
+        assert cleared and all(set(c.values()) <= {"DONE", "ABANDONED"} for c in cleared), cleared
+    finally:
+        run.e.stop()
+
+
+def test_a_part_that_landed_before_the_validation_began_is_delivered_too(tmp_path, monkeypatch):
+    """Attached before the pass read the frontier, the part landed, and a validation of the commit DELIVER recorded, which
+    cannot hold it, signed and landed the result without it: re-presented instead, with no such validation paid for."""
+    run = _Run(tmp_path, monkeypatch)
+    validated, real = [], run._validate
+
+    def counting(e, tid, agents, **k):
+        if str(tid) == "root":
+            validated.append(len([a for a in e.audit_log(TaskId(tid)) if a.signal == Signal.DELIVER and not a.rejected]))
+        return real(e, tid, agents, **k)
+
+    run.d._validate = counting
+    one_at_a_time, a_pass, session = threading.Lock(), run.d.dispatch_once, run.d._runner
+
+    def passing():
+        with one_at_a_time:
+            return a_pass()
+
+    def delivering(e, tid, executor, agents):        # …no pass reads between the root's DELIVER and the turn after it
+        if str(tid) != "root" or run.turned:
+            return session(e, tid, executor, agents)
+        with one_at_a_time:
+            out = session(e, tid, executor, agents)
+            e.wait_idle()
+            run.attach()
+            return out
+
+    run.d.dispatch_once, run.d._runner = passing, delivering
+    try:
+        run.drive()
+        assert validated == [2] and run.e.graph.get_task(TaskId("root")).reopens == 0, validated
+        _the_part_stands_in_the_base(run)
+    finally:
+        run.e.stop()
+
+
+def test_landing_again_moves_the_accepted_branch(tmp_path):
+    base, ref = _repo(tmp_path / "ws"), "refs/heads/gfso/p/accepted"
+    first = W.land(base, ref, None, None)
+    assert _git(base, "rev-parse", ref) == first
+    (base / "late.txt").write_text("the late part\n")
+    _git(base, "add", "-A")
+    _git(base, "commit", "-q", "-m", "the whole again")
+    second = W.land(base, ref, None, first, _git(base, "rev-parse", "HEAD^{tree}"))
+    assert second != first and _git(base, "rev-parse", ref) == second == _git(base, "rev-parse", "HEAD")
+    assert _git(base, "show", f"{ref}:late.txt") == "the late part"
+
+
+# ── its edges ──
+
+def _closed_over_a_part(tmp_path, monkeypatch, reopens=0):
+    """The root DONE over an open part, as the window past the re-ask leaves it."""
+    e, agents = _delivered_whole(tmp_path)
+    cleared = []
+    monkeypatch.setattr(DG, "clear_workspaces", lambda en, a, t: cleared.append(str(t.id)))
+    d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None)
+    d._rejoined_once = True
+    instrument_passes(e, TaskId("root"))
+    assert I.issuer_turn(e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))["status"] == "applied"
+    e.wait_idle()
+    assert DG._signal(e, TaskId("root"), Signal.PASS, "val-1")
+    e.wait_idle()
+    _until(lambda: not e.joins.joining_nodes(), "the root's join did not end")
+    time.sleep(0.05)      # the `_join` thread past its clearing, whichever way that went
+    t = e.graph.get_task(TaskId("root"))
+    t.reopens = reopens
+    e._graph.save_task(t)
+    assert t.state == State.DONE and e.graph.get_state(TaskId("root.late")) != State.DONE
+    return e, agents, d, cleared
+
+
+def test_both_ways_of_asking_answer_what_is_open(tmp_path, monkeypatch):
+    e, agents, d, _ = _closed_over_a_part(tmp_path, monkeypatch)
+    try:
+        for out in (e.next_steps(), e.next_steps(TaskId("root"))):
+            assert out["complete"] is False and out["open_nodes"] == ["root.late"] and out["steps"] == [], out
+            assert "made without you" in out["directive"], out["directive"]
     finally:
         e.stop()
 
 
-def test_it_is_re_presented_and_comes_again_with_the_part_in_what_is_validated(tmp_path, monkeypatch):
-    """What a verdict accepts is the commit DELIVER recorded (§11.3), which holds no later part, so waiting and validating
-    that commit again would land the result without it. Inv-8 walked: part PASS → join → root re-delivered → PASS."""
-    e, agents = _delivered_whole(tmp_path)
+def test_the_system_reopens_it_and_the_places_stand(tmp_path, monkeypatch):
+    e, agents, d, cleared = _closed_over_a_part(tmp_path, monkeypatch)
+    said = []
+    emit = e.emit_info
+    monkeypatch.setattr(e, "emit_info", lambda src, msg: (said.append(msg), emit(src, msg))[1])
     try:
-        d, out = _the_race(e, agents, monkeypatch)
-        assert {s["task_id"]: s["action"] for s in e.next_steps()["steps"]}["root"] == "accept"
+        d.dispatch_once()
+        e.wait_idle()
+        assert e.graph.get_state(TaskId("root")) == State.OFFERED and e.graph.get_task(TaskId("root")).reopens == 1
+        assert cleared == []
+        assert [m for m in said if "reopened by its issuer" in m and "root.late" in m], said
+        assert "root" in {s["task_id"] for s in e.next_steps()["steps"]}
+    finally:
+        e.stop()
+
+
+def test_a_reopen_refused_cancels_the_part_and_complete_says_so(tmp_path, monkeypatch):
+    e, agents, d, cleared = _closed_over_a_part(tmp_path, monkeypatch, reopens=1)
+    said = []
+    emit = e.emit_info
+    monkeypatch.setattr(e, "emit_info", lambda src, msg: (said.append(msg), emit(src, msg))[1])
+    try:
+        d._consent = lambda *a: {"status": "accepted"}
+        d.dispatch_once()
+        e.wait_idle()
+        assert e.graph.get_state(TaskId("root")) == State.DONE and [m for m in said if "stands final" in m], said
+        reason = [a for a in e.audit_log(TaskId("root.late")) if a.signal == Signal.CANCEL and not a.rejected]
+        assert reason, "no one moved the part"
+        for _ in range(50):
+            if e.graph.get_state(TaskId("root.late")) == State.ABANDONED:
+                break
+            d.dispatch_once()
+            e.wait_idle()
+            time.sleep(0.02)
+        assert e.graph.get_state(TaskId("root.late")) == State.ABANDONED
+        for out in (e.next_steps(), e.next_steps(TaskId("root"))):
+            assert out["complete"] is True and out["cancelled_after_the_close"] == ["root.late"], out
+        d.dispatch_once()
+        assert cleared == ["root"], "held by the open part, cleared once it settled"
+    finally:
+        e.stop()
+
+
+def test_a_refuted_pass_under_auto_is_reopened_and_past_its_count_stands_said(tmp_path, monkeypatch):
+    """The directive tells the customer this move is "made without you"; nothing made it."""
+    for spent in (0, 1):
+        tmp = tmp_path / str(spent)
+        tmp.mkdir()
+        e, agents = _delivered_whole(tmp)
+        d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None)
+        d._rejoined_once = True
+        said = []
+        emit = e.emit_info
+        monkeypatch.setattr(e, "emit_info", lambda src, msg, em=emit, s=said: (s.append(msg), em(src, msg))[1])
+        monkeypatch.setattr(DG, "clear_workspaces", lambda *a: None)
+        try:
+            instrument_passes(e, TaskId("root"))
+            assert DG._signal(e, TaskId("root"), Signal.PASS, "val-1")
+            e.wait_idle()
+            _until(lambda: not e.joins.joining_nodes(), "join")
+            t = e.graph.get_task(TaskId("root"))
+            t.reopens = spent
+            e._graph.save_task(t)
+            rec = dict(e.get_exec_verdict(TaskId("root")), verdict="FAIL", failed_criteria=["g"], reopens=spent)
+            e._graph._storage.store_exec_verdict(TaskId("root"), json.dumps(rec))
+            assert e.refuted_passes() == ["root"], "the probe made no refuted pass"
+            d.dispatch_once()
+            e.wait_idle()
+            if spent:
+                assert e.graph.get_state(TaskId("root")) == State.DONE and [m for m in said if "stands final" in m], said
+                assert e.next_steps()["complete"] is False, "a refuted final pass is not called complete"
+            else:
+                assert e.graph.get_state(TaskId("root")) == State.OFFERED and e.graph.get_task(TaskId("root")).reopens == 1
+        finally:
+            e.stop()
+
+
+def test_a_holder_keeps_his_moves_and_is_named_them(tmp_path):
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    e.project_name = "p"
+    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    agents.register("exec-1", "llm-executor", workdir=str(tmp_path), project="p")
+    T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]}, assignee="agent")
+    T.decompose(e, "root", [{"task_id": "kid", "assignee": "exec-1", "covers": ["g"],
+                             "spec": {"description": "a part", "criteria": [criterion("k", "K")]}}], accepted_risks=REGISTER)
+    T.decompose(e, "kid", [{"task_id": "kid.a", "assignee": "agent", "covers": ["k"],
+                            "spec": {"description": "below", "criteria": [criterion("a", "A")]}}], accepted_risks=REGISTER)
+    e.wait_idle()
+    try:
+        assert "error" not in (o := T.signal(e, "kid", "ACCEPT", "exec-1")), o
+        assert "error" not in (o := T.signal(e, "kid", "DELIVER", "exec-1", result="early")), o
+        instrument_passes(e, TaskId("kid"))
+        assert "error" not in (o := T.signal(e, "kid", "PASS", "agent")), o
+        e.wait_idle()
+        d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None)
+        d.dispatch_once()
+        e.wait_idle()
+        assert e.graph.get_state(TaskId("kid")) == State.DONE and e.graph.get_task(TaskId("kid")).reopens == 0
+        assert e.graph.get_state(TaskId("kid.a")) != State.CANCELLING
+        out = e.next_steps(TaskId("kid"))
+        assert out["complete"] is False and out["open_nodes"] == ["kid.a"] and "reopen('kid')" in out["directive"], out
+    finally:
+        e.stop()
+
+
+def test_a_stop_starts_no_reopen_and_rests_the_containers_keeping_the_places(tmp_path, monkeypatch):
+    e, agents, d, cleared = _closed_over_a_part(tmp_path, monkeypatch)
+    stops = []
+    try:
+        monkeypatch.setattr(DG, "execution_of", lambda *a: N(stop=lambda: stops.append(1)))
+        monkeypatch.setattr(e, "paused", lambda: {"why": "the user's stop"})
+        d.dispatch_once()
+        assert stops == [1] and cleared == [] and e.graph.get_state(TaskId("root")) == State.DONE, (stops, cleared)
+    finally:
+        e.stop()
+
+
+def test_a_stale_pass_moves_nothing_of_a_node_no_longer_validating(tmp_path):
+    """A PASS arriving after a re-ASSIGN and its ACCEPT, or after a lapse: re-presenting it was a decision no issuer made."""
+    def again(e):
+        I.issuer_turn(e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))
+        e.wait_idle()
+        DG._represent(e, e.graph.get_task(TaskId("root")), str(e.graph.issuer_of(TaskId("root"))), {"root.late"})
+        e.wait_idle()
         T.signal(e, "root", "ACCEPT", str(e.graph.get_task(TaskId("root")).assignee))
         e.wait_idle()
-        assert "root.late" in {s["task_id"] for s in e.next_steps()["steps"]}, "a part with no one moving it (Inv-8)"
-        _through_a_seam(e, agents, "root.late")
-        _until(lambda: not e.joins.joining_nodes(), "its join did not end")
-        assert "root" in {s["task_id"] for s in e.next_steps()["steps"]}, "the whole's re-delivery has no one moving it"
-        _deliver(e, "root")
-        del out["validated"]
-        assert "validate:root" in d.dispatch_once()
-        _until(lambda: "validated" in out, "the re-delivery was not validated")
+
+    def lapse(e):
+        I.issuer_turn(e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))
         e.wait_idle()
-        _until(lambda: not e.joins.joining_nodes(), "the root's join did not end")
-        assert out["validated"] == "pass" and e.graph.get_state(TaskId("root")) == State.DONE
-        assert sum(a.signal == Signal.DELIVER and not a.rejected for a in e.audit_log(TaskId("root"))) == 2
-        assert e.next_steps(TaskId("root"))["complete"] is True and e.next_steps()["complete"] is True
-    finally:
-        e.stop()
+        e.send_signal(SignalData(signal=Signal.TIMEOUT, task_id=TaskId("root")))
+        e.wait_idle()
 
-
-def test_a_part_that_fails_or_is_cancelled_leaves_someone_moving(tmp_path, monkeypatch):
-    for how in ("fail", "cancel"):
-        tmp = tmp_path / how
+    for name, move, state in (("rework", again, State.EXECUTING), ("lapse", lapse, State.ESCALATED)):
+        tmp = tmp_path / name
         tmp.mkdir()
         e, agents = _delivered_whole(tmp)
         try:
-            _the_race(e, agents, monkeypatch)
-            T.signal(e, "root", "ACCEPT", str(e.graph.get_task(TaskId("root")).assignee))
+            out = _auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root", first=lambda m=move, en=e: m(en)))
             e.wait_idle()
-            if how == "fail":
-                _deliver(e, "root.late")
-                assert _auto_validate(e, TaskId("root.late"), agents, _llm=_Validator(e, "root.late", verdict="FAIL")) == "fail"
-                e.wait_idle()
-                assert "root.late" in {s["task_id"] for s in e.next_steps()["steps"]}, "its rework"
-            else:
-                issuer = str(e.graph.issuer_of(TaskId("root.late")))
-                assert "error" not in (o := T.signal(e, "root.late", "CANCEL", issuer, reason="off the goal")), o
-                e.wait_idle()
-                for _ in range(3):
-                    if e.graph.get_state(TaskId("root.late")) != State.CANCELLING:
-                        break
-                    T.signal(e, "root.late", "CONFIRM_CANCEL", str(e.graph.get_task(TaskId("root.late")).assignee), in_flight="none")
-                    e.wait_idle()
-                assert e.graph.get_state(TaskId("root.late")) == State.ABANDONED
-                assert "root" in {s["task_id"] for s in e.next_steps()["steps"]}, "the whole has no one moving it"
+            t = e.graph.get_task(TaskId("root"))
+            assert out == "rejected" and t.state == state, (name, out, t.state)
+            assert t.revisions == (1 if name == "rework" else 0), (name, t.revisions)
         finally:
             e.stop()
 
@@ -202,6 +491,17 @@ def test_a_standing_pass_is_not_replayed_over_a_part_attached_since(tmp_path):
         e.wait_idle()
         assert _auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root")) == "rejected"
         assert e.graph.get_state(TaskId("root")) == State.OFFERED, "re-presented, not signed"
+    finally:
+        e.stop()
+
+
+def test_the_verdict_stays_on_the_record_superseded(tmp_path, monkeypatch):
+    e, agents = _delivered_whole(tmp_path)
+    try:
+        _, out = _the_race(e, agents, monkeypatch)
+        assert e.graph.get_state(TaskId("root")) == State.OFFERED and out["validated"] == "rejected", out
+        rec = e.get_exec_verdict(TaskId("root"))
+        assert rec["superseded_verdict"] == "PASS" and rec["per_criterion"]
     finally:
         e.stop()
 
@@ -228,79 +528,5 @@ def test_where_the_system_does_not_issue_it_waits_and_its_bound_hands_it_over(tm
         e.wait_idle()
         assert e.graph.get_state(TaskId("root")) == State.ESCALATED
         assert "root" in {s["task_id"] for s in e.next_steps()["steps"]}, "the escalation's decision has no one named"
-    finally:
-        e.stop()
-
-
-def _closed_over_an_open_part(tmp_path, monkeypatch):
-    """The window past the re-ask: the child lands between the reading and the signature, the seam's gate admits the PASS
-    (§12.8), and the root stands DONE over it — the shape of the canon's recovery, a child under a closed parent."""
-    e, agents = _delivered_whole(tmp_path)
-    cleared = []
-    monkeypatch.setattr(DG, "clear_workspaces", lambda en, a, t: cleared.append(str(t.id)))
-    d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None)
-    d._rejoined_once = True
-    instrument_passes(e, TaskId("root"))
-    assert I.issuer_turn(e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))["status"] == "applied"
-    e.wait_idle()
-    assert DG._signal(e, TaskId("root"), Signal.PASS, "val-1")
-    e.wait_idle()
-    _until(lambda: not e.joins.joining_nodes(), "the root's join did not end")
-    time.sleep(0.05)      # the `_join` thread past its clearing, whichever way that went
-    assert e.graph.get_state(TaskId("root")) == State.DONE and e.graph.get_state(TaskId("root.late")) != State.DONE
-    return e, agents, d, cleared
-
-
-def test_open_nodes_under_a_passed_root_get_their_steps_and_one_answer(tmp_path, monkeypatch):
-    e, agents, d, _ = _closed_over_an_open_part(tmp_path, monkeypatch)
-    try:
-        whole, scoped = e.next_steps(), e.next_steps(TaskId("root"))
-        assert whole["complete"] is False and scoped["complete"] is False, (whole, scoped)
-        assert whole["open_nodes"] == scoped["open_nodes"] == ["root.late"]
-        assert {s["task_id"] for s in whole["steps"]} == {s["task_id"] for s in scoped["steps"]} == {"root.late"}
-        assert e.next_step(TaskId("root"))["task_id"] == "root.late"
-        assert d.dispatch_once(), "the step reached nobody"
-    finally:
-        e.stop()
-
-
-def test_an_open_node_holds_the_places_and_its_settling_clears_them(tmp_path, monkeypatch):
-    e, agents, d, cleared = _closed_over_an_open_part(tmp_path, monkeypatch)
-    try:
-        assert cleared == [], "cleared under an open part: its uncommitted work went with them"
-        d.dispatch_once()
-        assert cleared == []
-        _through_a_seam(e, agents, "root.late")
-        _until(lambda: not e.joins.joining_nodes(), "its join did not end")
-        d.dispatch_once()
-        assert cleared == ["root"]
-        assert e.next_steps()["complete"] is True and e.next_steps(TaskId("root"))["complete"] is True
-    finally:
-        e.stop()
-
-
-def test_a_stop_rests_the_containers_and_keeps_the_places_for_the_open_node(tmp_path, monkeypatch):
-    e, agents, d, cleared = _closed_over_an_open_part(tmp_path, monkeypatch)
-    stops = []
-    try:
-        monkeypatch.setattr(DG, "execution_of", lambda *a: N(stop=lambda: stops.append(1)))
-        monkeypatch.setattr(e, "paused", lambda: {"why": "the user's stop"})
-        d.dispatch_once()
-        assert stops == [1] and cleared == [], (stops, cleared)
-    finally:
-        e.stop()
-
-
-def test_a_node_issued_by_nobody_holds_them_and_is_named_with_no_step(tmp_path, monkeypatch):
-    """IDLE has no clock: nothing lapses it. The places wait, the disk's cost, and the answer names it instead of "finished"."""
-    e, agents, d, cleared = _closed_over_an_open_part(tmp_path, monkeypatch)
-    try:
-        real = e.all_tasks()
-        kid = e.graph.get_task(TaskId("root.late"))
-        monkeypatch.setattr(e, "all_tasks", lambda: [t if t.id != kid.id else dataclasses.replace(kid, state=State.IDLE) for t in real])
-        out = e.next_steps()
-        assert out["complete"] is False and out["open_nodes"] == ["root.late"] and out["steps"] == [], out
-        d.dispatch_once()
-        assert cleared == []
     finally:
         e.stop()

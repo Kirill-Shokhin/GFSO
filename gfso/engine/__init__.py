@@ -2603,6 +2603,12 @@ class Engine:
         passed parent over an open child is a claim that no longer holds)."""
         return [str(t.id) for t in self._within(root_id) if t.state not in TERMINAL_STATES]
 
+    def cancelled_after_a_close(self, root_id: Optional[TaskId] = None) -> list[str]:
+        """The nodes abandoned after the verdict over them closed: work its goal's final verdict does not cover."""
+        return [str(t.id) for t in self._within(root_id) if t.state == State.ABANDONED
+                and (p := self._graph.get_parent(t.id)) is not None and p.state == State.DONE
+                and self.log_position(t.id, new_state=State.ABANDONED) > self.log_position(p.id, new_state=State.DONE)]
+
     def refuted_passes(self, root_id: Optional[TaskId] = None) -> list[str]:
         """Nodes standing at PASS whose OWN current record says FAIL — a green that is not green.
 
