@@ -767,6 +767,8 @@ def _end_cut(name: str) -> None:
     for wait in (0, 0.5, 1, 2):
         time.sleep(wait)
         run(["docker", "rm", "-f", name], timeout=60)
+
+
 def release_rounds(ex, place: str) -> None:
     """Every session of project `ex` standing in a validation's round of the delivery in `place`: filing a finding reads what
     its command names in the round, in the round's own container, after its run ended it. A host's has none."""

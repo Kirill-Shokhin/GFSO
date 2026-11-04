@@ -67,8 +67,10 @@ def test_a_wait_reports_what_it_waited():
     assert out["waited_seconds"] < 600
 
 
-def _engine(landed=None, mode="auto"):
-    return SimpleNamespace(graph=SimpleNamespace(setting=lambda key: landed and json.dumps(landed)), project_name="no-record-here",
+def _engine(landed=None, mode="auto", not_rerun=()):
+    return SimpleNamespace(graph=SimpleNamespace(setting=lambda key: landed and json.dumps(landed), get_parent=lambda tid: None),
+                           all_tasks=lambda: [SimpleNamespace(id="root")], checks_no_longer_run=lambda tid: list(not_rerun),
+                           findings_not_reproduced=lambda tid: [], project_name="no-record-here",
                            mode=lambda: {"mode": mode} if mode else None)
 
 
@@ -79,6 +81,13 @@ def test_the_end_says_what_the_person_is_told():
     """A run ended in one sentence: no verdict, no branch, no link, no way to see the result."""
     said = _with_ui_link("next_steps", {"complete": True}, "p", _engine(BRANCH))["say"]
     assert "get_verdict" in said and "gfso/p/accepted" in said and "git worktree add" in said
+
+
+def test_the_end_says_what_the_pass_did_not_re_run_only_where_it_did_not():
+    """A person in chat got a plain PASS over a check no longer run: the verdict said it, the end did not (critic)."""
+    plain = _with_ui_link("next_steps", {"complete": True}, "p", _engine(BRANCH))["say"]
+    assert "checks_no_longer_run" not in plain
+    assert "checks_no_longer_run" in _with_ui_link("next_steps", {"complete": True}, "p", _engine(BRANCH, not_rerun=[{}]))["say"]
 
 
 def test_the_end_says_only_where_the_result_landed():
