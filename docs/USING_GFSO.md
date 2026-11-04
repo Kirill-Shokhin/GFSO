@@ -352,6 +352,17 @@ so is a Level-2 finding discharged with `"nah"`. This is a floor on ASSERTION, n
 It cannot refuse a sentence naming a command that was never run, and it does not pretend to: at a door
 where you name yourself, the explicit record IS the guarantee (§10.3), and it carries your name.
 
+**What a `PASS` no longer re-ran, it says.** The criteria are the goal's; what the system made up on the way is its own to
+refute, on the record. `get_verdict` names both ways it happens, so a `PASS` does not read as wider than it is:
+
+* `findings_not_reproduced` — a finding a validator tried on its own, filed only where its report said it refuted, stands while
+  it is reproduced. A later validator that runs it as filed, shows what it printed and says why it refutes no criterion ends it.
+  No later `PASS` re-runs it. You can give it back with `return_finding(task_id, finding, why)`: it is demanded of every later
+  `PASS` again, and no validator's run takes it off. A plan's criteria and its pinned checks are not such findings.
+* `checks_no_longer_run` — on a plan the system wrote, under `auto`, a part's check that holds only while a sibling's work is
+  missing can be ruled out by the system's issuer once it has run it, never the last check of a criterion. The part stays as it
+  settled; the verdict lists each check, here or below. A plan handed in stops instead.
+
 **When a criterion fails, the rework flows down, not around.** If the failed criteria are covered by
 children, the engine refuses a re-delivery over an untouched subtree: contact refuted the split, not
 the aggregate (§15.4). Reopen the covering child, fix it there — or revise its contract, remap it, or

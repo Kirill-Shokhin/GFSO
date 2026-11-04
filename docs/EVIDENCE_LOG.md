@@ -3874,3 +3874,44 @@ single-edit near-misses per task were made by an agent told nothing of plans or 
   Its false FAILs were read near zero against the contract by one reader, no second.
 - **The proof of the planner is not obtained.** The stage is shown on one task of two, is not in the product, and no row ran
   on it.
+
+### 13.52 The user's path on a clean install, and what the planner's speed changes cost: real clients reach a root's `PASS` on small tasks and one of four parts; the changes won no minutes on E2 and left more open by a common reader (2026-11-04)
+
+**Real clients, clean install.** Fresh Claude Code clients (Sonnet 5.5), a clean configuration, a task told in words, every
+role of the system on Haiku 5.5, the network `open`, through the server's real door on its own port. Runs before the
+configuration was truly clean are not counted: an isolated configuration directory alone still loads the global
+instructions file.
+
+| what | runs | root | wall | system $ | client $ |
+|---|---|---|---|---|---|
+| a small command-line task | 9 | `PASS` ×9 | 10.5–23 min; one 54 min on a stall in ending a call under a slow Docker, since fixed | 0.05–0.16 | about 0.3 |
+| a task of four parts | 1 (an earlier one stopped at 60 min, no verdict) | `PASS` | 39.8 min | 0.39 | 0.44 |
+
+- Each landed on a branch with `main` untouched. There is no held-out suite here: the results on control data were right where
+  they were run, n = 1 on the four parts, so this shows the path runs, not how well.
+- One of the nine ran in an interactive session: 15 minutes, no permission prompt under the client's auto mode, one menu for
+  trusting the folder; long calls went to the background and woke the client, none was cut.
+- Told only the name `gfso`, one client searched the web and gave up.
+- What a client tells the person lies in its thinking blocks, shown on the interactive screen as a summary. A `-p` run shows
+  none of it, so a count over text blocks reads silence that was not there.
+- Larger tasks on this path are not shown here.
+
+**The planner's speed changes against their base, E2 and a small task** (pre-registered with a hash before reading; the blind
+judge of §13.50's form; 20 plans per arm on E2's ten tasks, 3 per arm on the small task):
+
+| reading, E2 (new − base) | mean base → new | difference, 95 % |
+|---|---|---|
+| structure, pooled | 0.712 → 0.689 | −0.024 [−0.081, +0.037], bar −0.05 not met |
+| structure, D + Dep | 0.801 → 0.769 | −0.032 [−0.091, +0.023], bar −0.05 not met |
+| open obligations, a common reader | 1.93 → 3.30 | +1.38 [+0.33, +2.40], exploratory |
+| open obligations, the arm's own gate | 3.20 → 2.30 | −0.90 [−3.20, +0.90] |
+| checks | 80 → 57 | −23 [−46.6, −0.95] |
+| minutes, whole plan | 15.6 → 14.6 | −0.98 [−3.72, +1.86] |
+
+- **On E2 no speed is shown, and the common reader finds more left open.** Structure stays inside rollout noise (median 0.066) and
+  its bar is not met in either form, which reads as not shown either way.
+- **A gate's own question is no reading of coverage.** The arm's own gate fell while the common reader rose.
+- On the small task speed is real where the plan is a leaf: 7.2 → 4.9 authoring minutes, near-misses caught cleanly, median of
+  three plans, 9 → 8 of 10, ranging 3–9 and 6–9.
+- **Which change costs what is not distinguished.** The old re-check's question against the new, n = 4 per arm on two tasks: a
+  difference of −1.00 at a standard error of 2.47; about 50 plans per arm would be needed, and none was spent.
