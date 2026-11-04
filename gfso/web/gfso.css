@@ -508,20 +508,21 @@ body:has(.hd-q.acc) .hd-quiet { display: none; }
 .cp-now { color: var(--ink); }
 .cp-now > i { width: 6px; height: 6px; border-radius: 50%; background: var(--acc); align-self: center; animation: tl-pulse var(--pulse) ease-in-out infinite; }
 .cy-badges { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
-.cy-badge { position: absolute; display: flex; gap: 3px; align-items: center; }
+.cy-plane { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; will-change: transform; }
+.cy-badge { position: absolute; display: flex; gap: 3px; align-items: center; transform-origin: 0 0; transform: scale(var(--unz, 1)) translate(var(--dx, -6px), -9px); }   /* a mark keeps its size, its place the node's */
 .cy-badge span { font-family: var(--font-mono); font-size: 9.5px; line-height: 1; padding: 3px 5px; border-radius: 8px; background: var(--bg); color: var(--ink); border: 1px solid var(--ink-soft); }
 .cy-badge span.cy-fails { border-color: var(--acc); color: var(--acc); }
 /* a node's folded parts: a tab hung under it, the count in the display face, those failing now in the accent */
-.cy-fold { position: absolute; transform: translateX(-50%); white-space: nowrap; font-family: var(--font-body); font-size: 10px;
+.cy-fold { position: absolute; white-space: nowrap; font-family: var(--font-body); font-size: 10px;
            line-height: 1; padding: 3px 7px 4px; color: var(--ink-soft); background: var(--bg); border: 1px solid var(--ink-soft);
            border-top: 0; border-radius: 0 0 6px 6px; }
 /* its counts are the page's one count mark at the line's size (dom.js tally); a click on it unfolds (graph.js) */
-.cy-fold { pointer-events: auto; cursor: pointer; box-sizing: border-box; min-width: var(--w, 0); text-align: center; }
+.cy-fold { pointer-events: auto; cursor: pointer; box-sizing: border-box; text-align: center; }
 .cy-fold::before { content: '\25BE\00A0'; }   /* folded: its press opens it */
 .cy-fold.open::before { content: '\25B4\00A0'; }   /* open: its press folds it back */
 .cy-fold.kf::before { content: none; }
 /* glued to its node at any zoom: its width, a type that fits; what asks by its colour, the counts in its tip (the author, 11-04) */
-.cy-fold:not(.kf) { width: var(--w); min-width: 0; padding: 3px 0 4px; overflow: hidden; font-size: 11px; transform: translateX(-50%) scale(var(--z, 1)); transform-origin: top center; }
+.cy-fold:not(.kf) { padding: 3px 0 4px; overflow: hidden; font-size: 10px; border-color: var(--ink-soft); }
 .cy-fold .tally { font-size: inherit; }
 .cy-fold.asks, .cy-fold.asks .tally, .cy-fold.asks .tally b { color: var(--acc); border-color: var(--acc); }
 @media (pointer: coarse) { .cy-fold { pointer-events: none; } }
@@ -529,7 +530,7 @@ body:has(.hd-q.acc) .hd-quiet { display: none; }
 .cy-fold .cy-live { display: inline-block; box-sizing: border-box; margin-right: 4px; vertical-align: baseline; }
 .cy-fold .tally i { opacity: 1; }
 .cy-fold .acc, .cy-fold .acc .tally b { color: var(--acc); }
-.cy-fold.kf { position: static; transform: none; display: inline-block; border-top: 1px solid var(--ink-soft); border-radius: 6px; }
+.cy-fold.kf { position: static; display: inline-block; border-top: 1px solid var(--ink-soft); border-radius: 6px; }
 .cy-live { width: 9px; height: 9px; border-radius: 50%; background: var(--bg); border: 2px solid var(--ink-soft); }
 .cy-live.on { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); animation: tl-pulse var(--pulse) ease-in-out infinite; }
 .tl .tl-wait { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-caption); font-style: italic; }

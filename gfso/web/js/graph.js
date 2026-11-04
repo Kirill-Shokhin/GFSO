@@ -146,7 +146,10 @@ export async function initGraph() {
         if (st.select) cy.getElementById(st.select).select();
         if ((key === 'select' || key === 'bring') && st.select) { fresh = false; inSight(cy.getElementById(st.select)); }
     });
-    cy.on('render', () => requestAnimationFrame(placeBadges));
+    // the marks ride the canvas: moved in the very frame it draws, redrawn only when what they say changes (the author, 11-04: a tag redrawn a frame
+    // behind on every render «пересовывается рывками»). A render with the view unchanged is news about the nodes.
+    let seen = '';
+    cy.on('render', () => { const v = `${cy.zoom()}|${cy.pan().x}|${cy.pan().y}`, moved = v !== seen; seen = v; moved ? ride() : placeBadges(); });
     // The canvas changes size when the panel opens or the deck folds or is dragged. The VIEW IS THE READER'S: the
     // canvas is told its new size and the graph stays where it was — a fit here made the graph jump each time a
     // click opened or closed the panel (author, 2026-10-25: «нажатие на некоторые ноды тригерит новую центровку»).
@@ -260,36 +263,41 @@ function nodeTip(t) {
 
 // Badges over the canvas: a pulse on a node being worked right now, and its rounds when it took more
 // than one — a node's history at a glance, without opening it.
-let layer;
+let layer, plane;
+const ride = () => { if (!plane) return; const z = cy.zoom(), p = cy.pan();
+    plane.style.transform = `translate(${p.x}px,${p.y}px) scale(${z})`; plane.style.setProperty('--unz', 1 / z); };
+const TAG_IN = 8;   // the tag hangs inside the node's rounded corners, so it reads as a part of it
 function placeBadges() {
     if (!cy) return;
     layer ??= $('cy').appendChild(Object.assign(document.createElement('div'), {className: 'cy-badges'}));
+    plane ??= layer.appendChild(Object.assign(document.createElement('div'), {className: 'cy-plane'}));
     // at work by the run's one rule; the pulse in the accent when this server has a process on it
     // (the graph may draw before the run is read: the same rule over the registry then)
     const now = nowOf(), work = now.work;
-    layer.innerHTML = cy.nodes().map(n => {
+    const html = cy.nodes().map(n => {
         // the count wears the accent only while the node is failing now: a history of FAILs behind a PASS asks for nothing
         const id = n.id(), rs = S.run?.rounds[id] || [], failing = failingNow(rs, n.data('state') ?? taskOf(id).state);
-        const b = n.renderedBoundingBox(BODY), f = foldOf(id);
+        const b = n.boundingBox(BODY), f = foldOf(id), hang = `left:${b.x1 + TAG_IN}px;top:${b.y2 - 1}px;width:${b.x2 - b.x1 - 2 * TAG_IN}px`;
         // the folded parts hang under the node: their count, and those failing now in the accent
         // …each a count as every count on the page (`tally`: the figure at its line's size — critic 5); a click on it unfolds
-        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px;${gluedTo(b)}"${TIP.fold([f.work.length && `${f.work.length} at work`, f.decide.length && `${f.decide.length} waiting on a decision`, f.shut.length && `${f.shut.length} closed by FAIL`,
+        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="${hang}"${TIP.fold([f.work.length && `${f.work.length} at work`, f.decide.length && `${f.decide.length} waiting on a decision`, f.shut.length && `${f.shut.length} closed by FAIL`,
                 f.byHand.length && `${f.byHand.length} closed by hand`, f.contested.length && `${f.contested.length} contested`, f.failing.length && `${f.failing.length} sent back`])}>${tally(f.n, f.n > 1 ? 'parts' : 'part')}`
-            + (f.work.length ? `<i class="cy-live${f.work.some(x => now.on(x)) ? ' on' : ''}"${beat()}></i>` : '') + '</div>' : openHere(id) ? `<div class="cy-fold open" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px;${gluedTo(b)}"${TIP.foldBack}>${tally(openHere(id), 'parts')}</div>` : '';
+            + (f.work.length ? `<i class="cy-live${f.work.some(x => now.on(x)) ? ' on' : ''}"${beat()}></i>` : '') + '</div>' : openHere(id) ? `<div class="cy-fold open" data-node="${esc(id)}" style="${hang}"${TIP.foldBack}>${tally(openHere(id), 'parts')}</div>` : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
         const shut = closedByFail(taskOf(id));
-        const cross = shut ? `<div class="cy-badge cy-shut" style="left:${b.x1 - 9}px;top:${b.y1 - 9}px"><svg viewBox="-6 -6 12 12"><path class="mk-fail" d="M-2.5,-2.5l5,5m0,-5l-5,5"/></svg></div>` : '';
+        const cross = shut ? `<div class="cy-badge cy-shut" style="left:${b.x1}px;top:${b.y1}px;--dx:-9px"><svg viewBox="-6 -6 12 12"><path class="mk-fail" d="M-2.5,-2.5l5,5m0,-5l-5,5"/></svg></div>` : '';
         if (!work.has(id) && rs.length < 2 && !failing) return cross + tag;
-        return cross + `<div class="cy-badge" style="left:${b.x2 - 6}px;top:${b.y1 - 9}px">`
+        return cross + `<div class="cy-badge" style="left:${b.x2}px;top:${b.y1}px">`
             // the pulse keeps the page's one clock: a badge redrawn on every render restarted it mid-beat
             + (work.has(id) ? `<i class="cy-live${now.on(id) ? ' on' : ''}"${beat()}></i>` : '')
             + (rs.length > 1 || failing ? `<span${failing ? ' class="cy-fails"' : ''}>${rs.length}</span>` : '') + '</div>' + tag;
     }).join('');
+    if (html !== shown) plane.innerHTML = shown = html;
+    ride();
 }
+let shown = '';
 // the run is read after the first drawing: an untouched view is framed again on what asks now
-// …drawn in the graph's own units and scaled with it, width, type and height alike: a type fitted to the width alone moved apart from the node's (the author, 11-04)
-const gluedTo = b => { const z = cy.zoom(); return `--w:${((b.x2 - b.x1) / z).toFixed(1)}px;--z:${z.toFixed(3)}`; };
 export const annotate = () => { if (cy?.nodes().length && fresh) home(); placeBadges(); };
 // The canvas height the drawn graph needs for its labels to read (zoom ≈ 0.8), framing included.
 export const graphNeeds = () => cy && cy.nodes().length ? cy.elements().boundingBox().h * 0.8 + 70 : 0;
