@@ -740,7 +740,7 @@ def watch_disk() -> None:
 #: `\2\0` where this image's `find` cannot, then `<type> <path>\0`, `\3` last where the walk did not finish. By the inode's
 #: change time, which no process of a user sets
 _CHANGED = ('m=$1; t=$2; shift 2; while [ $# -gt 0 ]; do d=$1; s=$2; shift 2; printf \'\\0\\1%s\\1\' "$d"; date +%s.%N | tr -d "\\n"; printf \'\\0\'; '
-            '[ -d "/v/$d" ] || continue; find "/v/$d" -maxdepth 0 -newerct @0 -printf "" 2>/dev/null || { printf \'\\2\\0\'; continue; }; '
+            '[ -d "/v/$d" ] || continue; find "/v/$d" -maxdepth 0 -newerct @0 -printf "" 2>/dev/null || { [ -d "/v/$d" ] && printf \'\\2\\0\'; continue; }; '
             '[ "$s" = new ] && s=$(( $(date +%s) - 60 )); '
             '{ timeout "$t" find "/v/$d" -xdev -ignore_readdir_race -newerct "@$s" -printf \'%y %P\\0\' 2>/dev/null; '
             '[ $? = 0 ] || printf \'\\3\'; } | head -c "$m"; done')
@@ -1395,8 +1395,8 @@ class WayOut:
                              for port in (self.door_port, *(() if self.network[0] == "open" else (egress.PORT,)))),
                            f"{to_own} -j REJECT"))
         # …Docker's own resolver is on its loopback, past every other rule here, under every switch (critic, ran: 60 of 60 under `off`)
-        burst = min(10000, 6 * new_flows())
-        resolver = (f"iptables -N gfso-names && iptables -A gfso-names -m limit --limit {new_flows()}/second --limit-burst {burst} -j RETURN && "
+        burst = min(10000, 30 * new_flows())
+        resolver = (f"iptables -N gfso-names && iptables -A gfso-names -m limit --limit {min(10000, 5 * new_flows())}/second --limit-burst {burst} -j RETURN && "
                     "iptables -A gfso-names -j DROP && iptables -A OUTPUT -o lo -d 127.0.0.11 -j gfso-names && ")
         if self.network[0] != "open":
             return f"{resolver}{own} && {inbound}"
@@ -1412,15 +1412,15 @@ class WayOut:
         # count a flow's first packet alone (`connbytes`, measured absent). Apart by protocol, one's flood not spending the other's
         flows = (f"iptables -N gfso-flows && iptables -A gfso-flows -m limit --limit {new_flows()}/second --limit-burst {burst} -j RETURN && "
                  "iptables -A gfso-flows -j DROP && iptables -A OUTPUT -o lo -j ACCEPT && iptables -A OUTPUT -p tcp -m conntrack --ctstate NEW -j gfso-flows && "
-                 f"iptables -N gfso-dgrams && iptables -A gfso-dgrams -m limit --limit {max(1, 3 * new_flows() // 10)}/second --limit-burst {burst} -j RETURN && "
+                 f"iptables -N gfso-dgrams && iptables -A gfso-dgrams -m limit --limit {min(10000, 3 * new_flows() // 2)}/second --limit-burst {burst} -j RETURN && "
                  "iptables -A gfso-dgrams -j DROP && iptables -A OUTPUT ! -p tcp -m conntrack --ctstate NEW -j gfso-dgrams && "
                  # …and all that leaves but TCP, which paces itself: an answered flow is not new, and passed the bound whole (critic, ran: 300 of 300)
-                 f"iptables -N gfso-udp && iptables -A gfso-udp -m limit --limit {min(10000, 100 * new_flows())}/second --limit-burst 10000 -j RETURN && "
+                 f"iptables -N gfso-udp && iptables -A gfso-udp -m limit --limit {min(10000, 500 * new_flows())}/second --limit-burst 10000 -j RETURN && "
                  "iptables -A gfso-udp -j DROP && iptables -A OUTPUT ! -p tcp -j gfso-udp && "
                  # …and the connections it holds, ports of the host too until they end: a rate alone reached all of them in minutes.
-                 # By nft where its image has it: `connlimit` is absent from iptables on this kernel (measured), a declared image may lack nft
+                 # By nft where it can: `connlimit` is absent from iptables on this kernel (measured), and an image may lack nft or a kernel the module: no bound then, not every start refused
                  f"if command -v nft >/dev/null; then nft add table ip gfso && nft 'add chain ip gfso out {{ type filter hook output priority 0; }}' && "
-                 f"nft 'add rule ip gfso out oifname != \"lo\" ip protocol tcp ct state new ct count over {HELD_FLOWS} counter reject with tcp reset' || exit 1; fi && ")
+                 f"nft 'add rule ip gfso out oifname != \"lo\" ip protocol tcp ct state new ct count over {HELD_FLOWS} counter reject with tcp reset' || true; fi && ")
         return (f'{resolver}{flows}{dns}iptables -A OUTPUT -d {HOST_NET} -j REJECT && gw=$({_GATEWAY_OF}) && [ -n "$gw" ] && '
                 f'iptables -A OUTPUT -d "$gw" -j REJECT && {own} && {shut} && {inbound}')
 

@@ -270,8 +270,8 @@ def test_a_thread_that_will_not_start_gives_its_address_its_room_back(monkeypatc
     s.held, s.block_on_close = {}, False
     monkeypatch.setattr(threading.Thread, "start", lambda self: (_ for _ in ()).throw(RuntimeError("can't start new thread")))
     assert s.verify_request(None, ("172.17.0.2", 1))
-    with pytest.raises(RuntimeError):
-        s.process_request(None, ("172.17.0.2", 1))
+    s.log = os.devnull
+    s.process_request(None, ("172.17.0.2", 1))
     assert s.held["172.17.0.2"] == 0
 
 
@@ -281,6 +281,43 @@ def test_a_docker_that_hangs_on_the_bound_s_line_costs_the_line_not_the_removal(
         raise subprocess.TimeoutExpired(argv, 30)
     monkeypatch.setattr(E, "run", hung)
     E.PlaceContainer._say_the_bound(SimpleNamespace(container="c", project_name="p"))
+
+
+def test_a_door_holds_two_of_the_largest_bodies_at_once_and_gives_room_back():
+    """Past its memory a door's heap stayed at the bound and threads for others no longer started (critic, ran)."""
+    assert door._Held.take(door.MAX_BODY) and door._Held.take(door.MAX_BODY)
+    assert not door._Held.take(1), "past its room"
+    door._Held.give(door.MAX_BODY)
+    assert door._Held.take(5)
+    door._Held.give(door.MAX_BODY)
+    door._Held.give(5)
+    assert door._Held.now == 0
+
+
+def test_a_request_gives_its_body_s_room_back_and_one_with_no_memory_is_told(tmp_path):
+    sent, log = [], str(tmp_path / "door.log")
+    h = SimpleNamespace(client_address=("172.17.0.2", 1), command="POST", send_error=sent.append)
+
+    def fails():
+        raise MemoryError
+    door._within_memory(h, door.MAX_BODY, log, lambda: None)
+    assert door._Held.now == 0 and not sent
+    door._within_memory(h, door.MAX_BODY, log, fails)
+    assert door._Held.now == 0 and sent == [503], "its room back, its client told"
+    door._within_memory(h, door.BODIES + 1, log, lambda: pytest.fail("answered past its room"))
+    assert sent == [503, 503] and door._Held.now == 0
+    assert "no memory" in (tmp_path / "door.log").read_text() and "no room" in (tmp_path / "door.log").read_text()
+
+
+@docker
+@pytest.mark.parametrize("fake, unread",[('find(){ rm -rf "$1"; return 1; }; ', False), ("find(){ return 1; }; ", True)])
+def test_live_a_directory_gone_as_it_is_read_is_not_an_image_that_cannot_say(fake, unread):
+    """A check's directory removed between the test and the find read as "this image's find cannot say": false, and it
+    reached a person through a clean run (engineering, a real client)."""
+    got = subprocess.run(["docker", "run", "--rm", "--tmpfs", "/v", "--entrypoint", "sh", IMAGE, "-c", "mkdir /v/d; " + fake + E._CHANGED, "sh", "1000", "5", "d", "new"],
+                         capture_output=True, timeout=60)
+    assert got.returncode == 0, got.stderr
+    assert (b"\0\2\0" in got.stdout) is unread, got.stdout
 
 
 def test_a_door_closing_puts_what_it_refused_on_its_project_s_record(data, monkeypatch, tmp_path):
@@ -315,7 +352,7 @@ def test_live_what_the_bound_refused_is_on_the_record_as_a_session_goes(data, mo
     made(project, "a")
     s = project.session(str(project.own / "a"))
     try:
-        got = s.run(["python3", "-c", "import socket\nfor i in range(40):\n try:\n  socket.socket(socket.AF_INET,socket.SOCK_DGRAM).sendto(b'x',('192.0.2.70',5000+i))\n except OSError:\n  pass\n"],
+        got = s.run(["python3", "-c", "import socket\nfor i in range(80):\n try:\n  socket.socket(socket.AF_INET,socket.SOCK_DGRAM).sendto(b'x',('192.0.2.70',5000+i))\n except OSError:\n  pass\n"],
                     cwd=str(project.own / "a"), timeout=60)
         assert got.returncode == 0, got.stderr
     finally:

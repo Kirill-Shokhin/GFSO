@@ -289,11 +289,11 @@ def validation_batch() -> int:
         return VALIDATION_BATCH
 
 
-#: new TCP connections a second one container may open under an `open` switch, a burst six times that; other new flows take three
-#: tenths of it. On Docker Desktop each is a socket of a process on the host, for its connect's 21 s or a datagram flow's idle 60 s,
-#: from Windows' 16,384 ports, so eight containers (a delivery's validation) at the bound hold about half: SECURITY.md
-NEW_FLOWS = 50
-#: connections one container may hold out under an `open` switch: eight at it hold half of those ports
+#: new TCP connections a second one container may open under an `open` switch, a burst thirty times that; other new flows take half
+#: as much again. On Docker Desktop each is a port of a process on the host, of Windows' 16,384 per protocol: for 120 s after a TCP
+#: connection closes (TIME_WAIT), about 83 s after a datagram flow's last: at these, about 1,500 ports a container at the bound: SECURITY.md
+NEW_FLOWS = 10
+#: connections one container may hold out under an `open` switch
 HELD_FLOWS = 1024
 
 

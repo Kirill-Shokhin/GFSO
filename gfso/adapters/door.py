@@ -58,7 +58,10 @@ FULL = "refused: past its share of connections"
 #: the largest request body a door reads — the provider's own cap on a messages request
 MAX_BODY = 32 * 2 ** 20
 #: the address space a door may take, under its container's 256 MiB (`_SMALL`), and a thread's stack in it
-MEMORY, STACK, READER_STACK = 240 * 2 ** 20, 2 ** 19, 16 * 2 ** 20
+#: (and room beside it for its 20 MiB log, which its memory-backed disk counts)
+MEMORY, STACK, READER_STACK = 224 * 2 ** 20, 2 ** 19, 16 * 2 ** 20
+#: the bodies a door holds at once: a heap grown to its bound stays there, and threads for others no longer start (critic, ran)
+BODIES = 2 * MAX_BODY
 _lock = threading.Lock()
 _full: list = []
 
@@ -166,6 +169,43 @@ def _judged(keyed: bool, command: str, path: str, body, closed: bool) -> tuple:
 _READER = ThreadPoolExecutor(1)
 
 
+class _Held:
+    """What the door holds of bodies now."""
+    now, lock = 0, threading.Lock()
+
+    @classmethod
+    def take(cls, n: int) -> bool:
+        """Room for `n` bytes more, taken?"""
+        with cls.lock:
+            if cls.now + n > BODIES:
+                return False
+            cls.now += n
+            return True
+
+    @classmethod
+    def give(cls, n: int) -> None:
+        """`n` bytes' room back."""
+        with cls.lock:
+            cls.now -= n
+
+
+def _within_memory(h, held: int, log: str, answer) -> None:
+    """`answer` the request of the handler `h` holding `held` bytes of body: one with no room or no memory now is refused by
+    a status its client retries."""
+    try:
+        if not _Held.take(held):
+            _say(log, f"{h.client_address[0]} {h.command} refused: no room for its body now")
+            return h.send_error(503)
+        try:
+            answer()
+        finally:
+            _Held.give(held)
+    except MemoryError:
+        _say(log, f"{h.client_address[0]} {h.command} refused: no memory for it")
+        with contextlib.suppress(OSError, MemoryError):
+            h.send_error(503)
+
+
 def _relay(h, r) -> None:
     """The provider's answer `r` back through the handler `h`, as it comes: the client reads a stream of events."""
     h.send_response(r.status)
@@ -193,6 +233,9 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
             keyed = self.headers.get(name) == key
             # …the key and the size before the body is read: any container on the bridge, keyless, ran four 400 MB bodies
             # into memory at once and the door was killed, its address free for the next container to take (critic)
+            _within_memory(self, n if keyed and 0 < n <= MAX_BODY else 0, log, lambda: self._answer(n, path, keyed))
+
+        def _answer(self, n, path, keyed):
             body = self.rfile.read(n) if keyed and 0 < n <= MAX_BODY else None
             status, body = (_READER.submit(_judged, keyed, self.command, path, body, closed).result() if not n or body is not None
                             else ("refused: not this door's key" if not keyed else "refused: the body is over its cap", None))
@@ -221,16 +264,7 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
                 if status != "said":
                     _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {status}")
 
-        def _within_memory(self):
-            """A request the door has no memory for is refused by a status its client retries."""
-            try:
-                self._pass()
-            except MemoryError:
-                _say(log, f"{self.client_address[0]} {self.command} refused: no memory for it")
-                with contextlib.suppress(OSError, MemoryError):
-                    self.send_error(503)
-
-        do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _within_memory
+        do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _pass
 
         def log_message(self, *a):
             """Nothing: the door writes its own log, one line a request."""
@@ -241,7 +275,7 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
 class _Server(socketserver.ThreadingMixIn, HTTPServer):
     """A thread a connection, and no one address holding more than `PER_CLIENT`: one session's 300 idle connections left its
     neighbours no door, with no key asked (critic, ran)."""
-    daemon_threads = True
+    daemon_threads, request_queue_size = True, 128        # …its default of 5 reset honest clients at 32 at once (critic, ran)
     held: dict = {}
     held_lock = threading.Lock()
     log = os.devnull
@@ -270,7 +304,9 @@ class _Server(socketserver.ThreadingMixIn, HTTPServer):
             super().process_request(request, client_address)
         except RuntimeError:
             self._leave(client_address)
-            raise
+            _say(self.log, f"{client_address[0]} refused: no thread for it")
+            with contextlib.suppress(OSError, AttributeError):
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nretry-after: 5\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
 
     def process_request_thread(self, request, client_address) -> None:
         """Its room back when its connection ends."""
