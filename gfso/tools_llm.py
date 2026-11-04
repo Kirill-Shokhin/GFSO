@@ -1859,7 +1859,7 @@ def _the_go(engine: Engine, plan: str, request: str, spec) -> tuple[str, dict]:
 
 #: The longest plan text an answer holds: a read of the file lies outside the person's folder, and a fresh client's auto
 #: mode stopped there on a prompt, with no one present before the go (measured). Past this, `path` stands alone.
-PLAN_TEXT_MAX = 60_000
+PLAN_TEXT_MAX = 47_000
 
 
 def _plan_written(text: str) -> dict:
