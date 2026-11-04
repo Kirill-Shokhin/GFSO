@@ -1132,9 +1132,10 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .pn-by sup { font-size: 9px; margin-left: 2px; color: var(--ui-text-soft); }   /* who ran it, whole: «validated by …» is said last and was the part cut */
 .pn-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .pn-note { font-size: 11.5px; margin: -2px 0 8px; }
-.pn-verdict { display: flex; align-items: center; gap: 6px; font-size: 11.5px; margin: 14px 0 6px; min-width: 0; }
+.pn-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11.5px; margin: 14px 0 6px; min-width: 0; }
 .pn-verdict b { font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: var(--tr-mono); }
-.pn-who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-caption); }
+.pn-verdict > b, .pn-verdict > .check-fail { flex: none; white-space: nowrap; }
+.pn-who { flex: 1; min-width: 5ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-caption); }
 .pn-when { font-family: var(--font-mono); font-size: 10px; color: var(--ink-soft); white-space: nowrap; }
 .pn-link {
     background: none;

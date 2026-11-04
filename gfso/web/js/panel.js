@@ -60,32 +60,35 @@ function head({d, rounds}) {
 }
 
 // THE EXECUTION VERDICT in one line — what, who, when, what failed; its evidence is the reader's.
-// WHAT NO VALIDATION HAS TO RUN ANY MORE: the engine's three records, read as it means them: no longer demanded, which says
-// nothing of whether this verdict ran it, and it may have. A PASS read without them reads as wide as one still held to all
-// that once failed (Thm 11). What stopped being demanded is a command: one ruling across 17 criteria is one; a check taken
-// off stands in the first record and the last, and is said once.
-const LIFTED = [['checks_no_longer_run', 'check a ruling took off', 'checks a ruling took off'],
-                ['findings_not_reproduced', 'finding a later validator did not reproduce', 'findings a later validator did not reproduce'],
-                ['retired_after_refutation', 'finding its issuer ruled out', 'findings its issuer ruled out']];
+// WHAT WAS LIFTED: the engine's three records, each saying its own thing, for no sentence holds of all three: a finding ruled
+// out leaves its check running, and none says this verdict skipped anything: it may have run it. A PASS read without them
+// reads as wide as one still held to all that once failed (Thm 11). Each is one command however many criteria it stood
+// under, with every reason given for it; a check taken off stands in the first record and the last, and is said once.
+const LIFTED = [['checks_no_longer_run', 'check a ruling took off', 'checks a ruling took off', 'no validation runs it now', 'no validation runs them now'],
+                ['findings_not_reproduced', 'finding a later validator did not reproduce', 'findings a later validator did not reproduce', 'no later validation demands it', 'no later validation demands them'],
+                ['retired_after_refutation', 'finding its issuer ruled out', 'findings its issuer ruled out', 'filed again it refutes nothing; its check may still run', 'filed again they refute nothing; their checks may still run']];
 const lifted = vr => { const taken = new Set((vr?.checks_no_longer_run || []).map(r => `${r.criterion}\n${r.command}`));
-    return LIFTED.map(([key, one, many]) => { const by = new Map();
+    return LIFTED.map(([key, one, many, it, them]) => { const by = new Map();
         for (const r of vr?.[key] || []) {
             if (key === 'retired_after_refutation' && taken.has(`${r.criterion}\n${r.command}`)) continue;
             const k = r.command || r.id || r.criterion;
-            if (!by.has(k)) by.set(k, {...r, criteria: []});
-            by.get(k).criteria.push(r.criterion);
+            if (!by.has(k)) by.set(k, {...r, criteria: new Set(), said: new Map()});
+            by.get(k).criteria.add(r.criterion);
+            if (!by.get(k).said.has(r.why)) by.get(k).said.set(r.why, r);
         }
-        return [[...by.values()], one, many]; }).filter(([rows]) => rows.length); };
-const liftedMark = vr => { const kinds = lifted(vr), n = kinds.reduce((sum, [rows]) => sum + rows.length, 0);
-    return n ? `<button class="pn-link pn-lifted" data-action="read" data-facet="verdict"${PANEL.lifted(kinds.map(([rows, one, many]) => `${rows.length} ${rows.length > 1 ? many : one}`))}>${tally(n, 'lifted')}</button>` : ''; };
+        const rows = [...by.values()], n = rows.length;
+        return {rows, kind: n > 1 ? many : one, means: n > 1 ? them : it}; }).filter(k => k.rows.length); };
+const liftedMark = vr => { const kinds = lifted(vr), n = kinds.reduce((sum, k) => sum + k.rows.length, 0);
+    return n ? `<button class="pn-link pn-lifted" data-action="read" data-facet="verdict" data-to="rd-lifted"${PANEL.lifted(kinds.map(k => `${k.rows.length} ${k.kind}: ${k.means}`))}>${tally(n, 'lifted')}</button>` : ''; };
+const ruling = r => (r.printed ? `<div class="verdict-evidence">printed: ${esc(trim(String(r.printed), 300))}</div>` : '')
+    + (r.why ? `<div class="verdict-evidence">${esc(spoken(r.why))}</div>` : '')
+    + `<div class="verdict-evidence">${esc([r.decided_by === 'system' ? 'the system' : r.by && agentName(r.by), r.at && stamp(r.at)].filter(Boolean).join(', '))}</div>`;
 const liftedFull = ({d, vr}) => { const kinds = lifted(vr);
-    return kinds.length ? section('No longer demanded of a validation', kinds.map(([rows, one, many]) => `<div class="verdict-evidence">${rows.length > 1 ? many : one}</div>`
-        + ul('item-list', rows.map(r => `<li><div class="verdict-body"><strong>${esc([...new Set(r.criteria)].join(', '))}</strong>`
+    return kinds.length ? `<div id="rd-lifted">` + section('Lifted', kinds.map(k => `<div class="verdict-evidence">${k.kind}: ${k.means}</div>`
+        + ul('item-list', k.rows.map(r => `<li><div class="verdict-body"><strong>${esc([...r.criteria].join(', '))}</strong>`
             + (r.node && r.node !== d.id ? ` <span class="pn-who">in ${esc(nameOf(taskOf(r.node)) || r.node)}</span>` : '')
             + (r.command ? `<div class="verdict-evidence"><code>${esc(r.command)}</code></div>` : '')
-            + (r.printed ? `<div class="verdict-evidence">printed: ${esc(trim(String(r.printed), 300))}</div>` : '')
-            + (r.why ? `<div class="verdict-evidence">${esc(spoken(r.why))}</div>` : '')
-            + `<div class="verdict-evidence">${esc([r.decided_by === 'system' ? 'the system' : r.by && agentName(r.by), r.at && stamp(r.at)].filter(Boolean).join(', '))}</div></div></li>`))).join('')) : ''; };
+            + [...r.said.values()].map(ruling).join('') + `</div></li>`))).join('')) + `</div>` : ''; };
 
 function verdict({vr}) {
     if (vr?.verdict) return `<div class="pn-verdict ${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${glyph(vr.verdict)}<b>${vr.verdict}</b>`
@@ -408,9 +411,10 @@ function render() {
 // `facet` opens or switches the tab; none closes the reader.
 // …and a facet CHIP pressed while its facet is open closes it — as the deck's tabs and the project picker do. A link
 // that means "show it there" (evidence →, full in reader →) only shows: it closed an open verdict before (critic).
-export function openReader(facet, toggle = false) {
+export function openReader(facet, toggle = false, to = '') {
     tab = facet && !(toggle && facet === tab) ? facet : null;
     tab && cur ? render() : closeReader();
+    if (to) $(to)?.scrollIntoView();
 }
 // The panel hands over each node it reads; an open reader follows it.
 export function showReader(ctx) {

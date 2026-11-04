@@ -110,7 +110,7 @@ const readInFlight = () => getJSON('/api/runtime').then(r => applyInFlight(r.in_
 const ACT = {
     'run-stop': async () => { if (await stopRun() === '') await refreshHeader(); },
     'run-start': async () => { if (await startRun() === '') await refreshHeader(); },
-    close: () => point('select', null), select: d => point('select', d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip')),
+    close: () => point('select', null), select: d => point('select', d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip'), d.to),
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
