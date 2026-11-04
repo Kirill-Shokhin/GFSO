@@ -100,7 +100,7 @@ and nothing of your disk is mounted into any of its containers:
   refuse does not land, the cause said), nothing of the agents' configuration travels, and your working tree and branches
   are not touched; a
   project whose base is no git repository gets its result in `.gfso-accepted-<base>/<project>/`
-  beside it. `gfso export-places`, whose stream its process holds whole in memory, up to all the places hold, writes the
+  beside it. `gfso export-places`, which holds in memory only the names of what it carries, writes the
   places out for reading, no link leading out of them, with the configuration and hooks of every
   repository replaced, each known by its shape whatever its directory is called, and a `.git` that is a file removed; a
   directory shaped as one loses its `config` and `hooks` though it was none. On a disk that reads two spellings as one
@@ -127,20 +127,28 @@ and nothing of your disk is mounted into any of its containers:
   also recorded as it starts and as it ends — its session, node, role and agent, its arguments, its
   exit code, and what in the place changed while it ran (up to 200 paths, by the change time no
   process of the agent can set; a deletion named by its directory; any process of the place in that
-  span counted, a command left running among them; what the client's own Write and Edit tools wrote
-  between commands is in the client's stream, not here) — by the system's listener in that container, which no command
-  can signal, read or ask for anything; the record is kept beside the door's log. Where a session reached by
+  span counted, a command left running among them) — by the system's listener in that container, which no command
+  can signal, read or ask for anything; the record is kept beside the door's log, and read from what the listener printed
+  where its container can start no process. What changed on disk is a record of its own (`gfso network <project>` says where
+  it lies): every ten seconds, and once more after a session has gone, the system reads each directory a session mounts
+  writable, from a container of its own holding that volume read-only, past every mode, and writes on the host what changed
+  there: by that change time, whichever way it was written, so what a client's own file tools wrote is on it, and nothing a
+  session does to its own containers reaches it. It says where, not who: the system's own writes there show too. What is
+  written and removed again between two readings leaves only its directory; each reading names 200 paths at most, the
+  quietest directories first, and counts the busiest; one that read its bound of 4 MiB of names says so and is read again;
+  the record turns over at 16 MiB as the network's does. Under an image whose `find` cannot say, it says that. Where a session reached by
 network is a record of its own, the same under every switch (`gfso network <project>` says where it lies): while an
-installation has work, a listener of the system's own for each of its server processes on Docker's host network, holding only the right to read packets and
-sharing nothing with a session, writes for each container the destination of each new connection, whatever the protocol, and
+installation has work, a listener of the system's own for each process that starts its containers, on Docker's host network, holding only the right to read packets and
+sharing nothing with a session, writes for each container the destination of each new connection leaving it, whatever the protocol, and
 the first name of each plain DNS query over UDP (over TCP, or encrypted, only the address). It changes no traffic, and a container's code starts only
-once the listener stands and knows its address, so a first packet is on it; where it cannot stand at a start the project stops with the cause,
+once the listener stands, knows its address and has said its link is open, so a first packet is on it; where it cannot stand at a start the project stops with the cause,
 unless the installation said `GFSO_NETWORK_RECORD=off`. One that dies later is raised again and the gap said on the record; sessions already running go on meanwhile. It holds addresses, ports and names, not what passed; nothing the kernel refused
 before it left a container. Each container lists 2,000
-destinations, and past that says so; a project's record turns over at 16 MiB, keeping its last turn, and goes with the project.
-Under an allowlist it names the gateway, whose own log has the target. A flood costs its own container's lines alone: each container is read apart, and the packets lost are said on the record under its name. On a Linux host the listener reads the headers of every
+destinations, and past that says so, and 64 ports of one host, and past that says so; a project's record turns over at 16 MiB, keeping its last turn and saying so, and goes with the project.
+Under an allowlist it names the gateway, whose own log has the target. A flood costs its own container's lines alone: each container is read apart, and what arrives at one is not read.
+A session under `open` can still hide where it went, by sending faster than the listener reads or past its 2,000 destinations: what it cannot do is hide that it did. The packets lost and the limit passed are on the record under its name, and `gfso network` names them. Such a session is not ended: `open` is the switch for work where a leak does not matter, and a measure that stops an honest upload would make it no longer open. Under the closed switches only new connections to the door and the gateway leave a container. On a Linux host the listener reads the headers of every
 container there, and writes those of this installation alone; a user's container taking a freed address within ten seconds
-is written under the one that left it. Files a client's own Write and Edit tools write are in its stream, not here. A client that runs a shell beside itself
+is written under the one that left it. A client that runs a shell beside itself
   instead (it ignores, silently, a shell it does not accept) runs no command there, and the session
   is refused with that cause: the project stops. The client's own file tools may not write through
   `/proc` or `/dev`, nor into its own state. What the client's shell writes back into the client's container is the

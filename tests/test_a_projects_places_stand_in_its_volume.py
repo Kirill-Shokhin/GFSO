@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import tarfile
 import time
+import tracemalloc
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -492,6 +493,32 @@ def test_live_a_projects_places_export_to_the_host_whole_its_clones_free_of_the_
 def _export(x, out) -> list:
     """`gfso export-places` over the project's record as the server kept it — the dict `_fresh` hands its volume."""
     return E.export_places("p", x.volume.record[0].__self__, str(out))
+
+
+@live
+def test_live_an_export_holds_what_it_carries_in_no_memory(tmp_path):
+    """Its stream was held whole in the process's memory, to all a project's places hold."""
+    (base := tmp_path / "ws").mkdir()
+    _git(base, "init", "-q")
+    (base / "b.txt").write_text("base\n")
+    _git(base, "add", "b.txt")
+    _git(base, "commit", "-qm", "base")
+    x = _fresh(tmp_path, base, {})
+    try:
+        assert W.ensure(base, x.own / "a", "gfso/p/a", base, execution=x)
+        x.session(str(x.own / "a")).run(["sh", "-c", "head -c 134217728 /dev/urandom > big"], cwd=str(x.own / "a"),
+                                        timeout=120).check_returncode()
+        tracemalloc.start()
+        try:
+            _export(x, tmp_path / "out")
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert peak < 2 ** 25, f"{peak} bytes held"
+        assert next((tmp_path / "out").rglob("big")).stat().st_size == 2 ** 27
+    finally:
+        x.stop()
+        x.volume.remove()
 
 
 def _two_clones(tmp_path):

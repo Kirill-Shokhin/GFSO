@@ -147,8 +147,9 @@ def run(args, *, timeout: float, input=None, **kw) -> subprocess.CompletedProces
     kw.setdefault("stdin", subprocess.DEVNULL if input is None else subprocess.PIPE)
     if os.name == "nt":
         kw.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
-    proc = adopt(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw,
-                                  **spawn_kw()))
+    kw.setdefault("stdout", subprocess.PIPE)
+    kw.setdefault("stderr", subprocess.PIPE)
+    proc = adopt(subprocess.Popen(args, **kw, **spawn_kw()))
     try:
         out, err = proc.communicate(input, timeout=timeout)
         return subprocess.CompletedProcess(args, proc.returncode, out, err)

@@ -30,8 +30,9 @@ from pathlib import Path
 from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, WORK_PATH, ExecutionPort,
                              FilesPort, PlaceUnavailable, base_named, nodes_dir, place_name)
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
-                         memory_ceiling, node_disk, executions, executions_path, host_env, subprocess_env)
+                         memory_ceiling, network_record_off, node_disk, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
+from gfso.adapters.records import append, said_of
 from gfso.places import same_place
 from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, run_printing, spawn_kw
 
@@ -732,6 +733,81 @@ def watch_disk() -> None:
         threading.Thread(target=_watch_disk, args=(None, None, _home()), name="gfso-disk", daemon=True).start()
 
 
+#: what a reading of a volume's directories for what changed says of each, at most `FILES_BYTES`: `\0\1<dir>\1<its clock>\0`, or
+#: `\2\0` where this image's `find` cannot, then `<type> <path>\0`. By the inode's change time, which no process of a user sets
+_CHANGED = ('m=$1; t=$2; shift 2; while [ $# -gt 0 ]; do d=$1; s=$2; shift 2; printf \'\\0\\1%s\\1\' "$d"; date +%s.%N | tr -d "\\n"; printf \'\\0\'; '
+            '[ -d "/v/$d" ] || continue; find "/v/$d" -maxdepth 0 -newerct @0 -printf "" 2>/dev/null || { printf \'\\2\\0\'; continue; }; '
+            '[ "$s" = new ] && s=$(( $(date +%s) - 60 )); '
+            'timeout "$t" find "/v/$d" -xdev -ignore_readdir_race -newerct "@$s" -printf \'%y %P\\0\' 2>/dev/null | head -c "$m"; done')
+FILES_BYTES = 4 * 2 ** 20
+#: (volume, subpath) → {"since", the clock the next reading reads from; "work", whose it is; "left", read once more, then dropped}
+_FILES: dict = {}
+
+
+def file_record_path(project: str) -> Path:
+    """Where `project`'s record of what changed in its sessions' directories lies, in this installation's data."""
+    return data_dir() / "files" / f"{component(project)}.jsonl"
+
+
+def _files_changed(vol: str, since: dict, image: "str | None") -> dict:
+    """{subpath: (its clock now, its entries, cut?) or None where this image cannot say} of the volume `vol`, read-only, in a
+    container of its own as `_read`'s, as root past every mode, each bounded in what reaches this process."""
+    name = f"gfso-disk-reader-{uuid.uuid4().hex[:12]}"
+    try:
+        got = run(["docker", "run", "--rm", "--name", name, "--network", "none", "-u", "0", "--cap-drop", "ALL",
+                   "--cap-add", "DAC_READ_SEARCH", "--read-only", *_SMALL, *ceiling(), "--mount",
+                   f"type=volume,src={vol},dst=/v,readonly", "--entrypoint", "sh", image or CEILING_IMAGE, "-c", _CHANGED,
+                   "sh", str(FILES_BYTES), str(DISK_READ_S), *(x for sub, s in since.items() for x in (sub, s))],
+                  timeout=DISK_READ_S * len(since) + 60)
+    except subprocess.TimeoutExpired:
+        run(["docker", "rm", "-f", name], timeout=60)
+        raise
+    said = {}
+    for part in (got.stdout or b"").split(b"\0\1")[1:]:
+        head, _, rest = part.partition(b"\0")
+        sub, _, clock = head.partition(b"\1")
+        said[sub.decode(errors="replace")] = None if rest.startswith(b"\2") else (
+            clock.decode(), [e for e in rest.decode(errors="replace").split("\0") if e[2:]], len(rest) >= FILES_BYTES)
+    return said
+
+
+def _record_files(works: dict) -> None:
+    """S6's file half: what changed in every directory a session mounts writable, on its project's record on the host, read
+    from outside the session (the disk's watch): nothing a session does to its own containers, its memory or its processes
+    reaches this, whichever way it wrote and whether or not it ran a command. Where, not who: the system's own writes there
+    show too. A directory whose work left is read once more; one cut keeps its clock, so the next reading reads it again."""
+    for k, w in works.items():
+        for d in w["dirs"]:
+            _FILES.setdefault(d, {"since": "new"}).update(work=k, image=w["image"], left=False)
+    standing = {d for w in works.values() for d in w["dirs"]}
+    for d, f in _FILES.items():
+        f["left"] = d not in standing
+    for vol in {v for v, _ in _FILES}:
+        mine = {s: f for (v, s), f in _FILES.items() if v == vol}
+        if any(f["left"] for f in mine.values()) and run(["docker", "volume", "inspect", vol], timeout=60).returncode:
+            for s in mine:                # …gone with its project: asking would have Docker make it again, empty
+                _FILES.pop((vol, s))
+            continue
+        try:
+            said = _files_changed(vol, {s: f["since"] for s, f in mine.items()}, next(iter(mine.values()))["image"])
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log.warning(f"what changed in {vol} was not read now ({e}): the next reading reads it")
+            continue
+        for s, f in mine.items():
+            got, (project, node, role, session) = said.get(s, ()), f["work"]
+            row = {"at": time.time(), "node": node, "role": role, "session": session, "dir": s}
+            if not got:
+                append(file_record_path(project), {**row, "unread": "this image's `find` cannot say what changed"})
+            else:
+                clock, entries, cut = got
+                if entries or cut:
+                    append(file_record_path(project), {**row, **said_of(entries), **({"cut": True} if cut else {})})
+                if not cut:
+                    f["since"] = f"{float(clock) - 0.05:.3f}"
+            if f["left"]:
+                _FILES.pop((vol, s))
+
+
 def _watch_disk(stop: threading.Event | None, every: float | None, scope: str, ledger: "DiskLedger | None" = None
                 ) -> None:
     """WHO PAYS WHEN ONE NODE FILLS DOCKER'S DISK: that node, by a bound of its own (`config.node_disk`). Docker Desktop's
@@ -748,6 +824,7 @@ def _watch_disk(stop: threading.Event | None, every: float | None, scope: str, l
             ledger.begin()
             works = _disk_works(scope)
             added = ledger.added(works, _disk_read(works))
+            _record_files(works)
             with ledger.lock:
                 busy = set(ledger.busy)
             # …never while the system writes into one of its directories: its git would be ended halfway
@@ -762,6 +839,7 @@ def _watch_disk(stop: threading.Event | None, every: float | None, scope: str, l
                        f"Docker's disk, past its bound of {bound[0] // 2 ** 20} MiB and {bound[1]} files "
                        f"(GFSO_NODE_DISK, GFSO_NODE_FILES)")
                 _DISK_ENDED.update(dict.fromkeys(works[k]["names"], why))
+                _keep_logs(works[k]["names"])        # …a session past its bound on purpose took its commands' record with it (critic, ran)
                 done = run(["docker", "rm", "-f", *works[k]["names"]], timeout=120, text=True)
                 log.warning(f"{k[0]}: {why}: " + ("its containers were ended, its directories kept" if not done.returncode
                                                   else f"it could not be ended ({(done.stderr or '').strip()[-200:]})"))
@@ -788,11 +866,16 @@ def _system_run(name: str, image: str, flags: list, script: Path, args: list, mi
 
 def _log_out(names, mirror: Path) -> str:
     """What the system containers `names` logged in their `OWN`, appended to the host's `mirror` before they go —
-    the mirror read with them: what they logged outlives them."""
-    got = [run(["docker", "exec", *SYS, n, "/bin/sh", "-c", f"cat {OWN}/*.log 2>/dev/null; true"], timeout=60, text=True,
-               encoding="utf-8", errors="replace").stdout or "" for n in names]
+    the mirror read with them: what they logged outlives them. One that can start no process — ended by its memory, or a
+    command holding every pid its container has — is read from what its listener printed, which takes none (critic, ran:
+    a session so emptied the record of its own commands)."""
+    def out(n):
+        """What `n` logged."""
+        got = run(["docker", "exec", *SYS, n, "/bin/sh", "-c", f"cat {OWN}/*.log 2>/dev/null; true"], timeout=60, text=True,
+                  encoding="utf-8", errors="replace")
+        return (got if not got.returncode else run(["docker", "logs", n], timeout=60, text=True, encoding="utf-8", errors="replace")).stdout or ""
     kept = mirror.read_text(encoding="utf-8") if mirror.is_file() else ""
-    return kept + "".join(got)
+    return kept + "".join(out(n) for n in names)
 
 
 def _mirror(names, mirror: Path) -> None:
@@ -1412,7 +1495,7 @@ class Commands:
         _system_run(self.name, s.image, [
             *labelled(s.name, s.project_name), "--label", f"{NODE}={s.node}", *flags, "-u", "0", "--cap-drop", "ALL",
             *[a for c in self.CAPS for a in ("--cap-add", c)], "--security-opt", "no-new-privileges",
-            *container_limits(), "--network", f"container:{s.container}"],
+            "--log-opt", "max-size=20m", *container_limits(), "--network", f"container:{s.container}"],
             Path(shell.__file__), ["serve", user, f"{OWN}/commands.log", json.dumps(said)], self.log(), "0700")
         laid = io.BytesIO()
         with tarfile.open(fileobj=laid, mode="w") as t:
@@ -1686,15 +1769,28 @@ class Volume:
         """A base with no git as it stands in the volume, written to the host directory `to` in place of what stood
         there — a root's accepted result, where its user reads it; what could not be written as it stood
         (`_untar`)."""
+        with self._read_out(image, [f"tar -c -C /from/{BASE_DIR} ."], "land", to) as (got, held):
+            if got.returncode:
+                raise OSError(f"{self.name}: its base could not be read out "
+                              f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
+            if to.exists():
+                shutil.rmtree(to)
+            return _untar(held, to)
+
+    @contextlib.contextmanager
+    def _read_out(self, image: str, script: list, role: str, to: Path):
+        """(the run of `script` over the places, read-only and as the image's user; what it printed): a tar stream, in a
+        file on the disk it is about to land on, gone after: all a project holds passes through no process's memory."""
         user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
-        got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/from,readonly"],
-                             [f"tar -c -C /from/{BASE_DIR} ."], "land", user or "0")
-        if got.returncode:
-            raise OSError(f"{self.name}: its base could not be read out "
-                          f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
-        if to.exists():
-            shutil.rmtree(to)
-        return _untar(got.stdout, to)
+        to.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=to.parent) as held, tempfile.TemporaryFile(dir=to.parent) as said:
+            got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/from,readonly"], script, role,
+                                 user or "0", stdout=held, stderr=said)
+            # …its last megabyte: what tar says of each file it cannot read is of a size the session chose (critic, ran)
+            said.seek(max(0, said.seek(0, os.SEEK_END) - 2 ** 20))
+            got.stderr = said.read()
+            held.seek(0)
+            yield got, held
 
     def _keep(self, image: str) -> None:
         """Beside the volumes in the record, what an export reads them by: the base and the image they stand over."""
@@ -1742,17 +1838,15 @@ class Volume:
         could not be carried as it stood — a clone not repacked, an entry the host refused, a link leading out of
         `to`, kept as a file naming its target — is said in `.gfso-export-notes` beside `to`, and returned; nothing
         exported at all is an `OSError`. Its CLI state is not exported."""
-        user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
-        got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/from,readonly"],
-                             [_EXPORT, "sh", f"/from/{BASE_DIR}"], "export", user or "0")
-        said = [x[6:] for x in (got.stderr or b"").decode(errors="replace").splitlines() if x.startswith("NOTE: ")]
-        if got.returncode:
-            raise OSError(f"{self.name}: its places could not be exported ({'; '.join(said) or got.returncode})")
-        try:
-            notes = said + _untar(got.stdout, to) + _left_inert(to)
-        except OSError as e:
-            shutil.rmtree(to, ignore_errors=True)
-            raise OSError(f"{self.name}: an exported repository could not be made inert, nothing is left of the export ({e})")
+        with self._read_out(image, [_EXPORT, "sh", f"/from/{BASE_DIR}"], "export", to) as (got, held):
+            said = [x[6:] for x in (got.stderr or b"").decode(errors="replace").splitlines() if x.startswith("NOTE: ")]
+            if got.returncode:
+                raise OSError(f"{self.name}: its places could not be exported ({'; '.join(said) or got.returncode})")
+            try:
+                notes = said + _untar(held, to) + _left_inert(to)
+            except OSError as e:
+                shutil.rmtree(to, ignore_errors=True)
+                raise OSError(f"{self.name}: an exported repository could not be made inert, nothing is left of the export ({e})")
         if notes:
             (to.parent / ".gfso-export-notes").write_text("\n".join(notes) + "\n", encoding="utf-8")
         return notes
@@ -1800,15 +1894,15 @@ def _base_of_places(record: dict) -> str | None:
     return None
 
 
-def _untar(data: bytes, to: Path) -> list:
-    """A tar stream's entries under `to`, none outside it — a link whose target, read from its own directory, leaves
+def _untar(data, to: Path) -> list:
+    """A tar stream's entries (bytes, or a file holding them) under `to`, none outside it — a link whose target, read from its own directory, leaves
     `to`, or one the host cannot make, written as a file naming its target; an entry the host refuses passed over —
     and what was not written as it stood, said. On a disk that folds names, an entry whose name this disk would read
     as another is not written: a `.git.` or `git~1` beside a neutralised `.git` wrote into it (critic, live), a `CONFIG`
     over its config, an `X/` through a link `x`."""
     to.mkdir(parents=True, exist_ok=True)
     root, notes, spelled = to.resolve(), [], {}
-    with tarfile.open(fileobj=io.BytesIO(data)) as t:
+    with tarfile.open(fileobj=io.BytesIO(data) if isinstance(data, bytes) else data) as t:
         for m in t.getmembers():
             at = Path(os.path.abspath(root / m.name))
             if at == root:
@@ -2148,6 +2242,9 @@ def _run_and_admit(ex) -> None:
             raise PlaceUnavailable(ex.name, down)
         raise subprocess.CalledProcessError(got.returncode, "docker run", got.stdout, got.stderr)
     ex.volume.require(ex.run_args())                 # …again: one made by Docker between the asking and the run
+    if not ON_START and not network_record_off():    # …a list left empty admitted anything: `gfso run`, a reload worker (critic)
+        raise PlaceUnavailable(ex.name, "nothing here keeps the record of where its sessions reach: nothing runs off it")
+    watch_disk()                                     # …and the bound on its disk and the record of its files, wherever it started
     for admit in ON_START:
         admit(ex)
 

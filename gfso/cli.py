@@ -19,8 +19,8 @@ from importlib.resources import files
 
 from gfso.adapters.children import bind_this_process, end_this_process, open_outside
 from gfso.adapters import resources
-from gfso.adapters.execution import component, end_leftovers, export_places, watch_ceiling, watch_disk
-from gfso.adapters.netrecord import record_path, watch_network
+from gfso.adapters.execution import component, end_leftovers, export_places, file_record_path, watch_ceiling, watch_disk
+from gfso.adapters.netrecord import record_path, said_apart
 from gfso.adapters.storage.sqlite import settings_of
 from gfso.adapters.llm import credentials, registry
 from gfso.adapters.llm.conformance import assess, report
@@ -299,6 +299,8 @@ def _dispatch(args) -> None:
         sys.exit(_export_places(args))
     elif args.command == "network":
         print(record_path(args.project))
+        print(*said_apart(args.project), sep="\n")
+        print(f"what changed in its sessions' directories: {file_record_path(args.project)}")
 
 
 def _export_places(args) -> int:
@@ -472,7 +474,6 @@ def _down():
 
 def _mcp(args):
     bind_this_process()          # the stdio server spawns `claude` children too
-    watch_network()
     install_mcp_env(db_path=args.db_path, llm=args.llm, model=args.model)
     # LEFT: `gfso.mcp.stdio` needs the optional `mcp` SDK, and importing it raises the whole HTTP
     # stack (fastapi + uvicorn + `gfso.api.server`) that the other subcommands do not pay for.
@@ -487,7 +488,6 @@ def _serve(args):
     end_leftovers()              # …and the project containers of the server that stood here before
     watch_ceiling()              # …and who pays when every installation's containers together reach the ceiling
     watch_disk()                 # …and who pays when Docker's disk fills
-    watch_network()              # …and where each session reached
     resources.watch()            # …and what it holds in Docker read on its own schedule, so a page gets it at once
     # …and its projects that stood stay stopped until their Start; a reload worker inherits it, a stdio MCP process not
     mark_the_server()

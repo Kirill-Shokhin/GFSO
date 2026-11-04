@@ -2,9 +2,12 @@
 default, nothing recorded it. A critic stopped the first form with one datagram, forged another project's row with a name's
 line break, and found another's traffic on a record through a freed address.
 
+A later critic ran it: a stranger's flood into a container hid what the container sent, with nothing said; a process with
+no container stood a listener; `gfso run` admitted nothing; fragments invented ports.
+
 CONTROLS: in `_Book.heard`, take the `try` off and the hostile lines stop the reader; `learn` without its grace and a freed
 address keeps its dead holder; `admit` passing on a failure and work runs off the record; the kernel filter back to TCP, UDP
-and ICMP and the live test's SCTP line goes."""
+and ICMP and the live test's SCTP line goes; the filter's first two lines off and the inbound flood test goes red."""
 import json
 import os
 import subprocess
@@ -18,7 +21,7 @@ from gfso.adapters import execution as E
 from gfso import config as C
 from gfso.adapters import netrecord as N
 from gfso.core.types import PlaceUnavailable
-from tests.test_a_session_holds_only_its_own_place import made, project  # noqa: F401 — a fixture
+from tests.test_a_session_holds_only_its_own_place import IMAGE, made, project  # noqa: F401 — a fixture
 
 docker = pytest.mark.skipif(subprocess.run(["docker", "version"], capture_output=True).returncode != 0, reason="no Docker")
 
@@ -27,6 +30,14 @@ docker = pytest.mark.skipif(subprocess.run(["docker", "version"], capture_output
 def data(monkeypatch, tmp_path):
     monkeypatch.setattr(N, "data_dir", lambda: tmp_path)
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _the_record_on(monkeypatch):
+    """The suite runs off it; here it is the subject, each test's record its own with no watch left behind to stand a
+    listener under the next one's name."""
+    monkeypatch.delenv("GFSO_NETWORK_RECORD", raising=False)
+    monkeypatch.setattr(N._Record, "_watch", lambda self: None)
 
 
 def _rows(data, project="p"):
@@ -43,10 +54,9 @@ def _book(*holders):
     return b
 
 
-def test_a_flow_is_booked_once_under_its_container_s_project(data):
+def test_a_flow_is_booked_under_its_container_s_project(data):
     b = _book()
-    for _ in range(3):
-        b.heard(_flow(), 5.0)
+    b.heard(_flow(), 5.0)
     b.heard(_flow(proto=17, to="8.8.8.8", port=53, asked="example.com"), 6.0)
     rows = _rows(data)
     assert [(r["kind"], r["to"], r["port"]) for r in rows] == [("tcp", "1.1.1.1", 443), ("dns", "8.8.8.8", 53)]
@@ -89,7 +99,7 @@ def test_a_freed_address_leaves_its_holder_and_the_next_user_s_flow_is_on_no_rec
     monkeypatch.setattr(N.time, "monotonic", lambda: t + N.GRACE_S + 1)
     b.learn("", whole=True)
     b.heard(_flow(to="2.2.2.2"), 2.0)
-    assert [r["to"] for r in _rows(data)] == ["1.1.1.1"] and b.seen == {}
+    assert [r["to"] for r in _rows(data)] == ["1.1.1.1"]
 
 
 def test_the_next_holder_of_an_address_takes_it_at_once(data):
@@ -100,14 +110,13 @@ def test_the_next_holder_of_an_address_takes_it_at_once(data):
     assert _rows(data)[0]["container"] == "a" and _rows(data, "q")[0]["container"] == "b"
 
 
-def test_one_container_s_flood_takes_its_own_budget_alone_and_the_server_s_memory_stays_bound(data, monkeypatch):
-    monkeypatch.setattr(N, "BUDGET", 5)
-    b = _book(("a", "p", "172.17.0.2"), ("b", "p", "172.17.0.3"))
-    for i in range(50):
-        b.heard(_flow(to=f"1.1.1.{i}"), 1.0)
-    b.heard(_flow(src="172.17.0.3", to="9.9.9.9"), 2.0)
-    rows = _rows(data)
-    assert len(rows) == 7 and "cut" in rows[5] and rows[6]["container"] == "b" and len(b.seen["a"]) == 6
+def test_a_container_past_its_budget_or_its_ports_is_said_under_its_name(data):
+    b = _book()
+    b.heard('{"src": "172.17.0.2", "cut": 2000}', 1.0)
+    b.heard(_flow(to="1.1.1.1", port=-1), 1.0)
+    cut, more = _rows(data)
+    assert "2000" in cut["cut"] and cut["container"] == "a"
+    assert "port" not in more and "more than" in more["more_ports"]
 
 
 def test_the_record_turns_over_keeping_its_last_turn_and_a_project_s_deletion_takes_it(data, monkeypatch):
@@ -116,9 +125,80 @@ def test_the_record_turns_over_keeping_its_last_turn_and_a_project_s_deletion_ta
     for i in range(30):
         b.heard(_flow(to=f"1.1.1.{i}"), 1.0)
     path = N.record_path("p")
-    assert path.stat().st_size < 600 and path.with_suffix(".jsonl.1").exists() and _rows(data)[-1]["to"] == "1.1.1.29"
+    assert path.stat().st_size < 800 and path.with_suffix(".jsonl.1").exists() and _rows(data)[-1]["to"] == "1.1.1.29"
+    assert any("turned" in r for r in _rows(data)), "what is gone is said"
     N.forget("p")
     assert not path.exists() and not path.with_suffix(".jsonl.1").exists()
+
+
+def test_a_turnover_the_host_refuses_loses_no_row(data, monkeypatch):
+    """A reader holding the file on Windows: the replace raised, and each destination then was never written again."""
+    monkeypatch.setattr(N, "CAP", 10)
+    b = _book()
+    b.heard(_flow(to="1.1.1.1"), 1.0)
+    monkeypatch.setattr(N.os, "replace", lambda *_: (_ for _ in ()).throw(PermissionError("held")))
+    b.heard(_flow(to="1.1.1.2"), 2.0)
+    assert [r["to"] for r in _rows(data)] == ["1.1.1.1", "1.1.1.2"]
+
+
+def test_a_reader_is_told_who_lost_lines_or_passed_its_budget(data):
+    assert N.said_apart("p") == []
+    b = _book()
+    b.heard(_flow(), 1.0)
+    assert N.said_apart("p") == [], "an honest record says nothing of itself"
+    b.heard('{"drops": 5, "src": "172.17.0.2"}', 1.0)
+    b.heard('{"drops": 2, "src": "172.17.0.2"}', 1.0)
+    b.heard('{"src": "172.17.0.2", "cut": 2000}', 1.0)
+    N._append("p", {"at": 1.0, "gap": "x"})
+    said = "\n".join(N.said_apart("p"))
+    assert "a: 7 packets" in said and "a: past its 2000" in said and "1 times" in said
+
+
+def test_no_code_runs_before_the_listener_says_its_link_is_open(data, monkeypatch):
+    """Its link was opened whenever the listener got to the kernel's notice: 4 to 7 of 8 first datagrams under load (critic,
+    ran). An admission waits for its word, and without the word nothing runs."""
+    r, asked = N._Record(), []
+    monkeypatch.setattr(r, "up", lambda: None)
+    monkeypatch.setattr(N, "_holders", lambda ids: "/c|p|n|executor|172.17.0.2 \n")
+    monkeypatch.setattr(N, "SYNC_S", 0.05)
+    r.proc = SimpleNamespace(stdin=SimpleNamespace(write=asked.append, flush=lambda: None))
+    with pytest.raises(PlaceUnavailable, match="did not open"):
+        r.admit(SimpleNamespace(container="c", name="default", image=None))
+    assert asked == ["s"]
+    r.proc.stdin.flush = r.synced.set
+    r.admit(SimpleNamespace(container="c", name="default", image=None))
+
+
+def test_a_listener_taken_down_on_purpose_says_no_gap(data, monkeypatch):
+    r = N._Record()
+    r.proc, r.stood = object(), True
+    r.book = _book()
+    monkeypatch.setattr(r, "down", lambda: None)
+    monkeypatch.setattr(N, "_work_stands", lambda: [])
+    r.turn()
+    assert r.stood is False and not r.book.holders
+
+
+def test_no_container_runs_where_nothing_keeps_the_record(monkeypatch):
+    """`gfso run`, a reload worker: the watch was registered by `serve` and `mcp` alone, and an empty list admitted anything."""
+    assert any(getattr(a, "__func__", None) is N._Record.admit for a in E.ON_START), "importing the module registers it"
+    monkeypatch.setattr(E, "ON_START", [])
+    monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=0))
+    ex = SimpleNamespace(name="default", run_args=lambda: [], volume=SimpleNamespace(require=lambda _: None))
+    with pytest.raises(PlaceUnavailable, match="off it"):
+        E._run_and_admit(ex)
+    monkeypatch.setenv("GFSO_NETWORK_RECORD", "off")
+    E._run_and_admit(ex)
+
+
+def test_the_watch_starts_at_a_process_s_first_admission_and_once(monkeypatch):
+    monkeypatch.undo()
+    started = []
+    monkeypatch.setattr(N.threading, "Thread", lambda **k: SimpleNamespace(start=lambda: started.append(k["name"])))
+    r = N._Record()
+    r._watch()
+    r._watch()
+    assert started == ["gfso-net"]
 
 
 def test_what_a_flood_lost_is_said_on_the_record(data):
@@ -145,13 +225,6 @@ def test_an_admission_with_no_address_known_does_not_pass(data, monkeypatch):
     monkeypatch.setattr(N, "_holders", lambda ids: "")
     with pytest.raises(PlaceUnavailable, match="no address"):
         r.admit(SimpleNamespace(container="c", name="default", image=None))
-
-
-def test_a_replaced_holder_takes_its_memory_with_it(data):
-    b = _book()
-    b.heard(_flow(), 1.0)
-    b.learn("/b|p|n|check|172.17.0.2 \n")
-    assert "a" not in b.seen
 
 
 def test_the_word_in_the_installation_s_file_is_heard_by_a_process_that_never_took_it_in(tmp_path, monkeypatch):
@@ -206,9 +279,7 @@ def test_live_a_real_session_is_admitted_before_its_first_command_and_its_flow_i
 
 @docker
 def test_live_a_session_s_every_way_out_is_on_the_record_from_its_first_packet_and_a_hostile_name_stops_nothing(data, monkeypatch):
-    home, project, name = E._home(), f"net{uuid.uuid4().hex[:6]}", f"gfso-nettest-{uuid.uuid4().hex[:6]}"
-    image = next(x for x in subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"], capture_output=True, text=True).stdout.split()
-                 if x.startswith(("gfso-agent:", "gfso-keep:", "e3-linux-agent:")))
+    home, project, name, image = E._home(), f"net{uuid.uuid4().hex[:6]}", f"gfso-nettest-{uuid.uuid4().hex[:6]}", IMAGE
     monkeypatch.setattr(N, "_image", lambda: image)
     r = N._Record()
     try:
@@ -243,11 +314,114 @@ def test_live_a_session_s_every_way_out_is_on_the_record_from_its_first_packet_a
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
+def _start(name, project, image, labelled=True):
+    subprocess.run(["docker", "run", "-d", "--name", name, "--cap-drop", "ALL", "--cpus", "1", "--memory", "128m",
+                    *(["--label", f"{E.HOME}={E._home()}", "--label", f"{E.PROJECT}={project}", "--label", f"{E.NODE}=a",
+                       "--label", f"{E.ROLE}=executor"] if labelled else []), "--entrypoint", "sleep", image, "90"],
+                   check=True, capture_output=True)
+
+
+def _send(name, program):
+    return subprocess.run(["docker", "exec", name, "python3", "-c", "import socket\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\n" + program],
+                          capture_output=True, text=True, timeout=60)
+
+
+def _said(r):
+    """Each line the listener says, before the reader passes over a source no container holds: on Docker Desktop a later
+    fragment reaches it under the VM's address, and a stranger's line goes no further."""
+    lines, heard = [], r.book.heard
+    r.book.heard = lambda line, now: (lines.append(json.loads(line)), heard(line, now))[1]
+    return lines
+
+
+def _wait_rows(data, project, enough, within=20):
+    end, rows = time.monotonic() + within, []
+    while time.monotonic() < end:
+        rows = _rows(data, project) if N.record_path(project).exists() else []
+        if enough(rows):
+            break
+        time.sleep(1)
+    return rows
+
+
+@docker
+def test_live_a_stranger_s_flood_into_a_container_hides_nothing_it_sends(data, monkeypatch):
+    """What comes in was read too: its source no holder of the installation, the loss it caused went unsaid, and the
+    container's own lines were lost with it (critic, ran: 4 of 50). Only what leaves a container is read now."""
+    tag, image = uuid.uuid4().hex[:6], IMAGE
+    monkeypatch.setattr(N, "_image", lambda: image)
+    r, us, peer = N._Record(), f"gfso-nettest-us-{tag}", f"gfso-nettest-peer-{tag}"
+    try:
+        _start(us, f"in{tag}", image)
+        _start(peer, "", image, labelled=False)
+        r.admit(SimpleNamespace(container=us, name="default", image=image))
+        at = subprocess.run(["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", us], capture_output=True, text=True).stdout.strip()
+        assert at, "no address to flood"
+        said = _said(r)
+        flood = subprocess.Popen(["docker", "exec", peer, "python3", "-c",
+                                  f"import socket,time\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nt=time.time()\nwhile time.time()-t<10:\n s.sendto(b'x',('{at}',9))\n"])
+        time.sleep(2)
+        _send(us, "import time\nfor i in range(50):\n s.sendto(b'x',('192.0.2.40',5000+i%60))\n s.sendto(b'x',('192.0.2.41',i+1))\n time.sleep(0.02)\n")
+        flood.wait(timeout=30)
+        rows = _wait_rows(data, f"in{tag}", lambda got: len([x for x in got if x.get("to") == "192.0.2.40"]) == 50)
+        assert len([x for x in rows if x.get("to") == "192.0.2.40"]) == 50, rows[:5]
+        assert len([x for x in said if x.get("to") == at and x.get("port") == 9]) == 1, "read where it left the stranger, never where it came in"
+    finally:
+        r.down()
+        subprocess.run(["docker", "rm", "-f", us, peer], capture_output=True)
+
+
+@docker
+def test_live_a_host_s_ports_spend_no_other_host_s_room_and_a_fragment_invents_no_port(data, monkeypatch):
+    tag, image = uuid.uuid4().hex[:6], IMAGE
+    monkeypatch.setattr(N, "_image", lambda: image)
+    r, us = N._Record(), f"gfso-nettest-pt-{tag}"
+    try:
+        _start(us, f"pt{tag}", image)
+        r.admit(SimpleNamespace(container=us, name="default", image=image))
+        said = _said(r)
+        _send(us, "import os\nfor i in range(300):\n s.sendto(b'x',('192.0.2.50',6000+i))\n"
+                  "for _ in range(5):\n s.sendto(os.urandom(6000),('192.0.2.51',7001))\n"
+                  "s.sendto(b'x',('192.0.2.52',7002))\n").check_returncode()
+        rows = _wait_rows(data, f"pt{tag}", lambda got: any(x.get("to") == "192.0.2.52" for x in got))
+        ports = [x for x in rows if x.get("to") == "192.0.2.50"]
+        assert len(ports) == N.PORTS + 1 and "more_ports" in ports[-1], ports[-3:]
+        assert [x["port"] for x in rows if x.get("to") == "192.0.2.51"] == [7001], "once, and only the port it went to"
+        assert {x["port"] for x in said if x.get("to") == "192.0.2.51"} == {7001}, "a later fragment's bytes are no port"
+        assert any(x.get("to") == "192.0.2.52" for x in rows)
+    finally:
+        r.down()
+        subprocess.run(["docker", "rm", "-f", us], capture_output=True)
+
+
+@docker
+def test_live_a_first_packet_is_on_the_record_under_another_s_flood(data, monkeypatch):
+    """Its link was opened whenever the listener got to the kernel's notice: 4 to 7 of 8 first datagrams (critic, ran)."""
+    tag, image = uuid.uuid4().hex[:6], IMAGE
+    monkeypatch.setattr(N, "_image", lambda: image)
+    r, flooder, firsts = N._Record(), f"gfso-nettest-fl-{tag}", [f"gfso-nettest-f{i}-{tag}" for i in range(6)]
+    try:
+        _start(flooder, f"fl{tag}", image)
+        r.admit(SimpleNamespace(container=flooder, name="default", image=image))
+        flood = subprocess.Popen(["docker", "exec", flooder, "python3", "-c",
+                                  "import socket,time\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nt=time.time()\nwhile time.time()-t<25:\n s.sendto(b'x',('192.0.2.60',9))\n"])
+        for i, n in enumerate(firsts):
+            _start(n, f"fi{tag}", image)
+            r.admit(SimpleNamespace(container=n, name="default", image=image))
+            _send(n, f"s.sendto(b'x',('192.0.2.61',{5000 + i}))\n").check_returncode()
+        want = {5000 + i for i in range(6)}
+        rows = _wait_rows(data, f"fi{tag}", lambda got: {x.get("port") for x in got} >= want)
+        assert {x.get("port") for x in rows} >= want, rows
+        assert not any("lost_packets" in x for x in rows), ("a neighbour's flood is not their loss", rows)
+        flood.kill()
+    finally:
+        r.down()
+        subprocess.run(["docker", "rm", "-f", flooder, *firsts], capture_output=True)
+
+
 @docker
 def test_live_one_container_s_flood_blinds_no_other(data, monkeypatch):
-    home, tag = E._home(), uuid.uuid4().hex[:6]
-    image = next(x for x in subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"], capture_output=True, text=True).stdout.split()
-                 if x.startswith(("gfso-agent:", "gfso-keep:", "e3-linux-agent:")))
+    home, tag, image = E._home(), uuid.uuid4().hex[:6], IMAGE
     monkeypatch.setattr(N, "_image", lambda: image)
     r, names = N._Record(), [f"gfso-nettest-{w}-{tag}" for w in ("flood", "quiet")]
     try:

@@ -50,9 +50,10 @@ CHUNK = 65536
 LOG_CAP, ARG, SHORT = 20 * 2 ** 20, 4096, 200
 #: the most of a named file sent back — a cwd file, a snapshot of a few kilobytes
 FILE_CAP = 2 ** 20
-#: what changed in the place while a command ran, as its record line says it: the paths at most, and the seconds the
-#: walk may take — 60 ms over 50 000 files (probe), cut past it and said so
-CHANGED_CAP, CHANGED_S = 200, 10
+#: what changed in the place while a command ran, as its record line says it: the paths at most, each this long, the seconds
+#: the walk may take — 60 ms over 50 000 files (probe), cut past it and said so — and the bytes of it this process holds: long
+#: names made the listener its container's largest process, and the kernel ended it with the record (critic, ran)
+CHANGED_CAP, CHANGED_NAME, CHANGED_S, CHANGED_BYTES = 200, 300, 10, 2 ** 20
 #: the files a client names from its own argv to be written back: the CLI's cwd file and its shell snapshot
 NAMED = (re.compile(r"pwd -P >\| ?'?([^'\s]+)"), re.compile(r"SNAPSHOT_FILE='?([^'\s;]+)"))
 #: the client's CLI state inside its container — the image's `CLAUDE_CONFIG_DIR`, where no command reaches
@@ -164,9 +165,13 @@ class Record:
             with self._lock, open(self.log, "a", encoding="utf-8") as f:
                 if "refused" in line and f.tell() >= LOG_CAP:
                     return
+                if "changed" in line and f.tell() >= LOG_CAP:    # …a session churning its files: how many, not which
+                    del line["changed"]
                 if "argv" in line:
                     line["argv"] = [str(a)[:SHORT if f.tell() >= LOG_CAP else ARG] for a in line["argv"]]
-                f.write(json.dumps({"at": time.time(), **self.said, **line}) + "\n")
+                text = json.dumps({"at": time.time(), **self.said, **line})
+                f.write(text + "\n")
+                print(text, flush=True)      # …where the system reads it needing no process in this container (`_log_out`)
         except OSError:          # …its memory full: the command runs all the same, its line lost
             pass
 
@@ -230,17 +235,19 @@ def _changed(place: str, since: float, user: dict) -> dict:
     """What in `place` had its status changed since `since` — written, made, chmodded, a directory whose entries were
     added, removed or renamed —, walked as the command's user: by the inode's change time, which no process of a user
     sets (a written file's mtime it does: `touch -d`). Every process of the place in that span changes it, the
-    command's own and any left running: the record says where, not who."""
+    command's own and any left running: the record says where, not who. A command's account of itself, walked as it: what
+    no process of the session can touch is the system's own reading from outside (`execution._record_files`)."""
     try:
-        got = subprocess.run(["timeout", str(CHANGED_S), "find", place, "-xdev", "-newerct", f"@{since:.3f}",
-                              "-printf", "%y %P\n"], capture_output=True, stdin=subprocess.DEVNULL, **user)
+        got = subprocess.run(["timeout", str(CHANGED_S), "sh", "-c", 'find "$1" -xdev -newerct "@$2" -printf "%y %P\\0" | head -c "$3"', "sh",
+                              place, f"{since:.3f}", str(CHANGED_BYTES)], capture_output=True, stdin=subprocess.DEVNULL, **user)
     except OSError as e:
         return {"changed_unread": str(e)}
-    lines = got.stdout.decode("utf-8", errors="replace").splitlines()
+    # …by NUL: a file's name holds a line break, and it wrote lines of its choosing here (critic, ran)
+    lines = [e[:CHANGED_NAME] for e in got.stdout.decode("utf-8", errors="replace").split("\0") if e[2:]]
     return {"changed": lines[:CHANGED_CAP], "changed_n": len(lines),
-            **({"changed_cut": True} if got.returncode == 124 else {}),
+            **({"changed_cut": True} if got.returncode == 124 or len(got.stdout) >= CHANGED_BYTES else {}),
             **({"changed_unread": got.stderr.decode("utf-8", errors="replace")[-300:]}
-               if got.returncode not in (0, 124) else {})}
+               if got.returncode not in (0, 124) or got.stderr else {})}
 
 
 def _one(c, user: dict, record: Record) -> None:

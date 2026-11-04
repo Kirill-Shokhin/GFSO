@@ -11,6 +11,7 @@ the model's API inside the session's container — no model, no credential.
 import json
 import subprocess
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,7 @@ import gfso.adapters.execution as E
 from gfso.adapters import shell
 from gfso.adapters.execution import LocalExecution, PlaceContainer
 from gfso.adapters.llm import headless as H
+from gfso.adapters.records import NAMES, said_of
 from tests.test_a_session_holds_only_its_own_place import IMAGE, _docker, made, project  # noqa: F401 — a fixture
 
 #: the stand-in for the model's messages API (`python3 -I -c FAKE <port> <commands json>`): each answer a Bash call of
@@ -339,6 +341,91 @@ def test_live_the_record_says_what_each_command_changed_in_the_place(monkeypatch
     assert {"f d/made.txt", "f old.txt"} <= set(first["changed"]), first
     assert "f hid.txt" in second["changed"] and "d d" in second["changed"], second
     assert "f old.txt" not in second["changed"], "a command is said with its own span alone"
+
+
+@live
+def test_live_what_a_client_wrote_itself_is_on_the_record_by_the_system(monkeypatch, project):
+    """S6's file half: a client's own file tool runs in no command, so no end line named what it wrote, and a walker in the
+    session's container was the session's to end (critic, ran). The system's reading from outside names it, under every
+    writable directory, a closed mode and a name with a line break no matter, and reads once more after the session went."""
+    E._FILES.clear()
+    at = project.to_inside(str(project.own / "a"))
+    answer, call, s = _session(monkeypatch, project, [
+        ["Write", {"file_path": f"{at}/by_the_tool.txt", "content": "x"}],
+        "mkdir shut && echo y > shut/inner.txt && chmod 000 shut; n=$(printf 'real\\nf forged.txt'); echo z > \"$n\"",
+        ["Write", {"file_path": f"{at}/last.txt", "content": "x"}]], tools=("Bash", "Write"))
+    assert answer == "done", call
+    subprocess.run(["docker", "exec", s.container, "sh", "-c", f"echo t > {s.to_inside(str(s.temp_root()))}/in_temp.txt"], check=True)
+    E._record_files(E._disk_works(E._home()))
+    subprocess.run(["docker", "exec", s.container, "sh", "-c", f"echo z > {at}/at_the_end.txt"], check=True)
+    subprocess.run(["docker", "rm", "-f", s.commands.name, s.container], capture_output=True)
+    E._record_files(E._disk_works(E._home()))
+    rows = [json.loads(x) for x in E.file_record_path(project.project_name).read_text().splitlines()]
+    seen = {p for r in rows for p in r.get("changed", ())}
+    assert {"f by_the_tool.txt", "f last.txt", "f shut/inner.txt", "f at_the_end.txt", "f real\nf forged.txt"} <= seen, rows
+    assert "f forged.txt" not in seen, "a name is one entry"
+    assert any(p.endswith("in_temp.txt") for p in seen), ("every directory it writes", rows)
+    assert all(r["node"] and r["session"] for r in rows)
+
+
+def test_what_a_session_stamps_over_and_over_displaces_no_other_name():
+    """The first 200 in the walk's order: 3000 files stamped each second hid every other write (critic, ran)."""
+    said = said_of([f"f loud/{i}" for i in range(3000)] + ["f quiet/mine.txt"])
+    assert said["changed"][0] == "f quiet/mine.txt" and len(said["changed"]) == NAMES
+    assert said["changed_n"] == 3001 and said["under"]["f loud"] == 3000
+    assert "under" not in said_of(["f a", "f b/c"]), "all named: nothing to count"
+    assert len(said_of(["f " + "x" * 9000])["changed"][0]) == 300, "a line a session makes long"
+
+
+def test_a_reading_cut_keeps_its_clock_and_a_directory_left_is_read_once_more(tmp_path, monkeypatch):
+    E._FILES.clear()
+    monkeypatch.setattr(E, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=0))
+    answers = [{"s": ("100.0", ["f a"], True)}, {"s": ("200.0", ["f b"], False)}, {"s": ("300.0", ["f c"], False)}]
+    since = []
+    monkeypatch.setattr(E, "_files_changed", lambda v, s, i: (since.append(s["s"]), answers.pop(0))[1])
+    works = {("p", "n", "executor", "c"): {"dirs": {("v", "s")}, "image": "i"}}
+    E._record_files(works)
+    E._record_files(works)
+    E._record_files({})
+    assert since == ["new", "new", "199.950"], "a cut reading read again from where it stood"
+    assert not E._FILES, "gone after the reading its leaving owed"
+    rows = [json.loads(x) for x in E.file_record_path("p").read_text().splitlines()]
+    assert rows[0]["cut"] is True and [r["changed"] for r in rows] == [["f a"], ["f b"], ["f c"]]
+
+
+def test_a_volume_gone_with_its_project_is_not_made_again_by_asking(tmp_path, monkeypatch):
+    E._FILES.clear()
+    monkeypatch.setattr(E, "data_dir", lambda: tmp_path)
+    E._FILES[("v", "s")] = {"since": "1", "work": ("p", "n", "r", "c"), "image": "i", "left": False}
+    monkeypatch.setattr(E, "run", lambda *a, **k: SimpleNamespace(returncode=1))
+    monkeypatch.setattr(E, "_files_changed", lambda *a: pytest.fail("a `docker run --mount` makes the volume"))
+    E._record_files({})
+    assert not E._FILES
+
+
+@live
+def test_live_a_command_holding_every_process_empties_no_record(monkeypatch, project):
+    """`docker exec` could not start, so the read and the mirror failed and `rm -f` followed: the record of its own commands
+    gone, on a session's say (critic, ran). What the listener printed takes no process there."""
+    monkeypatch.setenv("GFSO_CONTAINER_PIDS", "128")
+    s = _place(project)
+    s.commands_env()
+    _client(s, f"{shell.CLIENT} -c 'echo first'")
+    _client(s, f"{shell.CLIENT} -c 'for i in $(seq 200); do sleep 40 & done; sleep 30' >/dev/null 2>&1 &")
+    time.sleep(6)
+    held = subprocess.run(["docker", "exec", s.commands.name, "true"], capture_output=True)
+    assert held.returncode, "the control: no process could start there"
+    assert any("first" in " ".join(r.get("argv", ())) for r in s.commands.record())
+
+
+@live
+def test_live_a_changed_walk_holds_no_more_than_its_bound_of_a_session_s_names(monkeypatch, project):
+    s = _place(project)
+    s.commands_env()
+    _client(s, f"{shell.CLIENT} -c 'for i in $(seq 40); do : > {'x' * 200}$i; done'")
+    end = [r for r in s.commands.record() if "rc" in r and r.get("changed_n")][-1]
+    assert all(len(p) <= shell.CHANGED_NAME for p in end["changed"])
 
 
 @live

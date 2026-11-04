@@ -18,16 +18,22 @@ import time
 from pathlib import Path
 
 from gfso.adapters import execution as E
-from gfso.adapters.execution import HOME, NODE, PROJECT, ROLE, LocalExecution, PlaceUnavailable, ceiling, component, executions, host_env, installation, run
+from gfso.adapters.execution import HOME, NODE, PROJECT, ROLE, LocalExecution, PlaceUnavailable, ceiling, component, executions, file_record_path, host_env, installation, run
+from gfso.adapters.records import append
 from gfso.config import data_dir, network_record_off
 
 log = logging.getLogger(__name__)
 #: how often the watch asks which containers stand
 WATCH_S = 2.0
-#: a project's record turns over at this size, the last turn kept: what a session asks for fills no disk and erases no one
+#: a project's record turns over at this size, the last turn kept: what a session asks for fills no disk; about 40 containers
+#: at their full budget turn out what came before them, and the turn is said on the record
 CAP = 16 * 2 ** 20
 #: destinations listed per container: past them it is said once, and its flood takes no one else's room
 BUDGET = 2000
+#: ports of one host listed one by one per container: past them, one line says there are more
+PORTS = 64
+#: seconds the listener has to open a container's link when asked
+SYNC_S = 30.0
 #: seconds an ended container keeps its address here: its last flow may be read after it, and a user's container may take it
 GRACE_S = 10.0
 READY_S = 120.0
@@ -38,10 +44,14 @@ READY_S = 120.0
 #: every project, critic, ran); a link new to Docker is opened on its kernel notice, before `docker run` returns. Each line one JSON object: a name a session asks is its own text.
 _LISTEN = r"""
 import ctypes, json, os, select, socket, struct, sys, time
-P = [(0x28, 0, 0, 12), (0x15, 0, 6, 0x800), (0x30, 0, 0, 23), (0x15, 0, 10, 6), (0xb1, 0, 0, 14), (0x50, 0, 0, 27),
-     (0x54, 0, 0, 0x12), (0x15, 6, 7, 2), (0x15, 0, 6, 0x86dd), (0x30, 0, 0, 20), (0x15, 0, 3, 6), (0x30, 0, 0, 67),
-     (0x54, 0, 0, 0x12), (0x15, 0, 1, 2), (0x06, 0, 0, 512), (0x06, 0, 0, 0)]
+P = [(0x30, 0, 0, 0xfffff004), (0x15, 17, 0, 4),                   # …what a link carries TO its container: not where it reached
+     (0x28, 0, 0, 12), (0x15, 0, 8, 0x800),
+     (0x28, 0, 0, 20), (0x45, 13, 0, 0x1fff),                      # …an IP fragment past the first: no header in it, only what looks like one
+     (0x30, 0, 0, 23), (0x15, 0, 10, 6), (0xb1, 0, 0, 14), (0x50, 0, 0, 27), (0x54, 0, 0, 0x12), (0x15, 6, 7, 2),
+     (0x15, 0, 6, 0x86dd), (0x30, 0, 0, 20), (0x15, 0, 3, 6), (0x30, 0, 0, 67), (0x54, 0, 0, 0x12), (0x15, 0, 1, 2),
+     (0x06, 0, 0, 512), (0x06, 0, 0, 0)]
 code = ctypes.create_string_buffer(b"".join(struct.pack("HBBI", *p) for p in P))
+BUDGET, PORTS = int(sys.argv[1]), int(sys.argv[2])
 def say(**row):
     print(json.dumps(row), flush=True)
 def name(b, at):
@@ -50,70 +60,104 @@ def name(b, at):
         parts.append(b[at + 1:at + 1 + b[at]].decode("ascii", "replace"))
         at += b[at] + 1
     return ".".join(parts)[:253]
-links, last = {}, {}
+class Link:
+    def __init__(self, k):
+        self.k, self.seen, self.ports, self.src, self.lost, self.cut = k, set(), {}, None, 0, False
+links = {}
 changes = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, 0)
 changes.bind((0, 1))
+def tell(link):
+    link.lost += struct.unpack("II", link.k.getsockopt(263, 6, 8))[1]
+    if link.lost and link.src:
+        say(drops=link.lost, src=link.src)
+        link.lost = 0
+def close(n):
+    try:
+        tell(links[n])
+    except OSError:
+        pass
+    links.pop(n).k.close()
 def scan():
-    for n in os.listdir("/sys/class/net"):
+    here = set(os.listdir("/sys/class/net"))
+    for n in set(links) - here:
+        close(n)
+    for n in here:
         if n.startswith("veth") and n not in links:
             try:
-                k = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
+                # …of no protocol until it is bound: with one it takes every link's frames, unfiltered, from this line on, and a
+                # neighbour's flood counted as this new container's loss (ran)
+                k = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0)
                 k.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 ** 20)
                 k.setsockopt(socket.SOL_SOCKET, 26, struct.pack("HL", len(P), ctypes.addressof(code)))
                 k.bind((n, 3))
                 k.setblocking(False)
-                links[n] = k
+                links[n] = Link(k)
             except OSError:
                 pass
 scan()
 say(ready=True)
 said = time.monotonic()
-def one(n, k):
-    p = k.recv(600)
-    if len(p) < 34:
+def one(link):
+    p = link.k.recv(600)
+    if link.cut or len(p) < 34:
         return
     v6 = p[12:14] == b"\x86\xdd"
     proto, hl = (p[20], 40) if v6 else (p[23], (p[14] & 15) * 4)
     src, dst = ((socket.inet_ntop(socket.AF_INET6, p[22:38]), socket.inet_ntop(socket.AF_INET6, p[38:54])) if v6 else
                 (socket.inet_ntoa(p[26:30]), socket.inet_ntoa(p[30:34])))
-    last[n] = src
+    link.src = src
     port = struct.unpack("!H", p[14 + hl + 2:14 + hl + 4])[0] if proto in (6, 17, 132, 136) and len(p) >= 14 + hl + 4 else 0
     asked = name(p, 14 + hl + 8 + 12) if proto == 17 and port == 53 else ""
+    key = hash((proto, dst, port, asked))    # …a hash: a list of names at their longest would outgrow this container
+    if key in link.seen:
+        return
+    if not asked:
+        host = hash((proto, dst))            # …a host's ports spend no room meant for other hosts
+        link.ports[host] = n = link.ports.get(host, 0) + 1
+        if n > PORTS:
+            if n == PORTS + 1:
+                say(src=src, proto=proto, to=dst, port=-1, asked="")
+            link.ports[host] = PORTS + 2
+            return
+    if len(link.seen) >= BUDGET:
+        link.cut = True
+        return say(src=src, cut=BUDGET)
+    link.seen.add(key)
     say(src=src, proto=proto, to=dst, port=port, asked=asked)
 while True:
-    ready = select.select([changes, sys.stdin, *links.values()], [], [], 10)[0]
-    if sys.stdin in ready and not sys.stdin.buffer.read1(1):
-        break
+    ready = select.select([changes, 0, *(l.k for l in links.values())], [], [], 10)[0]
+    if 0 in ready:
+        if not os.read(0, 64):
+            break
+        scan()                               # …the system asks before a container's code runs: its link is read from here on
+        say(synced=True)
     if changes in ready:
         changes.recv(65536)
         scan()
-    for n, k in list(links.items()):
-        if k not in ready:
+    for n, link in list(links.items()):
+        if link.k not in ready:
             continue
         try:
             for _ in range(16):      # …each link its turn: a flood on one waits while the others are read
-                one(n, k)
+                one(link)
         except BlockingIOError:
             pass
         except OSError:              # …its container gone
-            k.close()
-            del links[n]
+            close(n)
     if time.monotonic() - said > 10:
         said = time.monotonic()
-        for n, k in links.items():
-            dropped = struct.unpack("II", k.getsockopt(263, 6, 8))[1]
-            if dropped:
-                say(drops=dropped, src=last.get(n))
+        for link in links.values():
+            tell(link)
 """
 _KINDS = {6: "tcp", 17: "udp", 1: "icmp", 58: "icmp", 132: "sctp", 136: "udplite"}
 
 
 class _Book:
-    """Who holds which address (each container the installation made, by its labels), and each new destination on its
-    project's record, once per container, up to its budget."""
+    """Who holds which address (each container the installation made, by its labels), and each line the listener says of
+    it on its project's record."""
 
     def __init__(self):
-        self.holders, self.seen, self.ended = {}, {}, {}
+        self.holders, self.ended = {}, {}
 
     def learn(self, rows: str, whole: bool = False) -> None:
         """`rows`: `<name>|<project>|<node>|<role>|<address> …` a line. `whole`, all that stand: a holder not among them
@@ -124,8 +168,6 @@ class _Book:
             if len(parts) == 5:
                 standing.add(parts[0])
                 for ip in parts[4].split():
-                    if (old := self.holders.get(ip)) and old["container"] != parts[0]:
-                        self.seen.pop(old["container"], None)
                     self.holders[ip] = dict(zip(("container", "project", "node", "role"), parts))
         if whole:
             for ip, who in list(self.holders.items()):
@@ -134,7 +176,6 @@ class _Book:
                     self.ended.pop(c, None)
                 elif now - self.ended.setdefault(c, now) > GRACE_S:
                     del self.holders[ip]
-                    self.seen.pop(c, None)
                     self.ended.pop(c, None)
 
     def heard(self, line: str, now: float) -> None:
@@ -148,17 +189,13 @@ class _Book:
                 log.warning(f"the network's record lost {drops} packets of {who['container']}: its flood outran it, and what it sent then is not on the record")
                 _append(who["project"], {"at": now, "container": who["container"], "lost_packets": int(drops)})
                 return
-            seen = self.seen.setdefault(who["container"], set())
-            key = (row["proto"], row["to"], row["port"], row["asked"])
-            if key in seen or len(seen) > BUDGET:
-                return
-            seen.add(key)
-            if len(seen) > BUDGET:
-                _append(who["project"], {"at": now, "container": who["container"], "cut": f"more than {BUDGET} destinations: the rest not listed"})
+            if cut := row.get("cut"):
+                _append(who["project"], {"at": now, "container": who["container"], "cut": f"more than {int(cut)} destinations: the rest not listed"})
                 return
             _append(who["project"], {"at": now, **{k: who[k] for k in ("container", "node", "role")},
                                      "kind": "dns" if row["asked"] else _KINDS.get(row["proto"], f"ip{row['proto']}"),
-                                     "to": str(row["to"]), "port": int(row["port"]), **({"asked": str(row["asked"])} if row["asked"] else {})})
+                                     "to": str(row["to"]), **({"more_ports": f"more than {PORTS} ports: the rest not listed"} if int(row["port"]) < 0 else {"port": int(row["port"])}),
+                                     **({"asked": str(row["asked"])} if row["asked"] else {})})
         except (ValueError, KeyError, TypeError, AttributeError, OSError) as e:
             log.warning(f"the network's record passed over a line it could not read ({e})")
 
@@ -169,19 +206,32 @@ def record_path(project: str) -> Path:
 
 
 def forget(project: str) -> None:
-    """A project gone: a new one of the name inherits none of its record."""
-    for p in (record_path(project), record_path(project).with_suffix(".jsonl.1")):
-        p.unlink(missing_ok=True)
+    """A project gone: a new one of the name inherits none of its records."""
+    for at in (record_path(project), file_record_path(project)):
+        for p in (at, at.with_suffix(".jsonl.1")):
+            p.unlink(missing_ok=True)
 
 
 def _append(project: str, row: dict) -> None:
-    """`row` on `project`'s record, turned over past `CAP` with its last turn kept."""
-    path = record_path(project)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists() and path.stat().st_size >= CAP:
-        os.replace(path, path.with_suffix(".jsonl.1"))
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row) + "\n")
+    """`row` on `project`'s record."""
+    append(record_path(project), row, CAP)
+
+
+def said_apart(project: str) -> list:
+    """What the record says of itself: each container that lost lines or passed its budget, and each gap. A row of these
+    is where a session may have hidden, so a reader is told without reading every destination."""
+    lost, cut, gaps, turned = collections.Counter(), set(), 0, 0
+    for p in (record_path(project).with_suffix(".jsonl.1"), record_path(project)):
+        for line in p.read_text(encoding="utf-8").splitlines() if p.exists() else ():
+            row = json.loads(line)
+            lost[row.get("container")] += row.get("lost_packets", 0)
+            cut |= {row["container"]} if "cut" in row else set()
+            gaps += "gap" in row
+            turned += "turned" in row
+    return ([f"{c}: {n} packets not read, what it sent then is not listed" for c, n in lost.items() if n]
+            + [f"{c}: past its {BUDGET} destinations, the rest not listed" for c in sorted(cut)]
+            + ([f"{gaps} times the listener stood again: what passed before each may not be listed"] if gaps else [])
+            + ([f"turned over {turned} times: older rows are gone"] if turned else []))
 
 
 def _image() -> "str | None":
@@ -213,8 +263,8 @@ class _Record:
     """The listener's life, one per process that starts containers."""
 
     def __init__(self):
-        self.book, self.proc, self.reader, self.image, self.stood = _Book(), None, None, None, False
-        self.ready, self.lock = threading.Event(), threading.RLock()
+        self.book, self.proc, self.reader, self.image, self.stood, self.watched = _Book(), None, None, None, False, False
+        self.ready, self.synced, self.lock = threading.Event(), threading.Event(), threading.RLock()
 
     def up(self) -> None:
         """The listener stands and reads, else `OSError` with why."""
@@ -228,7 +278,7 @@ class _Record:
             tail = collections.deque(maxlen=5)
             self.proc = LocalExecution().popen(["docker", "run", "--rm", "-i", "--name", listener(), "--network", "host", "--cap-drop", "ALL",
                                                 "--cap-add", "NET_RAW", "--log-driver", "none", "--security-opt", "no-new-privileges", "-u", "0", "--read-only", "--memory", "64m",
-                                                "--memory-swap", "64m", "--pids-limit", "16", "--cpus", "0.5", *ceiling(), "--entrypoint", "python3", image, "-u", "-c", _LISTEN],
+                                                "--memory-swap", "64m", "--pids-limit", "16", "--cpus", "0.5", *ceiling(), "--entrypoint", "python3", image, "-u", "-c", _LISTEN, str(BUDGET), str(PORTS)],
                                                env=host_env(), cwd=str(data_dir()), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             proc = self.proc
 
@@ -237,6 +287,8 @@ class _Record:
                 for line in proc.stdout:
                     if '"ready"' in line[:12]:
                         self.ready.set()
+                    elif '"synced"' in line[:12]:
+                        self.synced.set()
                     elif line.startswith("{"):
                         self.book.heard(line, time.time())
                     else:
@@ -262,19 +314,30 @@ class _Record:
             run(["docker", "rm", "-f", listener()], timeout=60)
             self.ready.clear()
 
+    def _sync(self) -> None:
+        """Back once the listener has opened every link there is now, a container's just started among them."""
+        self.synced.clear()
+        self.proc.stdin.write("s")
+        self.proc.stdin.flush()
+        if not self.synced.wait(SYNC_S):
+            raise OSError("the listener did not open its link in time")
+
     def admit(self, ex) -> None:
-        """Before any code runs in the container `ex` just started: the listener up and the address known, so its first
-        packet is on the record. Without them it does not run (`GFSO_NETWORK_RECORD=off` the installation's word)."""
+        """Before any code runs in the container `ex` just started: the listener up, its link open and the address known,
+        so its first packet is on the record. Without them it does not run (`GFSO_NETWORK_RECORD=off` the installation's
+        word)."""
         if network_record_off():
             return
         try:
             with self.lock:
+                self._watch()
                 self.image = ex.image or self.image
                 self.up()
-            rows = _holders([ex.container])
-            if not any(r.split("|")[-1].strip() for r in rows.splitlines()):
-                raise OSError(f"Docker gave no address for {ex.container}")
-            self.book.learn(rows)
+                rows = _holders([ex.container])
+                if not any(r.split("|")[-1].strip() for r in rows.splitlines()):
+                    raise OSError(f"Docker gave no address for {ex.container}")
+                self.book.learn(rows)
+                self._sync()
         except (OSError, subprocess.TimeoutExpired) as e:
             raise PlaceUnavailable(ex.name, f"the record of where its sessions reach could not stand ({e}): nothing runs off the record; "
                                             "GFSO_NETWORK_RECORD=off in data/serve.json runs without it") from e
@@ -290,6 +353,7 @@ class _Record:
                 if not ids:
                     if self.proc:
                         self.down()
+                    self.book, self.stood = _Book(), False     # …taken down on purpose, holding no one: no gap to say
                     return
                 self.book.learn(_holders(ids), whole=True)
                 self.up()
@@ -297,22 +361,22 @@ class _Record:
             log.warning(f"the network's record did not stand ({e}): what passes meanwhile is not on it")
 
 
-_RECORD = _Record()
-_WATCH = threading.Event()
+    def _watch(self) -> None:
+        """A turn each `WATCH_S`, started by the process's first admission: a process that starts no container stands no
+        listener (three bridges beside one server stood three, each writing every row)."""
+        if self.watched:
+            return
+        self.watched = True
+
+        def watch():
+            """A turn each `WATCH_S`."""
+            while not time.sleep(WATCH_S):
+                try:
+                    self.turn()
+                except Exception as e:      # …a half-written declaration ended the watch for the process's life (critic, ran)
+                    log.warning(f"the network's record passed over a turn ({e})")
+        threading.Thread(target=watch, name="gfso-net", daemon=True).start()
 
 
-def watch_network() -> None:
-    """The record, for this process's life: every container it starts admitted, a watch beside them. Started once."""
-    if _WATCH.is_set():
-        return
-    _WATCH.set()
-    E.ON_START.append(_RECORD.admit)
-
-    def watch():
-        """A turn each `WATCH_S`."""
-        while not time.sleep(WATCH_S):
-            try:
-                _RECORD.turn()
-            except Exception as e:      # …a half-written declaration ended the watch for the process's life (critic, ran)
-                log.warning(f"the network's record passed over a turn ({e})")
-    threading.Thread(target=watch, name="gfso-net", daemon=True).start()
+#: every container this process starts is admitted: the module's import is the registration, and a list left empty refuses
+E.ON_START.append(_Record().admit)

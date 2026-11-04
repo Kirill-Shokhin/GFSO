@@ -110,6 +110,8 @@ def _own_state_home():
     os.environ["GFSO_ALLOWED_HOSTS"] = "testserver"     # the name Starlette's TestClient sends; the door refuses others
     E.CEILING_GROUP = "gfso/suite"                      # its live containers under the machine's ceiling, never its limit
     os.environ["GFSO_LOCAL_AGENTS"] = "allow"           # the suite's sessions are fakes on this host, by its own word
+    os.environ["GFSO_NETWORK_RECORD"] = "off"           # …a listener for each worker's live tests; its own file asks for it
+    E._DISK_WATCH.set()                                 # …nor a watch beside each worker's: a test runs its own
     yield
     _sweep(Path(mine))
     if prior is None:

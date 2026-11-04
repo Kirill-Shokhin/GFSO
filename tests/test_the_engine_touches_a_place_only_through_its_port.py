@@ -130,6 +130,8 @@ HOSTS_OWN = {
     ("adapters/execution.py", "_left", "x.is_dir()"): "the host's leftover of a project's places",
     ("adapters/execution.py", "Volume._consume", "p.is_dir()"): "the host's leftover, consumed by its copy-in",
     ("adapters/execution.py", "Volume.export", "shutil.rmtree(to, ignore_errors=True)"): "an export's host directory",
+    ("adapters/execution.py", "Volume._read_out", "to.parent.mkdir(parents=True, exist_ok=True)"): "an export's or a result's host directory",
+    ("adapters/execution.py", "Volume._read_out", "tempfile.TemporaryFile(dir=to.parent)"): "an export's or a result's host directory",
     ("adapters/execution.py", "_left_inert", "(alt := (here / names.get('objects', 'objects') / 'info' / 'alternates')).exists()"): "an export's host directory",
     ("adapters/execution.py", "_left_inert", "(cfg := (here / names.get('config', 'config'))).is_dir()"): "an export's host directory",
     ("adapters/execution.py", "_left_inert", "(here / names['.git']).is_dir()"): "an export's host directory",
