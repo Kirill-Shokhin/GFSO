@@ -1252,3 +1252,11 @@ def test_no_read_a_move_starts_holds_the_later_moves(client):
     main = client.get("/js/main.js").text
     body = main[main.index("const settle = async"):main.index("// THE COUNT OF WORK IN FLIGHT")]
     assert re.findall(r"await within\(\w+\(", body) and not re.findall(r"await (?!within\()\w+\(", body), body
+
+
+def test_the_panel_reads_what_a_verdict_did_not_re_run_under_the_names_the_verb_gives_it(client):
+    """A lifted check read as a plain PASS: the verb carried the records and the page showed none."""
+    verb = (Path(__file__).parent.parent / "gfso" / "tools.py").read_text(encoding="utf-8")
+    panel = client.get("/js/panel.js").text
+    for name in ("checks_no_longer_run", "findings_not_reproduced", "retired_after_refutation"):
+        assert f'out["{name}"]' in verb and f"'{name}'" in panel, name
