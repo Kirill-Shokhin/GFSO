@@ -131,7 +131,7 @@ and nothing of your disk is mounted into any of its containers:
   between commands is in the client's stream, not here) — by the system's listener in that container, which no command
   can signal, read or ask for anything; the record is kept beside the door's log. Where a session reached by
 network is a record of its own, the same under every switch (`gfso network <project>` says where it lies): while an
-installation has work, one listener of the system's own on Docker's host network, holding only the right to read packets and
+installation has work, a listener of the system's own for each of its server processes on Docker's host network, holding only the right to read packets and
 sharing nothing with a session, writes for each container the destination of each new connection, whatever the protocol, and
 the first name of each plain DNS query over UDP (over TCP, or encrypted, only the address). It changes no traffic, and a container's code starts only
 once the listener stands and knows its address, so a first packet is on it; where it cannot stand at a start the project stops with the cause,

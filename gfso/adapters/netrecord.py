@@ -1,6 +1,6 @@
 """Where each session reached by network, written by the system, under every switch alike (DECISION S6; SECURITY.md).
 
-One listener for an installation, in a container of the system's own on Docker's host network, holding only the right to
+One listener for each process that starts containers, in a container of the system's own on Docker's host network, holding only the right to
 read packets, and only while the installation has work: no process of a session shares anything with it, so none stops or
 forges it, and it changes no traffic. The switches differ in where a session can get; this says where it went. It sees
 addresses, ports and asked names, not what passed, and nothing the kernel refused before it left a container. A container's
