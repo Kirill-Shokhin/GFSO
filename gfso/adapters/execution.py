@@ -31,7 +31,7 @@ from pathlib import Path
 from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, WORK_PATH, ExecutionPort,
                              FilesPort, PlaceUnavailable, base_named, nodes_dir, place_name)
 from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
-                         memory_ceiling, network_record_off, node_disk, executions, executions_path, host_env, subprocess_env)
+                         memory_ceiling, network_record_off, new_flows, node_disk, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
 from gfso.adapters.records import append, said_of
 from gfso.places import same_place
@@ -1381,7 +1381,12 @@ class WayOut:
         dns = ("for n in $(awk '/^nameserver [0-9.]+$/{print $2}' /etc/resolv.conf); do iptables -A OUTPUT -d $n -p "
                "udp --dport 53 -j ACCEPT && iptables -A OUTPUT -d $n -p tcp --dport 53 -j ACCEPT || exit 1; done && ")
         shut = " && ".join(f"iptables -A OUTPUT -d {n} -j REJECT" for n in PRIVATE_NETS)
-        return (f'{dns}iptables -A OUTPUT -d {HOST_NET} -j REJECT && gw=$({_GATEWAY_OF}) && [ -n "$gw" ] && '
+        # ...one session's new flows, as fast as it could open them, stopped Docker Desktop's backend and every project with it
+        # (critic, measured). An unanswered UDP stream stays NEW on every packet, so one past the rate is limited too: this
+        # kernel has no way to count a flow's first packet alone (`connbytes`, measured absent)
+        flows = (f"iptables -N gfso-flows && iptables -A gfso-flows -m limit --limit {new_flows()}/second --limit-burst {min(10000, 10 * new_flows())} -j RETURN && "
+                 "iptables -A gfso-flows -j DROP && iptables -A OUTPUT -o lo -j ACCEPT && iptables -A OUTPUT -m conntrack --ctstate NEW -j gfso-flows && ")
+        return (f'{flows}{dns}iptables -A OUTPUT -d {HOST_NET} -j REJECT && gw=$({_GATEWAY_OF}) && [ -n "$gw" ] && '
                 f'iptables -A OUTPUT -d "$gw" -j REJECT && {own} && {shut} && {inbound}')
 
     def open(self) -> None:

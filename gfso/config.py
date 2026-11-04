@@ -289,6 +289,19 @@ def validation_batch() -> int:
         return VALIDATION_BATCH
 
 
+#: new flows a second one container may open under an `open` switch: on Docker Desktop one container flooding at this rate left
+#: the backend standing over five minutes, unbounded ended it 2 of 2; at 5000 one stalled the API; many at once: SECURITY.md
+NEW_FLOWS = 200
+
+
+def new_flows() -> int:
+    """The bound on a container's new flows a second under an `open` switch (`GFSO_NEW_FLOWS`), 1 to 10000, what `limit` takes."""
+    try:
+        return min(10000, max(1, int(os.environ.get("GFSO_NEW_FLOWS", NEW_FLOWS))))
+    except ValueError:
+        return NEW_FLOWS
+
+
 def network_record_off() -> bool:
     """Has this installation said it runs off the record of where its sessions reach (`netrecord`, SECURITY.md)?"""
     if os.environ.get("GFSO_NETWORK_RECORD") == "off":

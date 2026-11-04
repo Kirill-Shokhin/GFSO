@@ -324,3 +324,16 @@ def test_live_an_open_session_reaches_no_container_of_the_users_on_the_bridge(tm
     finally:
         x.stop()
         subprocess.run(["docker", "rm", "-f", theirs], capture_output=True)
+
+
+def test_an_open_switch_bounds_a_containers_new_flows_and_a_closed_one_needs_none(tmp_path, monkeypatch):
+    """Text only: what this rate does under a flood was measured on an empty Docker and is said in SECURITY.md;
+    `limit` refuses a burst over 10000, and a refused rule stops the seal and so the start."""
+    monkeypatch.setenv("GFSO_NEW_FLOWS", "7")
+    seal = _ex(tmp_path).way.seal()
+    assert seal.index("-j gfso-flows") < seal.index("--dport 53"), "a flood of names to the resolver is a flood of flows"
+    assert "--limit 7/second --limit-burst 70" in seal and "connbytes" not in seal, "absent from Docker Desktop's kernel: it would stop every start"
+    assert "gfso-flows" not in _ex(tmp_path, {"mode": "off"}).way.seal()
+    monkeypatch.setenv("GFSO_NEW_FLOWS", "999999")
+    assert E.new_flows() == 10000
+    assert "--limit 10000/second --limit-burst 10000" in E.WayOut.seal(_ex(tmp_path, {"mode": "open"}).way)
