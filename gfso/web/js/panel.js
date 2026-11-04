@@ -173,11 +173,14 @@ const dispute = ({d}) => { const w = WHY[d.state], c = w && [...(d.audit || [])]
     return c ? `<div class="pn-verdict check-fail"><b>${w[1]}</b><span class="pn-who">${esc(trim(spoken(c.reason || ''), 200))}</span>${link('history', 'whole')}</div>` : ''; };
 const PARTS = [head, verdict, dispute, facets, criteria, actions];   // the prose chips above the list, always on screen
 
+let panelRead = 0;
 export async function selectTask(id) {
+    const mine = ++panelRead;
     try {
         const soft = p => p.catch(() => null);
         const [d, vr, cr, acts] = await Promise.all([task(id), soft(task(id, '/verdict')), soft(task(id, '/critique')),
             soft(task(id, `/actions?role=${encodeURIComponent(myRole() || '*')}`))]);
+        if (mine !== panelRead) return;                // a read that came late says no more than the later one
         // a round's per-criterion record is the node's verdict history, which the deck's run has joined to the log
         // …else, for the last verdict, the node's current record when it is that verdict's — even after a rework made it
         // not current — as Progress reads it (critic: the strip said «not kept» beside the current line drawing it)

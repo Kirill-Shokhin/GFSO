@@ -28,20 +28,23 @@ let graphRead = () => {};
 const refreshGraph = singleFlight(async () => {
     try { const ok = await loadGraph(); graphRead(); rebuildRun(); await drawGraph(ok); } catch (e) { console.error('refreshGraph:', e); } });
 const refreshHeader = singleFlight(async () => { await loadFrontier(); await loadReports(); await drawHeader(); });
-const refreshQuality = async () => { await loadMetrics(); drawQuality(); };
-const refreshDeck = singleFlight(async () => { await loadRun(); paintDeck(); });
+const refreshQuality = singleFlight(async () => { await loadMetrics(); drawQuality(); });
+const runRead = singleFlight(loadRun);
+const refreshDeck = singleFlight(async () => { await runRead(); paintDeck(); });
 const refreshAll = async () => { await refreshGraph(); goal.labelGoalButton(); await refreshQuality(); await refreshHeader(); };
 // A LOAD READS WHILE IT DRAWS: the rest needs the graph's read, not its drawing, which held every read behind it for over a
-// second on a phone. What frames the canvas over the deck still waits for both.
+// second on a phone. Nothing is painted over a drawing still under way: a chip pressed there would lose its unfolding.
 async function firstLoad() {
     const read = new Promise(go => { graphRead = go; }), drawn = refreshGraph();
     await Promise.race([read, drawn]);
     goal.labelGoalButton();
     // …the run is built on the frontier (what waits on what), so it is painted once both have answered
-    const run = loadRun(), asked = Promise.all([refreshQuality(), refreshHeader()]);
-    const deck = Promise.all([run, asked]).then(() => { rebuildRun(); paintDeck(); });
+    const run = runRead(), asked = Promise.all([refreshQuality(), refreshHeader()]);
+    const deck = Promise.all([run, asked, drawn]).then(() => { rebuildRun(); paintDeck(); });
     await Promise.all([drawn, asked]);
     suggestHeight(graphNeeds());
+    // `?task=` makes one node linkable, and the view is framed on the canvas its panel leaves
+    if (TASK) { point('select', TASK); await within(selectTask(TASK)); }
     deck.then(afterDeck);
 }
 S.reload = async () => { await refreshAll(); if (focus().select) await selectTask(focus().select); };
@@ -262,7 +265,6 @@ async function init() {
     setInterval(ages, 1e3);
     await initGraph();
     await firstLoad();
-    if (TASK) point('select', TASK);                   // `?task=` makes one node linkable
     if (GOAL && !S.tasks.length) goal.openGoal();     // a new project's first act: its goal
     // the picker's name is its own read, so a feed that cannot open does not leave it blank
     projects();
