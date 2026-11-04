@@ -878,13 +878,17 @@ def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, 
             continue
         name = _norm(e.get("criterion"))
         probes = probes_of(e)
+        # …nor, beside a probe the entry says did not hold, one it says nothing of: the entry named its refutation, and its
+        # own run that matched was filed as one, a shorthand of it standing six rounds (`cat-integrated#2bd5e0d5`,
+        # GB_coreutils_tnyzqh948: the run printed vT-same, the report wrote a line that creates no file)
+        named = any(probe_held(p.get("held")) is False for p in probes)
         # …never one the report says HELD (a part's pinned check), nor one of a split run that passed its share
         # (`share`, `tools_llm._fold`); unmarked, a root FAIL with 1 refuting probe of 1,336 grew the store by hundreds a
         # round to 1,414 findings (GB_sql_database_tmxu0n436, 2026-10-15). An unsaid probe of the failing entry is
         # kept: the validator says `held` only of a part's pinned check, never of its own probes
         for p in probes:
             if (not _norm(p.get("command", "")) or probe_held(p.get("held")) is True or p.get("share") == "pass"
-                    or p.get(SYSTEMS_ACT)):
+                    or p.get(SYSTEMS_ACT) or p.get(NOT_REFUTING) or (named and probe_held(p.get("held")) is None)):
                 continue
             # …AS RUN, with this round's inputs directories NAMED rather than spelled: normalizing a multi-line
             # program onto one line left a command no shell runs, and the round's directory is gone the next round
@@ -901,6 +905,33 @@ def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, 
                  "cited": (cited if "#" in cited else f"{name}#{cited}") if cited else "",
                  "expect": _norm(p.get("expect", "")),
                  **({"refuted_text": texts[name]} if name in (texts or {}) else {})})
+    return out
+
+
+#: what a report's probe says of a standing finding it re-ran as filed: why it refutes no criterion, beside what it printed
+NOT_REFUTING = "not_refuting"
+
+
+def findings_not_reproduced(per_criterion: Sequence[Mapping], regression: Mapping, plan: Mapping[str, Sequence[Criteria]],
+                            dirs: Iterable[tuple[str, object]] = ()) -> list[tuple[str, str, dict]]:
+    """[(criterion, finding id, what the report said)] — each standing finding of a validator's own this report re-ran AS
+    FILED, showed what it printed and said why it refutes no criterion. A finding is his claim about the work, not a
+    criterion (§2.2, §12.8): it stands while the next independent run reproduces it. A check of the plan (`plan`:
+    {criterion: criteria}), and a run the report says did not hold or did not run, is not such a finding."""
+    pins = [(probe_id(c.name, p), p) for cs in (plan or {}).values() for c in cs for p in c.check or () if _norm(p.command)]
+    out = []
+    for e in per_criterion or ():
+        name = _norm(e.get("criterion"))
+        for f in (regression or {}).get(name, ()):
+            if any(runs_pin(f, i, p) for i, p in pins):
+                continue
+            filed = _norm(f.get("as_run") or f.get("command"))
+            for p in probes_of(e):
+                if (p.get(NOT_REFUTING) and _norm(p.get("printed")) and p.get("ran") is not False
+                        and probe_held(p.get("held")) is not False and f.get("id") in _reported_ids(name, [p], dirs)
+                        and filed and filed in _norm(tokenized(str(p.get("command", "")), dirs))):
+                    out.append((name, f["id"], {"why": str(p[NOT_REFUTING]), "printed": str(p["printed"])}))
+                    break
     return out
 
 

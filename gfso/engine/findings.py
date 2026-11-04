@@ -27,9 +27,13 @@ from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, ro
                                           without_past_builds, without_pinned_runs, without_retired)
 from gfso.core.types import HOST, LAID, VOLUME, Signal, TaskId, files_at, laid_beside
 from .audit import VERSION_INSTALLING
-from .verdicts import REGRESSION, criterion_version, ledger_read
+from .verdicts import REGRESSION, criterion_version, ledger_read, ledger_write
 
 
+#: on a finding in the ledger: an independent validator re-ran it and did not reproduce it (`not_reproduced`) …
+NOT_REPRODUCED = "not_reproduced"
+#: … and a person gave it back, so no validator's run takes it off again (`return_finding`)
+RETURNED = "returned"
 #: what keys a validation or contact round in the record of the rounds standing (`round_stands`), by its name
 _ROUND = "round-made:"
 #: the rounds this process asked about where the record had none, and found not standing (`round_stands`)
@@ -235,10 +239,59 @@ def standing_rulings(storage, entries: list, task_id) -> list[dict]:
 
 def regression(storage, entries: list, task) -> dict:
     """{criterion: [the validator's findings demanded of this node]} — every refutation recorded, less the runs of
-    pinned probes, the findings a ruling in force retired and those that run a past round's build."""
-    return without_retired(without_pinned_runs(without_past_builds(ledger_read(storage, task.id, REGRESSION, {}) or {}),
+    pinned probes, the findings a ruling in force retired, those that run a past round's build and those an independent
+    validator did not reproduce (`not_reproduced`)."""
+    kept = without_retired(without_pinned_runs(without_past_builds(ledger_read(storage, task.id, REGRESSION, {}) or {}),
                                                ever_pinned(entries, task)),
                            standing_rulings(storage, entries, task.id))
+    return {k: left for k, ps in kept.items() if (left := [p for p in ps if not _unreproduced(p, k, task)])}
+
+
+def _criterion_now(name: str, task):
+    c = next((c for c in task.spec.criteria if " ".join(c.name.split()) == name), None)
+    return list(criterion_version(c.description, [p.to_dict() for p in c.check or ()])) if c is not None else None
+
+
+def _unreproduced(p: dict, name: str, task) -> bool:
+    """Did an independent validator not reproduce this finding, under the criterion as it reads now? A later act rewriting
+    that text ends it, as it ends a ruling."""
+    return bool(p.get(NOT_REPRODUCED)) and p[NOT_REPRODUCED].get("text") == _criterion_now(name, task)
+
+
+def not_reproduced(storage, task) -> list[dict]:
+    """The record of what no later run demands because a validator did not reproduce it (Thm 11): {criterion, id, command,
+    expect, by, at, why, printed}."""
+    return [{"criterion": k, "id": p.get("id"), "command": p.get("command"), "expect": p.get("expect"),
+             **{x: p[NOT_REPRODUCED].get(x) for x in ("by", "at", "why", "printed")}}
+            for k, ps in (ledger_read(storage, task.id, REGRESSION, {}) or {}).items() for p in ps if _unreproduced(p, k, task)]
+
+
+def record_not_reproduced(storage, task, marks: Iterable[tuple], by: str, at: str, found: dict) -> None:
+    """The ledger with each of `marks` (`procedure.findings_not_reproduced`) written on its finding — unless the same report
+    filed it again, or a person returned it — and the mark gone from each finding `found` filed: reproduced, it stands."""
+    stored = ledger_read(storage, task.id, REGRESSION, {}) or {}
+    again = {(k, p.get("id")) for k, ps in found.items() for p in ps}
+    said = {(k, i): m for k, i, m in marks}
+    for k, ps in stored.items():
+        for p in ps:
+            if (k, p.get("id")) in again:
+                p.pop(NOT_REPRODUCED, None)
+            elif (k, p.get("id")) in said and not p.get(RETURNED):
+                p[NOT_REPRODUCED] = {**said[(k, p.get("id"))], "by": by, "at": at, "text": _criterion_now(k, task)}
+    if said or again:
+        ledger_write(storage, task.id, REGRESSION, stored)
+
+
+def return_finding(storage, task, finding: str, by: str, why: str) -> bool:
+    """A person's word: this finding is demanded again, and no validator's run takes it off."""
+    stored = ledger_read(storage, task.id, REGRESSION, {}) or {}
+    hit = [p for ps in stored.values() for p in ps if p.get("id") == finding and p.get(NOT_REPRODUCED)]
+    for p in hit:
+        p.pop(NOT_REPRODUCED)
+        p[RETURNED] = {"by": by, "why": why}
+    if hit:
+        ledger_write(storage, task.id, REGRESSION, stored)
+    return bool(hit)
 
 
 def ruling_defect(storage, entries: list, task, ids: Iterable[str]) -> Optional[str]:

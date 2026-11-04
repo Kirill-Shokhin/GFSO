@@ -753,6 +753,9 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
     if _ret := engine.retired_findings(TaskId(task_id)):
         out["retired_after_refutation"] = [{**{k: r.get(k) for k in ("criterion", "id", "by", "why", "command", "at")},
                                             "decided_by": "system" if r.get("by_system") else "person"} for r in _ret]
+    # …AND WHAT A VALIDATOR RE-RAN AND DID NOT REPRODUCE: no later PASS re-runs it
+    if _unrep := engine.findings_not_reproduced(TaskId(task_id)):
+        out["findings_not_reproduced"] = _unrep
     # …AND WHICH PARTS' CHECKS NO LONGER RUN, here or below: a finding retired leaves the check running, this does not
     if _gone := engine.checks_no_longer_run(TaskId(task_id)):
         out["checks_no_longer_run"] = _gone
@@ -863,6 +866,16 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
     _what_there_is_to_decide_with(engine, task_id, out, _trimmed, _keep)
     _bound_the_read(out, task_id, _trimmed, _keep)
     return out
+
+
+def return_finding(engine: Engine, task_id: str, finding: str, why: str, agent: str = "") -> dict:
+    """Give back a validator's finding a later validator did not reproduce (`get_verdict`'s `findings_not_reproduced`):
+    it is demanded of every later PASS again, and no validator's run takes it off. `why` is recorded."""
+    if not why.strip():
+        return {"error": "a returned finding says why"}
+    if not engine.return_finding(TaskId(task_id), finding, agent or "person", why):
+        return {"error": f"no finding {finding} on {task_id} stands as not reproduced"}
+    return {"returned": finding}
 
 
 def dispute_finding(engine: Engine, task_id: str, criterion: Union[str, list], why: str) -> dict:
@@ -2890,6 +2903,7 @@ TOOLS = {
     "get_task": get_task, "project": project, "get_checks": get_checks, "get_graph": get_graph,
     "list_holes": list_holes, "get_review": get_review, "get_verdict": get_verdict,
     "dispute_finding": dispute_finding,
+    "return_finding": return_finding,
     "available_actions": available_actions, "get_dependencies": get_dependencies, "metrics": metrics,
     "usage": usage,
     "create_task": create_task, "decompose": decompose,

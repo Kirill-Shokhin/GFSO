@@ -32,7 +32,7 @@ from gfso.core.protocol.fsm import available_signals, not_admissible_here, trans
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, probes_of, probes_that_expected_nothing,
                                           verdict_report_defects, probe_labels, unrun_probes)
-from gfso.core.protocol.procedure import (same_expectation, BOUND_SPENT,PAST_BOUND, PAST_WHOLE, admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
+from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_not_reproduced, same_expectation, BOUND_SPENT,PAST_BOUND, PAST_WHOLE, admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
                                           refuting_probes, merge_regression, probe_id, layable_over, unrerunnable,
                                           unaccounted_for, orphaned_regression,
                                           claim_digest)
@@ -45,7 +45,8 @@ from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_
                     resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
                        OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations, answer_outside)
-from .findings import (disputed_findings, ever_pinned, keep_files, lay_files, released,
+from .findings import (disputed_findings, ever_pinned, keep_files, lay_files, not_reproduced, record_not_reproduced, released,
+                       return_finding as _return_finding,
                        regression as standing_regression, round_stands, standing_rulings)
 from .frontier import Frontier
 from .claims import Claims
@@ -1192,13 +1193,8 @@ class Engine:
         # the contract stays an issuer's act (`edit_criteria`), and `claim_drift` shows it.
         # …AND ONLY GROWS UNTIL ITS ISSUER RULES ONE OUT (`findings`) — each with the text it refuted as the run
         # VALIDATED it, the one he rules on, not the spec standing when the record lands
-        if per_criterion and (_found := self._as_filed(task_id, refuting_probes(per_criterion, inputs_dirs, texts={
-                **{c.name: c.description for c in (task.spec.criteria if task else ())},
-                **{n: v[0] for n, v in self._validated_versions(task_id).items()}}))):
-            ledger_write(self._storage, task_id, REGRESSION, merge_regression(self._stored_regression(task_id), _found))
-            # …and the files their commands name in the round, as they stand now that its runs ended: a re-run lays
-            # them from here (`lay_probe_files`), never from the round
-            keep_files(self._graph, self._storage, [p.get("as_run") or "" for ps in _found.values() for p in ps])
+        if per_criterion:
+            self._file_findings(task_id, task, per_criterion, inputs_dirs, validator_id, by_hand)
         # …placed where the run READ it: an instrument hands in the position its claim took when it began
         # (`ValidationClaim.log_at`) — a footing that moved while it ran is after its record; a hand record reads now
         store_verdict(self._storage, task_id, task, verdict, failed_criteria, validator_id,
@@ -1212,6 +1208,34 @@ class Engine:
                                                           inputs_dirs, own=task.spec.criteria)
                       if task is not None and verdict == Verdict.FAIL else {})
         return {"verdict": verdict, "failed_criteria": list(failed_criteria or ())}
+
+    def _file_findings(self, task_id: TaskId, task, per_criterion: list, dirs, validator_id, by_hand: bool) -> None:
+        """What this report refuted joins the node's findings; what it re-ran as filed and did not reproduce leaves the
+        demand, read only from an independent validator's report: the executor has no hand in it (`findings`)."""
+        found = self._as_filed(task_id, refuting_probes(per_criterion, dirs, texts={
+            **{c.name: c.description for c in (task.spec.criteria if task else ())},
+            **{n: v[0] for n, v in self._validated_versions(task_id).items()}}))
+        if found:
+            ledger_write(self._storage, task_id, REGRESSION, merge_regression(self._stored_regression(task_id), found))
+            # …and the files their commands name in the round, as they stand now that its runs ended: a re-run lays
+            # them from here (`lay_probe_files`), never from the round
+            keep_files(self._graph, self._storage, [p.get("as_run") or "" for ps in found.values() for p in ps])
+        if task is None:
+            return
+        plan = {"": task.spec.criteria, **self.parts_procedure(task_id)}
+        marks = ([] if by_hand or str(validator_id) == str(task.assignee) else
+                 _findings_not_reproduced(per_criterion, self._stored_regression(task_id), plan, dirs))
+        record_not_reproduced(self._storage, task, marks, str(validator_id), datetime.now().isoformat(timespec="seconds"), found)
+
+    def findings_not_reproduced(self, task_id: TaskId) -> list[dict]:
+        """The findings an independent validator re-ran and did not reproduce, standing no longer (`findings.not_reproduced`)."""
+        t = self._graph.get_task(task_id)
+        return not_reproduced(self._storage, t) if t is not None else []
+
+    def return_finding(self, task_id: TaskId, finding: str, by: str, why: str) -> bool:
+        """A person gives back a finding a validator did not reproduce: demanded again (`findings.return_finding`)."""
+        t = self._graph.get_task(task_id)
+        return t is not None and _return_finding(self._storage, t, finding, by, why)
 
     def _refiled_rulings(self, task_id: TaskId, per_criterion: list, dirs) -> dict:
         """{criterion: why} for each FAIL of this report resting only on findings its issuer ruled outside the criterion.
@@ -1876,7 +1900,8 @@ class Engine:
             "retired_after_refutation": (_retired := sorted({r["criterion"] for r in self.retired_findings(task_id)})),
             # …at any depth: a check lifted below this node is one its PASS, and every PASS above it, no longer runs
             "checks_no_longer_run": (_lifted := self.checks_no_longer_run(task_id)),
-            "narrowed": True if _structural else (None if _moved_after or _retired or _lifted else False),
+            "findings_not_reproduced": (_gone := self.findings_not_reproduced(task_id)),
+            "narrowed": True if _structural else (None if _moved_after or _retired or _lifted or _gone else False),
             "risks_dropped": sorted(_risks0 - _risksN),
             "authored": {"at": entries[0].timestamp.isoformat(sep=" ", timespec="seconds"),
                          "criteria": sorted(first)},

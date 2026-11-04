@@ -331,7 +331,14 @@ _VALIDATOR_SCHEMA = {
                                "held": {"type": "boolean", "description":
                                    "for a PART'S PINNED CHECK: did it show what it must on this delivery. "
                                    "false fails every criterion resting on it; left out, it counts as "
-                                   "holding only under a criterion you pass"},
+                                   "holding only under a criterion you pass. For a probe of your OWN that refutes "
+                                   "the criterion: false — beside a probe that says false, one that says nothing "
+                                   "is read as not refuting"},
+                               # …and a finding of an earlier validator's that this run does not reproduce
+                               "not_refuting": {"type": "string", "description":
+                                   "only on a REGRESSION line you re-ran exactly as written, whose output refutes nothing "
+                                   "the criterion requires: why. With `printed`, it is demanded no more"},
+                               "printed": {"type": "string", "description": "with `not_refuting`: what the command printed"},
                                # …and whether it RAN: a probe whose own setup failed (a cd, a file it writes, a
                                # build) printed whatever its fallback prints, which can be the line it expects
                                "ran": {"type": "boolean", "description":
