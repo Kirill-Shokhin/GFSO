@@ -7,6 +7,7 @@ import pytest
 
 from gfso import tools as T
 from gfso.adapters import execution as E
+from gfso.adapters.llm.stats import is_limit, is_unauthorized
 from gfso.decompose.loop import FOLD_SCHEMA, _audit_fold
 from gfso.mcp.server import _with_ui_link
 
@@ -100,6 +101,13 @@ def test_what_is_said_stands_first_in_the_answer():
     """Last in a long answer, it went unsaid: nothing on the plan before a go in 6 runs of 6."""
     assert next(iter(_with_ui_link("auto_decompose", {"root_id": "root", "log": "long"}, "p", _engine()))) == "say"
     assert next(iter(_with_ui_link("next_steps", {"steps": [], "complete": True}, "p", _engine(BRANCH)))) == "say"
+
+
+def test_a_token_its_organization_refused_is_a_refusal_the_pointer_moves_past():
+    """Every refusal the four credentials answer on one day, read: the limit, the credit, the organization's."""
+    assert is_limit("API Error: 400 You have reached your specified API usage limits.")
+    assert is_limit("Credit balance is too low")
+    assert is_unauthorized("Your organization has disabled Claude subscription access")
 
 
 def test_a_docker_slow_to_answer_still_ends_the_host_side_of_a_call(monkeypatch):

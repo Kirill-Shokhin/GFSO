@@ -32,6 +32,8 @@ ACCOUNT_LIMIT = ("usage limit", "usage_limit", "session limit", "weekly limit", 
 #: How a refused authentication reads in a call's error: the account is signed out or its key refused — no call of any
 #: role can answer until a person signs it in (the CLI's "403 Failed to authenticate", a chat API's HTTP 401/403).
 UNAUTHORIZED = ("failed to authenticate", "authentication_error", "unauthorized", "api error: 401", "api error: 403",
+                # …a token its organization refused: unread, the pointer stayed on it and every call failed (2026-11-04)
+                "has disabled claude subscription access",
                 "invalid api key", "invalid x-api-key",
                 # …and a client with no login at all — a container's, where no credential is set (critic, the CLI's words)
                 "not logged in", "authentication_failed")
