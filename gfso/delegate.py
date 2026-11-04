@@ -23,6 +23,7 @@ from typing import Optional
 
 from gfso import tools_llm as T
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
+from gfso.engine.validation import whole_waits_for_its_parts
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, agents_path, max_sessions, provider, validator_retry_model
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask
@@ -462,7 +463,25 @@ def _which_instrument_validates(engine, task, task_id: TaskId, agents: AgentRegi
     return validator_id
 
 
-def _replay_a_standing_verdict(engine, task_id: TaskId, rec: Optional[dict], validator_id, sign: bool):
+def _pass_held_by_open_parts(engine, agents, task_id: TaskId) -> bool:
+    """Do parts of this whole stand open at the moment a machine would sign its PASS (a child attached while its validator
+    ran)? Then it is not signed: at a seam the gate admits the PASS (§12.8), and a machine signing it closed the whole over
+    work nobody had done (Thm 1). What a verdict accepts is the commit DELIVER recorded (§11.3), which holds no such part,
+    so waiting for the part and validating that commit again would land the result without it: where the system issues,
+    the delivery is re-presented at once, as `_sign_scope` does a footing being redone, and comes again over the part.
+    Elsewhere the node waits in VALIDATING: its issuer's to move, and its bound hands it to him (§16.14)."""
+    t = engine.graph.get_task(task_id)
+    # …where the gate refuses it anyway, the refusal is the answer, with its reason
+    if whole_waits_for_its_parts(engine.graph, t) or not (parts := engine.joins.open_parts(task_id)):
+        return False
+    named = {str(k.id) for k in parts}
+    if not (_system_issues(engine, agents, task_id) and _represent(engine, t, str(engine.graph.issuer_of(t.id)), named)):
+        engine.emit_info("delegate", f"{task_id}: its validator's PASS stands on the record, not signed: "
+                                     f"{', '.join(sorted(named))} stand(s) open under it (Thm 1)")
+    return True
+
+
+def _replay_a_standing_verdict(engine, agents, task_id: TaskId, rec: Optional[dict], validator_id, sign: bool):
     """Reuse a validator's ruling on THIS delivery (`_standing_instrument_verdict`) instead of paying for a second one.
 
     Returns the outcome string, or None meaning "nothing to reuse — run the instrument"."""
@@ -478,6 +497,8 @@ def _replay_a_standing_verdict(engine, task_id: TaskId, rec: Optional[dict], val
         engine.emit_info("delegate", f"{task_id}: fresh recorded verdict {rec['verdict']} reused — "
                                      f"no duplicate validator run")
         sig = Signal.PASS if rec["verdict"] == Verdict.PASS else Signal.FAIL
+        if sig == Signal.PASS and _pass_held_by_open_parts(engine, agents, task_id):
+            return "rejected"
         if _signal(engine, task_id, sig, validator_id,
                    **({"failed_criteria": tuple(rec.get("failed_criteria") or ())}
                       if sig == Signal.FAIL else {})):
@@ -579,7 +600,7 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
     if engine.current_exec_verdict(task_id) is not None and engine.verdict_provenance(task_id) == "by_hand":
         _say_it_is_hand_asserted(engine, task_id, engine.current_exec_verdict(task_id))
     if (out := _replay_a_standing_verdict(
-            engine, task_id, _standing_instrument_verdict(engine, task_id) if _vkind != "unittest-checker" else None,
+            engine, agents, task_id, _standing_instrument_verdict(engine, task_id) if _vkind != "unittest-checker" else None,
             validator_id, sign)) is not None:
         return out
     vcfg = agents.get(validator_id) or {}
@@ -614,6 +635,8 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
         return "recorded" if verdict else _classify_no_verdict(engine, task_id, out)
     _why: list = []
     if verdict == Verdict.PASS:
+        if _pass_held_by_open_parts(engine, agents, task_id):
+            return "rejected"
         if _signal(engine, task_id, Signal.PASS, validator_id, _why=_why):
             return "pass"
     elif verdict == Verdict.FAIL:
@@ -1926,10 +1949,12 @@ class Dispatcher:
 
     def _clear_places(self, root) -> None:
         """The root landed: its places go, unless a verdict is still coming (a signature can land before it, and it is what
-        refutes the signed node) — then the next pass after that verdict's end asks again (`_clear_what_waited`). The clearing
-        ends every session of the project, rounds included, so any node's validation holds it; a restart keeps nothing of
-        either, and `_rejoin`'s first pass comes back here over a place still standing."""
-        if any(self._engine.claims.validation_in_flight(t.id) for t in self._engine.all_tasks()):
+        refutes the signed node) or a node is still open (a child attached after the close works in them) — then a later
+        pass asks again (`_clear_what_waited`). The clearing ends every session of the project, rounds included, so any
+        node holds it, and work outweighs the disk: every issued node has a clock. A restart keeps nothing of the wait, and
+        `_rejoin`'s first pass comes back here over a place still standing."""
+        if (self._engine.open_nodes()
+                or any(self._engine.claims.validation_in_flight(t.id) for t in self._engine.all_tasks())):
             self._to_clear.add(str(root.id))
             return
         self._to_clear.discard(str(root.id))
@@ -1940,7 +1965,7 @@ class Dispatcher:
             log.warning(f"delegate: {root.id} landed; its places were not cleared: {e}")
 
     def _clear_what_waited(self) -> None:
-        """Each pass, a stop or a goal's end included: clear what a verdict held, if the root it held still stands landed. A
+        """Each pass, a stop or a goal's end included: clear what `_clear_places` held, if the root still stands landed. A
         root reopened, or joining again, meanwhile is its next join's to clear (`_join`)."""
         for tid in self._to_clear.copy():
             t = self._engine.graph.get_task(TaskId(tid))
@@ -1976,7 +2001,7 @@ class Dispatcher:
         (`_rejoin`): a parent's acceptance settles none of its children (§11.3), so a root's DONE alone is not this."""
         joins, graph = self._engine.joins, self._engine.graph
         return (self._rejoined_once and not joins.joining_nodes() and not joins.unjoined_roots()
-                and bool(tasks := self._engine.all_tasks()) and all(t.state in (State.DONE, State.ABANDONED) for t in tasks)
+                and bool(tasks := self._engine.all_tasks()) and not self._engine.open_nodes()
                 # …a DONE readable before its join is marked: `root_landed` reads that as being joined
                 and all(joins.root_landed(t) for t in tasks if t.state == State.DONE and graph.get_parent(t.id) is None))
 

@@ -884,7 +884,7 @@ def test_a_hand_asserted_verdict_is_not_replayed_under_an_instruments_name():
         e.verdict_provenance = lambda tid: "instrument"
         standing = _standing_instrument_verdict(e, TaskId("n"))
         assert standing == {"verdict": Verdict.PASS, "failed_criteria": []}
-        assert _replay_a_standing_verdict(e, TaskId("n"), standing, AgentId("the-instrument"), False) == "recorded"
+        assert _replay_a_standing_verdict(e, None, TaskId("n"), standing, AgentId("the-instrument"), False) == "recorded"
     finally:
         e.stop()
 

@@ -510,7 +510,7 @@ def _served(e, agents, settles, monkeypatch, closes_after=(), waits=None, settle
             if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
                 th.join(5)
         if waits is not None:
-            waits.append(round(max(nb for _, nb, _ in ledger.values()) - time.monotonic()))
+            waits.append(max(0, round(max(nb for _, nb, _ in ledger.values()) - time.monotonic())))
             ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
     return len(served)
 

@@ -208,7 +208,7 @@ def test_a_verdict_is_the_systems_signature_where_it_signs_and_the_parties_where
     T.signal(e, "kid", "ACCEPT", "exec-2")
     T.signal(e, "kid", "DELIVER", "exec-2", result="r")
     e.wait_idle()
-    assert D._replay_a_standing_verdict(e, TaskId("kid"), {"verdict": Verdict.FAIL, "failed_criteria": ["k"]}, "val",
+    assert D._replay_a_standing_verdict(e, None, TaskId("kid"), {"verdict": Verdict.FAIL, "failed_criteria": ["k"]}, "val",
                                         True) == "fail"
     e.wait_idle()
     T.signal(e, "kid", "DELIVER", "exec-2", result="again")

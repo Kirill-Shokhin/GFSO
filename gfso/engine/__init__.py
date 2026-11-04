@@ -2598,6 +2598,11 @@ class Engine:
         return [str(t.id) for t in self._within(root_id)
                 if (self.closure_of(t.id) or {}).get("overruled")]
 
+    def open_nodes(self, root_id: Optional[TaskId] = None) -> list[str]:
+        """The nodes not settled yet: what a goal's end, a clearing of its places and `complete` all ask of it (Thm 1: a
+        passed parent over an open child is a claim that no longer holds)."""
+        return [str(t.id) for t in self._within(root_id) if t.state not in TERMINAL_STATES]
+
     def refuted_passes(self, root_id: Optional[TaskId] = None) -> list[str]:
         """Nodes standing at PASS whose OWN current record says FAIL — a green that is not green.
 

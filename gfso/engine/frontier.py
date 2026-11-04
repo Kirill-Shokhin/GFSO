@@ -623,6 +623,27 @@ class NodeSteps:
                 "criteria": [c.name for c in t.spec.criteria], "directive": directive}
 
 
+def _open_over_a_pass(engine, root_id: Optional[TaskId] = None) -> dict:
+    """{open_nodes: the nodes still open under a root that has passed, which nobody's verdict covers (Thm 1)}, or nothing."""
+    roots = [engine.graph.get_task(root_id)] if root_id else [t for t in engine.all_tasks() if t.parent_id is None]
+    return ({"open_nodes": open_now} if roots and all(settled_positive(r) for r in roots)
+            and (open_now := engine.open_nodes(root_id)) else {})
+
+
+def _nothing_to_take_over_a_pass(engine, root_id: Optional[TaskId] = None) -> Optional[dict]:
+    """Open nodes under a passed root with no step on any: what is open, not "stuck", whose sentence is about a root still
+    working, nor "the goal is finished"."""
+    if not (over := _open_over_a_pass(engine, root_id)):
+        return None
+    named = over["open_nodes"]
+    return {"complete": False, **over, **({"in_flight": _r} if (_r := engine.in_flight_nodes()) else {}),
+            "directive": (f"NOT COMPLETE — the root(s) passed, but {', '.join(named)} "
+                          f"{'is' if len(named) == 1 else 'are'} still open. A "
+                          f"parent's result is the AND over its children (Thm 1), so a "
+                          f"node attached after its parent closed leaves that parent's "
+                          f"verdict standing on work nobody has done.")}
+
+
 class Frontier:
     """The walk over the graph: every node that owes a move, in order, and — when none does — why nothing is open, how
     the root closed, or what holds it (`next_step(s)`)."""
@@ -917,7 +938,8 @@ class Frontier:
                                           "to build the structure yourself.")}, None)
         if root_id:
             root = self.engine.graph.get_task(root_id)
-            if root is not None and _passed(root):
+            # …nodes still open under it have their steps, as the whole-graph answer below says (Thm 1)
+            if root is not None and _passed(root) and (self.engine.refuted_passes(root_id) or not self.engine.open_nodes(root_id)):
                 # …UNLESS THAT ROOT IS A GREEN THAT IS NOT GREEN. The refutation test below was
                 # installed on the WHOLE-GRAPH answer only, so asking about a node BY NAME — which is
                 # what `next_step(<id>)` does, and what every signal reply calls — walked past it:
@@ -954,15 +976,10 @@ class Frontier:
             # stay passed, so this answered COMPLETE over a graph with an unstarted node visibly in
             # it (HTTP door, 2026-09-02: "5 Done · 1 Not started · root DONE — the goal is met" on
             # one line). V(parent) is the AND over its children (Thm 1), so a passed parent with an
-            # unsettled child is a claim that no longer holds; the honest answer is what is open.
-            if open_now := [str(t.id) for t in tasks if t.state not in TERMINAL_STATES]:
-                return ({"complete": False,
-                         "open_nodes": open_now,
-                         "directive": (f"NOT COMPLETE — the root(s) passed, but {', '.join(open_now)} "
-                                       f"{'is' if len(open_now) == 1 else 'are'} still open. A "
-                                       f"parent's result is the AND over its children (Thm 1), so a "
-                                       f"node attached after its parent closed leaves that parent's "
-                                       f"verdict standing on work nobody has done.")}, None)
+            # unsettled child is a claim that no longer holds; the honest answer is what is open, and its steps
+            # (`_frontier`): answered with none, the canon's recovery left a child nobody moved.
+            if self.engine.open_nodes():
+                return None, roots[0]
             # …and a ⊥ that landed anyway is SAID, never used to withhold the answer. A validator that
             # could not decide is not a validator that decided against: withholding COMPLETE over one
             # would be reading ⊥ as fail, which §2.3 forbids in those words.
@@ -1062,7 +1079,7 @@ class Frontier:
                 cands.append(_c)
 
         if not cands:
-            return self._nothing_to_take(tasks, waits, _deps_ready)
+            return _nothing_to_take_over_a_pass(self.engine, root_id) or self._nothing_to_take(tasks, waits, _deps_ready)
         cands.sort(key=lambda c: (c[0], str(c[1].id)))
         return cands
 
@@ -1172,7 +1189,7 @@ class Frontier:
         # the MCP door: two of three children were dep-blocked and appeared nowhere, while
         # `get_dependencies` had every edge and glue note. The pairs go in the answer, not in a
         # second verb the reader has to know about.
-        out = {"complete": False, "steps": steps, **self._waiting_on(steps)}
+        out = {"complete": False, "steps": steps, **self._waiting_on(steps), **_open_over_a_pass(self.engine, root_id)}
         if stranded := [t for t in self.engine.stranded_nodes() if t.state != State.ABANDONED]:
             # …AND WHAT THE GRAPH CANNOT MOVE PAST, whether or not something else is actionable.
             out["stranded"] = [
