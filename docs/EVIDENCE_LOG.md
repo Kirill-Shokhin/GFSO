@@ -3896,6 +3896,20 @@ instructions file.
   none of it, so a count over text blocks reads silence that was not there.
 - Larger tasks on this path are not shown here.
 
+**The system's own plan on a larger task, the same contract as the bare arm** (`GB_coreutils_tnzimp748`, build `7a8480c`, AUTO, every
+role but the harness's customer on Haiku 5.5, addendum served; a debugging row, one, no bare arm beside it and not counted in
+§13.46's table, where bare Haiku 5.5 already reads 100 % on this task, so it is no comparison of value):
+
+| root | held-out, accepted tree | held-out, signed branch | wall | plan | execution | validation | issuer | total |
+|---|---|---|---|---|---|---|---|---|
+| DONE (promise kept) | 1.000 | 1.000 | 77 min (plan 27) | $0.61 | $0.30 | $1.23 | $0.12 | $2.27 |
+
+- 13 nodes, all DONE. Contact repaired what it met: 2 FAILs reworked, 1 BLOCK resolved, and 1 CHALLENGE on two of the plan's pinned
+  checks that could not pass on correct work, which the issuer reproduced and changed.
+- No check was ruled out and no validator's finding ended unreproduced (`checks_no_longer_run`, `findings_not_reproduced` empty), so
+  this row does not exercise those two exits. It says the dead ends that stopped the rows before it did not arise here, not that they
+  cannot.
+
 **The planner's speed changes against their base, E2 and a small task** (pre-registered with a hash before reading; the blind
 judge of §13.50's form; 20 plans per arm on E2's ten tasks, 3 per arm on the small task):
 
