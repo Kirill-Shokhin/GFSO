@@ -46,8 +46,9 @@ export async function loadMetrics() { try { S.metrics = await getJSON('/api/metr
 // answer is S.frontier, null when it was not asked or did not answer — the chips from the graph still stand then.
 export async function loadFrontier() {
     const mySteps = new Map();       // node → the steps next_steps names as this person's, with their directives
-    S.frontier = null;
-    if (begun()) try {
+    // the last answer stands while this one is out: a header drawn in the gap read the system's move as a person's (critic)
+    if (!begun()) S.frontier = null;
+    else try {
         const r = await post('/api/run/next_steps', myRole() ? {actor: myRole()} : {});
         if (!r.ok) throw r.status;
         const f = await r.json();
@@ -64,7 +65,7 @@ export async function loadFrontier() {
         // …and a verdict arriving by itself is the validator's, in the engine's kind: it read «waits on the issuer» under AUTO (critic)
         for (const w of f.waiting || []) if (w.kind === 'validator' && !S.steps.has(w.task_id)) S.steps.set(w.task_id, {task_id: w.task_id, role: 'validator'});
         S.frontier = f;
-    } catch (e) { /* the frontier is a read */ }
+    } catch (e) { S.frontier = null; }   // the frontier is a read: not heard is said as not heard
     // the panel keeps its moves on these only (panel.js): what the ENGINE says is this person's move — a state chip is
     // a call to look, and under AUTO the engine refuses a person's Cancel or Edit on an escalated root (critic)
     S.mySteps = mySteps;

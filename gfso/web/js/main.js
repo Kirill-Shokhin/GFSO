@@ -55,16 +55,19 @@ const later = (o = {}) => {
 const afterDeck = () => { annotate(); refreshHeader(); drawPlanning(); if (focus().select) resign(focus().select); };
 // A MOVE IS READ AT ONCE; moves arriving meanwhile share one more read: five at once read 21 times, a move every second never caught up (measured)
 let settling = false, again = null;
+// a read that hangs on a dead link holds no later move past this: the next read goes on without it
+const within = read => Promise.race([read, new Promise(go => setTimeout(go, 5e3))]);
 const settle = async o => {
     if (settling) { again = {graph: again?.graph || o.graph}; return; }
     settling = true;
     try { for (let cur = o; cur; cur = again) { again = null;
         if (cur.graph) await refreshGraph();
-        await refreshQuality(); await refreshHeader();
+        await within(refreshQuality()); await refreshHeader();
         // …AND THE OPEN PANEL IS RE-READ ON ANY TRANSITION: its checks are computed from the CHILDREN.
-        if (focus().select) { await selectTask(focus().select); paneled = Date.now(); }
+        if (focus().select) { await within(selectTask(focus().select)); paneled = Date.now(); }
         await refreshDeck();                     // …the run read, the header drawn over it from the frontier just read
-        annotate(); drawHeader(); drawPlanning(); if (focus().select) resign(focus().select);
+        annotate(); S.frontier ? drawHeader() : refreshHeader(); drawPlanning();   // a frontier read that failed is asked again
+        if (focus().select) resign(focus().select);
     } } finally { settling = false; }
 };
 

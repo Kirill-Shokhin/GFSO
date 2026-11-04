@@ -577,7 +577,7 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
     def get_graph(next: bool = True):
         """The whole project as the `get_graph` verb answers it — the page draws what every door reads (one shaping;
         a second one here drifted: `label` for the verb's `name`, no `awaiting`, no mode — ortho audit, D-F16)."""
-        return _tools.TOOLS["get_graph"](_e(), with_next=next)   # `?next=0`: the page reads the frontier by `next_steps`; this read's own was 280 of its 300 ms
+        return _tools.TOOLS["get_graph"](_e()) if next else _tools.graph_read(_e())   # `?next=0`: the page reads the frontier by `next_steps`; this read's own was 280 of its 300 ms
 
 def _mount_pages(app) -> None:
     """The page and its assets — the human door's own surface.
