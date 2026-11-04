@@ -31,7 +31,8 @@ from urllib.parse import quote
 from gfso.runtime import build_engine_from_env
 from gfso import tools as _T     # the verb surface
 from gfso.serverctl import UI_LINK_VERBS, ui_link
-from gfso.config import agent_id, narrate, select_project
+from gfso.adapters.netrecord import said_apart
+from gfso.config import DEFAULT_PROJECT, agent_id, narrate, project_by_env, select_project
 from gfso import serverctl
 from gfso import tools_llm as T  # the COMPLETE registry (structural + LLM verbs)
 
@@ -375,6 +376,9 @@ def status(argv: list[str]) -> int:
           + (f" under {root}" if root else " total"))
     if isinstance(nxt, dict):
         print(_frontier_line(nxt))
+    # …what the system's own records say of this project: a person at the CLI was told COMPLETE and no word of it (critic)
+    for line in said_apart(project or project_by_env() or DEFAULT_PROJECT):
+        print(f"the records say: {line}")
     return 0
 
 

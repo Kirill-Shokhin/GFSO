@@ -175,6 +175,9 @@ def test_a_root_s_end_carries_what_the_records_say_of_themselves(data, monkeypat
     said = ended()
     assert "a: 5 packets" in said["the_records_say"][0] and "the_records_say" in said["say"]
     assert "the_records_say" not in ended(False), "at the end: each poll would read the whole record"
+    stopped = {}
+    S._link_and_say("stop_project", stopped, "p", engine)
+    assert "a: 5 packets" in stopped["the_records_say"][0], "a stopped run says it too"
 
 
 def test_a_reader_is_told_when_the_file_record_turned_or_named_less_than_changed(data, monkeypatch):

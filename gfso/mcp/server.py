@@ -174,7 +174,7 @@ def _link_and_say(name: str, out: dict, project, engine) -> None:
     no container, a base with no git say otherwise or nothing), the go only where it built work no one holds."""
     # …a session that hid where it went was read only by whoever ran `gfso network` (critic): at the end it is told, a link
     # that cannot be made or not
-    if engine is not None and name == "next_steps" and out.get("complete") and (said := said_apart(engine.project_name)):
+    if engine is not None and (name == "stop_project" or (name == "next_steps" and out.get("complete"))) and (said := said_apart(engine.project_name)):
         out["the_records_say"] = said
         out["say"] = "Tell them what the system's own records say of this run: `the_records_say`."
     try:
