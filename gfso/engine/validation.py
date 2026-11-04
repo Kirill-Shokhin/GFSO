@@ -10,7 +10,7 @@ from typing import Optional
 from gfso.config import agent_id as _config_agent_id
 from gfso.config import validate_internal as _validate_internal
 from gfso.engine.verdicts import criterion_version, observations, refuted_versions
-from gfso.engine.findings import ruling_defect
+from gfso.engine.findings import regression, ruling_defect, standing_rulings
 
 
 from gfso.core.types import (Mode, Signal, SignalData, State, CriticVerdict, DoneReason, TaskId,
@@ -20,7 +20,7 @@ from gfso.core.protocol.validation import Role, required_role
 from gfso.core.protocol.invariants import (validate_fail_has_criteria,
                                            fail_names_this_contract)
 from gfso.core.handlers.structural import run_structural
-from gfso.core.protocol.procedure import criteria_without_procedure, part_criteria
+from gfso.core.protocol.procedure import criteria_without_procedure, part_criteria, probe_id, runs_pin, without_ruled_pins
 from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
@@ -256,9 +256,14 @@ def footing(graph: Graph, task) -> list:
                if (p := graph.get_task(TaskId(e.from_id))) is not None])
 
 
-def parts_procedure(graph: Graph, task) -> dict:
+def parts_procedure(graph: Graph, task, audit) -> dict:
     """{criterion of the whole: the pinned procedure of each part mapped to it (`part_criteria`)} — what a
     validation of `task` runs over its delivered result besides its own procedure (`procedure.unrun_parts`).
+
+    Less a pinned check the whole's issuer ruled out under that criterion (`without_ruled_pins`): a part's pin true only
+    while its siblings were stubs is false on the finished whole, and retiring the finding alone left the system running
+    the pin and failing every criterion mapped to the part (GB_coreutils_tnyzqh948, 17 of 21). A plan the user handed in
+    is closed: there his parts' checks stand whatever is ruled, and the run stops with the signal (`issuer.settle`).
 
     Only the parts already DONE: a part still in VALIDATING is validated in the same run as its whole — a scope's
     one validation lays parts and whole over one artifact — and runs its procedure there under its own name; one
@@ -273,15 +278,31 @@ def parts_procedure(graph: Graph, task) -> dict:
     for name in dict.fromkeys(m.criterion_name for m in task.criterion_mappings):
         kids = dict.fromkeys(str(m.child_id) for m in task.criterion_mappings
                              if m.criterion_name == name and str(m.child_id) in done)
-        if crits := tuple(c for k in kids for c in part_criteria(k, settled_procedure(graph, done[k]))):
+        if crits := tuple(c for k in kids for c in part_criteria(k, settled_procedure(graph, done[k], audit))):
             out[name] = crits
-    return out
+    if not out or users_plan(graph):
+        return out
+    return without_ruled_pins(out, standing_rulings(graph._storage, audit.get_entries(task.id), task.id))
 
 
-def settled_procedure(graph: Graph, task) -> tuple:
+def settled_procedure(graph: Graph, task, audit) -> tuple:
     """Every criterion whose pinned probes a validation of `task` runs over its delivery: its own, then its DONE
     parts' (`parts_procedure`) — what a whole above it demands again of it."""
-    return tuple(task.spec.criteria) + tuple(c for cs in parts_procedure(graph, task).values() for c in cs)
+    return tuple(task.spec.criteria) + tuple(c for cs in parts_procedure(graph, task, audit).values() for c in cs)
+
+
+def plans_own_findings(graph: Graph, audit, task) -> list[str]:
+    """The findings standing on `task` that only say a settled part's pinned check does not hold: a check of the plan the
+    system wrote, which contact may refute and its issuer may rule on, even at an AUTO root (the author, 2026-11-04: «он
+    может быть сильным но не идеальным»). Not one the task's own criteria pin too, and not one under a criterion with no
+    pin of its own, whose procedure it would leave empty: those speak for the goal. None under a plan the user handed in."""
+    if task is None or users_plan(graph):
+        return []
+    own = [(probe_id(c.name, p), p) for c in task.spec.criteria for p in c.check or () if p.command]
+    pins = [(probe_id(c.name, p), p) for cs in parts_procedure(graph, task, audit).values() for c in cs for p in c.check or ()]
+    pinned = {i.rsplit("#", 1)[0] for i, _ in own}
+    return [f["id"] for name, fs in regression(graph._storage, audit.get_entries(task.id), task).items() if name in pinned
+            for f in fs if any(runs_pin(f, i, p) for i, p in pins) and not any(runs_pin(f, i, p) for i, p in own)]
 
 
 def record_stands(graph: Graph, audit, task, rec: Optional[dict]) -> bool:

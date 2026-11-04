@@ -62,7 +62,8 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here,
                          session_fit as _session_fit, scope_top as _scope_top,
                          scope_members as _scope_members, split_owed as _split_owed,
-                         parts_procedure as _parts_procedure, settled_procedure as _settled_procedure,
+                         parts_procedure as _parts_procedure, plans_own_findings as _plans_own_findings,
+                         settled_procedure as _settled_procedure,
                          observation_binds as _observation_binds,
                          observation_standing, record_stands as _record_stands,
                          redelivery_refusal, execution_admitted as _execution_admitted,
@@ -2023,6 +2024,11 @@ class Engine:
             return []
         return disputed_findings(self._storage, self._audit.get_entries(task_id), t)
 
+    def plans_own_findings(self, task_id: TaskId) -> list[str]:
+        """The findings on this node that speak for a check of the plan the system wrote, not for the goal: the system's
+        issuer may rule on these at an AUTO root (`validation.plans_own_findings`). The user's door stays open on them."""
+        return _plans_own_findings(self._graph, self._audit, self._graph.get_task(task_id))
+
     def challenge_reason(self, task_id: TaskId) -> Optional[str]:
         """The reason the standing CHALLENGE carried — the issuer cannot answer what he cannot read."""
         for e in reversed(self.audit_log(task_id)):
@@ -2697,7 +2703,7 @@ class Engine:
         """{criterion: the pinned procedure of the DONE parts mapped to it} a validation of this node also runs
         over its delivered result (`validation.parts_procedure`)."""
         t = self._graph.get_task(task_id)
-        return _parts_procedure(self._graph, t) if t is not None else {}
+        return _parts_procedure(self._graph, t, self._audit) if t is not None else {}
 
     def layable(self, task_id: TaskId) -> set:
         """The pinned probes whose inputs a validation of this node lays down — its own and its parts', as the PASS
@@ -2708,7 +2714,7 @@ class Engine:
     def validation_procedure(self, task_id: TaskId) -> tuple:
         """Every criterion whose pinned probes a validation of this node runs: its own, then its parts'."""
         t = self._graph.get_task(task_id)
-        return _settled_procedure(self._graph, t) if t is not None else ()
+        return _settled_procedure(self._graph, t, self._audit) if t is not None else ()
 
     def scope_members(self, top_id: TaskId) -> list[Task]:
         """The scope's nodes top-down, its top first (`validation.scope_members`)."""

@@ -200,6 +200,8 @@ def rulings(storage, entries: list, task_id) -> list[dict]:
     """Every ruling on the node's log, oldest first — {criterion, id, command, by, at, why, text, lapsed}: the finding
     retired, the ACCEPT_CHALLENGE that retired it (who, when, why), the criterion's text as that act left it, and
     whether a later act rewrote that text (`lapsed`, the entry's time, else None)."""
+    if not any(e.retire_findings for e in entries):     # …read wherever a part's procedure is: most nodes have none
+        return []
     found = {p.get("id"): (c, p) for c, ps in (ledger_read(storage, task_id, REGRESSION, {}) or {}).items() for p in ps}
     in_force: dict = {}
     out: list[dict] = []
@@ -219,7 +221,8 @@ def rulings(storage, entries: list, task_id) -> list[dict]:
             out += [{"criterion": found[i][0], "id": i, "command": found[i][1].get("command"), "by": str(e.source),
                      "at": e.timestamp.isoformat(timespec="seconds"), "why": e.justification or e.reason or "",
                      "text": in_force.get(found[i][0]), "lapsed": None,
-                     "seen": found[i][1].get("seen") or found[i][1].get("as_run")}
+                     "seen": found[i][1].get("seen") or found[i][1].get("as_run"),
+                     "as_run": found[i][1].get("as_run"), "expect": found[i][1].get("expect")}
                     for i in dict.fromkeys(e.retire_findings) if i in found]
     return out
 

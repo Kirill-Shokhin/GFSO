@@ -393,11 +393,13 @@ class NodeSteps:
                     # …AND AT AN AUTO ROOT THE SYSTEM ANSWERS THE DISPUTE, only a ruling on a finding is the user's
                     # (`Engine.users_dispute`): told "nothing moves until you close it", a customer stopped the whole
                     # run to ask the person what the system closed a minute later (fresh install, run B, 2026-11-04)
-                    + (f"The system answers this dispute by itself and the work goes on: keep waiting. | THE USER'S "
-                       f"QUESTION, optional: it asks to rule {', '.join(_asked)} outside the user's goal, which the "
-                       f"system never rules: tell the person in a line. Only if they rule, send their answer: "
-                       f"ACCEPT_CHALLENGE with `retire_findings` naming what they rule out, or REJECT_CHALLENGE "
-                       f"with why the goal asks for it."
+                    # …and a check of the plan the system wrote is not such a ruling (`Engine.plans_own_findings`)
+                    + (f"The system answers this dispute by itself and the work goes on: keep waiting."
+                       + (f" | THE USER'S QUESTION, optional: it asks to rule {', '.join(_theirs)} outside the user's "
+                          f"goal, which the system never rules: tell the person in a line. Only if they rule, send their "
+                          f"answer: ACCEPT_CHALLENGE with `retire_findings` naming what they rule out, or REJECT_CHALLENGE "
+                          f"with why the goal asks for it."
+                          if (_theirs := [i for i in _asked if i not in self.engine.plans_own_findings(t.id)]) else "")
                        if (_asked := self.engine.users_dispute(t.id)) and not self.engine.paused() else
                        f"This is YOURS and nothing moves until you close it: ACCEPT_CHALLENGE with the new spec if "
                        f"the dispute is right (the node returns to OFFERED and its executor consents afresh), or "

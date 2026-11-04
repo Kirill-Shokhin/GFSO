@@ -1019,6 +1019,31 @@ def pinned_run(p: Mapping, pinned: Mapping[str, str], criterion: str = "") -> st
                  if inputs_token(w) in cmd and _norm(cmd.replace(inputs_token(w), INPUTS_TOKEN)) == _norm(c)), None)
 
 
+def runs_pin(finding: Mapping, pid: str, pin: Probe) -> bool:
+    """Does this finding say only what pinned check `pin` (id `pid`) says — its command, over its own inputs directory,
+    and an expectation that is the pin's or a part of it? The same command with an expectation of the validator's own,
+    or none said, is his reading of the work, not the pin's."""
+    said = _norm(finding.get("expect"))
+    return bool(said) and said in _norm(pin.expect) and _norm(pin.command) == _norm(
+        str(finding.get("as_run") or finding.get("command") or "").replace(inputs_token(pid), INPUTS_TOKEN))
+
+
+def without_ruled_pins(parts: Mapping[str, Sequence[Criteria]], rulings: Iterable[Mapping]) -> dict:
+    """`parts` (`{criterion: its parts' criteria}`) less each pinned check a ruling in force retired under that criterion
+    — only there: a ruling speaks to its criterion (`without_retired`), and the part's own contract stays as it settled."""
+    ruled: dict[str, list] = {}
+    for r in rulings or ():
+        ruled.setdefault(_norm(r.get("criterion")), []).append(r)
+    out = {}
+    for name, crits in (parts or {}).items():
+        mine = ruled.get(_norm(name), ())
+        kept = (replace(c, check=tuple(p for p in c.check or ()
+                                       if not any(runs_pin(r, probe_id(c.name, p), p) for r in mine))) for c in crits)
+        if left := tuple(c for c in kept if c.check):
+            out[name] = left
+    return out
+
+
 def unrun_regression(regression: Mapping, per_criterion: Sequence[Mapping],
                      dirs: Iterable[tuple[str, object]] = (), layable: Iterable[str] | None = None,
                      delivery: str | Path | None = None, *, standing) -> dict[str, list[str]]:

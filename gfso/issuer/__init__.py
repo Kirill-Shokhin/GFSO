@@ -495,6 +495,12 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
                    + (_standing_findings(engine, task_id, lists, ex) or "- none")
                    + ("\n\nUnder AUTO this node's criteria are the user's goal: only the user rules a finding of the "
                       "validator outside them — answer without `retire_findings`."
+                      + (f" Except a check of the plan, not of the goal: {', '.join(own)} only say a settled part's "
+                         "pinned check does not hold. Run it: where it is false on correct work (it held only while a "
+                         "sibling's work was missing), accept, naming those ids in `retire_findings`: the part stays as it "
+                         "settled, this node's validation stops demanding that check under those criteria, and a later "
+                         "change of a criterion's text ends the ruling. Where the work broke it, reject."
+                         if (own := engine.plans_own_findings(task_id)) else "")
                       if is_auto_root(engine.graph, engine.graph.get_task(task_id)) else
                       "\n\nA finding stays demanded until you rule it outside its criterion as written: accept, naming "
                       "in `retire_findings` the id of a finding the dispute named by its id. Nothing else retires one "
@@ -1823,7 +1829,13 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
         # …THE RULING, NOT THE DISPUTE, IS THE USER'S: the system still rejects it or adds to the contract — a rejection
         # is read first, a stray ruling beside it ignored. Barred from every move, the root sat CHALLENGED on a dispute
         # that only said the findings could not be met, until the run's ceiling (GB_sql_database_tn03ao788, 2026-10-16)
-        return {"task_id": str(task_id), "status": "users", "why": _USERS_DISPUTE.format(task_id, ", ".join(asked))}
+        # …A CHECK OF THE PLAN THE SYSTEM WROTE IS NOT THE GOAL: refused its ruling, the 17 criteria resting on one part's
+        # stub pin failed round after round, with no exit but the ceiling (GB_coreutils_tnyzqh948, 2026-11-04). What the
+        # ruling may not reach stays demanded, and the executor may dispute it again.
+        own = engine.plans_own_findings(task_id)
+        if not (retire := [i for i in retire if i in own]):
+            theirs = [i for i in asked if i not in own]
+            return {"task_id": str(task_id), "status": "users", "why": _USERS_DISPUTE.format(task_id, ", ".join(theirs))}
     try:
         # …below an AUTO root, a node of the user's plan takes additions only — no re-pin: its expected outputs are the
         # user's, and one re-pinned to what the build printed contradicted the root's own (GB_sql_database_tne9fg736)
@@ -2178,8 +2190,8 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
         out = issuer_turn(engine, task_id, question, actor, verbs, where=where,
                           refusal=str(out.get("why") or out["status"]))
     # …A DISPUTE A CLOSED PLAN CANNOT ANSWER IS THE USER'S: asked of a model again it was thrown away again, no line said,
-    # 29 calls in 27 min (tracker, 2026-11-03)
-    if question == "dispute" and out["status"] == "unparsed" and engine.users_plan():
+    # 29 calls in 27 min (tracker, 2026-11-03); and so is one its issuer twice asked to rule out, which he may not there
+    if question == "dispute" and out["status"] in ("unparsed", "users") and engine.users_plan():
         why = (f"the plan the user gave cannot go on at {task_id}: its executor disputes a check, and only the user "
                f"changes a check of that plan: {str(engine.challenge_reason(task_id) or '')[:300]}")
         engine.pause("system", why)
