@@ -9,7 +9,7 @@ export function tip(html, e) {
     el.innerHTML = html;
     el.classList.add('visible');
     const r = el.getBoundingClientRect(), x = e.clientX + 14, y = e.clientY + 14;
-    el.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
+    el.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
     el.style.top = `${y + r.height > innerHeight - 8 ? e.clientY - r.height - 10 : y}px`;
     e.tipped = true;
     mine = false;

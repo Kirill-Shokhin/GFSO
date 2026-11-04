@@ -1,7 +1,7 @@
 // The header, by significance: the project's goal and where it stands, then ONLY what needs a person
 // (each a chip that selects its first node), then the quality metrics folded into one chip whose
 // popover carries the meanings the server sends beside them.
-import {$, esc, data, tally, daily} from './dom.js';
+import {$, esc, data, tally, daily, phone} from './dom.js';
 import {H, QUALITY, GRADES, doing} from './hints.js';
 import {post, GOAL, PROJECT} from './api.js';
 import {S, taskOf, myRole, procs, begun, stateWord} from './state.js';
@@ -35,7 +35,8 @@ function standing(root) {
     }[root.state] || said(root.state);
     // …the phrase and its count are two marks of their own, set apart as what needs a person is (the author, 2026-10-30:
     // «статус и количество это два разных поинта … там что мало место их разнести?»)
-    return `<span class="hd-phrase">${cap(phrase)}</span>` + (parts.length ? tally(`${k}/${parts.length}`, 'parts done') : '');
+    // (`hd-plain`: at work with its parts counted the count says it; a phone's status row has no room for the word)
+    return `<span class="hd-phrase${root.state === 'EXECUTING' && parts.length ? ' hd-plain' : ''}">${cap(phrase)}</span>` + (parts.length ? tally(`${k}/${parts.length}`, 'parts done') : '');
 }
 
 // the mode's settings in words (set_mode's own names: l2_gate, observe, deadline_s)
@@ -149,7 +150,7 @@ function drawReports() {
     const seen = `${reports.length}|${reports.at(-1)?.at || ''}|${new Date().toDateString()}`;
     if ($('hd-reports').dataset.seen === seen) return;
     $('hd-reports').dataset.seen = seen;
-    $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${tally(reports.length, reports.length > 1 ? 'tech reports' : 'tech report')}</button>`
+    $('hd-reports').innerHTML = !reports.length ? '' : `<button class="hd-q" data-action="reports">${tally(reports.length, (phone() ? '' : 'tech ') + (reports.length > 1 ? 'reports' : 'report'))}</button>`
         + H.reports([...reports].reverse().map(r => ({head: r.role || 'the system',
             val: `<span class="hq-when">${esc(when(r.at))}</span>`,
             link: r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : '', means: r.text})));

@@ -102,6 +102,7 @@ document.addEventListener('click', e => {
     // a header popover opens below the toolbar, not over it: over it, it covered the toolbar's own "?" (critic 9).
     // Set on the header, not on the popover: the quality chip is rebuilt on every transition and took an inline top with it.
     const open = document.querySelector('.header .hd-quality.open');
+    if (open) document.querySelector('.header').style.setProperty('--below-header', `${document.querySelector('.header').getBoundingClientRect().bottom + 8}px`);
     if (open) document.querySelector('.header').style.setProperty('--below-toolbar',
         `${(document.querySelector('.toolbar') || document.querySelector('.header')).getBoundingClientRect().bottom - open.getBoundingClientRect().top + 8}px`);
 });
