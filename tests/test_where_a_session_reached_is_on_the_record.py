@@ -122,8 +122,9 @@ def test_the_record_turns_over_keeping_its_last_turn_and_a_project_s_deletion_ta
 
 
 def test_what_a_flood_lost_is_said_on_the_record(data):
-    _book().heard('{"drops": 17}', 1.0)
-    assert _rows(data)[0]["lost_packets"] == 17
+    _book().heard('{"drops": 17, "src": "172.17.0.2"}', 1.0)
+    row = _rows(data)[0]
+    assert row["lost_packets"] == 17 and row["container"] == "a"
 
 
 def test_no_work_runs_off_the_record_unless_the_installation_said_so(data, monkeypatch):
@@ -240,3 +241,30 @@ def test_live_a_session_s_every_way_out_is_on_the_record_from_its_first_packet_a
     finally:
         r.down()
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+
+@docker
+def test_live_one_container_s_flood_blinds_no_other(data, monkeypatch):
+    home, tag = E._home(), uuid.uuid4().hex[:6]
+    image = next(x for x in subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"], capture_output=True, text=True).stdout.split()
+                 if x.startswith(("gfso-agent:", "gfso-keep:", "e3-linux-agent:")))
+    monkeypatch.setattr(N, "_image", lambda: image)
+    r, names = N._Record(), [f"gfso-nettest-{w}-{tag}" for w in ("flood", "quiet")]
+    try:
+        for n, project in zip(names, (f"fl{tag}", f"qu{tag}")):
+            subprocess.run(["docker", "run", "-d", "--name", n, "--cap-drop", "ALL", "--cpus", "1", "--memory", "128m", "--label", f"{E.HOME}={home}", "--label", f"{E.PROJECT}={project}",
+                            "--label", f"{E.NODE}=a", "--label", f"{E.ROLE}=executor", "--entrypoint", "sleep", image, "60"], check=True, capture_output=True)
+            r.admit(SimpleNamespace(container=n, name="default", image=image))
+        flood = subprocess.Popen(["docker", "exec", names[0], "python3", "-c",
+                                  "import socket,time\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nt=time.time()\nwhile time.time()-t<12:\n s.sendto(b'x',('192.0.2.20',9))\n"])
+        time.sleep(3)
+        subprocess.run(["docker", "exec", names[1], "python3", "-c",
+                        "import socket\nfor i in range(20):\n s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\n s.sendto(b'x',('192.0.2.21',5000+i))\n"], capture_output=True, timeout=30)
+        flood.wait(timeout=30)
+        time.sleep(3)
+        quiet = {x.get("port") for x in _rows(data, f"qu{tag}")}
+        assert len(quiet & set(range(5000, 5020))) == 20, sorted(quiet)
+        assert r.reader.is_alive()
+    finally:
+        r.down()
+        subprocess.run(["docker", "rm", "-f", *names], capture_output=True)

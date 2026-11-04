@@ -34,16 +34,14 @@ READY_S = 120.0
 
 #: In the container, its stdin the system's pipe: gone with the server, so is it. A kernel filter passes all but a TCP flow's
 #: later packets, whatever else a process can send (SCTP and UDP-Lite open with no capability), so a bulk transfer costs
-#: nothing here. Each line one JSON object: a name a session asks is its own text.
+#: nothing here. A socket per container's link, each read in turn: a flood fills its own buffer alone (one shared blinded
+#: every project, critic, ran); a link new to Docker is opened on its kernel notice, before `docker run` returns. Each line one JSON object: a name a session asks is its own text.
 _LISTEN = r"""
-import ctypes, json, select, socket, struct, sys, time
-s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
-s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 ** 22)
+import ctypes, json, os, select, socket, struct, sys, time
 P = [(0x28, 0, 0, 12), (0x15, 0, 6, 0x800), (0x30, 0, 0, 23), (0x15, 0, 10, 6), (0xb1, 0, 0, 14), (0x50, 0, 0, 27),
      (0x54, 0, 0, 0x12), (0x15, 6, 7, 2), (0x15, 0, 6, 0x86dd), (0x30, 0, 0, 20), (0x15, 0, 3, 6), (0x30, 0, 0, 67),
      (0x54, 0, 0, 0x12), (0x15, 0, 1, 2), (0x06, 0, 0, 512), (0x06, 0, 0, 0)]
 code = ctypes.create_string_buffer(b"".join(struct.pack("HBBI", *p) for p in P))
-s.setsockopt(socket.SOL_SOCKET, 26, struct.pack("HL", len(P), ctypes.addressof(code)))
 def say(**row):
     print(json.dumps(row), flush=True)
 def name(b, at):
@@ -52,28 +50,60 @@ def name(b, at):
         parts.append(b[at + 1:at + 1 + b[at]].decode("ascii", "replace"))
         at += b[at] + 1
     return ".".join(parts)[:253]
+links, last = {}, {}
+changes = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, 0)
+changes.bind((0, 1))
+def scan():
+    for n in os.listdir("/sys/class/net"):
+        if n.startswith("veth") and n not in links:
+            try:
+                k = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
+                k.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 ** 20)
+                k.setsockopt(socket.SOL_SOCKET, 26, struct.pack("HL", len(P), ctypes.addressof(code)))
+                k.bind((n, 3))
+                k.setblocking(False)
+                links[n] = k
+            except OSError:
+                pass
+scan()
 say(ready=True)
 said = time.monotonic()
-while True:
-    ready = select.select([s, sys.stdin], [], [], 10)[0]
-    if sys.stdin in ready and not sys.stdin.buffer.read1(1):
-        break
-    if time.monotonic() - said > 10:
-        said, dropped = time.monotonic(), struct.unpack("II", s.getsockopt(263, 6, 8))[1]
-        if dropped:
-            say(drops=dropped)
-    if s not in ready:
-        continue
-    p, a = s.recvfrom(600)
-    if not a[0].startswith("veth") or len(p) < 34:
-        continue
+def one(n, k):
+    p = k.recv(600)
+    if len(p) < 34:
+        return
     v6 = p[12:14] == b"\x86\xdd"
     proto, hl = (p[20], 40) if v6 else (p[23], (p[14] & 15) * 4)
     src, dst = ((socket.inet_ntop(socket.AF_INET6, p[22:38]), socket.inet_ntop(socket.AF_INET6, p[38:54])) if v6 else
                 (socket.inet_ntoa(p[26:30]), socket.inet_ntoa(p[30:34])))
+    last[n] = src
     port = struct.unpack("!H", p[14 + hl + 2:14 + hl + 4])[0] if proto in (6, 17, 132, 136) and len(p) >= 14 + hl + 4 else 0
     asked = name(p, 14 + hl + 8 + 12) if proto == 17 and port == 53 else ""
     say(src=src, proto=proto, to=dst, port=port, asked=asked)
+while True:
+    ready = select.select([changes, sys.stdin, *links.values()], [], [], 10)[0]
+    if sys.stdin in ready and not sys.stdin.buffer.read1(1):
+        break
+    if changes in ready:
+        changes.recv(65536)
+        scan()
+    for n, k in list(links.items()):
+        if k not in ready:
+            continue
+        try:
+            for _ in range(16):      # …each link its turn: a flood on one waits while the others are read
+                one(n, k)
+        except BlockingIOError:
+            pass
+        except OSError:              # …its container gone
+            k.close()
+            del links[n]
+    if time.monotonic() - said > 10:
+        said = time.monotonic()
+        for n, k in links.items():
+            dropped = struct.unpack("II", k.getsockopt(263, 6, 8))[1]
+            if dropped:
+                say(drops=dropped, src=last.get(n))
 """
 _KINDS = {6: "tcp", 17: "udp", 1: "icmp", 58: "icmp", 132: "sctp", 136: "udplite"}
 
@@ -112,11 +142,11 @@ class _Book:
         is not recorded: on a Linux host another's containers, or the user's own, are none of this."""
         try:
             row = json.loads(line)
-            if drops := row.get("drops"):
-                log.warning(f"the network's record lost {drops} packets: a flood outran it, and what passed in it is not on the record")
-                for project in {h["project"] for h in list(self.holders.values())}:
-                    _append(project, {"at": now, "lost_packets": int(drops)})
             if not (who := self.holders.get(row.get("src"))):
+                return
+            if drops := row.get("drops"):
+                log.warning(f"the network's record lost {drops} packets of {who['container']}: its flood outran it, and what it sent then is not on the record")
+                _append(who["project"], {"at": now, "container": who["container"], "lost_packets": int(drops)})
                 return
             seen = self.seen.setdefault(who["container"], set())
             key = (row["proto"], row["to"], row["port"], row["asked"])

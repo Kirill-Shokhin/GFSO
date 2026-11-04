@@ -138,8 +138,7 @@ once the listener stands and knows its address, so a first packet is on it; wher
 unless the installation said `GFSO_NETWORK_RECORD=off`. One that dies later is raised again and the gap said on the record; sessions already running go on meanwhile. It holds addresses, ports and names, not what passed; nothing the kernel refused
 before it left a container. Each container lists 2,000
 destinations, and past that says so; a project's record turns over at 16 MiB, keeping its last turn, and goes with the project.
-Under an allowlist it names the gateway, whose own log has the target. The packets a UDP flood outran it by are said on the
-record, and such a flood blinds it for that time for every project. On a Linux host the listener reads the headers of every
+Under an allowlist it names the gateway, whose own log has the target. A flood costs its own container's lines alone: each container is read apart, and the packets lost are said on the record under its name. On a Linux host the listener reads the headers of every
 container there, and writes those of this installation alone; a user's container taking a freed address within ten seconds
 is written under the one that left it. Files a client's own Write and Edit tools write are in its stream, not here. A client that runs a shell beside itself
   instead (it ignores, silently, a shell it does not accept) runs no command there, and the session
