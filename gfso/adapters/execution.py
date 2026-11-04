@@ -737,13 +737,13 @@ def watch_disk() -> None:
 
 
 #: what a reading of a volume's directories for what changed says of each, at most `FILES_BYTES`: `\0\1<dir>\1<its clock>\0`, or
-#: `\2\0` where this image's `find` cannot, then `<type> <path>\0`, `\3` last where the walk outran its time. By the inode's
+#: `\2\0` where this image's `find` cannot, then `<type> <path>\0`, `\3` last where the walk did not finish. By the inode's
 #: change time, which no process of a user sets
 _CHANGED = ('m=$1; t=$2; shift 2; while [ $# -gt 0 ]; do d=$1; s=$2; shift 2; printf \'\\0\\1%s\\1\' "$d"; date +%s.%N | tr -d "\\n"; printf \'\\0\'; '
             '[ -d "/v/$d" ] || continue; find "/v/$d" -maxdepth 0 -newerct @0 -printf "" 2>/dev/null || { printf \'\\2\\0\'; continue; }; '
             '[ "$s" = new ] && s=$(( $(date +%s) - 60 )); '
             '{ timeout "$t" find "/v/$d" -xdev -ignore_readdir_race -newerct "@$s" -printf \'%y %P\\0\' 2>/dev/null; '
-            '[ $? = 124 ] && printf \'\\3\'; } | head -c "$m"; done')
+            '[ $? = 0 ] || printf \'\\3\'; } | head -c "$m"; done')
 FILES_BYTES = 4 * 2 ** 20
 #: (volume, subpath) → {"since", the clock the next reading reads from; "work", whose it is; "left", read once more, then dropped}
 _FILES: dict = {}
@@ -1269,16 +1269,16 @@ def gateway_of(container: str) -> str:
 def end_started() -> None:
     """At this server's exit: its project containers, and every call in them — killing a `docker exec` client leaves
     its call running inside (probe P1), so the server's children would outlive it there and go on spending."""
-    if _DISK_WATCH.is_set() and _FILES:              # …what changed since the last reading: else on no record, and nothing said (critic, ran)
-        try:
-            _record_files(_disk_works(_home()))
-        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
-            log.warning(f"what changed last on Docker's disk was not recorded ({e})")
     if ids := list(_STARTED):
         _keep_logs([*ids, *map(gateway_of, ids), *_DOORS])          # …a session's commands among `ids`
         run(["docker", "rm", "-f", *ids, *map(gateway_of, ids), *_DOORS], timeout=120)
         run(["docker", "network", "rm", *[f"{i}-net" for i in ids]], timeout=120)
         _STARTED.clear()
+    if _DISK_WATCH.is_set() and _FILES:              # …what changed since the last reading, the work now gone: else on no record, nothing said (critic, ran)
+        try:
+            _record_files(_disk_works(_home()))
+        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+            log.warning(f"what changed last on Docker's disk was not recorded ({e})")
 
 
 at_exit(end_started)

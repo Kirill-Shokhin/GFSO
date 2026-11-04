@@ -249,6 +249,9 @@ def at_exit(fn) -> None:
 
 
 def _end_all(closing: bool = False) -> None:
+    global _CLOSING
+    with _LOCK:                      # …what is left to do here runs children of its own: past the reap each died at its spawn, and
+        _CLOSING = False             # on Linux no container was removed nor any last reading made (critic, ran)
     for fn in list(_AT_EXIT):
         with contextlib.suppress(Exception):     # one holder failing to end its own never keeps the rest alive
             fn()

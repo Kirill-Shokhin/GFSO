@@ -32,6 +32,8 @@ CAP = 16 * 2 ** 20
 BUDGET = 2000
 #: ports of one host listed one by one per container: past them, one line says there are more
 PORTS = 64
+#: lines of what the file record could not say, told at most
+SAID = 20
 #: seconds the listener has to open a container's link when asked
 SYNC_S = 30.0
 #: seconds an ended container keeps its address here: its last flow may be read after it, and a user's container may take it
@@ -224,14 +226,16 @@ def said_apart(project: str) -> list:
     """What the record says of itself: each container that lost lines or passed its budget, and each gap. A row of these
     is where a session may have hidden, so a reader is told without reading every destination."""
     lost, cut, gaps, turned = collections.Counter(), set(), 0, 0
-    said_files, bad = [], 0
+    said_files, bad, fewer = [], 0, 0
     for p in (file_record_path(project).with_suffix(".jsonl.1"), file_record_path(project)):
         got, unread = rows_of(p)
         bad += unread
         turned += sum("turned" in r for r in got)
         gaps += sum("gap" in r for r in got)
-        said_files += [f"{r.get('session')}: {r.get('dir')}: " + ("what changed could not be read" if "unread" in r else "more changed than a reading names")
-                       for r in got if "unread" in r or "cut" in r or r.get("changed_n", 0) > len(r.get("changed", ()))]
+        # …a reading's bound reached apart from a reading over the names it holds, which an install is: not to be told from an alarm
+        said_files += [f"{r.get('session')}: {r.get('dir')}: " + ("what changed could not be read" if "unread" in r else "more changed than a reading could read")
+                       for r in got if "unread" in r or "cut" in r]
+        fewer += sum(r.get("changed_n", 0) > len(r.get("changed", ())) and "cut" not in r for r in got)
     for p in (record_path(project).with_suffix(".jsonl.1"), record_path(project)):
         got, unread = rows_of(p)
         bad += unread
@@ -244,7 +248,9 @@ def said_apart(project: str) -> list:
             + [f"{c}: past its {BUDGET} destinations, the rest not listed" for c in sorted(cut)]
             + ([f"{gaps} times the listener stood again: what passed before each may not be listed"] if gaps else [])
             + ([f"turned over {turned} times: older rows are gone"] if turned else [])
-            + list(dict.fromkeys(said_files)) + ([f"{bad} lines of the records could not be read"] if bad else []))
+            + (held := list(dict.fromkeys(said_files)))[:SAID] + ([f"and {len(held) - SAID} more such"] if len(held) > SAID else [])
+            + ([f"{fewer} readings of what changed named fewer paths than changed"] if fewer else [])
+            + ([f"{bad} lines of the records could not be read"] if bad else []))
 
 
 def _image() -> "str | None":
@@ -258,12 +264,12 @@ def _work_stands() -> "list[str] | None":
     return None if got.returncode else (got.stdout or "").split()
 
 
-def _holders(ids: list) -> str:
-    """Rows for `_Book.learn`."""
+def _holders(ids: list) -> "str | None":
+    """Rows for `_Book.learn`; None where Docker did not say: no answer is not every holder gone."""
     labels = "|".join(f'{{{{index .Config.Labels "{k}"}}}}' for k in (PROJECT, NODE, ROLE))
     got = run(["docker", "inspect", "-f", f"{{{{.Name}}}}|{labels}|{{{{range .NetworkSettings.Networks}}}}{{{{.IPAddress}}}}/{{{{.MacAddress}}}} {{{{.GlobalIPv6Address}}}}/{{{{.MacAddress}}}} {{{{end}}}}",
                *ids], timeout=30, text=True)
-    return got.stdout or ""
+    return None if got.returncode else got.stdout or ""
 
 
 def listener() -> str:
@@ -284,6 +290,10 @@ class _Record:
         with self.lock:
             if self.proc and self.proc.poll() is None and self.reader.is_alive() and self.ready.is_set():
                 return
+            if self.stood:                       # …said now, not once it stands again: it may never (critic, ran)
+                self.stood = False
+                for project in {h["project"] for h in list(self.book.holders.values())}:
+                    _append(project, {"at": time.time(), "gap": "the listener went: what passes until it stands again may not be on the record"})
             self.down()
             if not (image := self.image or _image()):
                 raise OSError("no execution declares an image to run it in")
@@ -313,9 +323,6 @@ class _Record:
                 if proc.poll() is not None or time.monotonic() > end:
                     self.down()
                     raise OSError("; ".join(tail) or "it did not start")
-            if self.stood:                       # …what passed since it last stood is on no line: the record says so
-                for project in {h["project"] for h in list(self.book.holders.values())}:
-                    _append(project, {"at": time.time(), "gap": "the listener stood again: what passed before this may not be on the record"})
             self.stood = True
 
     def down(self) -> None:
@@ -346,7 +353,7 @@ class _Record:
                 self._watch()
                 self.image = ex.image or self.image
                 self.up()
-                rows = _holders([ex.container])
+                rows = _holders([ex.container]) or ""
                 if not any(a.split("/")[0] for r in rows.splitlines() for a in r.split("|")[-1].split()):
                     raise OSError(f"Docker gave no address for {ex.container}")
                 self.book.learn(rows)
@@ -371,7 +378,8 @@ class _Record:
                         self.down()
                     self.book, self.stood = _Book(), False     # …taken down on purpose, holding no one: no gap to say
                     return
-                self.book.learn(_holders(ids), whole=True)
+                if (rows := _holders(ids)) is not None:
+                    self.book.learn(rows, whole=True)
                 self.up()
         except (OSError, subprocess.TimeoutExpired) as e:
             log.warning(f"the network's record did not stand ({e}): what passes meanwhile is not on it")

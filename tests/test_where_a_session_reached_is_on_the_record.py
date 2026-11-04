@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gfso.adapters import execution as E
+from gfso.adapters import children, execution as E
 from gfso import config as C
 from gfso.mcp import server as S
 from gfso.adapters import netrecord as N
@@ -185,7 +185,42 @@ def test_a_reader_is_told_when_the_file_record_turned_or_named_less_than_changed
     N.append(path, {"at": 1.0, "x": 2}, 1)
     assert any("turned over 1 times" in x for x in N.said_apart("p"))
     N.append(path, {"at": 1.0, "session": "s", "dir": "d", "changed": ["f a"], "changed_n": 452})
-    assert any("s: d: more changed" in x for x in N.said_apart("p"))
+    assert any("1 readings of what changed named fewer" in x for x in N.said_apart("p"))
+    for i in range(30):
+        N.append(path, {"at": 1.0, "session": f"s{i}", "dir": "d", "cut": True})
+    said = N.said_apart("p")
+    assert "and 10 more such" in said and len(said) < 25, "a long list of it hides what comes first"
+
+
+def test_a_listener_gone_says_its_gap_before_it_stands_again(data, monkeypatch):
+    """Said only once it rose: a rise that failed until the work ended said nothing at all (critic, ran)."""
+    r = N._Record()
+    r.book, r.stood, r.proc = _book(), True, SimpleNamespace(poll=lambda: 1, stdin=SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(N, "run", lambda *a, **k: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(N, "_image", lambda: None)
+    with pytest.raises(OSError):
+        r.up()
+    assert "gap" in _rows(data)[0]
+    with pytest.raises(OSError):
+        r.up()
+    assert len(_rows(data)) == 1, "once"
+
+
+def test_what_is_left_to_do_at_exit_runs_past_the_reap(monkeypatch):
+    """A graceful stop on Linux reaps first, and past that every child died at its spawn: no container removed, no last reading (critic, ran)."""
+    closing = []
+    monkeypatch.setattr(children, "_CLOSING", True)
+    monkeypatch.setattr(children, "_AT_EXIT", [lambda: closing.append(children._CLOSING)])
+    monkeypatch.setattr(children, "_LIVE", set())
+    children._end_all(closing=True)
+    assert closing == [False] and children._CLOSING is True
+
+
+def test_docker_not_answering_is_not_every_holder_gone(data, monkeypatch):
+    b = _book()
+    monkeypatch.setattr(N, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout=""))
+    assert N._holders(["c"]) is None
+    assert b.holders
 
 
 def test_only_a_server_starts_the_watches(monkeypatch):
@@ -199,7 +234,7 @@ def test_a_reader_is_told_what_the_file_record_could_not_say(data):
     E_row = {"at": 1.0, "session": "s", "dir": "d"}
     N.append(N.file_record_path("p"), {**E_row, "cut": True})
     N.append(N.file_record_path("p"), {**E_row, "cut": True})
-    assert N.said_apart("p") == ["s: d: more changed than a reading names"]
+    assert N.said_apart("p") == ["s: d: more changed than a reading could read"]
 
 
 def test_a_server_gone_with_its_work_standing_leaves_a_gap_on_the_record(data, monkeypatch):
