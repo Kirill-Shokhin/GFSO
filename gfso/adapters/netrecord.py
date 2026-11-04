@@ -225,6 +225,9 @@ def said_apart(project: str) -> list:
     """What the record says of itself: each container that lost lines or passed its budget, and each gap. A row of these
     is where a session may have hidden, so a reader is told without reading every destination."""
     lost, cut, gaps, turned = collections.Counter(), set(), 0, 0
+    read = [(file_record_path(project).with_suffix(".jsonl.1")), file_record_path(project)]
+    files_said = [f"{row.get('session')}: {row.get('dir')}: " + ("what changed could not be read" if "unread" in row else "more changed than a reading holds")
+                  for p in read if p.exists() for row in map(json.loads, p.read_text(encoding="utf-8").splitlines()) if "unread" in row or "cut" in row]
     for p in (record_path(project).with_suffix(".jsonl.1"), record_path(project)):
         for line in p.read_text(encoding="utf-8").splitlines() if p.exists() else ():
             row = json.loads(line)
@@ -235,7 +238,8 @@ def said_apart(project: str) -> list:
     return ([f"{c}: {n} packets not read, what it sent then is not listed" for c, n in lost.items() if n]
             + [f"{c}: past its {BUDGET} destinations, the rest not listed" for c in sorted(cut)]
             + ([f"{gaps} times the listener stood again: what passed before each may not be listed"] if gaps else [])
-            + ([f"turned over {turned} times: older rows are gone"] if turned else []))
+            + ([f"turned over {turned} times: older rows are gone"] if turned else [])
+            + list(dict.fromkeys(files_said)))
 
 
 def _image() -> "str | None":
@@ -355,6 +359,9 @@ class _Record:
                 if (ids := _work_stands()) is None:
                     return
                 if not ids:
+                    if self.proc and self.proc.poll() is not None:     # …no one took it down: Docker went, and the work with it
+                        for project in {h["project"] for h in self.book.holders.values()}:
+                            _append(project, {"at": time.time(), "gap": "Docker went with this work standing: what it did last may not be on the record"})
                     if self.proc:
                         self.down()
                     self.book, self.stood = _Book(), False     # …taken down on purpose, holding no one: no gap to say

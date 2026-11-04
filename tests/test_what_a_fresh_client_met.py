@@ -60,7 +60,7 @@ def test_a_wait_reports_what_it_waited():
 
 
 def _engine(landed=None, mode="auto"):
-    return SimpleNamespace(graph=SimpleNamespace(setting=lambda key: landed and json.dumps(landed)),
+    return SimpleNamespace(graph=SimpleNamespace(setting=lambda key: landed and json.dumps(landed)), project_name="no-record-here",
                            mode=lambda: {"mode": mode} if mode else None)
 
 

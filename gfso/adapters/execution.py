@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import datetime
 import hashlib
 import io
 import ipaddress
@@ -783,9 +784,15 @@ def _files_changed(vol: str, since: dict, image: "str | None") -> dict:
 def _note_files(ex) -> None:
     """A session's directories known from its start: one that begins and ends between two readings is seen by neither (critic, ran)."""
     if isinstance(ex, PlaceContainer):
+        # …by the clock of Docker's VM, which stamps the files, a second early: a watch delayed past a guess lost the first writes
+        at = run(["docker", "inspect", "-f", "{{.State.StartedAt}}", ex.container], timeout=30, text=True).stdout or ""
+        try:
+            since = f"{datetime.datetime.fromisoformat(at.strip()[:19]).replace(tzinfo=datetime.timezone.utc).timestamp() - 1:.3f}"
+        except ValueError:
+            since = "new"
         for d in ex.writable():
             with _FILES_LOCK:
-                _FILES.setdefault(ex.volume.key(d), {"since": "new"}).update(
+                _FILES.setdefault(ex.volume.key(d), {"since": since}).update(
                     work=(ex.project_name, ex.node, ex.role, ex.container), image=ex.image, left=False)
 
 
@@ -2272,6 +2279,7 @@ def _run_and_admit(ex) -> None:
     if not ON_START and not network_record_off():    # …a list left empty admitted anything: `gfso run`, a reload worker (critic)
         raise PlaceUnavailable(ex.name, "nothing here keeps the record of where its sessions reach: nothing runs off it")
     watch_disk()                                     # …and the bound on its disk and the record of its files, wherever it started
+    watch_ceiling()                                  # …and on the machine's memory: `gfso mcp` dispatches work with no server
     _note_files(ex)
     for admit in ON_START:
         admit(ex)

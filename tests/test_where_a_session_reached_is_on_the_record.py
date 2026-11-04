@@ -19,6 +19,7 @@ import pytest
 
 from gfso.adapters import execution as E
 from gfso import config as C
+from gfso.mcp import server as S
 from gfso.adapters import netrecord as N
 from gfso.core.types import PlaceUnavailable
 from tests.test_a_session_holds_only_its_own_place import IMAGE, made, project  # noqa: F401 — a fixture
@@ -118,6 +119,39 @@ def test_a_stranger_on_a_freed_address_is_written_under_no_one(data):
     assert _rows(data)[-1]["container"] == "c"
 
 
+def test_docker_gone_with_work_standing_leaves_a_gap_and_a_quiet_end_none(data, monkeypatch):
+    """Docker dies, its containers with it, the server lives: the turn saw no containers, as at any quiet end, and said nothing (critic, ran)."""
+    r = N._Record()
+    r.book = _book()
+    r.proc = SimpleNamespace(poll=lambda: 1, stdin=SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(N, "run", lambda *a, **k: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(N, "_work_stands", lambda: [])
+    r.turn()
+    assert "gap" in _rows(data)[0]
+    r.book, r.proc = _book(), SimpleNamespace(poll=lambda: None, stdin=SimpleNamespace(close=lambda: None))
+    r.turn()
+    assert len(_rows(data)) == 1, "the listener still stood: work simply ended"
+
+
+def test_a_root_s_end_carries_what_the_records_say_of_themselves(data, monkeypatch):
+    """Read only by whoever ran `gfso network`, so a session's hiding reached no one who did not ask (critic, read)."""
+    engine = SimpleNamespace(project_name="p", graph=SimpleNamespace(setting=lambda _: None))
+    monkeypatch.setattr(S, "_ui_link", lambda _: "link")
+    ended = lambda complete=True: (out := {"complete": complete}, S._link_and_say("next_steps", out, "p", engine))[0]
+    assert "the_records_say" not in ended(), "nothing to say, no key"
+    _book().heard('{"drops": 5, "src": "172.17.0.2"}', 1.0)
+    said = ended()
+    assert "a: 5 packets" in said["the_records_say"][0] and "the_records_say" in said["say"]
+    assert "the_records_say" not in ended(False), "at the end: each poll would read the whole record"
+
+
+def test_a_reader_is_told_what_the_file_record_could_not_say(data):
+    E_row = {"at": 1.0, "session": "s", "dir": "d"}
+    N.append(N.file_record_path("p"), {**E_row, "cut": True})
+    N.append(N.file_record_path("p"), {**E_row, "cut": True})
+    assert N.said_apart("p") == ["s: d: more changed than a reading holds"]
+
+
 def test_a_server_gone_with_its_work_standing_leaves_a_gap_on_the_record(data, monkeypatch):
     home = E._home()
     monkeypatch.setattr(E.shutil, "which", lambda _: "docker")
@@ -204,7 +238,7 @@ def test_no_code_runs_before_the_listener_says_its_link_is_open(data, monkeypatc
 
 def test_a_listener_taken_down_on_purpose_says_no_gap(data, monkeypatch):
     r = N._Record()
-    r.proc, r.stood = object(), True
+    r.proc, r.stood = SimpleNamespace(poll=lambda: None), True
     r.book = _book()
     monkeypatch.setattr(r, "down", lambda: None)
     monkeypatch.setattr(N, "_work_stands", lambda: [])
@@ -278,7 +312,7 @@ def test_each_process_has_a_listener_of_its_own(monkeypatch):
 
 def test_a_docker_that_did_not_answer_is_no_empty_installation(monkeypatch):
     r, downs = N._Record(), []
-    r.proc = object()
+    r.proc = SimpleNamespace(poll=lambda: None)
     monkeypatch.setattr(r, "down", lambda: downs.append(1))
     monkeypatch.setattr(N, "_work_stands", lambda: None)
     r.turn()

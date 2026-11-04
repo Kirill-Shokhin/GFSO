@@ -137,6 +137,7 @@ _PINNED_ACTOR = {"signal": ("source",), "revise": ("agent",),
 from gfso import tools as _T
 from gfso.serverctl import UI_LINK_VERBS as _UI_LINK_VERBS, ui_link as _ui_link   # ONE list, both doors
 from gfso.workspaces import LANDED
+from gfso.adapters.netrecord import said_apart
 from gfso.config import HEARTBEAT_SECONDS as _HEARTBEAT
 
 
@@ -183,6 +184,10 @@ def _link_and_say(name: str, out: dict, project, engine) -> None:
             f"the branch `{where['branch']}` with their own untouched, {link}, and the one command that shows the result "
             "(`git worktree add`: a checkout refuses over uncommitted files); a next task starts from their HEAD: merge "
             "first to build on this." if where.get("branch") else f"where the result lies, `{where.get('path')}`, and {link}."))
+    # …a session that hid where it went was read only by whoever ran `gfso network` (critic): at the end it is told
+    if engine is not None and name == "next_steps" and out.get("complete") and (said := said_apart(engine.project_name)):
+        out["the_records_say"] = said
+        out["say"] = f"{out.get('say', '')} Tell them too what the system's own records say of this run: `the_records_say`.".strip()
     if name not in _UI_LINK_VERBS or "ui" in out:
         return
     out["ui"] = link
