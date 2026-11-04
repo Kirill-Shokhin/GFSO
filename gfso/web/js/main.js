@@ -13,10 +13,11 @@ import {selectTask, closeSidebar, resign, openReader, closeReader} from './panel
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
 import * as author from './author.js';
 import * as goal from './goal.js';
-import {mountDeck, paint as paintDeck, onPipeline, onInflight, suggestHeight} from './deck.js';
+import {mountDeck, paint as paintDeck, onPipeline, onInflight, suggestHeight, foldDeck} from './deck.js';
 import {connectWS} from './live.js';
 import {askProjectName} from './overlays.js';
-import {mountHints} from './hints.js';
+import {mountHints, LEAVING} from './hints.js';
+import {untip} from './tip.js';
 import {drawPlanning} from './planning.js';
 import {onReading, rereadResources} from './resources.js';
 import {said} from './run.js';
@@ -112,19 +113,30 @@ $('pl-search').addEventListener('input', searchProjects);
 // …AND THE BAR IS ASKED AGAIN: the frontier's `mine` is computed FOR the identity in the box.
 $('current-role').addEventListener('input', () => { rememberRole(myRole()); if (S.mineOnly) applyMineDim(); refreshHeader(); });
 watch((st, key) => { if (key === 'select') st.select ? selectTask(st.select) : closeSidebar(); });
-// ON A PHONE A NODE'S PANEL COVERS THE SCREEN, and the browser's Back is the way out a hand reaches for: opening it adds a step
-// to the history, Back closes the reader first, then the panel — never leaves the page (the author, 2026-10-31: «интуитивно
-// жмешь кнопку назад а не крестик»). A panel closed by its × takes its step back out.
-let opened = false;
-watch((st, key) => {
-    if (key !== 'select' || !phone()) return;
-    if (st.select && !opened) opened = true, history.pushState({gfso: 'node'}, '');
-    else if (!st.select && opened) { opened = false; if (history.state?.gfso === 'node') history.back(); }
-});
+// ON A PHONE THE BROWSER'S BACK IS THE WAY OUT A HAND REACHES FOR: it closes what is open, topmost first — a tip, a popover, the reader,
+// a panel, the deck — and with nothing open says once that the next one leaves (the author, 2026-10-31: «интуитивно жмешь кнопку назад
+// а не крестик»; 11-04: «любое движение привычное и вкладка у тебя слетела в пустую страницу»). Steps are laid under a finger's gesture:
+// the browser's Back skips an entry added without one, so one laid as Back is handled would let the next Back leave the page.
+const STEPS = 6;
+let warned = 0;
+const closeTop = () => {
+    const tipBox = $('tooltip');
+    if (tipBox?.classList.contains('visible')) return untip(), true;
+    const pop = document.querySelector('.hd-quality.open');
+    if (pop) return pop.classList.remove('open'), pop.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', 'false'), true;
+    if ($('reader') && !$('reader').hidden) return closeReader(), true;
+    if ($('goal-panel') && !$('goal-panel').hidden) return goal.closeGoal(), true;
+    if ($('project-panel') && !$('project-panel').hidden) return closeProjects(), true;
+    if (focus().select) return point('select', null), true;
+    return foldDeck();
+};
+addEventListener('pointerup', () => { const n = history.state?.gfsoSteps || 0; if (phone() && n < STEPS) history.pushState({gfsoSteps: n + 1}, ''); }, true);
 addEventListener('popstate', () => {
-    if (!opened) return;
-    if (!$('reader')?.hidden && $('reader')) { closeReader(); history.pushState({gfso: 'node'}, ''); return; }
-    opened = false; point('select', null);
+    if (!phone() || closeTop()) return;
+    if (Date.now() - warned < 3000) return history.go(-(history.state?.gfsoSteps || 0) - 1);
+    warned = Date.now();
+    const note = document.body.appendChild(Object.assign(document.createElement('div'), {className: 'back-note', textContent: LEAVING}));
+    setTimeout(() => note.remove(), 3000);
 });
 
 const NEWS = {

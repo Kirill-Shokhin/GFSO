@@ -36,6 +36,10 @@ export function foldInto(tasks) {
 export const isHidden = id => id in hidden;
 export const unfold = ids => ids.forEach(id => unfolded.add(id));
 export const refold = () => { const any = unfolded.size > 0; unfolded.clear(); return any; };
+// one node's parts folded back, by its tag: an unfolded node keeps a tag that says how many lie under it
+export const refoldOne = id => unfolded.delete(id);
+export const openHere = id => !folding || !unfolded.has(id) || !depths(S.tasks)[id] ? 0
+    : S.tasks.filter(t => ancestorsIn(S.tasks)(t.id).includes(id) && !cancelled(t)).length;
 
 // A FOLD HIDES NOTHING THAT ASKS: whatever the drawing marks on a node is counted on the node it is folded into, by the same
 // looks — so what asks is never a list of cases of its own (critic 4: work at depth 2 vanished; critic 5: an escalated part

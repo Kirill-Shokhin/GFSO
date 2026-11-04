@@ -118,6 +118,8 @@ function drawStrip() {
 }
 
 const TIMED = new Set(['timeline', 'progress']);
+// the deck closed by the browser's Back; false when it stands closed
+export const foldDeck = () => { if (pref.closed) return false; pref.closed = true; save(); paint(); return true; };
 // the deck drawn from the run as last read (model.js loadRun)
 export function paint() {
     const d = $('deck');

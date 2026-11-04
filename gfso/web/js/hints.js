@@ -240,6 +240,7 @@ const DOING = {review_decomposition: 'reviewing the plan', join_whole: 'joining 
 export const doing = (verb, kind) => DOING[verb] || KIND[kind]?.doing || verb.replace(/_/g, ' ');
 // a bar's round: a session of the round's work or its check; a plan, a consent or an issuer's turn delivered nothing (live critic)
 const roundOf = (x, r) => r && (x.kind === 'val' ? `Round ${r.n}: ${r.verdict || 'no verdict yet'}` : x.kind === 'exec' && `Round ${r.n}`);
+export const LEAVING = 'Back once more leaves the page';
 export const STRIP = {
     live: (name, row) => hover(name, row),
     block: (n, of, direct, through) => hover(`${n} wait on ${of}`, 'None starts until it passes', direct,

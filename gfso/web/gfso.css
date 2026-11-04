@@ -516,7 +516,10 @@ body:has(.hd-q.acc) .hd-quiet { display: none; }
            line-height: 1; padding: 3px 7px 4px; color: var(--ink-soft); background: var(--bg); border: 1px solid var(--ink-soft);
            border-top: 0; border-radius: 0 0 6px 6px; }
 /* its counts are the page's one count mark at the line's size (dom.js tally); a click on it unfolds (graph.js) */
-.cy-fold { pointer-events: auto; cursor: pointer; }
+.cy-fold { pointer-events: auto; cursor: pointer; box-sizing: border-box; min-width: var(--w, 0); text-align: center; }
+.cy-fold::before { content: '\25BE\00A0'; }   /* folded: its press opens it */
+.cy-fold.open::before { content: '\25B4\00A0'; }   /* open: its press folds it back */
+.cy-fold.kf::before { content: none; }
 @media (pointer: coarse) { .cy-fold { pointer-events: none; } }
 .cy-fold .tally { margin-right: 7px; } .cy-fold > .tally:last-child, .cy-fold > :last-child .tally { margin-right: 0; }
 .cy-fold .cy-live { display: inline-block; box-sizing: border-box; margin-right: 4px; vertical-align: baseline; }
@@ -1563,7 +1566,6 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
     .hd-goal .hd-root { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .hd-goal > .hd-left, .hd-run { flex-shrink: 0; }
     .cy-fold .cy-more { display: none; }   /* a phone's tag stays the width of its node: how many parts, how many of them ask */
-    .cy-fold::before { content: '\25BE\00A0'; }   /* folded: a tap opens it */
     .cy-fold.asks, .cy-fold.asks .tally, .cy-fold.asks .tally b { color: var(--acc); border-color: var(--acc); }
     .hd-needs > .need { order: -1; }
     .hd-needs > .tally, .hd-needs > .hd-quiet { border-left: none; padding-left: 0; }   /* a row that wraps has no line to set apart */
@@ -1621,3 +1623,5 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
     .hd-phrase.hd-plain { display: none; }
     .hd-needs > .hd-landed { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* whole in its tip and the goal's panel */
 }
+
+.back-note { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 300; padding: 8px 14px; border-radius: var(--radius); background: var(--ink); color: var(--bg); font-size: 12.5px; white-space: nowrap; }
