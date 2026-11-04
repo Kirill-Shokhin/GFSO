@@ -115,15 +115,15 @@ const when = t => clockAt(typeof t === 'number' ? t * 1e3 : at(t));
 function runSwitch(r) {
     // …but a stop someone made while the plan was written stands when the plan ends: it hid, and the Start with it (critic)
     const held = r && r.state !== 'running' && r.by !== 'system';
-    if (!r || !(begun() || held) || (terminal(rootOf(S.tasks)?.state) && !procs().length)) return '';
-    if (r.state === 'running') return `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`;
+    if (!r || !(begun() || held) || (terminal(rootOf(S.tasks)?.state) && !procs().length)) return ['', ''];
+    if (r.state === 'running') return ['', `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`];
     // the count its own mark (audit A5); the tip headed by who and when, each session still at work by its node and what it
     // does — not the in-flight registry's verb and id joined by dots (A8, A9)
     const text = r.state === 'stopping' ? `Stopping${tally(r.working.length, 'still at work')}` : 'Stopped';
     const tip = r.state === 'stopping' ? H.stopping(r.by, when(r.at), r.why, r.working.map(w => `${w.task_id ? nameOf(taskOf(w.task_id)) || w.task_id : 'the system'}: ${doing(w.verb, PROC_KIND[w.verb])}, since ${when(w.since)}`))
         : H.stopped(r.by, when(r.at), r.why);
-    return `<span class="hd-run-state${r.state === 'stopping' ? ' live' : ''}"${tip}>${text}</span>`
-        + `<button class="hd-run" data-action="run-start"${H.start}>start</button>`;
+    return [`<span class="hd-run-state${r.state === 'stopping' ? ' live' : ''}"${tip}>${text}</span>`,
+        `<button class="hd-run" data-action="run-start"${H.start}>start</button>`];
 }
 // '' when the switch moved — the page then re-reads its header (main.js)
 const switchRun = (verb, body) => act(post(`/api/run/${verb}`, body), {ok: null});
@@ -205,10 +205,11 @@ export async function drawHeader() {
     }
     chips += stalled(chips);
     drawReports();
-    $('hd-goal').innerHTML = left + runSwitch(S.runState);
+    const [runState, runButton] = runSwitch(S.runState), small = phone();
+    $('hd-goal').innerHTML = left + (small ? '' : runState) + runButton;
     // …and a goal closed undelivered is said by its verdict alone: «FAILED nothing needs you» read as leave it (critic)
     const root = rootOf(S.tasks), failed = root && terminal(root.state) && !delivered(root);
-    $('hd-needs').innerHTML = status + (chips || (heard && !failed && S.runState?.state === 'running' ? '<span class="hd-quiet">nothing needs you</span>' : ''));
+    $('hd-needs').innerHTML = (small ? runState : '') + status + (chips || (heard && !failed && S.runState?.state === 'running' ? '<span class="hd-quiet">nothing needs you</span>' : ''));
 }
 
 // The quality metrics. What each MEANS, how far it can be trusted (§15.8's grade) and which of them call a person are the

@@ -265,15 +265,13 @@ function placeBadges() {
         const b = n.renderedBoundingBox(BODY), f = foldOf(id);
         // the folded parts hang under the node: their count, and those failing now in the accent
         // …each a count as every count on the page (`tally`: the figure at its line's size — critic 5); a click on it unfolds
-        const asks = f.n ? f.decide.length + f.shut.length + f.contested.length + f.failing.length : 0;
-        const tag = f.n ? `<div class="cy-fold" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px"${TIP.fold}>${tally(f.n, f.n > 1 ? 'parts' : 'part')}`
-            + (f.work.length ? `<i class="cy-live${f.work.some(x => now.on(x)) ? ' on' : ''}"${beat()}></i>${tally(f.work.length, 'at work')}` : '')
+        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px"${TIP.fold}>${tally(f.n, f.n > 1 ? 'parts' : 'part')}`
+            + (f.work.length ? `<i class="cy-live${f.work.some(x => now.on(x)) ? ' on' : ''}"${beat()}></i><span class="cy-more">${tally(f.work.length, 'at work')}</span>` : '')
             + '<span class="cy-more">' + (f.decide.length ? tally(f.decide.length, f.decide.length > 1 ? 'wait on a decision' : 'waits on a decision') : '')
             + (f.shut.length ? tally(f.shut.length, 'closed by FAIL') : '')
             + (f.byHand.length ? tally(f.byHand.length, 'closed by hand') : '')
             + (f.contested.length ? `<span class="acc">${tally(f.contested.length, 'contested')}</span>` : '')
-            + (f.failing.length ? `<span class="acc">${tally(f.failing.length, 'sent back')}</span>` : '') + '</span>'
-            + (asks ? `<span class="cy-asks acc">${tally(asks, asks > 1 ? 'ask' : 'asks')}</span>` : '') + '</div>' : '';
+            + (f.failing.length ? `<span class="acc">${tally(f.failing.length, 'sent back')}</span>` : '') + '</span></div>' : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
         const shut = closedByFail(taskOf(id));
