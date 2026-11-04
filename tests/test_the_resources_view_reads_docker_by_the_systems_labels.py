@@ -105,7 +105,7 @@ def test_a_project_is_read_per_node_by_its_labels_and_a_missing_number_stays_non
     said, _ = docker
     h = E._home()
     said["ps"] = [_ps("a1", "executor.root.x-1", h, "p", "executor", "root.x", "exec-2", "executors"),
-                  _ps("a2", "judge.root.x.r_1-2", h, "p", "judge", "root.x", "val", "judges"),
+                  _ps("a2", "validator.root.x.r_1-2", h, "p", "validator", "root.x", "val", "validators"),
                   _ps("a3", "gfso-e-p", h, "p", "system", "", "", "system"),
                   _ps("a4", "door-3", h, "p", "", "", "", "door"),
                   _ps("b1", "executor.root-4", "otherhome", "p", "executor", "root"),
@@ -126,7 +126,7 @@ def test_a_project_is_read_per_node_by_its_labels_and_a_missing_number_stays_non
     assert gone["known"] is False and gone["disk_bytes"] == 3_000_000 and gone["containers"]["standing"] == 0
     assert p["known"] is True and p["disk_bytes"] == 1_000_000 and p["disk_counted"] == "1/2", "N/A is not 0"
     assert p["containers"] == {"standing": 4, "running": 4, "busy": 1, "busy_counted": "3/4"}
-    assert {k: v["busy"] for k, v in p["by_role"].items()} == {"door": None, "executor": 1, "judge": 0, "system": 0}
+    assert {k: v["busy"] for k, v in p["by_role"].items()} == {"door": None, "executor": 1, "validator": 0, "system": 0}
     [node] = p["nodes"]
     assert node["node"] == "root.x" and node["memory_bytes"] == 201 * 2 ** 20 and node["cpu_percent"] == 12.5
     assert {c["agent_id"] for c in node["containers"]} == {"exec-2", "val"}

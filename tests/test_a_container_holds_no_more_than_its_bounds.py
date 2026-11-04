@@ -354,10 +354,10 @@ def test_a_judges_build_the_watch_ended_is_asked_again_not_the_deliverys_fail(mo
     """The watch ends the work furthest over its share, a judge's batches among them: ended so, a build read as the
     delivery's FAIL — a neighbour pressing on the ceiling steered another node's verdict (critic B6). Its own bound, or
     its own exit, still FAILs it."""
-    (box := E.ContainerExecution.__new__(E.ContainerExecution)).container = "judge.b.b_1.batch1-x"
+    (box := E.ContainerExecution.__new__(E.ContainerExecution)).container = "validator.b.b_1.batch1-x"
     box.shell, box.run = lambda: "sh", lambda *a, **k: subprocess.CompletedProcess(a, 137, "", "Killed")
     ex = SimpleNamespace(session=lambda at: box, files=SimpleNamespace(exists=lambda p: False))
-    monkeypatch.setattr(E, "_WATCH_ENDED", {"judge.b.b_1.batch1-x"})
+    monkeypatch.setattr(E, "_WATCH_ENDED", {"validator.b.b_1.batch1-x"})
     with pytest.raises(S.Uncopied, match="memory watch"):
         S._build(tmp_path, "make", ex)
     monkeypatch.setattr(E, "_WATCH_ENDED", set())
@@ -371,7 +371,7 @@ def test_a_node_is_charged_with_what_it_added_and_never_with_the_systems_own_wri
     carried into the base (critic: a neighbour's delivery FAILed the root's judge), and nothing it wrote beside a system
     write is forgiven with it (critic: a mark every 10 s forgave a node everything)."""
     GiB, L = 2 ** 30, E.DiskLedger()
-    root, judge = ("p", "root", "executor", "s"), ("p", "root", "judge", "r1")
+    root, judge = ("p", "root", "executor", "s"), ("p", "root", "validator", "r1")
     works = {root: {"dirs": {("v", "base")}, "layers": {"c1": (0, 0)}}, judge: {"dirs": {("v", "round")}, "layers": {}}}
 
     def read(base, round_=(0, 0)):
@@ -413,7 +413,7 @@ def test_a_node_is_charged_with_what_it_added_and_never_with_the_systems_own_wri
     assert E._past_bound({("p", "filler", "executor", "f"): (21 * GiB, 1), root: (3 * GiB, 5)}, running, bound) == \
         [("p", "filler", "executor", "f")]
     assert E._past_bound({root: (GiB, 2 * 10 ** 6)}, running, bound) == [root], "files count as bytes do"
-    assert E._past_bound({("p", "x", "judge", "r"): (99 * GiB, 1)}, running, bound) == [], "no container of it runs"
+    assert E._past_bound({("p", "x", "validator", "r"): (99 * GiB, 1)}, running, bound) == [], "no container of it runs"
     monkeypatch.setenv("GFSO_NODE_DISK", "5g")
     monkeypatch.setenv("GFSO_NODE_FILES", "nope")
     assert C.node_disk() == (5 * GiB, C.NODE_FILES)
@@ -421,10 +421,10 @@ def test_a_node_is_charged_with_what_it_added_and_never_with_the_systems_own_wri
 
 
 def test_a_judges_build_its_disk_bound_ended_fails_the_delivery_with_its_cause(monkeypatch, tmp_path):
-    (box := E.ContainerExecution.__new__(E.ContainerExecution)).container = "judge.b.r1-x"
+    (box := E.ContainerExecution.__new__(E.ContainerExecution)).container = "validator.b.r1-x"
     box.shell, box.run = lambda: "sh", lambda *a, **k: subprocess.CompletedProcess(a, 137, "", "Killed")
     ex = SimpleNamespace(session=lambda at: box, files=SimpleNamespace(exists=lambda p: False))
-    monkeypatch.setattr(E, "_DISK_ENDED", {"judge.b.r1-x": "node b's work added 30 MiB … (GFSO_NODE_DISK, GFSO_NODE_FILES)"})
+    monkeypatch.setattr(E, "_DISK_ENDED", {"validator.b.r1-x": "node b's work added 30 MiB … (GFSO_NODE_DISK, GFSO_NODE_FILES)"})
     with pytest.raises(S.BuildFailed, match="ended: node b's work added .*GFSO_NODE_DISK"):
         S._build(tmp_path, "make", ex)
 
@@ -491,7 +491,7 @@ def test_live_each_node_past_its_disk_bound_is_ended_wherever_it_wrote_and_none_
                                       "mkdir t && mv x t/x && mv t x; i=$((i+1)); done; sleep 600")):     # …deeper than the system reads
             ids[node] = start(h, node, mount, body)
         for batch in ("b1", "b2"):        # …one validation's two batches, each under the bound, over it together
-            ids[batch] = start(home, "j", sub(vol, f"j/{batch}"), "head -c 200000000 /dev/zero > /w/build; sleep 600", "judge")
+            ids[batch] = start(home, "j", sub(vol, f"j/{batch}"), "head -c 200000000 /dev/zero > /w/build; sleep 600", "validator")
         for _ in range(60):
             if all(gone(ids[n]) for n in "abcnexdzq"):
                 break
@@ -700,10 +700,10 @@ def test_an_executor_ended_past_its_disk_bound_is_said_once_by_its_place(monkeyp
     it, and taken off once said — the place's next session runs in containers of the same names."""
     (box := E.ContainerExecution.__new__(E.ContainerExecution)).container = "executor.a-f40103"
     monkeypatch.setattr(E, "_DISK_ENDED", {"executor.a-f40103-client": "past", "executor.a-f40103-client-commands":
-                                           "past", "executor.a-f40103x": "a neighbour's", "judge.a.r1-x": "its judge's"})
+                                           "past", "executor.a-f40103x": "a neighbour's", "validator.a.r1-x": "its judge's"})
     assert E.ended_past_disk(box) == "past"
     assert E.ended_past_disk(box) is None, "said once: an older end is not the place's next session's"
-    assert set(E._DISK_ENDED) == {"executor.a-f40103x", "judge.a.r1-x"}, "no other place's cause taken with it"
+    assert set(E._DISK_ENDED) == {"executor.a-f40103x", "validator.a.r1-x"}, "no other place's cause taken with it"
     assert E.ended_past_disk(SimpleNamespace(container="executor.a-f40103x")) is None, "a host session: none"
 
 

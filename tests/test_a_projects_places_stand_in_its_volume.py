@@ -142,8 +142,8 @@ def test_a_sessions_container_is_named_and_labelled_by_its_agent_node_and_role(p
     starting session names, its node, its role; grouped by role in its project's stack."""
     own = project.own
     cases = {own / "root.parser": ("executor", "root.parser"), project.base: ("executor", "root"),
-             own / ".gfso-scratch-root.parser" / "r_1": ("judge", "root.parser"),
-             own / ".gfso-scratch-.ws" / "r_2": ("judge", "root"), own / ".gfso-sys" / "gfso-exact-1": ("check", "gfso-exact-1")}
+             own / ".gfso-scratch-root.parser" / "r_1": ("validator", "root.parser"),
+             own / ".gfso-scratch-.ws" / "r_2": ("validator", "root"), own / ".gfso-sys" / "gfso-exact-1": ("check", "gfso-exact-1")}
     for place, (role, node) in cases.items():
         s = project.session(str(place), "exec-2")
         assert (s.role, s.node, s.agent) == (role, node, "exec-2")

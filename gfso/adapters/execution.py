@@ -2838,14 +2838,14 @@ def _served(rw: Path, project: "ContainerExecution") -> Path:
 
 def _kind_of(rel: tuple, systems: tuple) -> tuple:
     """(role, node, the rest) of a place by its path in the project's directory (`_writable_root`), the base's ():
-    the base and a node's clone its executor's, a validation's or a contact's round a judge's, a directory the system
+    the base and a node's clone its executor's, a validation's or a contact's round a validator's, a directory the system
     lends a call (`systems`) a check's."""
     if not rel:
         return "executor", ROOT_ID, ()
     if rel == (STATE_DIR,):
         return "system", "state", ()
     if rel[0].startswith(SCRATCH):
-        return "judge", ROOT_ID if rel[0][len(SCRATCH):].startswith(".") else rel[0][len(SCRATCH):], rel[1:]
+        return "validator", ROOT_ID if rel[0][len(SCRATCH):].startswith(".") else rel[0][len(SCRATCH):], rel[1:]
     return ("check", rel[-1], ()) if rel[0] in systems else ("executor", rel[0], ())
 
 

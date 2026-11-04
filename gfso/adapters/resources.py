@@ -26,9 +26,9 @@ from gfso.adapters.children import adopt, release, run, spawn_kw
 from gfso.adapters.execution import AGENT, HOME, ID, LABEL, NODE, PROJECT, ROLE, installation
 
 #: the processes a container that hosts calls holds while none runs: `--init` and the `sleep` it waits in — a door's
-#: or a gateway's own server is its work, never "busy" (measured: an idle door at 3, a judge's `claude -p` at 21)
+#: or a gateway's own server is its work, never "busy" (measured: an idle door at 3, a validator's `claude -p` at 21)
 IDLE_PIDS = 2
-HOSTS = ("executor", "judge", "check", "system")
+HOSTS = ("executor", "validator", "check", "system")
 #: seconds a reading stands before Docker is asked again — `docker stats` takes ~2 s, `system df -v` ~0.3–4 s (measured)
 FRESH, DISK_FRESH = 5.0, 60.0
 #: seconds one Docker read may take: a hung daemon holds every poller behind the lock no longer than this
