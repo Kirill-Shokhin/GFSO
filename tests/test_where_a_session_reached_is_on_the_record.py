@@ -283,29 +283,57 @@ def test_a_docker_that_hangs_on_the_bound_s_line_costs_the_line_not_the_removal(
     E.PlaceContainer._say_the_bound(SimpleNamespace(container="c", project_name="p"))
 
 
-def test_a_door_holds_two_of_the_largest_bodies_at_once_and_gives_room_back():
-    """Past its memory a door's heap stayed at the bound and threads for others no longer started (critic, ran)."""
-    assert door._Held.take(door.MAX_BODY) and door._Held.take(door.MAX_BODY)
-    assert not door._Held.take(1), "past its room"
-    door._Held.give(door.MAX_BODY)
-    assert door._Held.take(5)
-    door._Held.give(door.MAX_BODY)
-    door._Held.give(5)
-    assert door._Held.now == 0
+def _body(n):
+    a, b = socket.socketpair()
+    b.sendall(b"x" * n)
+    return a.makefile("rb"), a, b
+
+
+def test_a_door_holds_what_has_arrived_of_bodies_and_one_address_at_most_one_of_the_largest(monkeypatch):
+    """Room taken for what a request declared let two trickling connections hold a project's door from everyone (critic, ran)."""
+    monkeypatch.setattr(door, "MAX_BODY", 3000)
+    monkeypatch.setattr(door, "BODIES", 5000)
+    trickler, peer = door._Room("t"), _body(10)
+    assert trickler.read(peer[0], 10) == b"x" * 10 and door._Room.now == 10, "ten bytes came, ten are held, whatever it declared"
+    big, other = door._Room("a"), door._Room("a")
+    assert big.read(_body(3000)[0], 3000) and door._Room.now == 3010
+    with pytest.raises(door._NoRoom):
+        other.read(_body(10)[0], 10)
+    assert door._Room("b").read(_body(1990)[0], 1990)
+    with pytest.raises(door._NoRoom):
+        door._Room("c").read(_body(10)[0], 10)
+    big.free()
+    assert door._Room("c").read(_body(10)[0], 10), "room back"
+    door._Room.now, door._Room.by_address = 0, {}
+
+
+def test_a_door_opens_the_provider_at_its_rate():
+    """28 requests a second from one session took host ports past every bound, under every switch, unspent on the model (critic, ran)."""
+    now = [0.0]
+    b = door._Bucket(2, 3, clock=lambda: now[0])
+    assert [b.take() for _ in range(4)] == [True, True, True, False]
+    now[0] = 1.0
+    assert [b.take() for _ in range(3)] == [True, True, False]
+    now[0] = 100.0
+    assert [b.take() for _ in range(4)] == [True, True, True, False], "a burst, no more"
 
 
 def test_a_request_gives_its_body_s_room_back_and_one_with_no_memory_is_told(tmp_path):
     sent, log = [], str(tmp_path / "door.log")
     h = SimpleNamespace(client_address=("172.17.0.2", 1), command="POST", send_error=sent.append)
 
-    def fails():
-        raise MemoryError
-    door._within_memory(h, door.MAX_BODY, log, lambda: None)
-    assert door._Held.now == 0 and not sent
-    door._within_memory(h, door.MAX_BODY, log, fails)
-    assert door._Held.now == 0 and sent == [503], "its room back, its client told"
-    door._within_memory(h, door.BODIES + 1, log, lambda: pytest.fail("answered past its room"))
-    assert sent == [503, 503] and door._Held.now == 0
+    def reads_then(e=None):
+        def answer(room):
+            room.read(_body(100)[0], 100)
+            if e:
+                raise e
+        return answer
+    door._within_memory(h, log, reads_then())
+    assert door._Room.now == 0 and not sent and not door._Room.by_address
+    door._within_memory(h, log, reads_then(MemoryError()))
+    assert door._Room.now == 0 and sent == [503], "its room back, its client told"
+    door._within_memory(h, log, reads_then(door._NoRoom()))
+    assert sent == [503, 503] and door._Room.now == 0
     assert "no memory" in (tmp_path / "door.log").read_text() and "no room" in (tmp_path / "door.log").read_text()
 
 

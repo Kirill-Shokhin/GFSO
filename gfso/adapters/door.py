@@ -60,8 +60,12 @@ MAX_BODY = 32 * 2 ** 20
 #: the address space a door may take, under its container's 256 MiB (`_SMALL`), and a thread's stack in it
 #: (and room beside it for its 20 MiB log, which its memory-backed disk counts)
 MEMORY, STACK, READER_STACK = 224 * 2 ** 20, 2 ** 19, 16 * 2 ** 20
-#: the bodies a door holds at once: a heap grown to its bound stays there, and threads for others no longer start (critic, ran)
-BODIES = 2 * MAX_BODY
+#: the bodies a door holds at once, what has arrived of them: a heap grown to its bound stays there, and threads for others no
+#: longer start (critic, ran); one address holds at most one of the largest, so two trickling ones left a project no model (critic, ran)
+BODIES = 3 * MAX_BODY
+#: the provider's requests a door opens a second, a burst of `BURST`: each is a port of the host for 120 s and a lookup's for 83, and a
+#: session's seal sees only its connections to the door, so 28 a second from one session passed every bound, under every switch (critic, ran)
+RATE, BURST = 20, 300
 _lock = threading.Lock()
 _full: list = []
 
@@ -169,41 +173,72 @@ def _judged(keyed: bool, command: str, path: str, body, closed: bool) -> tuple:
 _READER = ThreadPoolExecutor(1)
 
 
-class _Held:
-    """What the door holds of bodies now."""
-    now, lock = 0, threading.Lock()
+class _NoRoom(Exception):
+    """A body past what the door or its address may hold now."""
 
-    @classmethod
-    def take(cls, n: int) -> bool:
-        """Room for `n` bytes more, taken?"""
-        with cls.lock:
-            if cls.now + n > BODIES:
+
+class _Room:
+    """What one request holds of the door's bodies: what has arrived, so one sent a byte at a time holds a byte."""
+    now, by_address, lock = 0, {}, threading.Lock()
+
+    def __init__(self, address: str):
+        self.address, self.held = address, 0
+
+    def read(self, rfile, n: int) -> bytes:
+        """The `n` bytes of a body as they come, or `_NoRoom`."""
+        got = []
+        while n > 0 and (chunk := rfile.read1(min(n, 2 ** 20))):
+            with self.lock:
+                mine = self.by_address.get(self.address, 0) + len(chunk)
+                if _Room.now + len(chunk) > BODIES or mine > MAX_BODY:
+                    raise _NoRoom
+                _Room.now, self.by_address[self.address] = _Room.now + len(chunk), mine
+            self.held += len(chunk)
+            n -= len(chunk)
+            got.append(chunk)
+        return b"".join(got)
+
+    def free(self) -> None:
+        """All it holds, back."""
+        with self.lock:
+            _Room.now -= self.held
+            self.by_address[self.address] = self.by_address.get(self.address, 0) - self.held
+            if self.by_address[self.address] <= 0:
+                del self.by_address[self.address]
+        self.held = 0
+
+
+class _Bucket:
+    """The provider's requests this door may still open now."""
+
+    def __init__(self, rate: float, burst: int, clock=time.monotonic):
+        self.rate, self.burst, self.clock, self.left, self.at, self.lock = rate, burst, clock, burst, clock(), threading.Lock()
+
+    def take(self) -> bool:
+        """One more, taken?"""
+        with self.lock:
+            now = self.clock()
+            self.left, self.at = min(self.burst, self.left + (now - self.at) * self.rate), now
+            if self.left < 1:
                 return False
-            cls.now += n
+            self.left -= 1
             return True
 
-    @classmethod
-    def give(cls, n: int) -> None:
-        """`n` bytes' room back."""
-        with cls.lock:
-            cls.now -= n
+
+_UPSTREAM = _Bucket(RATE, BURST)
 
 
-def _within_memory(h, held: int, log: str, answer) -> None:
-    """`answer` the request of the handler `h` holding `held` bytes of body: one with no room or no memory now is refused by
-    a status its client retries."""
+def _within_memory(h, log: str, answer) -> None:
+    """`answer(room)` the request of the handler `h`: one with no room or no memory now is refused by a status its client retries."""
+    room = _Room(h.client_address[0])
     try:
-        if not _Held.take(held):
-            _say(log, f"{h.client_address[0]} {h.command} refused: no room for its body now")
-            return h.send_error(503)
-        try:
-            answer()
-        finally:
-            _Held.give(held)
-    except MemoryError:
-        _say(log, f"{h.client_address[0]} {h.command} refused: no memory for it")
+        answer(room)
+    except (_NoRoom, MemoryError) as e:
+        _say(log, f"{h.client_address[0]} {h.command} refused: {'no room for its body now' if isinstance(e, _NoRoom) else 'no memory for it'}")
         with contextlib.suppress(OSError, MemoryError):
             h.send_error(503)
+    finally:
+        room.free()
 
 
 def _relay(h, r) -> None:
@@ -233,10 +268,10 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
             keyed = self.headers.get(name) == key
             # …the key and the size before the body is read: any container on the bridge, keyless, ran four 400 MB bodies
             # into memory at once and the door was killed, its address free for the next container to take (critic)
-            _within_memory(self, n if keyed and 0 < n <= MAX_BODY else 0, log, lambda: self._answer(n, path, keyed))
+            _within_memory(self, log, lambda room: self._answer(room, n, path, keyed))
 
-        def _answer(self, n, path, keyed):
-            body = self.rfile.read(n) if keyed and 0 < n <= MAX_BODY else None
+        def _answer(self, room, n, path, keyed):
+            body = room.read(self.rfile, n) if keyed and 0 < n <= MAX_BODY else None
             status, body = (_READER.submit(_judged, keyed, self.command, path, body, closed).result() if not n or body is not None
                             else ("refused: not this door's key" if not keyed else "refused: the body is over its cap", None))
             try:
@@ -244,10 +279,15 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
                     _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {status}")
                     status = "said"
                     return self.send_error(403)
+                if not _UPSTREAM.take():
+                    _say(log, f"{self.client_address[0]} {self.command} {path[:200]} refused: past the door's rate")
+                    status = "said"
+                    return self.send_error(429)
                 headers = {k: v for k, v in self.headers.items() if k.lower() not in DROPPED}
                 headers[name] = value_of.format(cred["value"])
                 up = http.client.HTTPSConnection(upstream, 443, context=tls, timeout=600)
                 up.request(self.command, self.path, body=body, headers=headers)
+                room.free()
                 r = up.getresponse()
                 # …written as the answer starts: a door ended mid-stream still leaves the passed request on record
                 _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {r.status}", passed=True)

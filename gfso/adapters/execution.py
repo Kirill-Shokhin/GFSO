@@ -1409,8 +1409,9 @@ class WayOut:
         # (critic, measured), and each flow let through is a socket of that HOST process: eight containers at a burst of 2000
         # held 15,407 of Windows' 16,384 ports and other programs on the machine could bind none (measured): `NEW_FLOWS`.
         # An unanswered UDP stream stays NEW on every packet, so one past the rate is limited too: this kernel has no way to
-        # count a flow's first packet alone (`connbytes`, measured absent). Apart by protocol, one's flood not spending the other's
-        flows = (f"iptables -N gfso-flows && iptables -A gfso-flows -m limit --limit {new_flows()}/second --limit-burst {burst} -j RETURN && "
+        # count a flow's first packet alone (`connbytes`, measured absent). Apart by protocol, one's flood not spending the other's.
+        # TCP's burst the smaller, past it a connection only waits on its retry: a fresh container per exact check is a fresh burst (critic)
+        flows = (f"iptables -N gfso-flows && iptables -A gfso-flows -m limit --limit {new_flows()}/second --limit-burst {min(10000, 10 * new_flows())} -j RETURN && "
                  "iptables -A gfso-flows -j DROP && iptables -A OUTPUT -o lo -j ACCEPT && iptables -A OUTPUT -p tcp -m conntrack --ctstate NEW -j gfso-flows && "
                  f"iptables -N gfso-dgrams && iptables -A gfso-dgrams -m limit --limit {min(10000, 3 * new_flows() // 2)}/second --limit-burst {burst} -j RETURN && "
                  "iptables -A gfso-dgrams -j DROP && iptables -A OUTPUT ! -p tcp -m conntrack --ctstate NEW -j gfso-dgrams && "
