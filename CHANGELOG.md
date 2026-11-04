@@ -194,6 +194,10 @@ that would establish one (E3) has shown so far, and what not, is in the README a
   it settled and the verdict names what no longer runs (`checks_no_longer_run`). A plan handed in stops instead.
 - A `docker run` cut by its time while Docker was still making the container no longer leaves that container standing with its
   mounts after a removal that answered 0.
+- A goal over holds no container: every node settled and the result landed, its project's containers end as a stopped
+  project's do, its volumes kept, and a reopen starts them again; and a node's end takes its validations' rounds with it, which
+  filing a finding had started again. A run's whole stack stood idle past its root's DONE until the project was stopped.
+- A validation's containers are named and labelled `validator`, the canon's word.
 - A call in a container whose ending meets a Docker slow to answer still ends its client on the host; left standing, it held
   whoever read it, a `plan` for 24 minutes.
 - `gfso setup` brings a registration naming another installation to this one, and says where a directory's own entry goes

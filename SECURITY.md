@@ -207,7 +207,9 @@ container there, and writes those of this installation alone. A container is kno
   A standing finding whose file the record could not keep (not there when it was filed, or past the
   record's size limit) is shown to the validator, not demanded.
 - A validation's container ends when its run ends, with every process the run left behind; a node's
-  place, client and commands containers end once it passed and joined, or was cancelled.
+  place, client and commands containers end once it passed and joined, or was cancelled, and any of its
+  rounds' with them. Once every node is settled and the result has landed, all of the project's containers
+  end, its volumes kept.
 - Every container the system makes holds at most 4 GiB of memory, with no swap past it, and 4096 processes
   (`GFSO_CONTAINER_MEMORY`, `GFSO_CONTAINER_PIDS`; the door and the gateway hold 256 MiB and 256). Past its memory
   the kernel ends the container's largest process: a runaway that is one program fails alone, exit 137, as its own

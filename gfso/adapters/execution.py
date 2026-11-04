@@ -767,6 +767,13 @@ def _end_cut(name: str) -> None:
     for wait in (0, 0.5, 1, 2):
         time.sleep(wait)
         run(["docker", "rm", "-f", name], timeout=60)
+def release_rounds(ex, place: str) -> None:
+    """Every session of project `ex` standing in a validation's round of the delivery in `place`: filing a finding reads what
+    its command names in the round, in the round's own container, after its run ended it. A host's has none."""
+    if isinstance(ex, ContainerExecution):
+        under = os.path.normcase(scratch_of(_real(place), ex.project_name)) + os.sep
+        for s in [s for (c, rw), s in _SESSIONS.copy().items() if c == ex.container and rw.startswith(under)]:
+            s.stop()
 
 
 def _files_changed(vol: str, since: dict, image: "str | None") -> dict:
@@ -2871,8 +2878,8 @@ class PlaceContainer(ContainerExecution):
     delivery that could not be checked out is not judged (`apart`). The base's CLI state is its root executor's alone:
     a parent consents in its own place, the plan's place reader works in a temp of its own, a base that is no git
     repository is refused. NOT HELD YET: a tool-loop provider's issuer reads a node's inputs by its shell only. A judge's
-    container ends with its run (`ExecutionPort.release`), a node's when it passed and joined or was cancelled
-    (`delegate.Dispatcher._released`)."""
+    container ends with its run (`ExecutionPort.release`), and again with its node if a read of its round started it since; a
+    node's when it passed and joined or was cancelled (`delegate.Dispatcher._released`)."""
     commands_apart = True
 
     def __init__(self, project: ContainerExecution, rw: Path, agent: str | None = None):

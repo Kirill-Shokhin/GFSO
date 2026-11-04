@@ -39,6 +39,7 @@ from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok 
 from gfso.adapters.llm.chat import answers, is_address
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among, what_stopped
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
+from gfso.adapters.execution import release_rounds
 from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace, clear_workspaces, execution_of,
                              join_whole, land_accepted, made, node_workspace, root_created, session_scope,
                              stands)
@@ -1373,7 +1374,7 @@ class Dispatcher:
         if getattr(self._engine, "_dispatch_quiesce", 0):
             return []      # a wholesale build/rebuild is mid-burst — dispatch on the settled graph only
         self._publish_the_roster()
-        if self._engine.paused():
+        if self._engine.paused() or self._over():
             self._rest()
             return []      # the user's STOP: nothing new starts; running sessions finish and their signals land
         self._rested = False
@@ -1938,13 +1939,22 @@ class Dispatcher:
             return
         try:
             if (w := _place_of(self._engine, self._agents, t)) is not None and made(self._engine, w[1]):
-                execution_of(self._engine, self._agents).release(w[1])
+                (ex := execution_of(self._engine, self._agents)).release(w[1])
+                release_rounds(ex, w[1])
         except Exception as e:                          # noqa: BLE001 — tidying, said, never raised into a thread
             log.warning(f"delegate: {tid} ended; its place's containers were not ended: {e}")
 
+    def _over(self) -> bool:
+        """Every node settled and the result landed — asked only once a start has read what its last process left
+        (`_rejoin`): a parent's acceptance settles none of its children (§11.3), so a root's DONE alone is not this."""
+        joins = self._engine.joins
+        return (self._rejoined_once and not joins.joining_nodes() and not joins.unjoined_roots()
+                and bool(tasks := self._engine.all_tasks()) and all(t.state in (State.DONE, State.ABANDONED) for t in tasks))
+
     def _rest(self) -> None:
-        """A stopped project's containers ended once, when nothing of it runs any more (`run_state`'s `stopped`): its
-        work stands in its volumes, and its next start makes them again over them (`ExecutionPort.stop`)."""
+        """The containers of a project that nothing of will run ended once, when nothing of it runs any more — stopped
+        (`run_state`'s `stopped`) or its goal over (`_over`), else they stood idle on the person's machine for as long as
+        it was left: its work stands in its volumes, and its next start makes them again over them (`ExecutionPort.stop`)."""
         if self._rested or any(w.get("project") == (self._engine.project_name or DEFAULT_PROJECT) for w in in_flight()):
             return
         self._rested = True
