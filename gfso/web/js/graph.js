@@ -141,7 +141,7 @@ export async function initGraph() {
         if (st.hover && !own) cy.getElementById(st.hover).addClass('focus');
         cy.nodes(':selected').filter(n => n.id() !== st.select).unselect();
         // a node chosen in another view, folded here, unfolds the path to it
-        if (st.select && isHidden(st.select)) { unfold(ancestorsIn(S.tasks)(st.select));
+        if ((key === 'select' || key === 'bring') && st.select && isHidden(st.select)) { unfold(ancestorsIn(S.tasks)(st.select));
             redraw().then(() => { fresh = false; inSight(cy.getElementById(st.select)); }); return; }
         if (st.select) cy.getElementById(st.select).select();
         if ((key === 'select' || key === 'bring') && st.select) { fresh = false; inSight(cy.getElementById(st.select)); }
@@ -170,25 +170,30 @@ export async function initGraph() {
     let wantT;
     const framed = () => { clearTimeout(wantT); if (want) { const z = cy.zoom(), p = {...cy.pan()}; fitCapped(want, 40);
         // short of room, the opened subtree is centred at the floor (the author, 11-04: «не центруется открытое поддерево»)
-        if (cy.zoom() < FLOOR) atFloor(want);
+        if (cy.zoom() < FLOOR) { cy.zoom(FLOOR); cy.center(want); }
         const to = {zoom: cy.zoom(), pan: {...cy.pan()}}; cy.viewport({zoom: z, pan: p}); cy.animate({...to, duration: 200}); } want = null; };
     const framing = eles => { want = eles; clearTimeout(wantT); wantT = setTimeout(framed, 450); };
     // a double-click on a node frames what is drawn of it; seeing a node is not unfolding it (the author, 11-04)
     const opening = id => framing(subtree(cy.getElementById(id)));
     // ONLY THE TAG folds and unfolds, and its press opens no panel: under a finger the same tap also reached the node beneath
-    const toggled = async id => { if (foldOf(id).n) unfold([id]); else refoldOne(id); await redraw(); fresh = false;
-        framing(subtree(cy.getElementById(id))); };
+    const toggled = async id => { const opens = foldOf(id).n > 0; if (opens) unfold([id]); else refoldOne(id); await redraw(); fresh = false;
+        if (opens) framing(subtree(cy.getElementById(id))); else cy.animate({center: {eles: cy.getElementById(id)}, duration: 200}); };
+    // the press's hold on selection ends with it, however it ends; a second finger makes it a pinch, no press (critic: a stuck hold left no node selectable)
+    let fingers = 0;
+    const release = () => { cy.autounselectify(false); pressed = null; const s = focus().select; if (s) cy.getElementById(s).select(); };
+    addEventListener('pointerdown', () => { if (++fingers > 1 && pressed?.id) release(); }, true);
+    const ended = e => { fingers = Math.max(0, fingers - 1); const p = pressed; if (!p?.id) return;
+        if (e.type === 'pointerup' && Math.hypot(e.clientX - p.x, e.clientY - p.y) < 8) toggled(p.id);
+        setTimeout(release, 400); };
+    addEventListener('pointerup', ended, true); addEventListener('pointercancel', ended, true);
     cy.on('dbltap', 'node', evt => opening(evt.target.id()));
     // a press and release in place on the tag: a pan begun on it moves the graph and unfolds nothing (critic 7). Found by where
     // it stands, not by the event's target: under a finger the tag lets every gesture through to the canvas (gfso.css), or a
     // tag across a phone's width could not be panned from (critic 8)
     const tagAt = e => [...$('cy').querySelectorAll('.cy-fold')].find(t => { const r = t.getBoundingClientRect();
         return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; });
-    $('cy').addEventListener('pointerdown', e => { pressed = {x: e.clientX, y: e.clientY, id: tagAt(e)?.dataset.node};
+    $('cy').addEventListener('pointerdown', e => { if (fingers > 1) return; pressed = {x: e.clientX, y: e.clientY, id: tagAt(e)?.dataset.node};
         if (pressed.id) cy.autounselectify(true); }, true);
-    $('cy').addEventListener('pointerup', e => {
-        if (pressed?.id && Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) < 8) toggled(pressed.id);
-        if (pressed?.id) setTimeout(() => cy.autounselectify(false), 400); });
     // …the background's: the plan as first drawn, its parts folded again
     cy.on('dbltap', async evt => { if (evt.target !== cy) return;
         if (refold()) await redraw();
@@ -268,13 +273,9 @@ function placeBadges() {
         const b = n.renderedBoundingBox(BODY), f = foldOf(id);
         // the folded parts hang under the node: their count, and those failing now in the accent
         // …each a count as every count on the page (`tally`: the figure at its line's size — critic 5); a click on it unfolds
-        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px;${gluedTo(b)}"${TIP.fold}>${tally(f.n, f.n > 1 ? 'parts' : 'part')}`
-            + (f.work.length ? `<i class="cy-live${f.work.some(x => now.on(x)) ? ' on' : ''}"${beat()}></i><span class="cy-more">${tally(f.work.length, 'at work')}</span>` : '')
-            + '<span class="cy-more">' + (f.decide.length ? tally(f.decide.length, f.decide.length > 1 ? 'wait on a decision' : 'waits on a decision') : '')
-            + (f.shut.length ? tally(f.shut.length, 'closed by FAIL') : '')
-            + (f.byHand.length ? tally(f.byHand.length, 'closed by hand') : '')
-            + (f.contested.length ? `<span class="acc">${tally(f.contested.length, 'contested')}</span>` : '')
-            + (f.failing.length ? `<span class="acc">${tally(f.failing.length, 'sent back')}</span>` : '') + '</span></div>' : openHere(id) ? `<div class="cy-fold open" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px;${gluedTo(b)}"${TIP.fold}>${tally(openHere(id), 'parts')}</div>` : '';
+        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px;${gluedTo(b)}"${TIP.fold([f.work.length && `${f.work.length} at work`, f.decide.length && `${f.decide.length} waiting on a decision`, f.shut.length && `${f.shut.length} closed by FAIL`,
+                f.byHand.length && `${f.byHand.length} closed by hand`, f.contested.length && `${f.contested.length} contested`, f.failing.length && `${f.failing.length} sent back`])}>${tally(f.n, f.n > 1 ? 'parts' : 'part')}`
+            + (f.work.length ? `<i class="cy-live${f.work.some(x => now.on(x)) ? ' on' : ''}"${beat()}></i>` : '') + '</div>' : openHere(id) ? `<div class="cy-fold open" data-node="${esc(id)}" style="left:${(b.x1 + b.x2) / 2}px;top:${b.y2 - 1}px;${gluedTo(b)}"${TIP.foldBack}>${tally(openHere(id), 'parts')}</div>` : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
         const shut = closedByFail(taskOf(id));

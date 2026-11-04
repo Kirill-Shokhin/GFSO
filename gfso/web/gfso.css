@@ -520,6 +520,10 @@ body:has(.hd-q.acc) .hd-quiet { display: none; }
 .cy-fold::before { content: '\25BE\00A0'; }   /* folded: its press opens it */
 .cy-fold.open::before { content: '\25B4\00A0'; }   /* open: its press folds it back */
 .cy-fold.kf::before { content: none; }
+/* glued to its node at any zoom: its width, a type that fits; what asks by its colour, the counts in its tip (the author, 11-04) */
+.cy-fold:not(.kf) { width: var(--w); min-width: 0; padding: 2px 0 3px; overflow: hidden; font-size: var(--fs, 10px); }
+.cy-fold .tally { font-size: inherit; }
+.cy-fold.asks, .cy-fold.asks .tally, .cy-fold.asks .tally b { color: var(--acc); border-color: var(--acc); }
 @media (pointer: coarse) { .cy-fold { pointer-events: none; } }
 .cy-fold .tally { margin-right: 7px; } .cy-fold > .tally:last-child, .cy-fold > :last-child .tally { margin-right: 0; }
 .cy-fold .cy-live { display: inline-block; box-sizing: border-box; margin-right: 4px; vertical-align: baseline; }
@@ -1565,10 +1569,6 @@ body.no-project .header > .role-select:not(.acting-as)::after { display: none; }
     .hd-goal { flex-wrap: nowrap; align-items: center; column-gap: 10px; }
     .hd-goal .hd-root { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .hd-goal > .hd-left, .hd-run { flex-shrink: 0; }
-    .cy-fold:not(.kf) { width: var(--w); min-width: 0; padding: 2px 0 3px; overflow: hidden; font-size: var(--fs, 10px); }
-    .cy-fold .tally { font-size: inherit; }
-    .cy-fold .cy-more { display: none; }   /* a phone's tag stays the width of its node: how many parts, how many of them ask */
-    .cy-fold.asks, .cy-fold.asks .tally, .cy-fold.asks .tally b { color: var(--acc); border-color: var(--acc); }
     .hd-needs > .need { order: -1; }
     .hd-needs > .tally, .hd-needs > .hd-quiet { border-left: none; padding-left: 0; }   /* a row that wraps has no line to set apart */
 }

@@ -73,8 +73,8 @@ const KEY = [
     {glyph: '<span class="kb">3</span>', head: 'Delivery rounds', means: 'from the second on; in the accent while the last one failed'},
     {glyph: '<svg class="glyph" width="22" height="11" viewBox="0 0 22 11"><rect class="tl-exec" x="0" y="3" width="22" height="5" rx="1.5"/><line class="tl-hand" x1="11" x2="11" y1="1" y2="10"/></svg>',
      head: 'Session passed on', means: 'on the timeline: its context reached the budget, a fresh session went on from its note'},
-    {glyph: '<span class="cy-fold kf"><span class="tally"><b>12</b><i>parts</i></span></span>', head: 'Parts folded inside', means: 'on a plan too large to read whole: a part\'s own parts, cancelled ones left out, then how many are at work, wait on a decision, closed by FAIL, closed by hand, and in the accent contested or sent back — a click or tap on it unfolds them'},
-    {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node unfolds and frames its parts · the background shows the plan as first drawn'},
+    {glyph: '<span class="cy-fold kf"><span class="tally"><b>12</b><i>parts</i></span></span>', head: 'Parts folded inside', means: 'on a plan too large to read whole: a part\'s own parts. A press on the tag unfolds them and folds them back; in the accent if any of them asks'},
+    {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node frames it · the background shows the plan as first drawn'},
     {group: 'Verdicts'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
     {glyph: svg('<path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>'), head: 'FAIL'},
@@ -339,7 +339,8 @@ export const TIP = {
     verdict: (signal, r, t, f, m, total, name) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
         name, `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, failedRows(f)]),
     cell: (name, also) => hover(name, also),
-    fold: hover('Unfold', 'Draws these parts in the graph'),
+    fold: rows => hover('Unfold', 'Draws these parts in the graph', ...rows),
+    foldBack: hover('Fold back', 'Hides these parts under this node again'),
     waits: names => hover(`Waits on ${names.length}`, names.map(n => `– ${n}`)),
     // a ⊥ standing alone: which absence it is
     noValue: why => hover('No value', cap(NO_VALUE[why])),

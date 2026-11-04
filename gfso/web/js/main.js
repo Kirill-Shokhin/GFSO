@@ -17,7 +17,7 @@ import {mountDeck, paint as paintDeck, onPipeline, onInflight, suggestHeight, fo
 import {connectWS} from './live.js';
 import {askProjectName, clearNotice} from './overlays.js';
 import {mountHints, LEAVING} from './hints.js';
-import {untip} from './tip.js';
+import {untip, TOUCH} from './tip.js';
 import {drawPlanning} from './planning.js';
 import {onReading, rereadResources} from './resources.js';
 import {said} from './run.js';
@@ -132,15 +132,22 @@ const closeTop = () => {
     if (pop) return pop.classList.remove('open'), pop.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', 'false'), true;
     if ($('reader') && !$('reader').hidden) return closeReader(), true;
     if ($('goal-panel') && !$('goal-panel').hidden) return goal.closeGoal(), true;
-    if ($('project-panel') && !$('project-panel').hidden) return closeProjects(), true;
+    if (PROJECT && $('project-panel') && !$('project-panel').hidden) return closeProjects(), true;
     if (focus().select) return point('select', null), true;
-    return foldDeck();
+    return !!PROJECT && foldDeck();
 };
-addEventListener('pointerup', () => { const n = history.state?.gfsoSteps || 0; if (phone() && n < STEPS) history.pushState({gfsoSteps: n + 1}, ''); }, true);
+// a hand, not a width: a phone held sideways has one too. A step is laid on load, under each gesture, and again as Back is handled, so
+// the page's layers never outnumber its steps; only the last Back leaves.
+const hand = () => phone() || TOUCH.matches;
+const lay = n => history.pushState({gfsoSteps: n + 1}, '');
+if (hand()) lay(history.state?.gfsoSteps || 0);
+addEventListener('pointerup', () => { const n = history.state?.gfsoSteps || 0; if (hand() && n < STEPS) lay(n); }, true);
 addEventListener('popstate', () => {
-    if (!phone() || closeTop()) return;
-    if (Date.now() - warned < 3000) return history.go(-(history.state?.gfsoSteps || 0) - 1);
-    warned = Date.now();
+    if (!hand()) return;
+    const n = history.state?.gfsoSteps || 0;
+    if (closeTop()) return lay(n);
+    if (Date.now() - warned < 3000) return history.go(-n - 1);
+    warned = Date.now(); lay(n);
     const note = document.body.appendChild(Object.assign(document.createElement('div'), {className: 'back-note', textContent: LEAVING}));
     setTimeout(() => note.remove(), 3000);
 });
