@@ -7,13 +7,17 @@ author reads the cycle. A merge of what fits stays one node. The executor's repo
 The refine's model is the one thing faked: what it was given is asserted, and its split goes through the real admission."""
 import json
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from gfso import delegate as DG, issuer as I, tools as T
 from gfso.adapters import worktrees as W
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.types import AgentId, Mode, State, TaskId
 from gfso.delegate import Dispatcher
+from gfso.engine.validation import AdmissionRefused
 from gfso.inflight import _inflight
 from gfso.roster import AgentRegistry
 from gfso.workspaces import _ensure_place, _enter_workspace, _workspace
@@ -105,7 +109,7 @@ class _Author:
 def _dispatcher(e, agents, monkeypatch, author):
     spawned = []
     monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=None, busy=_inflight, review=lambda *a: {"stats": [{"cost_usd": 0}]},
-                                                    refine=author))
+                                                    refine=author, keep=DG._keep_the_place))
     return Dispatcher(e, agents, poll=30, runner=lambda en, tid, *a: spawned.append(str(tid)),
                       consent_runner=lambda en, tid, *a: (spawned.append(str(tid)), {"status": "accepted"})[1], validator_runner=lambda *a, **k: "rejected"), spawned
 
@@ -150,7 +154,7 @@ def test_a_small_merged_pair_still_works_as_one_node(tmp_path, monkeypatch):
         e.stop()
 
 
-def _at_work_on_a_leaf(tmp_path, signal, *kw):
+def _at_work_on_a_leaf(tmp_path, signal):
     e, agents, _ = _ring(tmp_path, {"pp": True, "fe": True, "cg": True})
     node = _merge(e)
     # the plan's review, current (`Engine`'s gate lets the node work)
@@ -158,7 +162,8 @@ def _at_work_on_a_leaf(tmp_path, signal, *kw):
                                                                  "criteria_verdicts": [], "conflicts": [], "model": "t", "ts": "2026-11-06 00:00:00"}))
     e.graph.update_task(TaskId("root"), verified=True)
     assert "error" not in (o := T.signal(e, str(node.id), "ACCEPT", str(node.assignee))), o
-    assert "error" not in (o := T.signal(e, str(node.id), signal, str(node.assignee), reason=LARGE)), o
+    if signal != "ACCEPTED":
+        assert "error" not in (o := T.signal(e, str(node.id), signal, str(node.assignee), reason=LARGE)), o
     e.wait_idle()
     return e, agents, node
 
@@ -194,14 +199,110 @@ def test_a_block_saying_so_has_it_too(tmp_path, monkeypatch):
         e.stop()
 
 
-def test_a_node_already_split_or_a_holders_is_not_the_moves(tmp_path):
+def test_a_node_already_split_or_a_holders_is_not_the_moves(tmp_path, monkeypatch):
+    e, agents, node = _at_work_on_a_leaf(tmp_path, "CHALLENGE")
+    act = lambda: (True, "")
+    try:
+        assert "split already" in I._split_owed_with(e, e.graph.get_task(TaskId("root")), LARGE, act)[1]
+        monkeypatch.setattr(e, "mode", lambda: None)
+        assert "its executor's own move" in I._split_owed_with(e, node, LARGE, act)[1] and e.session_fit(node.id) is None
+    finally:
+        e.stop()
+
+
+def test_a_plan_the_user_gave_is_not_offered_the_move(tmp_path, monkeypatch):
+    e, agents, node = _at_work_on_a_leaf(tmp_path, "BLOCK")
+    try:
+        monkeypatch.setattr(I, "users_plan", lambda g: True)
+        monkeypatch.setattr(e, "users_plan", lambda: True)
+        assert "split" not in I.moves_for(e, node, "external") and e.session_fit(node.id) is None
+        assert "only the user" in I._split_owed_with(e, node, LARGE, lambda: (True, ""))[1]
+    finally:
+        e.stop()
+
+
+def test_a_split_decided_with_no_contact_is_held_to_the_rule_a_rejection_is(tmp_path, monkeypatch):
     e, agents, node = _at_work_on_a_leaf(tmp_path, "CHALLENGE")
     try:
-        assert "split already" in I._owe_the_split(e, e.graph.get_task(TaskId("root")), LARGE)
-        monkey = e.mode
-        e.mode = lambda: None
-        assert "its executor's own move" in I._owe_the_split(e, node, LARGE) and e.session_fit(node.id) is None
-        e.mode = monkey
+        monkeypatch.setattr(I, "_ask", lambda *a, **k: ({"decision": "split", "justification": "so it reads"}, {"Read": 1}))
+        out = I.issuer_turn(e, node.id, "dispute", str(e.graph.issuer_of(node.id)))
+        assert out["status"] == "uncontacted" and "split ran nothing" in out["why"], out
+        assert e.session_fit(node.id) is None and e.graph.get_state(node.id) == State.CHALLENGED
+    finally:
+        e.stop()
+
+
+def test_a_spent_deadline_names_the_way_and_a_split_not_taken_leaves_no_judgement(tmp_path):
+    e, agents, node = _at_work_on_a_leaf(tmp_path, "BLOCK")
+    try:
+        e.graph.update_task(node.id, deadline=datetime.now() - timedelta(hours=1))
+        out = I.issuer_turn(e, node.id, "external", str(e.graph.issuer_of(node.id)),
+                            _llm=_Answers({"move": "split", "justification": LARGE}))
+        e.wait_idle()
+        assert out["status"] == "refused" and "reassign" in out["why"], out
+        assert e.split_owed(node.id) is None and e.graph.get_state(node.id) != State.OFFERED
+    finally:
+        e.stop()
+
+
+def test_a_session_s_uncommitted_work_reaches_both_parts(tmp_path, monkeypatch):
+    e, agents, node = _at_work_on_a_leaf(tmp_path, "CHALLENGE")
+    try:
+        w = _workspace(e, agents, node)
+        _ensure_place(e, agents, node, w)
+        (Path(w[1]) / "written.c").write_text("/* uncommitted */\n")
+        assert I.issuer_turn(e, node.id, "dispute", str(e.graph.issuer_of(node.id)),
+                             _llm=_Answers({"decision": "split", "justification": "so it is"}))["status"] == "applied"
+        e.wait_idle()
+        d, _ = _dispatcher(e, agents, monkeypatch, _Author(e))
+        _until_split(e, d, node.id)
+        for part in e.graph.get_active_children(node.id):
+            place, unjoined, _w = _enter_workspace(e, agents, part, [part])
+            assert not unjoined and (Path(place) / "written.c").exists(), part.id
+    finally:
+        e.stop()
+
+
+def test_a_one_child_split_of_a_node_owed_its_split_is_refused_and_its_authors_next_answer_lifts_it(tmp_path):
+    e, agents, _ = _ring(tmp_path, {"pp": False, "fe": True, "cg": True})
+    try:
+        node = _merge(e)
+        one = [{"task_id": f"{node.id}.all", "covers": [c.name for c in node.spec.criteria], "spec": {
+            "description": "all of it", "criteria": [criterion("all_ok", "it holds")]}}]
+        with pytest.raises(AdmissionRefused, match="split of one part"):
+            T.decompose(e, str(node.id), one, accepted_risks=REGISTER)
+        assert not e.graph.get_active_children(node.id)
+        _Author(e)(e, str(node.id))
+        assert len(e.graph.get_active_children(node.id)) == 2
+    finally:
+        e.stop()
+
+
+def test_a_challenge_under_a_review_gone_stale_opens_its_plan_and_then_the_split_lands(tmp_path, monkeypatch):
+    """The root's `plan` opened only for an OFFERED child held by the gate: with its review stale, a CHALLENGED child's `split`
+    and `reject` were refused until the clock. Drop b onto a, b settles, a challenges: the rounds below are the dispatcher's."""
+    e, agents, node = _at_work_on_a_leaf(tmp_path, "ACCEPTED")
+    try:
+        root = e.graph.get_task(TaskId("root"))
+        e.graph.update_task(root.id, verified=False)
+        assert "error" not in (o := T.signal(e, str(node.id), "CHALLENGE", str(node.assignee), reason=LARGE)), o
+        e.wait_idle()
+        assert (root.id, "plan") in I.open_questions(e) and e.execution_blocked_by(node.id), I.open_questions(e)
+        author = _Author(e)
+
+        def review(en, n):
+            en._graph._storage.store_critique(TaskId(n), json.dumps({
+                "node_id": n, "gate_passed": True, "semantic_covered": True, "criteria_verdicts": [], "conflicts": [],
+                "model": "t", "ts": "2026-11-06 00:00:00"}))
+            en.graph.update_task(TaskId(n), verified=True)
+            return {"stats": [{"cost_usd": 0}]}
+
+        answers = _Answers({"decision": "split", "justification": "so it is"})
+        monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=lambda m, **k: answers, busy=_inflight, review=review, refine=author))
+        d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: {"status": "accepted"},
+                       validator_runner=lambda *a, **k: "rejected")
+        _until_split(e, d, node.id)
+        assert e.graph.get_task(root.id).verified and answers.calls
     finally:
         e.stop()
 

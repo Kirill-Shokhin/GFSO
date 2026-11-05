@@ -145,6 +145,7 @@ class Verbs:
     review: object       # (engine, node id) -> the review's reply
     refine: object       # (engine, node id) -> the refine round's reply
     place: object = None  # (engine, agents, node id) -> the directory the node's work is in, or None
+    keep: object = None  # (engine, agents, node id) -> its place's written work committed, for the parts its split starts
     execution: object = None  # engine -> where its project's sessions and commands run (`ExecutionPort`), None = here
 
 
@@ -1516,24 +1517,35 @@ def _promote(engine, task, actor, answer, why, verbs):
     return True, ""
 
 
-def _owe_the_split(engine, task, said: str) -> Optional[str]:
-    """Its issuer's judgement that this node is above κ, on its executor's report (§3.7): its split is owed, by the path a
-    plan author's judgement opens (`split_owed`). Why not, where that path has no mover here."""
+def _split_owed_with(engine, task, said: str, act) -> tuple[bool, str]:
+    """`act` (→ (taken, why)), with its issuer's judgement that this node is above κ (§3.7), which opens the path a plan
+    author's opens (`split_owed`): written ahead of the act, so no session starts in between, and not left by an act not
+    taken, for a later answer of another kind to stand on. The judgement is his, whatever the report's words were."""
     if engine.mode() is None or held_by_a_holder(engine, str(task.assignee)):
-        return f"the split of {task.id} is its executor's own move ({task.assignee}), not the system's"
+        return False, f"the split of {task.id} is its executor's own move ({task.assignee}), not the system's"
     if engine.graph.get_active_children(task.id):
-        return f"{task.id} is split already: its split changes by `reshape` on its own question"
-    engine.record_session_fit(task.id, f"its executor reported it larger than one session: {said[:300]}", False)
-    return None
+        return False, f"{task.id} is split already: its split changes by `reshape` on its own question"
+    if engine.users_plan():
+        return False, f"{task.id} is of the plan the user gave: only the user re-plans it"
+    was = engine.session_fit(task.id) or {}
+    engine.record_session_fit(task.id, f"its issuer judged it larger than one session, on this report: {said[:300]}", False)
+    taken, why = act()
+    if not taken:
+        engine.record_session_fit(task.id, was.get("volume", ""), was.get("fits"))
+    return taken, why
 
 
 def _split(engine, task, actor, answer, why, verbs):
     """The BLOCK or the escalation answered by the split the report calls for: the node re-issued under its contract
     (nothing of it changes, Inv-1), and its split's own question makes the split before any more work."""
-    if refused := _owe_the_split(engine, task, why):
-        return False, refused
-    engine.revise(task.id, task.spec, AgentId(engine.graph.issuer_of(task.id)))
-    return True, ""
+    def _reissued():
+        try:
+            engine.revise(task.id, task.spec, AgentId(engine.graph.issuer_of(task.id)))
+            return True, ""
+        except ValueError as e:
+            return False, (f"{e} — `split` re-issues it under the contract it has; where that cannot stand, `reassign` it "
+                           f"a contract that can (a live deadline), and its split can be owed then")
+    return _split_owed_with(engine, task, why, _reissued)
 
 
 def _add_criterion(engine, task, actor, answer, why, verbs):
@@ -1678,9 +1690,9 @@ def moves_for(engine, task, question: str) -> tuple:
         moves = tuple(m for m in moves if m != "drop_dependency")
     if "cancel" in moves and (is_auto_root(engine.graph, task) or _offer_lapsed(engine, task)):
         moves = tuple(m for m in moves if m != "cancel")
-    # …nor `promote` into, nor a Dep dropped from, a plan the user handed in: either is a split the user did not make
+    # …nor `promote` into, nor a Dep dropped from, nor a split of, a plan the user handed in: each a split he did not make
     if users_plan(engine.graph):
-        moves = tuple(m for m in moves if m not in ("promote", "drop_dependency"))
+        moves = tuple(m for m in moves if m not in ("promote", "drop_dependency", "split"))
     return moves
 
 
@@ -1845,10 +1857,9 @@ _USERS_DISPUTE = ("{0}'s dispute asks to rule {1} outside the user's goal, and u
 def _challenge_closed_keeping_the_contract(engine, task, issuer_id: str, answer: dict, split: bool) -> dict:
     """The protocol's one exit of a dispute keeping the contract (§12.4): a rejection, or, on a report that the work is more
     than a session, its split owed: the true answer no rejection is, its parts then carrying this contract."""
-    if split and (refused := _owe_the_split(engine, task, str(engine.challenge_reason(task.id) or ""))):
-        return {"task_id": str(task.id), "status": "refused", "why": refused}
-    ok, why = _signalled(engine, task.id, Signal.REJECT_CHALLENGE, issuer_id, justification=str(answer.get("justification", "")) or (
+    close = lambda: _signalled(engine, task.id, Signal.REJECT_CHALLENGE, issuer_id, justification=str(answer.get("justification", "")) or (
         "the report stands: its split is owed" if split else "the contract stands"))
+    ok, why = _split_owed_with(engine, task, str(engine.challenge_reason(task.id) or ""), close) if split else close()
     engine.emit_info("issuer", f"{task.id}: " + (f"its split owed on its executor's report, by {issuer_id}" + ("" if ok else f" — REFUSED: {why}")
                                                  if split else f"dispute {'REJECTED' if ok else 'reject REFUSED'} by {issuer_id}"))
     return {"task_id": str(task.id), "status": "rejected" if ok else "refused", "why": why}
@@ -1879,10 +1890,10 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
         return {"task_id": str(task_id), "status": "unparsed"}
     # …AND A RULING THAT RETIRES A FINDING IS HELD TO THE SAME CONTACT: it takes back an observation of the work, and
     # an answer that ran nothing is a guess either way (critic over 28bd5e7)
-    if (decision == "reject" or retire) and ran is not None and not _ran_a_shell(ran):
+    if (decision in ("reject", "split") or retire) and ran is not None and not _ran_a_shell(ran):
         # the dispute is not adjudicated yet: the question stands, asked again after its backoff
         return {"task_id": str(task_id), "status": "uncontacted",
-                "why": f"the {'rejection' if decision == 'reject' else 'ruling on the findings'} ran nothing: run the "
+                "why": f"the {'rejection' if decision == 'reject' else 'split' if decision == 'split' else 'ruling on the findings'} ran nothing: run the "
                        f"disputed checks in the workspace and decide on what they show, quoting each command and its "
                        f"output"}
     if decision in ("reject", "split"):
@@ -2100,7 +2111,7 @@ def open_questions(engine) -> list[tuple[TaskId, str]]:
                     or any(_starved(engine, k) for k in kids)):
                 qs.append("repair")
             elif refuted or engine.split_holes(t.id) or any(
-                    k.state == State.OFFERED and engine.execution_blocked_by(k.id) for k in kids):
+                    k.state in (State.OFFERED, State.CHALLENGED) and engine.execution_blocked_by(k.id) for k in kids):
                 qs.append("plan")
             # …and what a child's validator saw that no criterion writes, asked of the split's holder — the child's
             # issuer — once, holding nothing: shown only in a context, it was readable and never delivered: a validator
@@ -2243,6 +2254,8 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
         engine.pause("system", why)
         return {"status": "users", "why": why}
     if question == "split":
+        if verbs.keep:      # …what a session wrote before its split was owed: on no branch, no part would start from it
+            verbs.keep(engine, agents, task_id)
         # ONE admissible move, and it is not a judgement: the refine round authors the split (SEARCH + the
         # form audit), the same verb a plan question may call; a model turn would only choose it
         done, why = _refine(engine, engine.graph.get_task(task_id), actor, {"move": "refine"}, "", verbs)

@@ -32,9 +32,12 @@ def cli(tmp_path, monkeypatch):
     `ends` is how the next call ends: "answer", "cap" (cut at the turn cap) or "gone" (a resume the CLI cannot take)."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
     hold_a_credential(monkeypatch, tmp_path)
-    seen, state = [], {"ends": "answer"}
+    seen, state, real = [], {"ends": "answer"}, H.subprocess.Popen
 
     def popen(args, **kw):
+        # …the CLI's alone: the patch is the process's, and a thread an earlier test left running git landed in `seen`
+        if not isinstance(args, list) or args[0] != "claude":
+            return real(args, **kw)
         seen.append(args)
         if "--session-id" in args:
             f = tmp_path / "cfg" / "projects" / "-node-place" / f"{args[args.index('--session-id') + 1]}.jsonl"

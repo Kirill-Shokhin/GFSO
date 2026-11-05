@@ -148,7 +148,7 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
         _cb(f"{task_id}: the report answers a contract revised while the session worked - nothing signalled; the "
             f"node waits under its new version · {_stat_line(llm)}")
         # …what it wrote is the old version's, on the record as such — never in a later delivery
-        if why := _committed(engine, executor_id, workspace, f"gfso: {task_id} work under a superseded version")[1]:
+        if why := committed_place(engine, executor_id, workspace, f"gfso: {task_id} work under a superseded version")[1]:
             _cb(f"{task_id}: its work under the superseded version is not on the record — {why}")
         return
     if status == "challenge":
@@ -216,7 +216,7 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
                 f"each conflicted file and commit the merge · {_stat_line(llm)}")
             engine.emit_info("delegate", f"{task_id}: {HELD}a merge left unfinished in its tree")
             return
-        artifact, unstaged = _committed(engine, executor_id, workspace, f"gfso: {task_id} delivery")
+        artifact, unstaged = committed_place(engine, executor_id, workspace, f"gfso: {task_id} delivery")
         carried = W.head(workspace[1], execution=execution_of(engine)) if artifact else None
         if why := unstaged or _not_handed_in(engine, task_id, workspace, artifact, unjoined):
             _cb(f"{task_id}: NOT delivered — {why} · {_stat_line(llm)}")
@@ -229,7 +229,7 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
         _settle_internal(engine, task_id, _self, _cb, observed)
 
 
-def _committed(engine, executor_id, workspace: tuple | None, message: str) -> tuple:
+def committed_place(engine, executor_id, workspace: tuple | None, message: str) -> tuple:
     """(tree, None) of the node's place committed whole (`W.commit_all`) — (None, None) with no place — or (None, why)
     where its files could not be staged: nothing is then committed, nor handed in as though it were."""
     if workspace is None:

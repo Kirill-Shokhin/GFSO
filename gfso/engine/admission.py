@@ -22,7 +22,7 @@ from gfso.core.types import (TERMINAL_STATES, AgentId, CriterionMapping, Registe
                              Task, TaskId, seams_apart)
 
 from .loop import refresh_checks
-from .validation import AdmissionRefused, hole_kind, issuing_condition, no_live_deadline
+from .validation import AdmissionRefused, hole_kind, issuing_condition, no_live_deadline, split_owed
 
 
 @dataclasses.dataclass(frozen=True)
@@ -391,6 +391,10 @@ def _refuse_before_writing(graph: Graph, parent, children: list[tuple], reopen_r
     deadline still ahead — is not read of it (critic r15: a passed child named with its spent deadline refused the act);
     the edges the act declares into it are read all the same."""
     refuse_what_the_act_cannot_take(graph, parent, children, reopen_refusal or _settled, drops, register)
+    if len(children) == 1 and split_owed(graph, parent) is not None:
+        one = (f"{parent.id} is judged larger than one session, and a split of one part carries it whole, above κ still "
+               f"(§3.7): admit its parts in one act, each one session's")
+        raise AdmissionRefused(one, (one,))
     changed = [c for c in children if not named_unchanged(graph, parent, c)]
     for cid, spec, *_ in changed:
         refuse_a_d_cycle(graph, cid, parent.id)
