@@ -727,6 +727,7 @@ class Dispatcher:
         self._consent = consent_runner or run_consent
         self._running: set[str] = set()   # nodes whose executor round is running right now
         self._issuer_attempts: dict = {}   # (node generation, question) → (unproductive settles, not before)
+        self._issuer_turns_ended: set = set()   # …the same keys, where a turn ended and left its question standing
         self._issuer_owed: dict = {}       # (node, question) → (owed since, versions reported stuck, last move)
         self._validate = validator_runner or _auto_validate
         self._retry_model: dict = {}   # round key → the tier its RETRY should use
@@ -992,7 +993,7 @@ class Dispatcher:
     def _issuer_speaks_first(self, task) -> bool:
         """Does a machine validation of this node wait for its issuer: a turn in flight on it, or a question he has not
         had his say on (`issuer.answer_owed_first`)?"""
-        asked = answer_owed_first(self._engine, self._agents, self._issuer_attempts, task)
+        asked = answer_owed_first(self._engine, self._agents, self._issuer_turns_ended, task)
         if asked or f"q:{task.id}" in self._seen:
             self._say_once(f"first:{self._round_key(task)}#{asked}",
                            f"{task.id}: delivered, and its issuer answers first ({asked or 'a turn in flight'}): "
@@ -1428,7 +1429,7 @@ class Dispatcher:
         self._rejoin()     # a root's result that did not land is tried again (cheap: roots only)
         self._resolve_ready_blocks()
         answer_open_questions(self._engine, self._agents, self._claim, self._release_after_answer,
-                              self._cap.closing, ISSUER_VERBS, self._issuer_attempts, self._issuer_owed)
+                              self._cap.closing, ISSUER_VERBS, self._issuer_attempts, self._issuer_owed, self._issuer_turns_ended)
         if self._engine.mode() is not None:
             confirm_system_cancellations(self._engine, self._agents, lambda t: str(t.id) in self._running)
         started = []

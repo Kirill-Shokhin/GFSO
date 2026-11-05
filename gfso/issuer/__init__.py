@@ -2008,16 +2008,16 @@ def _asked_key(task, question: str) -> str:
     return f"{task.id}#{task.iteration}#{task.reopens}#{question}"
 
 
-def answer_owed_first(engine, agents, ledger: dict, task) -> Optional[str]:
+def answer_owed_first(engine, agents, ended: set, task) -> Optional[str]:
     """The question on this node the system's issuer has not yet had his say on, or None: his answer and his signature are
-    one party's acts, so a machine validation waits for it. Once only: a turn that ended leaving it open (refused, unread,
-    no model) lets the validation start, the question asked on at its rate, for a count sets a rate and never closes; and
-    a turn that never ends waits no longer than VALIDATING's own bound, which hands the delivery to him (§16.14)."""
+    one party's acts, so a machine validation waits for it. Once only: a turn that ended leaving it open, however it ended
+    (`ended`, beside the ledger's rate), lets the validation start, the question asked on at its rate; and a turn that never ends waits no
+    longer than VALIDATING's own bound, which hands the delivery to him (§16.14). A `gone` or a review still running is no
+    turn ended: the next sweep asks."""
     question = dict(open_questions(engine)).get(task.id)
     if question is None or system_mover(engine, agents, task.id, question) is None:
         return None
-    waits, _, answers = ledger.get(_asked_key(task, question), (0, 0.0, 0))
-    return None if waits or answers else question
+    return None if _asked_key(task, question) in ended else question
 
 
 def open_questions(engine) -> list[tuple[TaskId, str]]:
@@ -2240,7 +2240,7 @@ def refused_on_this_version(engine, task_id: TaskId, actor: str) -> str:
 
 
 def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, ledger: dict,
-                          owed: Optional[dict] = None) -> list[str]:
+                          owed: Optional[dict] = None, ended: Optional[set] = None) -> list[str]:
     """One sweep: each node's open question the SYSTEM answers is taken by ONE thread at a time (a claim
     on the node, released when the answer is in). The ledger keeps, per node generation, how many settles
     moved nothing, how many applied answers in a row left the same question open, and when the node may be asked
@@ -2276,6 +2276,8 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
                     engine.emit_info("issuer", f"{t}: the issuer turn on {q} FAILED — {type(e).__name__}: {e}")
                 finally:
                     st, now_ = out.get("status"), time.monotonic()
+                    if st not in ("gone", "inflight") and ended is not None:
+                        (ended.add if (t, q) in open_questions(engine) else ended.discard)(g)
                     # `w` counts the settles in a row no model answered — a transport's failures; any answer ends the
                     # run (an account's limit window left it raised for the rest of a version, every later wait doubled)
                     review = out.get("kind") == "review"

@@ -334,12 +334,14 @@ def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], cover
     # …a standing child named as it stands is re-issued only where the deadline the engine supplied it must move
     issued = {str(c[0]): c for c in children if not named_unchanged(graph, parent, c)
               or (str(c[0]) in defaults and graph.get_task(TaskId(str(c[0]))).deadline_supplied)}
+    landed: list = []
     try:
-        _issue(graph, send, parent, issued, split.issue, covers, defaults, max_iterations)
+        _issue(graph, send, parent, issued, split.issue, covers, defaults, max_iterations, landed)
     except InvariantViolation:
         # …the parent settled between the read above and the ASSIGN's own step: under it nothing is owed (§12.7), and
-        # the act is whole or nothing — no record of a child that never was
-        if (why := issuing_condition(graph.get_task(parent.id), parent.id)) is None:
+        # an act none of whose children stands leaves no record of them. One that stands keeps its admission, and the
+        # half-split is said as any other refusal met here
+        if landed or (why := issuing_condition(graph.get_task(parent.id), parent.id)) is None:
             raise
         _take_back(storage, parent.id, log_was, edges_were)
         raise ValueError(why) from None
@@ -443,10 +445,10 @@ def _settled(task_id) -> str:
 
 
 def _issue(graph: Graph, send, parent, by_id: dict, order: tuple, covers: dict, defaults: dict,
-           max_iterations) -> None:
+           max_iterations, landed: list) -> None:
     """The admitted split's ASSIGNs, producers first (`Split.issue`), of the children `by_id` holds — a standing child
-    named unchanged is not among them. Every refusal the gate holds was read before the act; one met here anyway is a
-    defect of that reading, said aloud rather than left as a silent half-split."""
+    named unchanged is not among them; each taken joins `landed`. Every refusal the gate holds was read before the act; one
+    met here anyway is a defect of that reading, said aloud rather than left as a silent half-split."""
     for cid in (c for c in order if c in by_id):
         child_id, spec, assignee, *rest = by_id[cid]
         deadline = rest[0] if rest else None
@@ -462,6 +464,7 @@ def _issue(graph: Graph, send, parent, by_id: dict, order: tuple, covers: dict, 
         if entry is not None and entry.rejected:
             raise InvariantViolation(f"the admission of {parent.id}'s split passed its gate and its ASSIGN of {cid} "
                                      f"was refused — a refusal the admission did not read: {entry.error}")
+        landed.append(cid)
 
 
 def record_admission(storage, log_at: int, parent_id: TaskId, split: Split) -> None:

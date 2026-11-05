@@ -7,6 +7,8 @@ import json
 import threading
 import time
 
+import pytest
+
 from gfso import delegate as DG
 from gfso import issuer as I
 from gfso import tools as T
@@ -16,6 +18,7 @@ from gfso.core.graph.metrics import q_V_reversed
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import AgentId, Mode, Signal, SignalData, State, TaskId
 from gfso.core.graph.model import admission_key
+from gfso.core.graph.mutations import InvariantViolation
 from gfso.core.types import settled_positive
 from gfso.core.types.enums import Verdict
 from gfso.delegate import Dispatcher, _auto_validate
@@ -364,6 +367,39 @@ def test_a_question_never_answered_holds_no_validation_and_the_person_hears_it(t
         e.stop()
 
 
+def test_a_review_that_moved_nothing_lifts_the_hold_though_it_counts_nothing(tmp_path, monkeypatch):
+    """`plan` standing on a VALIDATING whole, its review due, a checker with no readable verdict: `unproductive`, the rate's
+    counts both zero. Read off those counts the hold lasted to T_validate; before the hold it validated and signed."""
+    e = make_engine(validate_signals=True, state_timeout=0)
+    agents, ran, go = _goal(e, tmp_path), threading.Event(), threading.Event()
+    _through_a_seam(e, agents, "root.kid")
+    _deliver(e, "root")
+    e.set_settings({"l2_gate": "1"}, AgentId("agent"), "the gate as it stands by default; the suite's conftest has it off")
+    # …the one thing set by hand: what puts `plan` on this node, the rest of the turn real
+    monkeypatch.setattr(e, "decomposition_refuted", lambda t: "run review_decomposition(root) first" if str(t) == "root" else None)
+    assert I.open_questions(e) == [(TaskId("root"), "plan")] and I.review_due(e, TaskId("root")), I.open_questions(e)
+
+    def review(en, node):
+        ran.set()
+        go.wait(20)
+        return {"stats": [{"cost_usd": 0}]}
+
+    monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=None, busy=_inflight, review=review, refine=None))
+    d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None,
+                   validator_runner=lambda *a, **k: "rejected")
+    try:
+        assert "validate:root" not in d.dispatch_once()
+        assert ran.wait(20) and "validate:root" not in d.dispatch_once()
+        go.set()
+        _until(lambda: "q:root" not in d._seen, "the turn did not end")
+        key = I._asked_key(e.graph.get_task(TaskId("root")), "plan")
+        assert d._issuer_attempts[key][0] == d._issuer_attempts[key][2] == 0, d._issuer_attempts
+        assert (TaskId("root"), "plan") in I.open_questions(e) and "validate:root" in d.dispatch_once()
+    finally:
+        go.set()
+        e.stop()
+
+
 def test_a_turn_that_never_ends_holds_the_delivery_no_longer_than_its_bound(tmp_path, monkeypatch):
     run = _Run(tmp_path, monkeypatch)
     run.answer, _ = LATE, run.go.clear()
@@ -500,6 +536,43 @@ def test_under_auto_no_signature_closes_a_whole_over_a_part_whoever_signs(tmp_pa
         e.wait_idle()
         assert "root.late" in str(T.signal(e, "root", "PASS", "agent"))
         assert e.graph.get_state(TaskId("root")) == State.VALIDATING
+    finally:
+        e.stop()
+
+
+def test_a_child_that_stands_keeps_its_admission_when_its_sibling_is_refused(tmp_path, monkeypatch):
+    """No mode, a seam, a split of two, a holder's PASS stepped between their ASSIGNs: the first child stands under the DONE.
+    Taken back, the log would name a split without the child it issued; refused as a defect, as any half-split is said."""
+    e = make_engine(validate_signals=True, state_timeout=0)
+    real, assigned = loop.process_signal, []
+
+    def step(sd, *rest):
+        if str(sd.task_id) in ("n1", "n2") and sd.signal == Signal.ASSIGN:
+            assigned.append(str(sd.task_id))
+            if len(assigned) == 2:
+                real(SignalData(signal=Signal.PASS, task_id=TaskId("kid"), source=AgentId("agent")), *rest)
+        real(sd, *rest)
+
+    monkeypatch.setattr(loop, "process_signal", step)
+    e.start()
+    T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]}, assignee="agent")
+    T.decompose(e, "root", [{"task_id": "kid", "assignee": "exec-1", "covers": ["g"],
+                             "spec": {"description": "a part", "criteria": [criterion("k", "K")]}}], accepted_risks=REGISTER)
+    T.decompose(e, "kid", [{"task_id": "kid.a", "assignee": "agent", "covers": ["k"],
+                            "spec": {"description": "below", "criteria": [criterion("a", "A")]}}], accepted_risks=REGISTER)
+    e.wait_idle()
+    try:
+        assert "error" not in (o := T.signal(e, "kid", "ACCEPT", "exec-1")), o
+        assert "error" not in (o := T.signal(e, "kid", "DELIVER", "exec-1", result="early")), o
+        instrument_passes(e, TaskId("kid"))
+        with pytest.raises(InvariantViolation, match="is DONE"):
+            T.decompose(e, "kid", [{"task_id": t, "assignee": "agent", "covers": ["k"], "spec": {
+                "description": f"part {t}", "criteria": [criterion(f"{t}c", "C")]}} for t in ("n1", "n2")])
+        e.wait_idle()
+        first, second = assigned[:2]
+        assert e.graph.get_state(TaskId("kid")) == State.DONE and e.graph.get_task(TaskId(second)) is None
+        assert e.graph.get_state(TaskId(first)) == State.OFFERED
+        assert first in json.loads(e._storage.get_critique(admission_key(TaskId("kid"))))[-1]["issued"]
     finally:
         e.stop()
 
