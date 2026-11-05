@@ -619,7 +619,7 @@ class DiskLedger:
         with self.lock:
             for held in vars(self).values():
                 if isinstance(held, dict):
-                    for k in [k for k in held if isinstance(k, tuple) and k[0] == volume]:
+                    for k in [k for k in held if isinstance(k, tuple) and volume in (k[0], k[0][0] if isinstance(k[0], tuple) else None)]:
                         del held[k]
 
     def writing(self, at: tuple, start: bool) -> int:
@@ -1659,6 +1659,15 @@ def _json_or_none(line: str):
         return None
 
 
+def _empty_gone(v: str) -> bool:
+    """An unlabelled volume under a name this installation's alone makes, empty: Docker made it, for a reader of the disk that mounted it as a
+    project was deleted, and it held that project's name from every new one for good (critic, ran). Removed; True where it now stands no more."""
+    got = run(["docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL", "--read-only", *_SMALL, *ceiling(), "--mount", f"type=volume,src={v},dst=/v,readonly",
+               "--entrypoint", "sh", CEILING_IMAGE, "-c", "ls -A /v"], timeout=60, text=True)
+    return not got.returncode and not (got.stdout or "").strip() and not run(["docker", "volume", "rm", v], timeout=60).returncode
+
+
+
 class Volume:
     """A project's own directory as two Docker volumes — its places (`name`) and its sessions' CLI state (`state`,
     `.gfso-state`), which the project's container never mounts: the system's own git runs there over places an agent
@@ -1777,9 +1786,11 @@ class Volume:
                     raise PlaceUnavailable(self.execution, f"its volume {v} is gone: the project's record holds its "
                                                            f"{role} there")
                 raise LookupError(f"its volume {v} is not made yet")
+            if not labels and not named and _empty_gone(v):
+                raise LookupError(f"its volume {v} is not made yet")
             if labels.get(HOME) != _home():
-                raise PlaceUnavailable(self.execution, f"the volume {v} is not this installation's making (its labels: "
-                                                       f"{labels or 'none'}): nothing runs on it")
+                raise PlaceUnavailable(self.execution, f"the volume {v} is not this installation's making (its labels: {labels or 'none'}): "
+                                                       f"nothing runs on it. If it holds nothing of yours, `docker volume rm {v}` lifts this")
 
     def ready(self, image: str, host: Path, old: Path, places: dict, dirs: list) -> None:
         """Both volumes as the project's record names them, else made now, ONCE. Made: each created with its labels,

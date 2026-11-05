@@ -70,7 +70,7 @@ def test_every_docker_run_of_the_system_is_bounded():
     with pytest.raises(ValueError, match="bounded"):
         E._system_run("gfso-never-started", IMAGE, ["--label", "x=y"], Path(__file__), [], Path("log"))
     assert E._SMALL == ("--memory", "256m", "--memory-swap", "256m", "--pids-limit", "256")
-    assert src.count("*_SMALL") == 5 and f'"{chr(45)}{chr(45)}memory", f"{{DOOR_MEMORY_MB}}m"' in src, \
+    assert src.count("*_SMALL") == 6 and f'"{chr(45)}{chr(45)}memory", f"{{DOOR_MEMORY_MB}}m"' in src, \
         "the door's, the gateway's, the ceiling's maker and its reader, the disk's readers of what nodes hold and what changed"
 
 

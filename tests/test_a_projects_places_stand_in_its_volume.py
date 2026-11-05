@@ -447,9 +447,15 @@ def test_live_an_unlabelled_volume_under_the_projects_name_is_never_its_places(t
     x = _fresh(tmp_path, base, kept)
     try:
         subprocess.run(["docker", "volume", "create", x.volume.name], capture_output=True, check=True)
-        with pytest.raises(PlaceUnavailable, match="not this installation's making"):
+        subprocess.run(["docker", "run", "--rm", "--mount", f"type=volume,src={x.volume.name},dst=/v", "--entrypoint", "sh", E.CEILING_IMAGE, "-c", "touch /v/x"],
+                       capture_output=True, check=True)
+        with pytest.raises(PlaceUnavailable, match="not this installation's making.*docker volume rm"):
             x.files.mkdir(str(x.own / "a"))
         assert not kept, "nothing recorded"
+        subprocess.run(["docker", "volume", "rm", x.volume.name], capture_output=True, check=True)
+        subprocess.run(["docker", "volume", "create", x.volume.name], capture_output=True, check=True)
+        x.files.mkdir(str(x.own / "a"))         # …empty: what a reader of the disk left as a project was deleted (critic, ran), made anew, labelled
+        assert x.volume._labels(x.volume.name).get(E.HOME) == E._home()
     finally:
         x.stop()
         x.volume.remove()

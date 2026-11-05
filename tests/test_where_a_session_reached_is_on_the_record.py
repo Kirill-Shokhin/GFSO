@@ -317,12 +317,25 @@ def test_two_ids_that_spell_one_name_have_two_places():
         assert E.node_key(plain) == plain, "a plain id's place keeps its name, across an upgrade too"
 
 
+def test_an_unlabelled_empty_volume_gives_a_project_its_name_back_and_one_holding_anything_does_not(monkeypatch):
+    calls, shown = [], {"ls": ""}
+
+    def ran(argv, **k):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout=shown["ls"], stderr="")
+    monkeypatch.setattr(E, "run", ran)
+    assert E._empty_gone("v") and calls[-1][:3] == ["docker", "volume", "rm"]
+    shown["ls"], calls[:] = "yours.txt", []
+    assert not E._empty_gone("v") and not [c for c in calls if c[:3] == ["docker", "volume", "rm"]]
+
+
 def test_a_volume_deleted_is_no_ledger_s_any_more():
     """A new project of the name read it by a mount: Docker made it again unlabelled, and the name was lost for good (critic, ran)."""
     ledger = E.DiskLedger()
     ledger.base[("v", "a")], ledger.base[("w", "a")], ledger.system[("v", "b")] = (1, 1), (1, 1), (1, 1)
+    ledger.put[(("v", "a"), "p")] = (1, 1)
     ledger.forget("v")
-    assert list(ledger.base) == [("w", "a")] and not ledger.system
+    assert list(ledger.base) == [("w", "a")] and not ledger.system and not ledger.put
 
 
 def test_a_project_spelled_otherwise_is_the_project_as_it_was_made(tmp_path):

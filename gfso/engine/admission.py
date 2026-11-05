@@ -299,6 +299,16 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple], declared
     return {c: d for c, d in defaults.items() if d and d != act[c][2]}   # a re-issued child that still fits rides as is
 
 
+def _refuse_ids_alike(graph: Graph, children: list) -> None:
+    """Two ids a file system's case merges are one node's temp and session on a Windows server: a sibling read another's file with no edge
+    between them, and the second's session crashed (critic, ran). Refused before anything stands: the plan is the one to rename."""
+    seen = {str(t.id).casefold(): str(t.id) for t in graph.active_tasks()}
+    for child in children:
+        name = str(child[0])
+        if seen.setdefault(name.casefold(), name) != name:
+            raise ValueError(f"{name} and {seen[name.casefold()]} differ only by case: a node's id must differ from another's by more")
+
+
 def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], covers: Optional[dict] = None, *,
           replace: bool = False, register: Optional[Register] = None, drops: tuple = (), contract=None,
           max_iterations: Optional[int] = None, send, revise=None, reopen_refusal=None,
@@ -318,6 +328,7 @@ def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], cover
         raise ValueError(f"parent {parent_id} not found")
     covers = {str(k): tuple(v) for k, v in (covers or {}).items()}
     declared, children = declared_by(children, deps), _bare(children)
+    _refuse_ids_alike(graph, children)
     contract, carried = seams_apart(contract, parent.id)
     if contract is not None and contract != parent.spec and revise is None:
         raise ValueError(f"{parent.id}'s contract changes with its split, and only its issuer revises it (§10.1)")

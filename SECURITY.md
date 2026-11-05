@@ -8,7 +8,7 @@ word, `GFSO_LOCAL_AGENTS=allow`, which puts it on your machine, with none of wha
   every session can read: clean a secret out of the history first. What is uncommitted does not enter, and the project's log says so.
   The root's accepted result comes back as the branch `gfso/<project>/accepted`, your working tree and branches untouched.
 - No agent process holds your provider's credential: one small container does, and it passes the model's messages alone.
-- No session reads another node's files but by the plan's edges, nor reaches the log of signals and verdicts, and no one validates its own
+- No session reads another node's files but by the plan's edges (two ids that differ only by case are refused at the plan), nor reaches the log of signals and verdicts, and no one validates its own
   delivery: the check is on a copy of the commit delivered, in a container of its own.
 
 The switch is yours, per execution or per project, and the default is `open`:
