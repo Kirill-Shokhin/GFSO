@@ -391,7 +391,8 @@ def container_limits() -> list[str]:
     except ValueError:
         pids = CONTAINER_PIDS
     pids = pids if pids >= 64 else CONTAINER_PIDS        # …0 and -1 are Docker's "unbounded"
-    return ["--memory", mem, "--memory-swap", mem, "--pids-limit", str(pids)]
+    # …and what it prints: Docker's log of a container lies past every directory the disk bound reads, and a process of its own writes it (critic, ran)
+    return ["--memory", mem, "--memory-swap", mem, "--pids-limit", str(pids), "--log-driver", "json-file", "--log-opt", "max-size=20m", "--log-opt", "max-file=1"]
 
 
 def validator_retry_model() -> str | None:

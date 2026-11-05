@@ -312,7 +312,9 @@ def lay_ceiling() -> None:
                        "--security-opt", "no-new-privileges", "--read-only", *_SMALL,
                        "--mount", "type=bind,src=/sys/fs/cgroup,dst=/cg", "-u", "0", "--entrypoint", "sh",
                        CEILING_IMAGE, "-c",
-                       'mkdir -p "/cg/$1" && echo "$2" > "/cg/$1/memory.max" && echo 0 > "/cg/$1/memory.swap.max"',
+                       # …and half the VM's threads: past them no process starts anywhere on it, Docker's own among them (critic); a VM with no such file holds no less
+                       'mkdir -p "/cg/$1" && echo "$2" > "/cg/$1/memory.max" && echo 0 > "/cg/$1/memory.swap.max" && '
+                       '{ echo $(( $(cat /proc/sys/kernel/threads-max) / 2 )) > "/cg/$1/pids.max" 2>/dev/null || true; }',
                        "sh", CEILING_GROUP, str(size)], timeout=120, text=True)
             why = (got.stderr or "").strip()[-200:] if got.returncode else None
         except (OSError, ValueError, subprocess.TimeoutExpired) as e:
@@ -1590,7 +1592,7 @@ class Commands:
         _system_run(self.name, s.image, [
             *labelled(s.name, s.project_name), "--label", f"{NODE}={s.node}", *flags, "-u", "0", "--cap-drop", "ALL",
             *[a for c in self.CAPS for a in ("--cap-add", c)], "--security-opt", "no-new-privileges",
-            "--log-opt", "max-size=20m", *container_limits(), "--network", f"container:{s.container}"],
+            *container_limits(), "--network", f"container:{s.container}"],
             Path(shell.__file__), ["serve", user, f"{OWN}/commands.log", json.dumps(said)], self.log(), "0700")
         laid = io.BytesIO()
         with tarfile.open(fileobj=laid, mode="w") as t:

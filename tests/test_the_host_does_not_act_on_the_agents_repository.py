@@ -57,8 +57,9 @@ def test_every_system_git_call_on_a_place_goes_through_the_projects_execution(tm
     W.merging(base, place, execution=ex)
     W.contains(base, base, "gfso/p/a", execution=ex)
     W.remove(base, place, "gfso/p/a", execution=ex)
-    assert all(c[1:1 + len(W.APART)] == list(W.APART) for c in ex.calls), "no hook, no fsmonitor, the repo's config alone"
-    assert {c[1 + len(W.APART)] for c in ex.calls} >= {"init", "checkout", "bundle", "update-ref", "rev-parse",
+    gits = [c for c in ex.calls if "git" in str(c[0]) and "python" not in str(c[0])]
+    assert gits and all(c[1:1 + len(W.APART)] == list(W.APART) for c in gits), "no hook, no fsmonitor, the repo's config alone"
+    assert {c[1 + len(W.APART)] for c in gits} >= {"init", "checkout", "bundle", "update-ref", "rev-parse",
                                                       "merge-base", "branch", "ls-files"}
     assert not [a for a in host if a[:1] == ["git"]]
 

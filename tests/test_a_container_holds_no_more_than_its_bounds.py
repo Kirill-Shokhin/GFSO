@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,13 +39,14 @@ live = pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_the_bounds_are_the_installations_dial_with_defaults(monkeypatch):
     monkeypatch.delenv("GFSO_CONTAINER_MEMORY", raising=False)
     monkeypatch.delenv("GFSO_CONTAINER_PIDS", raising=False)
-    assert C.container_limits() == ["--memory", "4g", "--memory-swap", "4g", "--pids-limit", "4096"]
+    assert C.container_limits()[:6] == ["--memory", "4g", "--memory-swap", "4g", "--pids-limit", "4096"]
     monkeypatch.setenv("GFSO_CONTAINER_MEMORY", "6g")
+    assert C.container_limits()[6:] == ["--log-driver", "json-file", "--log-opt", "max-size=20m", "--log-opt", "max-file=1"], "what it prints lies past the disk bound"
     monkeypatch.setenv("GFSO_CONTAINER_PIDS", "512")
-    assert C.container_limits() == ["--memory", "6144m", "--memory-swap", "6144m", "--pids-limit", "512"]
+    assert C.container_limits()[:6] == ["--memory", "6144m", "--memory-swap", "6144m", "--pids-limit", "512"]
     monkeypatch.setenv("GFSO_CONTAINER_MEMORY", "unbounded")
     monkeypatch.setenv("GFSO_CONTAINER_PIDS", "-1")
-    assert C.container_limits() == ["--memory", "4g", "--memory-swap", "4g", "--pids-limit", "4096"], \
+    assert C.container_limits()[:6] == ["--memory", "4g", "--memory-swap", "4g", "--pids-limit", "4096"], \
         "a dial that does not read bounds by the default, never by nothing"
     for unbounded_or_refused in ("0", "0g", "512", "5m"):
         monkeypatch.setenv("GFSO_CONTAINER_MEMORY", unbounded_or_refused)
@@ -107,14 +109,20 @@ def test_a_delivery_whose_tree_is_past_a_node_s_bound_is_never_laid(tmp_path, mo
         git("update-index", "--add", "--cacheinfo", f"100644,{blob},f{i}")
     git("commit", "-q", "-m", "c")
     commit = git("rev-parse", "HEAD").stdout.strip()
-    ex = SimpleNamespace(run=_ran_here)
-    monkeypatch.setattr(S, "node_disk", lambda: (4999, 100))
-    assert "5000 bytes in 5 files" in S._past_disk(ex, tmp_path, commit, {}), "its names, not its pack"
-    monkeypatch.setattr(S, "node_disk", lambda: (5000, 100))
-    assert S._past_disk(ex, tmp_path, commit, {}) is None
-    monkeypatch.setattr(S, "node_disk", lambda: (5000, 4))
-    assert "past what a node may add" in S._past_disk(ex, tmp_path, commit, {})
-    assert S._past_disk(ex, tmp_path, "0" * 40, {}) is None, "unread is not refused: the checkout says what it finds"
+    ex = SimpleNamespace(run=_ran_here, python=sys.executable)
+    monkeypatch.setattr(W, "node_disk", lambda: (4999, 100))
+    assert "5000 bytes in 5 files" in W.past_disk(ex, tmp_path, commit), "its names, not its pack"
+    monkeypatch.setattr(W, "node_disk", lambda: (5000, 100))
+    assert W.past_disk(ex, tmp_path, commit) is None
+    monkeypatch.setattr(W, "node_disk", lambda: (5000, 4))
+    assert "past what a node may add" in W.past_disk(ex, tmp_path, commit)
+    assert W.past_disk(ex, tmp_path, "0" * 40) is None, "unread is not refused: the checkout says what it finds"
+    pointer = f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 900000\n"
+    named = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=tmp_path, input=pointer.encode(), capture_output=True, check=True).stdout.decode().strip()
+    git("update-index", "--add", "--cacheinfo", f"100644,{named},big")
+    git("commit", "-q", "-m", "lfs")
+    monkeypatch.setattr(W, "node_disk", lambda: (100000, 100))
+    assert "905000 bytes" in W.past_disk(ex, tmp_path, git("rev-parse", "HEAD").stdout.strip()), "an LFS file at the size its pointer says"
 
 
 @pytest.mark.parametrize("rc, said", [(6, "rewritten"), (1, "Errno 6"), (137, "memory bound")])

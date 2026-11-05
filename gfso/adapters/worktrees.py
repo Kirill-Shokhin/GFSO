@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 
 from gfso.adapters import children, lfs
-from gfso.config import subprocess_env
+from gfso.config import node_disk, subprocess_env
 from gfso.adapters.execution import NODES, READ_REF, ContainerExecution, LocalExecution, fetched_on_host, stored_on_host
 from gfso.core.types import base_named
 
@@ -203,6 +203,45 @@ def kept_out(base, execution=None) -> dict:
             if (b := _fs(execution).files.read_bytes(str(Path(base) / ".git" / "info" / n))) is not None}
 
 
+#: what a tree would lay on disk by what it records, an LFS file at the size its pointer says: bytes, files. Read in the copy's own
+#: container from objects the system holds, as `_CHECKOUT`
+_LAID = r'''
+import re, subprocess, sys
+commit, *apart = sys.argv[1:]
+git = ["git", *apart]
+listed = subprocess.run([*git, "ls-tree", "-r", "-l", "-z", commit], stdout=subprocess.PIPE, check=True).stdout
+batch = subprocess.Popen([*git, "cat-file", "--batch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+size = files = 0
+for entry in listed.split(b"\0"):
+    meta = entry.split(b"\t")[0].split()
+    if len(meta) < 4:
+        continue
+    files += 1
+    n = int(meta[3]) if meta[3].isdigit() else 0
+    if 0 < n < 256:
+        batch.stdin.write(meta[2] + b"\n")
+        batch.stdin.flush()
+        batch.stdout.readline()
+        said = re.search(rb"^version https://git-lfs\S*\n(?:.*\n)*?size (\d+)", batch.stdout.read(n + 1), re.M)
+        n = int(said[1]) if said else n
+    size += n
+print(size, files)
+'''
+
+
+def past_disk(ex, at, commit: str) -> str | None:
+    """Why a commit's tree may not be laid at `at`: past what a node may add (`config.node_disk`). Its own place never held it: one blob
+    under many names, kept from the place's disk by the index, took 2.0 GiB of copy from a 509 KB pack, a system's write and no one's
+    charge, and nothing bounded it but Docker's disk, every project's (critic, ran). An honest tree fits its place's bound."""
+    r = ex.run([ex.python, "-I", "-c", _LAID, commit, *APART], cwd=str(at), timeout=600, env=_env())
+    size, files = ((r.stdout or "").split() + ["", ""])[:2]
+    bytes_, most = node_disk()
+    if r.returncode or not size.isdigit() or not files.isdigit() or (int(size) <= bytes_ and int(files) <= most):
+        return None
+    return (f"the tree of {commit[:12]} would lay {size} bytes in {files} files, past what a node may add "
+            f"({bytes_} bytes, {most} files): no copy of it is made")
+
+
 def _start(base, place: Path, branch: str, start_from, execution, rev: str = "HEAD") -> None:
     """The new clone on `branch`: the base's commit of that name where it has one, else `rev` of `start_from` — a
     parent's place, whose commit comes over by bundle (`_carry`): no container holds both places."""
@@ -214,6 +253,9 @@ def _start(base, place: Path, branch: str, start_from, execution, rev: str = "HE
     else:
         held = git(start_from, "cat-file", "-e", f"{rev}^{{commit}}", execution=execution).returncode == 0
         start = _carry(base, start_from, place, rev if held else "HEAD", execution)
+    # …a parent's commit laid here is this place's baseline, charged to no one: the same tree a delivery's copy refuses
+    if past := past_disk(_fs(execution).session(str(place)), place, start):
+        raise OSError(f"{place} could not start {branch}: {past}")
     r = git(place, "checkout", "-q", "-B", branch, start, execution=execution)
     if r.returncode != 0:
         raise OSError(f"{place} could not start {branch}: {r.stderr.strip()}")
