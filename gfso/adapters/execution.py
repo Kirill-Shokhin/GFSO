@@ -614,6 +614,14 @@ class DiskLedger:
         self.read = False                # a first reading made: a layer seen after it is of a container made since
         self.lock = threading.Lock()
 
+    def forget(self, volume: str) -> None:
+        """All it holds of a volume that is gone."""
+        with self.lock:
+            for held in vars(self).values():
+                if isinstance(held, dict):
+                    for k in [k for k in held if isinstance(k, tuple) and k[0] == volume]:
+                        del held[k]
+
     def writing(self, at: tuple, start: bool) -> int:
         """The system starts or ends a write into `at`; how many of its writes stand there now."""
         with self.lock:
@@ -1138,6 +1146,16 @@ _VOLUMES: dict = {}
 def component(s) -> str:
     """A node id or a project name as one path component and one ref component — never starting with a dot."""
     return re.sub(r"[^A-Za-z0-9._-]+", "_", str(s)).replace("..", "_").strip(".") or "_"
+
+
+def node_key(node) -> str:
+    """A node's id as one path component and one ref's, one id one name: `db/schema` and `db_schema` spelled one, and two siblings shared a
+    place, its branch and each other's files with nothing on the plan or the log to say so (critic, ran); `x.lock` is no ref; an id of 200
+    characters had a place and no validator, a file name too long. A plain id keeps its own: a project standing across an upgrade finds its places."""
+    key = component(node)
+    if key == str(node) and len(key) <= 64 and not key.endswith(".lock"):
+        return key
+    return f"{key[:48]}-{hashlib.sha256(str(node).encode()).hexdigest()[:8]}"
 
 
 def _mount_field(key: str, path: str) -> str:
@@ -2301,6 +2319,7 @@ def drop_volumes(project: str) -> None:
         if ids := (run(["docker", "ps", "-aq", "--filter", f"volume={v}"], timeout=60, text=True).stdout or "").split():
             run(["docker", "rm", "-f", *ids], timeout=120)
         run(["docker", "volume", "rm", "-f", v], timeout=120)
+        _LEDGER.forget(v)      # …a new project of the name read it through a mount, Docker made it again unlabelled, and "not this installation's" refused the name for good (critic, ran)
 
 
 class _SystemWrites:

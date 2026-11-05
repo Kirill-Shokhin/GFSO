@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from gfso.adapters import children, door, execution as E
-from gfso import config as C, runtime as RT, workspaces as WS
+from gfso import config as C, runtime as RT
 from gfso.adapters import worktrees as W
 from gfso.mcp import server as S
 from gfso.adapters import netrecord as N
@@ -310,9 +310,19 @@ def test_a_door_holds_what_has_arrived_of_bodies_and_one_address_at_most_one_of_
 
 
 def test_two_ids_that_spell_one_name_have_two_places():
-    keys = [WS._place_key(i) for i in ("db/schema", "db_schema", "m.", "m", "k:1", "k;1", "Case", "case")]
+    keys = [E.node_key(i) for i in ("db/schema", "db_schema", "m.", "m", "k:1", "k;1", "x.lock", "x" * 200, "x" * 201)]
     assert len(set(keys)) == len(keys), keys
-    assert WS._place_key("db_schema") == "db_schema" and WS._place_key("root") == "root", "a plain id's place keeps its name"
+    assert all(len(k) <= 64 for k in keys) and not E.node_key("x.lock").endswith(".lock")
+    for plain in ("db_schema", "root", "root.Prod", "A1"):
+        assert E.node_key(plain) == plain, "a plain id's place keeps its name, across an upgrade too"
+
+
+def test_a_volume_deleted_is_no_ledger_s_any_more():
+    """A new project of the name read it by a mount: Docker made it again unlabelled, and the name was lost for good (critic, ran)."""
+    ledger = E.DiskLedger()
+    ledger.base[("v", "a")], ledger.base[("w", "a")], ledger.system[("v", "b")] = (1, 1), (1, 1), (1, 1)
+    ledger.forget("v")
+    assert list(ledger.base) == [("w", "a")] and not ledger.system
 
 
 def test_a_project_spelled_otherwise_is_the_project_as_it_was_made(tmp_path):
