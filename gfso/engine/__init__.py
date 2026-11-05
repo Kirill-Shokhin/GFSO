@@ -58,7 +58,7 @@ from .admission import (admit as _admit, admit_register as _admit_register, refu
                         refuse_a_d_cycle)
 from .validation import (AdmissionRefused, pause_record, users_plan as _users_plan, _l0_holes, _l2_undischarged, l2_gate_on, no_live_deadline, dep_cycle_closed,
                          issuing_condition, rule_refusal, signer_refusal, whole_waits_for_its_parts,
-                         mode_kind, party_kind, is_auto_root,
+                         parts_outside_the_delivery as _parts_outside_the_delivery, mode_kind, party_kind, is_auto_root,
                          displaces_a_refutation, observation_blocker,
                          fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here,
                          session_fit as _session_fit, scope_top as _scope_top,
@@ -2603,11 +2603,9 @@ class Engine:
         passed parent over an open child is a claim that no longer holds)."""
         return [str(t.id) for t in self._within(root_id) if t.state not in TERMINAL_STATES]
 
-    def cancelled_after_a_close(self, root_id: Optional[TaskId] = None) -> list[str]:
-        """The nodes abandoned after the verdict over them closed: work its goal's final verdict does not cover."""
-        return [str(t.id) for t in self._within(root_id) if t.state == State.ABANDONED
-                and (p := self._graph.get_parent(t.id)) is not None and p.state == State.DONE
-                and self.log_position(t.id, new_state=State.ABANDONED) > self.log_position(p.id, new_state=State.DONE)]
+    def parts_outside_the_delivery(self, task) -> set[str]:
+        """The active parts a machine's PASS would close this whole without (`validation.parts_outside_the_delivery`)."""
+        return _parts_outside_the_delivery(self._graph, self._audit, task)
 
     def refuted_passes(self, root_id: Optional[TaskId] = None) -> list[str]:
         """Nodes standing at PASS whose OWN current record says FAIL — a green that is not green.
@@ -2689,16 +2687,18 @@ class Engine:
         """THE ONE WAY A SENTENCE OFFERS A MOVE: the words of each move the door takes (after `lead`), and for those the
         mode holds, whose they are and that they are made without the asker (`moves.door_holder`, the doors' own
         lock). Prose that named its moves by hand offered the customer refused ones three times over (critics over
-        9853468 and 25faf94)."""
+        9853468 and 25faf94). A move the system never makes (`Move.unmade`) is not said to be made: it has no mover there."""
         free, held = [], {}
         for m in moves:
             if (h := door_holder(self, m.verb, m.node, m.signal)) is None:
                 free.append(m.say)
             else:
-                held.setdefault(h, {}).setdefault(f"{m.signal or m.verb} on '{m.node}'", None)
+                held.setdefault((h, m.unmade), {}).setdefault(f"{m.signal or m.verb} on '{m.node}'", None)
         notes = [f"{', '.join(v)} {'is' if len(v) == 1 else 'are'} {h}'s under the project's mode "
-                 f"({self.mode()['mode']}) — the door refuses {'it' if len(v) == 1 else 'them'} from anyone else, so "
-                 f"{'it is' if len(v) == 1 else 'they are'} made without you" for h, v in held.items()]
+                 f"({self.mode()['mode']}) — the door refuses {'it' if len(v) == 1 else 'them'} from anyone else, "
+                 + (f"and nothing in the system makes {'it' if len(v) == 1 else 'them'}: no party holds this move while "
+                    f"the mode stands" if unmade else
+                    f"so {'it is' if len(v) == 1 else 'they are'} made without you") for (h, unmade), v in held.items()]
         return "; ".join(([lead + sep.join(free)] if free else []) + notes)
 
     def holder_signs(self, task_id: TaskId) -> bool:

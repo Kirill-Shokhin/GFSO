@@ -328,12 +328,21 @@ def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], cover
                                     declared)
     if contract is not None and contract != parent.spec:
         revise(contract)                                    # the act's first write: refused, nothing stands
+    log_was, edges_were = storage.get_critique(admission_key(parent.id)), storage.get_dep_edges()
     record_admission(storage, log_at(), parent.id, split)
     moved = declare(graph, [e for es in split.declared.values() for e in es] + list(carried), replacing=split.declared)
     # …a standing child named as it stands is re-issued only where the deadline the engine supplied it must move
     issued = {str(c[0]): c for c in children if not named_unchanged(graph, parent, c)
               or (str(c[0]) in defaults and graph.get_task(TaskId(str(c[0]))).deadline_supplied)}
-    _issue(graph, send, parent, issued, split.issue, covers, defaults, max_iterations)
+    try:
+        _issue(graph, send, parent, issued, split.issue, covers, defaults, max_iterations)
+    except InvariantViolation:
+        # …the parent settled between the read above and the ASSIGN's own step: under it nothing is owed (§12.7), and
+        # the act is whole or nothing — no record of a child that never was
+        if (why := issuing_condition(graph.get_task(parent.id), parent.id)) is None:
+            raise
+        _take_back(storage, parent.id, log_was, edges_were)
+        raise ValueError(why) from None
     node = graph.get_task(parent.id)
     if set(node.criterion_mappings) != set(split.node.criterion_mappings):
         # a pair onto a child this act does not issue — standing unchanged, or settled — is the split's too (§2.4)
@@ -351,6 +360,16 @@ def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], cover
     refresh_checks(graph, parent.id, stale_review=bool(issued or drops or moved)
                    or before != (set(node.criterion_mappings), node.register, node.spec))
     return split
+
+
+def _take_back(storage, parent_id, log_was, edges_were: list) -> None:
+    """The admission's record and its declared edges as they stood before an act none of whose children was issued."""
+    storage.store_critique(admission_key(parent_id), log_was or "[]")
+    now = storage.get_dep_edges()
+    for e in (e for e in now if e not in edges_were):
+        storage.remove_dep_edge(e)
+    for e in (e for e in edges_were if e not in now):
+        storage.add_dep_edge(e)
 
 
 def _refuse_before_writing(graph: Graph, parent, children: list[tuple], reopen_refusal, drops: tuple,

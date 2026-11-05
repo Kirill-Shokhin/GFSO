@@ -677,6 +677,21 @@ def whole_waits_for_its_parts(graph: Graph, task) -> bool:
     return task is not None and str(graph.issuer_of(task.id)) == str(task.assignee)
 
 
+def parts_outside_the_delivery(graph: Graph, audit, task) -> set[str]:
+    """The active parts a machine's PASS would close this whole without: open, or — under a mode, where such a PASS is
+    the system's own — settled after its DELIVER by the log's order, for what the PASS accepts is the commit DELIVER
+    recorded (§11.3), which holds no such part (Thm 1). A scope's top delivers with its parts, whose signatures follow
+    in its one validation: they stand in that commit."""
+    kids = graph.get_active_children(task.id)
+    outside = {str(k.id) for k in kids if not settled_positive(k)}
+    if mode_kind(graph) is None or audit is None:
+        return outside
+    delivered = audit.last_at(task.id, signal=Signal.DELIVER)
+    late = {str(k.id) for k in kids if audit.last_at(k.id, new_state=State.DONE) > delivered}
+    top = scope_top(graph, task) if late else None
+    return outside if top is not None and top.id == task.id else outside | late
+
+
 def _pass_rules(signal_data: SignalData, graph: Graph, audit) -> None:
     """PASS: Theorem 1 over the children, and the seam's independent verdict.
 
@@ -713,6 +728,14 @@ def _pass_rules(signal_data: SignalData, graph: Graph, audit) -> None:
                 f"cannot PASS {signal_data.task_id}: not all children have PASSed "
                 f"(V=AND of children): {unaccepted}"
             )
+        # …AND A MACHINE'S SIGNATURE, HERE IN THE LOG'S ONE STEP: a part's ASSIGN is serialized before this and is read,
+        # or after it and meets the issuing condition (§12.7). Under AUTO every signature is the system's. Not a refusal
+        # the canon's sender cannot lift (§12.16 (ii)): the system is the sender, and it presents the delivery again.
+        if (not _waits and (mode_kind(graph) == Mode.AUTO or str(signal_data.source or "") in graph.authorized_validators)
+                and (_outside := parts_outside_the_delivery(graph, audit, _t0))):
+            raise ValidationError(
+                f"cannot PASS {signal_data.task_id}: a machine signs no whole over an active part its delivery does not "
+                f"hold (Thm 1, §11.3): {', '.join(sorted(_outside))}")
         # …AND THE AND MUST STILL BE ABOUT THIS GOAL. Thm 1 (§7.3) makes a parent's PASS the
         # conjunction over its children, and that conjunction only establishes the PARENT because
         # the children jointly cover its criteria — which is what L0 checks. The L0 gate fired in

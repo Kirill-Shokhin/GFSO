@@ -35,11 +35,13 @@ DOOR_KEYS = {
 
 
 class Move(NamedTuple):
-    """`verb` on `node` (`signal` for a signal) and the words that offer it to whoever may make it."""
+    """`verb` on `node` (`signal` for a signal) and the words that offer it to whoever may make it. `unmade`: where the
+    mode locks it nothing in the system makes it either — a settled node's way back, which no question asks."""
     verb: str
     node: Optional[str]
     say: str
     signal: Optional[str] = None
+    unmade: bool = False
 
 
 def signal_role(sig: str) -> str:

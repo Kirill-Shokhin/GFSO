@@ -801,7 +801,10 @@ encoding is where they show, or are engine gaps.)*
    orders every edge (`admission.deadlines_the_act_sets`); met afterwards it is §12.10's flag,
    named in the frontier's step as the consumer's issuer's with his two moves and in `list_holes` as `kind: flag`
    (`validation.hole_kind`). The Syntactic-level gate on a whole's PASS binds only where the whole's issuer is its Del
-   (`validation.whole_waits_for_its_parts`); at a seam the PASS lands and the departure from AND is said (§12.8).
+   (`validation.whole_waits_for_its_parts`); at a seam a holder's PASS lands and the departure from AND is said (§12.8).
+   A machine's does not (`validation.parts_outside_the_delivery`): it is read in the PASS's own step, so a part's ASSIGN
+   serialized first holds the PASS and the delivery is presented again, and one serialized after it meets the issuing
+   condition (§12.7) and attaches nothing. No node stands DONE over an active open part under `auto`, and nothing reopens one there.
    **Placement:** the level runs at the split's admission, the decomposer's own act (§11.5), over
    the split as it will stand — its children, their coverage, its register — and refuses the split whole, no child
    issued (`gfso/engine/admission.py`, every door that adds a child or changes the register). The child's ACCEPT no

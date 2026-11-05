@@ -1196,8 +1196,8 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
                 out["recovery"] = f"'{task_id}' is finished. " + engine.offer(
                     Move("reopen", task_id, f"`reopen('{task_id}')` puts it back to OFFERED under its standing "
                                             f"contract (R′, §12.14) unless the graph has CONSUMED it — the refusal "
-                                            f"says which gate stopped it"),
-                    Move("revise", task_id, f"`revise('{task_id}', …)` reopens it WITH a new contract"),
+                                            f"says which gate stopped it", unmade=True),
+                    Move("revise", task_id, f"`revise('{task_id}', …)` reopens it WITH a new contract", unmade=True),
                     sep="; ") + "."
         elif role is None:
             out["why_none"] = (f"{who} holds no role on {task_id}: its executor is "

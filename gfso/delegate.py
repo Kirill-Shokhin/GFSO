@@ -464,36 +464,20 @@ def _which_instrument_validates(engine, task, task_id: TaskId, agents: AgentRegi
 
 
 def _pass_held_by_parts_outside(engine, agents, task_id: TaskId, judged: tuple) -> bool:
-    """Is this whole, still VALIDATING on the delivery `judged`, missing an active part from that delivery — open, or settled
-    after its DELIVER by the log's order? Then a machine does not sign its PASS: at a seam the gate admits it (§12.8), and
-    what it accepts is the commit DELIVER recorded (§11.3), which holds no such part (Thm 1). Where the system issues the
+    """Is this whole, still VALIDATING on the delivery `judged`, missing an active part from that delivery
+    (`Engine.parts_outside_the_delivery`, which a machine's PASS meets in its own step)? Where the system issues the
     delivery is re-presented, as `_sign_scope` does a footing being redone, and comes again over the part; each add_child
     can cost one. Elsewhere an open part waits in VALIDATING, its issuer's to move, and its bound hands it to him (§16.14)."""
     t = engine.graph.get_task(task_id)
     if (t is None or t.state != State.VALIDATING or generation_of_task(t) != judged
-            or whole_waits_for_its_parts(engine.graph, t)):
+            or whole_waits_for_its_parts(engine.graph, t) or not (named := engine.parts_outside_the_delivery(t))):
         return False                                    # …the signal's own refusal is the answer
-    delivered, open_parts = engine.log_position(t.id, signal=Signal.DELIVER), {str(k.id) for k in engine.joins.open_parts(t.id)}
-    named = open_parts | {str(k.id) for k in engine.graph.get_active_children(t.id)
-                          if engine.log_position(k.id, new_state=State.DONE) > delivered}
-    if _system_issues(engine, agents, task_id):
-        if not named:
-            return False
-        if not _represent(engine, t, str(engine.graph.issuer_of(t.id)), named):
-            engine.emit_info("delegate", f"{task_id}: its validator's PASS is not signed: {', '.join(sorted(named))} not in it")
-        return True
-    if open_parts:
+    if not _system_issues(engine, agents, task_id):
         engine.emit_info("delegate", f"{task_id}: its validator's PASS stands on the record, not signed: "
-                                     f"{', '.join(sorted(open_parts))} stand(s) open under it (Thm 1)")
-    return bool(open_parts)
-
-
-@system_decides()
-def _earn_again(engine, t, why: str) -> None:
-    """A closed node whose claim no longer holds earns its verdict again by the canon's move (§12.14, counted by
-    `max_reopens`, Inv-5): back to OFFERED under its contract, its work re-delivered and validated afresh."""
-    engine.reopen(t.id, AgentId(str(engine.graph.issuer_of(t.id))))
-    engine.emit_info("delegate", f"{t.id}: reopened by its issuer — {why}; it earns its verdict again (§12.14)")
+                                     f"{', '.join(sorted(named))} stand(s) open under it (Thm 1)")
+    elif not _represent(engine, t, str(engine.graph.issuer_of(t.id)), named):
+        engine.emit_info("delegate", f"{task_id}: its validator's PASS is not signed: {', '.join(sorted(named))} not in it")
+    return True
 
 
 def _replay_a_standing_verdict(engine, agents, task_id: TaskId, rec: Optional[dict], validator_id, sign: bool, judged=None):
@@ -512,12 +496,12 @@ def _replay_a_standing_verdict(engine, agents, task_id: TaskId, rec: Optional[di
         engine.emit_info("delegate", f"{task_id}: fresh recorded verdict {rec['verdict']} reused — "
                                      f"no duplicate validator run")
         sig = Signal.PASS if rec["verdict"] == Verdict.PASS else Signal.FAIL
-        if sig == Signal.PASS and _pass_held_by_parts_outside(engine, agents, task_id, judged):
-            return "rejected"
         if _signal(engine, task_id, sig, validator_id,
                    **({"failed_criteria": tuple(rec.get("failed_criteria") or ())}
                       if sig == Signal.FAIL else {})):
             return "pass" if sig == Signal.PASS else "fail"
+        if sig == Signal.PASS and _pass_held_by_parts_outside(engine, agents, task_id, judged):
+            return "rejected"
         engine.emit_info("delegate", f"{task_id}: reused verdict {rec['verdict']} REJECTED by the "
                                      f"FSM — the node revalidates on the graph's next change")
         return "rejected"
@@ -651,10 +635,10 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
         return "recorded" if verdict else _classify_no_verdict(engine, task_id, out)
     _why: list = []
     if verdict == Verdict.PASS:
-        if _pass_held_by_parts_outside(engine, agents, task_id, judged):
-            return "rejected"
         if _signal(engine, task_id, Signal.PASS, validator_id, _why=_why):
             return "pass"
+        if _pass_held_by_parts_outside(engine, agents, task_id, judged):
+            return "rejected"
     elif verdict == Verdict.FAIL:
         if _signal(engine, task_id, Signal.FAIL, validator_id, _why=_why,
                    failed_criteria=tuple(out.get("failed_criteria") or ())):
@@ -1416,7 +1400,6 @@ class Dispatcher:
         if getattr(self._engine, "_dispatch_quiesce", 0):
             return []      # a wholesale build/rebuild is mid-burst — dispatch on the settled graph only
         self._publish_the_roster()
-        self._earn_again_what_no_longer_holds()
         self._clear_what_waited()
         if self._engine.paused() or self._over():
             self._rest()
@@ -1965,34 +1948,6 @@ class Dispatcher:
         if is_root and why is None and t.state == State.DONE:
             self._clear_places(t)
         self._released(tid)
-
-    def _earn_again_what_no_longer_holds(self) -> None:
-        """A DONE node the system issues whose claim no longer holds — an open child under it (Thm 1), or its own record
-        refuting it — is reopened (`_earn_again`). Past its finality gate the verdict stands, and what is open under it is
-        cancelled, said: else no one moves it, and `complete` could never be true or truthful. Holders keep these moves;
-        a stop starts nothing; a join, a clearing or a verdict still coming is waited for (a session started beside a
-        clearing had its place removed under it)."""
-        e = self._engine
-        here = e.project_name or DEFAULT_PROJECT
-        if e.paused() or any(w.get("project") == here and w.get("verb") == "clear_workspaces" for w in in_flight()):
-            return
-        refuted = set(e.refuted_passes())
-        for t in e.all_tasks():
-            if t.state != State.DONE or not _system_issues(e, self._agents, t.id) or str(t.id) in e.joins.joining_nodes():
-                continue
-            kids = [k for k in e.graph.get_active_children(t.id)
-                    if k.state not in (State.DONE, State.ABANDONED, State.CANCELLING)]
-            if (not kids and str(t.id) not in refuted) or e.claims.validation_in_flight(t.id):
-                continue
-            why = f"{', '.join(str(k.id) for k in kids)} stand(s) open under it" if kids else "its own record refutes its PASS"
-            if not (final := e.reopen_refusal(t.id)):
-                _earn_again(e, t, why)
-                continue
-            self._say_once(f"final:{t.id}#{t.reopens}", f"{t.id}: its verdict stands final ({why}): {final}")
-            for k in kids:
-                if _system_issues(e, self._agents, k.id):
-                    _signal(e, k.id, Signal.CANCEL, str(e.graph.issuer_of(k.id)),
-                            reason=f"{t.id}'s verdict stands final: this part cannot enter it, and what it was to do is not done")
 
     def _clear_places(self, root) -> None:
         """The root landed: its places go, unless a verdict is still coming (a signature can land before it, and it is what

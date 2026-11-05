@@ -625,22 +625,17 @@ class NodeSteps:
 
 def _not_complete_while_open(engine, open_now: list[str]) -> dict:
     """Nodes still open under a passed root (Thm 1): the answer, and the move that earns its verdict again (§12.14)."""
-    closed = {str(p.id) for n in open_now if (p := engine.graph.get_parent(TaskId(n))) is not None and p.state == State.DONE}
+    # …a part a re-admission dropped settles by itself, and a whole may pass while it does: no move is owed over it
+    closed = {str(p.id) for n in open_now if (p := engine.graph.get_parent(TaskId(n))) is not None and p.state == State.DONE
+              and engine.graph.get_state(TaskId(n)) != State.CANCELLING}
     return {"complete": False, "open_nodes": open_now,
             "directive": (f"NOT COMPLETE — the root(s) passed, but {', '.join(open_now)} "
                           f"{'is' if len(open_now) == 1 else 'are'} still open. A "
                           f"parent's result is the AND over its children (Thm 1), so a "
                           f"node attached after its parent closed leaves that parent's "
                           f"verdict standing on work nobody has done. "
-                          + "; ".join(engine.offer(Move("reopen", n, f"`reopen('{n}')` earns it again"), lead="")
+                          + "; ".join(engine.offer(Move("reopen", n, f"`reopen('{n}')` earns it again", unmade=True), lead="")
                                       for n in sorted(closed)))}
-
-
-def _cancelled_after_the_close(left: list[str]) -> dict:
-    """What `complete` must not leave out: the work a final verdict does not cover."""
-    return {"cancelled_after_the_close": left,
-            "cancelled_after_the_close_note": (f"{', '.join(left)} attached after the verdict above it and cancelled "
-                                               f"undone: that verdict stands final (§12.14) and does not cover them.")} if left else {}
 
 
 class Frontier:
@@ -804,7 +799,8 @@ class Frontier:
                 return (f"Nothing is open because the goal is finished: '{root.id}' is DONE. "
                         + self.engine.offer(Move("reopen", str(root.id),
                                                  f"If it should not be, `reopen('{root.id}')` puts it back to OFFERED "
-                                                 f"while nothing has been staked on it and reopens remain (§12.14)"))
+                                                 f"while nothing has been staked on it and reopens remain (§12.14)",
+                                                 unmade=True))
                         + ".")
             left = max(0, root.max_reopens - root.reopens)
             return (f"Nothing is open, and that is not a block: the goal itself is settled — "
@@ -812,7 +808,7 @@ class Frontier:
                     + (f"move it. " + self.engine.offer(Move(
                         "reopen", str(root.id), f"To take the goal up again: `reopen('{root.id}')` ({left} of "
                                                 f"{root.max_reopens} reopens left), which returns it to OFFERED to be "
-                                                f"re-earned by fresh contact"))
+                                                f"re-earned by fresh contact", unmade=True))
                        + ". To start a different goal, open another project (`use_project`)." if left else
                        f"move it, and its reopens are spent ({root.reopens}/{root.max_reopens}) — "
                        f"this goal is over. A different goal belongs in another project "
@@ -836,8 +832,8 @@ class Frontier:
                               f"before the instrument's verdict did, and the graph is showing "
                               f"the signature. Read `get_verdict` on it. "
                               + "; ".join(self.engine.offer(
-                                  Move("reopen", n, f"`reopen('{n}')` if it is not consumed"),
-                                  Move("decompose", self._parent_of(n), "re-decomposition around it if it is"),
+                                  Move("reopen", n, f"`reopen('{n}')` if it is not consumed", unmade=True),
+                                  Move("decompose", self._parent_of(n), "re-decomposition around it if it is", unmade=True),
                                   sep=", and ", lead=f"For '{n}', recovery is ") for n in refuted) + ".")}
 
     def _how_this_closed(self, root_id: "Optional[TaskId]" = None) -> dict:
@@ -854,7 +850,7 @@ class Frontier:
         check can establish that a self-named reviewer is independent (§15.7) — so a correct override
         must stay finishable. What must not happen is that it finishes SILENTLY.
         """
-        extra: dict = _cancelled_after_the_close(self.engine.cancelled_after_a_close(root_id))
+        extra: dict = {}
         if _open_plan := self.engine.closed_over_an_open_plan_review(root_id):
             extra |= {"closed_over_an_open_plan_review": _open_plan,
                       "closed_over_an_open_plan_review_note":

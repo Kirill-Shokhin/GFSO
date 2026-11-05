@@ -338,7 +338,8 @@ a node the protocol has closed. That verdict is refused as a signal, correctly, 
 terminal; it is not discarded. `next_steps` then refuses to call the graph complete and names the node
 under `refuted_passes`; `gfso status` marks it `[X] … PASS CONTRADICTED by its own current verdict`
 instead of the tick an earned node gets; and `get_verdict` says the state and the record disagree.
-Recovery is `reopen` while the node is not consumed, and re-decomposition around it once it is.
+Recovery is `reopen` while the node is not consumed, and re-decomposition around it once it is. Under `auto`
+the door refuses both and nothing in the system makes them, and the directive says that.
 
 Two things follow from that, and both are deliberate. A verdict arriving after a node closed is kept
 BESIDE the one it closed on rather than replacing it (`closed_on`) — a later record is evidence about
