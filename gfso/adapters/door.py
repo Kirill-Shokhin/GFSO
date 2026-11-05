@@ -237,7 +237,7 @@ _UPSTREAM = _Bucket(RATE, BURST)
 
 def _declared(length) -> int:
     """A request's declared length: one that is no number is past the cap, a traceback on the log for each no more (critic, ran)."""
-    return int(length) if str(length or 0).isdecimal() else MAX_BODY + 1
+    return int(length or 0) if str(length or 0).isdecimal() else MAX_BODY + 1
 
 
 def _refusal(keyed: bool, body, n: int) -> int:
