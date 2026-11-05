@@ -1721,6 +1721,14 @@ class Engine:
         """The dropped children this node stands in for."""
         return json.loads(self._storage.get_critique(replaces_key(task_id)) or "[]")
 
+    def ancestors(self, task_id: TaskId) -> list[Task]:
+        """The nodes above this one, its parent first."""
+        up, t = [], self._graph.get_parent(task_id)
+        while t is not None:
+            up.append(t)
+            t = self._graph.get_parent(t.id)
+        return up
+
     def carried_work(self, task_id: TaskId) -> list[Task]:
         """The work a node carries on from what it replaced (§12.16 (ii): work-keeping): each child it stands in for,
         whatever that child carried in turn, and every PASSed node of their subtrees — a dropped child's committed work

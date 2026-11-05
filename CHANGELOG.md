@@ -193,6 +193,9 @@ that would establish one (E3) has shown so far, and what not, is in the README a
   no node stands DONE over an open part under `auto`. Nothing in the system reopens a settled node, and the directive says so.
 - A machine validation of a whole starts after its issuer has had his say on the question standing on it. A question still
   unanswered when the node above it closes is named beside `complete` (`questions_left_standing`) and at the goal's end.
+- Parts merged out of a dependency cycle whose plan judged them past a session owe their split before any work, its author told
+  the cycle, and each part starts from their work. An executor's report that its work is more than a session has an answer that
+  does it: the issuer's `split`, on a dispute, a block or an escalation.
 - A write of one field of a node beside a transition no longer puts the node's old state back: a PASS or a DELIVER stayed in the
   log while the node read as before it.
 - What a validator tried on its own is filed as a refutation only where its report says it refuted; and a finding of its own

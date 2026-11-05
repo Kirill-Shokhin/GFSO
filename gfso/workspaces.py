@@ -278,7 +278,8 @@ def parts_of(engine, members: list) -> tuple[dict, dict]:
                   if f not in inside})
     # …AND THE WORK OF WHAT IT REPLACES, PASSed or not: a child merged out of a cycle, or cut again, started from the
     # base and redid what its dropped predecessors had committed (§12.16 (ii): the issuer's move keeps the work)
-    kept = {str(x.id): x for m in members for x in engine.carried_work(m.id)}
+    # …a part of such a node too: its whole never had a session to join it in, where its split was owed before work
+    kept = {str(x.id): x for m in members for a in (m, *engine.ancestors(m.id)) for x in engine.carried_work(a.id)}
     parts.update(kept)
     return parts, kept
 
