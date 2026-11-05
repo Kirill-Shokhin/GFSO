@@ -1858,8 +1858,9 @@ def _the_go(engine: Engine, plan: str, request: str, spec) -> tuple[str, dict]:
 
 
 #: The longest plan text an answer holds: a read of the file lies outside the person's folder, and a fresh client's auto
-#: mode stopped there on a prompt, with no one present before the go (measured). Past this, `path` stands alone.
-PLAN_TEXT_MAX = 47_000
+#: mode stopped there on a prompt, with no one present before the go (measured). Past this, `path` stands alone. About
+#: 20k tokens, ASSUMING 4 characters a token, under a client's default 25k; the MCP door declares the room (`ANSWER_ROOM`).
+PLAN_TEXT_MAX = 80_000
 
 
 def _plan_written(text: str) -> dict:
@@ -1872,7 +1873,8 @@ def _plan_written(text: str) -> dict:
             "undecided_obligations": len(r.get("undecided_obligations") or ()),
             "covered": r.get("semantic_covered"), "notes": len(p["notes"]),
             "how_to_read": "read `text` whole, the file at `path` if there is none (the [inputs] at its end are the "
-                           "checks' files, named by hash); "
+                           "checks' files, named by hash); a client's background result shows the plan's ampersands and "
+                           "angle brackets as HTML entities: that is its display, the file is exact; "
                            "a check whose `expect` its command cannot print will fail correct work: that is a note. "
                            "A note → refine_plan(plan=path, note); the go → auto_decompose(plan=path)",
             "say": "Write to the person now, before any other call: it splits into "

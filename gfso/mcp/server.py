@@ -157,6 +157,20 @@ def _brief(listing: dict, active: str, keep: int = 12) -> dict:
     return {"active": active, "projects_recent": recent, "projects_total": len(names)}
 
 
+#: What a verb's listing declares for an answer that holds a plan's whole text (`tools_llm.PLAN_TEXT_MAX`, escaped as
+#: JSON): Claude Code saves a longer result than 50,000 characters to a file, unless the tool declares its own, up to
+#: 500,000 (docs: code.claude.com/docs/en/mcp, "Raise the limit for a specific tool") — and a plan past 47,000 was read
+#: from outside the person's folder, four prompts (M3, M4, 2026-11-05).
+ANSWER_ROOM = {verb: {"anthropic/maxResultSizeChars": 100_000} for verb in ("plan", "refine_plan")}
+
+
+def _link_for_them(link: str) -> str:
+    """The link said so it is written: told to write it, a client wrote it after the go, bare, or as "at the link in the
+    panel", believing the person sees what a tool answers (five clients, 2026-11-05). The author: «в обязательном порядке
+    ссылку … чтобы пользователь просто тыкнул в чате»."""
+    return f"The person does not see this tool's answer: type this link in your own text now: {link} — "
+
+
 def _with_ui_link(name: str, out, project=None, engine=None):
     """Attach the local UI address to an entry verb's result (dict results only — `project` returns
     markdown and keeps its shape). Best-effort: a link is a convenience, never a reason to fail a
@@ -200,12 +214,12 @@ def _link_and_say(name: str, out: dict, project, engine) -> None:
         return
     out["ui"] = link
     if name == "use_project" and not out.get("mode"):
-        out["say"] = (f"Write to the person now, before any other call: {link} shows the work; the scheme is `auto`, every "
+        out["say"] = (f"{_link_for_them(link)}it shows the work; the scheme is `auto`, every "
                       "role on claude-haiku-5-5, the most tested and cheap, say if another suits; only what is committed "
                       f"enters; their branch is not touched and the result comes as branch "
                       f"`gfso/{out.get('active') or '<project>'}/accepted`.")
     if name == "auto_decompose" and out.get("root_id") and not out.get("error") and engine is not None             and (engine.mode() or {}).get("mode") == "auto":
-        out["say"] = (f"Write to the person now, before any other call: {link}; it runs unattended, they can watch there, "
+        out["say"] = (f"{_link_for_them(link)}it runs unattended, they can watch there, "
                       "you report the end. Then loop `next_steps(wait=600)`.")
 
 
@@ -462,7 +476,8 @@ def create_server(engine_or_registry):
     # Bound from `T.TOOLS[...]`, not the module functions — the registry entries are the ones wrapped to announce
     # themselves in INFLIGHT; bound to the bare functions, `/api/runtime` reported `busy: []` through a decomposition.
     for name, fn in T.TOOLS.items():
-        server.add_tool(_bind(engine_or_registry, fn), name=name, description=(fn.__doc__ or "").strip())
+        server.add_tool(_bind(engine_or_registry, fn), name=name, description=(fn.__doc__ or "").strip(),
+                        meta=ANSWER_ROOM.get(name))
     if hasattr(engine_or_registry, "use"):    # ProjectRegistry → the project verbs
         _mount_project_verbs(server, engine_or_registry)
     return server
