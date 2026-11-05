@@ -11,6 +11,7 @@ and ICMP and the live test's SCTP line goes; the filter's first two lines off an
 import inspect
 import json
 import os
+import shutil
 import socket
 import subprocess
 import threading
@@ -22,6 +23,7 @@ import pytest
 
 from gfso.adapters import children, door, execution as E
 from gfso import config as C, runtime as RT, workspaces as WS
+from gfso.adapters import worktrees as W
 from gfso.mcp import server as S
 from gfso.adapters import netrecord as N
 from gfso.core.types import PlaceUnavailable
@@ -318,6 +320,25 @@ def test_a_project_spelled_otherwise_is_the_project_as_it_was_made(tmp_path):
     r = SimpleNamespace(_engines={}, _dir=str(tmp_path))
     assert RT.ProjectRegistry._spelled(r, "caps") == "Caps" and RT.ProjectRegistry._spelled(r, "Caps") == "Caps"
     assert RT.ProjectRegistry._spelled(r, "other") == "other"
+    assert RT.ProjectRegistry._spelled(r, "GFSO") == "default", "the default project's own file"
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="no git")
+def test_a_submodule_the_user_committed_is_no_delivery_s_nested_repository(tmp_path, monkeypatch):
+    def git(*a, cwd):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+    base, place = tmp_path / "b", tmp_path / "p"
+    for repo in (base, place):
+        repo.mkdir()
+        git("init", "-q", cwd=repo)
+        git("update-index", "--add", "--cacheinfo", f"160000,{'a' * 40},vendor/lib", cwd=repo)
+        git("commit", "-q", "-m", "c", cwd=repo)
+    monkeypatch.setattr(W, "base_of", lambda p: str(base))
+    assert W.nested(place, "HEAD", None) == [], "the same commit at the same path carries nothing of a node's"
+    git("update-index", "--add", "--cacheinfo", f"160000,{'b' * 40},vendor/lib", cwd=place)
+    git("update-index", "--add", "--cacheinfo", f"160000,{'a' * 40},mine", cwd=place)
+    git("commit", "-q", "-m", "c2", cwd=place)
+    assert sorted(W.nested(place, "HEAD", None)) == ["mine", "vendor/lib"], "moved, or new, it is the node's"
 
 
 def test_a_length_that_is_no_number_is_past_a_door_s_cap():

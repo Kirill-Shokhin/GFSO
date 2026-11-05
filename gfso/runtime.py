@@ -117,6 +117,8 @@ class ProjectRegistry:
         if name in self._engines:
             return name
         low = name.casefold()
+        if low == "gfso":                   # …the default project's own file: a second engine over it, on no list (critic, ran)
+            return "default"
         made = [*self._engines, *(f[:-3] for f in os.listdir(self._dir) if f.endswith(".db"))] if os.path.isdir(self._dir) else [*self._engines]
         return next((m for m in made if m == name), next((m for m in made if m.casefold() == low), name))
 
@@ -183,7 +185,7 @@ class ProjectRegistry:
         REMEMBERED: a restart used to put every session that had not re-chosen back into `default`
         without saying so (MCP door, wave 26, 2026-09-06)."""
         eng = self.engine(name)   # validates + creates
-        self._active = name
+        self._active = name = eng.project_name
         remember_active_project(name)
         return eng
 
@@ -196,6 +198,7 @@ class ProjectRegistry:
         the project by definition (cross-project provenance was never representable)."""
         if not self._NAME_RE.match(name):
             raise ValueError(f"bad project name {name!r} (allowed: [A-Za-z0-9_-], ≤64)")
+        name = self._spelled(name)
         if name == "default":
             raise ValueError("the default project cannot be deleted")
         if name == self._active:

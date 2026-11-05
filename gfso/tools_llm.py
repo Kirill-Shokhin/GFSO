@@ -42,7 +42,7 @@ from gfso.observe import FRESH_S, OBSERVE_S, run_checks
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
-from gfso.adapters.execution import network_of
+from gfso.adapters.execution import component, network_of
 from gfso.decompose import NoPlan, decompose_into, artifact as _artifact, planning as _planning
 from gfso.engine.events import emit_cb
 from gfso.engine.findings import record_round
@@ -650,7 +650,8 @@ def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None, 
         root = scratch_of(workdir, project)
         # …a round of its own, never one an earlier validation in the same second holds: its batches are made fresh
         at = int(time.time())
-        while ex.files.exists(scratch := str(root / f"{task_id}_{at}")):
+        # …one path component, whatever the id spells: `db/schema` had a place and no round, a node stuck with no validator run (critic, ran)
+        while ex.files.exists(scratch := str(root / f"{component(task_id)}_{at}")):
             at += 1
         ex.files.mkdir(scratch)
         if graph is not None:              # …in the record of the rounds standing, as it goes (`findings.record_round`)

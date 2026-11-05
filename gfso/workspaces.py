@@ -65,7 +65,7 @@ def _place_key(node) -> str:
     """A node's id as its place's name, one id one place: `db/schema` and `db_schema` spelled one, and two siblings shared a place, its
     branch and each other's files with nothing on the plan or the log to say so (critic, ran); so did what a file system's case merges."""
     key = component(node)
-    return key if key == str(node) and key == key.lower() else f"{key}-{hashlib.sha256(str(node).encode()).hexdigest()[:8]}"
+    return key if key == str(node) and key == key.lower() and not key.endswith(".lock") else f"{key}-{hashlib.sha256(str(node).encode()).hexdigest()[:8]}"
 
 
 def _place_of(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | None:

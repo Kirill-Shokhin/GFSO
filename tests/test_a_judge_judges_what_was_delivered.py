@@ -206,6 +206,26 @@ def test_live_an_object_of_the_delivery_rewritten_in_its_place_after_deliver_is_
 
 
 @live
+def test_live_a_submodule_the_user_committed_is_copied_empty_and_one_moved_is_not(project):
+    """Having a submodule was enough for no delivery to pass, with no move to lift it (critic, ran)."""
+    x, a = project, project.own / "a"
+    link = "mkdir -p vendor/lib && git update-index --add --cacheinfo 160000,{},vendor/lib && git -c user.name=t -c user.email=t@t commit -qm link"
+    _sh(x, x.base, link.format("a" * 40))
+    _sh(x, a, link.format("a" * 40) + " && echo mine > m.txt")
+    tree = W.commit_all(x.base, a, "gfso: a delivery", "exec-a", execution=x)
+    x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
+    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, W.head(a, execution=x), "")) as copy:
+        assert x.files.exists(str(Path(copy) / "m.txt")), "its files are there, its submodule empty as in every copy"
+    _sh(x, a, link.format("b" * 40))
+    tree = W.commit_all(x.base, a, "gfso: moved", "exec-a", execution=x)
+    assert W.nested(a, "HEAD", x) == ["vendor/lib"]
+    x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_2"))
+    with pytest.raises(NotTheDelivery, match=r"nested repositories \(vendor/lib\)"):
+        with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, W.head(a, execution=x), "")):
+            pass
+
+
+@live
 @pytest.mark.parametrize("case", list(_CASES))
 def test_live_a_copy_is_the_recorded_tree_whatever_the_place_holds(project, case):
     before, after, cause = _CASES[case]

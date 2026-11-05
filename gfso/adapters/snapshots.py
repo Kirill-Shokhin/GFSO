@@ -16,6 +16,7 @@ is built there, by the system, from that tree alone (`_build`). A place with no 
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -300,7 +301,7 @@ _PACK = 'set -o pipefail; c=$1; shift; git "$@" rev-list --objects --no-walk "$c
 #: system runs in an agent's tree: `python -c` imports from its cwd first, and a delivered `json.py` exiting 0 passed a
 #: changed copy as the delivery (critic over 4817a32, run)
 _CHECKOUT = r'''
-import hashlib, os, subprocess, sys, threading
+import hashlib, json, os, subprocess, sys, threading
 from pathlib import Path
 how, at, commit, apart = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[5:]
 # …the paths its checkout wrote as their Git LFS content ("smudged"), read before any build ran (`_checkout`) and laid
@@ -447,6 +448,7 @@ if how == "kept":
     if ls.returncode:
         bad(6, f"its tree cannot be read: {ls.stderr.decode(errors='replace')[-300:]}")
     items = [(meta.split(), p) for meta, _, p in (e.partition(b"\t") for e in ls.stdout.split(b"\0") if e)]
+    items = [i for i in items if i[0][1] != b"commit"]      # …a submodule the user's commit records holds no object here, only "take" reads it
     verify(list(dict.fromkeys([tree.encode(), *(meta[2] for meta, _ in items)])))
     for (mode, _, oid), rel in items:
         path = at / rel.decode("utf-8", "surrogateescape")
@@ -500,8 +502,10 @@ ls = git("ls-tree", "-r", "-t", "-z", "--full-tree", tree)
 if ls.returncode:
     bad(4, f"its tree cannot be read: {ls.stderr.decode(errors='replace')[-300:]}")
 items = [(meta.split(), p) for meta, _, p in (e.partition(b"\t") for e in ls.stdout.split(b"\0") if e)]
-if nested := [p.decode(errors="replace") for meta, p in items if meta[1] == b"commit"]:
+KEPT = set(json.loads(os.environ.get("GFSO_USERS_LINKS") or "[]"))
+if nested := [p.decode(errors="replace") for meta, p in items if meta[1] == b"commit" and f"{meta[2].decode()} {p.decode(errors='replace')}" not in KEPT]:
     bad(3, "\n".join(nested))
+items = [i for i in items if i[0][1] != b"commit"]
 verify(list(dict.fromkeys([tree.encode(), *(meta[2] for meta, _ in items)])))
 (at / ".git" / "shallow").write_bytes(commit.encode() + b"\n")
 '''
@@ -522,7 +526,7 @@ def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> set[s
     rc, err, r = src.pipe([src.shell() or "bash", "-c", _PACK, "sh", commit, *W.APART], cwd=str(place),
                           env=subprocess_env(extra={**W.NO_CONFIG, "GIT_NO_REPLACE_OBJECTS": "1"}), into=ex,
                           into_args=[*end, "take", str(at), commit, tree, *W.APART], into_cwd=str(at.parent),
-                          into_env=env, timeout=1800)
+                          into_env={**env, "GFSO_USERS_LINKS": json.dumps(W.users_links(place, execution))}, timeout=1800)
     said = (r.stdout or "").split()
     if r.returncode == 3:
         raise NotTheDelivery(f"the delivery holds nested repositories ({', '.join(said[:5])}): their files are no part "

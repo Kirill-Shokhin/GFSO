@@ -20,7 +20,7 @@ The switch is yours, per execution or per project, and the default is `open`:
 Under `off` your code still goes to the model's provider, as far as an agent sends it there, on your account. It stays with you only
 where every role, the system's own too (`set_mode(system_model=, planner_model=)`), names a local model. Not promised: a boundary
 against an escape from Docker or its kernel, which every project shares (no VM per task); a check a validation writes itself, which the
-delivered code it runs can reach, where only a pinned one is out of its reach; a model validator's reading, which what it reads can argue with, where only a pinned check decides by itself; anything for what runs on your machine, namely the work your
+delivered code it runs can reach, where only a pinned one is out of its reach; a model validator's reading, which what it reads can argue with, where only a check pinned with `exact: true` decides by itself; anything for what runs on your machine, namely the work your
 own agent does in its chat, the validator of that work, and the reader of a plan's documents. What the agents wrote reaches that
 agent of yours as text, in what a check printed and in a plan's words, past every container: it is told to take these as data, which
 a model can be argued out of, measured on one plain instruction alone (a cheap model followed it in none of six tries, told or not); a result is read before it is run
@@ -202,7 +202,7 @@ container there, and writes those of this installation alone. A container is kno
   cause, which the executor's next packet states, and nothing of it stands for later rounds; an
   issuer asked about it is told the cause and rules on it. A copy that fails for any other cause (a
   Docker error, a timeout, a full disk) gives no verdict, and the validation is asked again. A delivery
-  holding a nested repository or a submodule is refused when it is delivered, with what lifts it.
+  holding a nested repository or a submodule of its own is refused when it is delivered, with what lifts it; one the user's imported commit records, at that commit, passes, empty in every copy, so a check that needs its files has none.
   An issuer's contact, whatever it asks, rules on the same checkout of the recorded commit.
   A standing finding whose file the record could not keep (not there when it was filed, or past the
   record's size limit) is shown to the validator, not demanded.
@@ -304,7 +304,7 @@ What one session can still reach:
 - A validation runs the delivered code in its own container: while its run lasts, that code can rewrite
   what the validation itself writes in its batch — the build included — and what the validation's later commands
   load (its shell's setup, its home), so a check the validation writes and runs itself is in the
-  code's reach; a check that must be trusted is pinned, and the system runs it in a container of its
+  code's reach; a check that must be trusted is pinned with `exact: true`, and the system runs it in a container of its
   own on a fresh copy. It can also add files beside a pinned probe's
   inputs that a later step of the same command, or a later command of the validation, reads where it
   lists or searches that directory (a `GNUmakefile` beside a pinned `Makefile`), and a finding's files

@@ -360,9 +360,23 @@ def unstaged_cause(stderr: str) -> str:
 
 def nested(place, rev: str = "HEAD", execution=None) -> list[str]:
     """The paths `rev`'s tree in `place` records only as a gitlink — a nested repository or a submodule, whose files
-    are no part of the tree, so no copy of it can be checked out whole (`snapshots._checkout`)."""
-    r = git(place, "ls-tree", "-r", "-z", rev, execution=execution)
-    return [e.split("\t", 1)[1] for e in r.stdout.split("\0") if e.startswith("160000 ")] if r.returncode == 0 else []
+    are no part of the tree, so no copy of it can be checked out whole (`snapshots._checkout`) —, but those the user's own
+    imported commit records at that commit: empty in every copy alike, they carry nothing of a node's, and a repository holding a
+    submodule could deliver nothing, with no move of its executor's to lift it (critic, ran)."""
+    kept = set(users_links(place, execution))
+    return [link.split(" ", 1)[1] for link in _links(place, rev, execution) if link not in kept]
+
+
+def _links(repo, rev: str, execution) -> list[str]:
+    """Each gitlink of `rev`'s tree in `repo`, as "<commit> <path>"."""
+    r = git(repo, "ls-tree", "-r", "-z", rev, execution=execution)
+    return [" ".join((e.split(" ", 2)[2].split("\t", 1))) for e in r.stdout.split("\0") if e.startswith("160000 ")] if r.returncode == 0 else []
+
+
+def users_links(place, execution) -> list[str]:
+    """What the user's imported commit records of gitlinks, for the node's `place`."""
+    root = base_of(str(place))
+    return _links(root, "HEAD", execution) if root else []
 
 
 def nested_cause(paths: list) -> str:
