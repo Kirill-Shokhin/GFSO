@@ -55,6 +55,19 @@ class StoragePort(ABC):
         log entry is not."""
         ...
 
+    #: what makes `update_task`'s read and write one step, in a store with concurrent writers
+    _one_write = contextlib.nullcontext()
+
+    def update_task(self, task_id: TaskId, **fields) -> Task:
+        """Write these fields of the node as it stands now, nothing else of it: a verb off the log's pump writes its own
+        field beside a pump that moves the state."""
+        with self._one_write:
+            task = self.get_task(task_id)
+            for name, value in fields.items():
+                setattr(task, name, value)
+            self.save_task(task)
+        return task
+
     @abstractmethod
     def get_all_tasks(self) -> list[Task]:
         """Every node of this graph, terminal ones included — the frontier and the metrics both read the

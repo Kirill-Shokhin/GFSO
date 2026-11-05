@@ -2003,6 +2003,23 @@ def _watched(engine, ledger: dict, owed: Optional[dict], now: float) -> list:
     return questions
 
 
+def _asked_key(task, question: str) -> str:
+    """The ledger's key of one question on one version of a node (`answer_open_questions`)."""
+    return f"{task.id}#{task.iteration}#{task.reopens}#{question}"
+
+
+def answer_owed_first(engine, agents, ledger: dict, task) -> Optional[str]:
+    """The question on this node the system's issuer has not yet had his say on, or None: his answer and his signature are
+    one party's acts, so a machine validation waits for it. Once only: a turn that ended leaving it open (refused, unread,
+    no model) lets the validation start, the question asked on at its rate, for a count sets a rate and never closes; and
+    a turn that never ends waits no longer than VALIDATING's own bound, which hands the delivery to him (§16.14)."""
+    question = dict(open_questions(engine)).get(task.id)
+    if question is None or system_mover(engine, agents, task.id, question) is None:
+        return None
+    waits, _, answers = ledger.get(_asked_key(task, question), (0, 0.0, 0))
+    return None if waits or answers else question
+
+
 def open_questions(engine) -> list[tuple[TaskId, str]]:
     """Every node the graph waits on an issuer for, with its most pressing question — a read only."""
     found: dict = {}
@@ -2240,7 +2257,7 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
         # a revision the machine makes itself must not reset its own backoff — and a new question on the same version
         # owes none of the old one's: a dispute's doubled wait kept the TIMEOUT into ESCALATED from asking the decision
         # for 2 h (series 2 REF 2)
-        gen = f"{task_id}#{task.iteration}#{task.reopens}#{question}" if task else ""
+        gen = _asked_key(task, question) if task else ""
         waits, not_before, answers = ledger.get(gen, (0, 0.0, 0))
         if (actor is None or task is None or now < not_before or being_rewritten(engine, task_id)
                 or not claim(f"q:{task_id}")):

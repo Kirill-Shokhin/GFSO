@@ -216,7 +216,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         # One connection is shared by every dispatcher thread (`check_same_thread=False`), so the
         # lock below — not the connection — is what makes a multi-statement write atomic. Reentrant
         # because a reader may call another reader (`get_parent` → `get_task`).
-        self._lock = threading.RLock()
+        self._lock = self._one_write = threading.RLock()
         with self._write() as c:
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA busy_timeout=5000")

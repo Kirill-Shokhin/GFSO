@@ -410,10 +410,8 @@ def refresh_checks(graph: Graph, node_id: Optional[TaskId], stale_review: bool =
     deps, deadlines = dep_scope(graph, node_id)
     graph.store_check_results(
         node_id, run_all_checks(node, kids, deps, non_leaf_ids(graph, kids), deadlines))
-    stored = graph.get_task(node_id)
-    if stale_review and stored.verified:   # the decomposition changed: a stored Level-2 verdict is no longer current
-        stored.verified = False
-        graph.save_task(stored)
+    if stale_review and graph.get_task(node_id).verified:   # the decomposition changed: a stored Level-2 verdict is no longer current
+        graph.update_task(node_id, verified=False)
 
 
 def _execute_effects(

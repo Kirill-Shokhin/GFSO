@@ -392,7 +392,8 @@ def _frontier_line(nxt: dict) -> str:
     if nxt.get("refuted_passes"):
         return f"frontier: NOT COMPLETE — {nxt['directive']}"
     if nxt.get("complete"):
-        return "frontier: COMPLETE — the root is DONE/PASS"
+        return "frontier: COMPLETE — the root is DONE/PASS" + "".join(
+            f"\n  left unanswered: {q}" for q in nxt.get("questions_left_standing") or ())
     steps = list(nxt.get("steps") or ())
     mine = [s for s in steps if s.get("mine")]
     if mine:

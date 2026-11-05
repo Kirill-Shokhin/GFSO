@@ -2603,6 +2603,12 @@ class Engine:
         passed parent over an open child is a claim that no longer holds)."""
         return [str(t.id) for t in self._within(root_id) if t.state not in TERMINAL_STATES]
 
+    def questions_left_standing(self, root_id: Optional[TaskId] = None) -> list[str]:
+        """What validators observed outside the criteria and no issuer answered, over nodes now settled: asked of no one any
+        more (`issuer.open_questions` stops at a settled node), so said where a person reads the end."""
+        return [f"{t.id}: {o['node']} saw {o['what']}" for t in self._within(root_id) if t.state in TERMINAL_STATES
+                for o in self.outside_the_criteria(t.id, own=self._graph.get_parent(t.id) is None)]
+
     def parts_outside_the_delivery(self, task) -> set[str]:
         """The active parts a machine's PASS would close this whole without (`validation.parts_outside_the_delivery`)."""
         return _parts_outside_the_delivery(self._graph, self._audit, task)

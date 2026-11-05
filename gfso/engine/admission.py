@@ -346,8 +346,7 @@ def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], cover
     node = graph.get_task(parent.id)
     if set(node.criterion_mappings) != set(split.node.criterion_mappings):
         # a pair onto a child this act does not issue — standing unchanged, or settled — is the split's too (§2.4)
-        node.criterion_mappings = tuple(split.node.criterion_mappings)
-        graph.save_task(node)
+        graph.update_task(parent.id, criterion_mappings=tuple(split.node.criterion_mappings))
     record_drops(storage, log_at(), parent.id, drops)
     for d in (d for d in drops if graph.get_state(TaskId(str(d))) != State.CANCELLING):
         send(SignalData(signal=Signal.CANCEL, task_id=TaskId(str(d)), source=parent.assignee,
@@ -508,8 +507,7 @@ def admit_register(graph: Graph, storage, log_at: int, task_id: TaskId, register
                          f"leaf's risks is no register, and its issuer's is the packet's pre-fill")
     if validate:
         refuse_unless_syntactic(graph, t, [], {}, register)
-    t.register = Register(tuple(register.items), tuple(register.components))
-    graph.save_task(t)
+    t = graph.update_task(t.id, register=Register(tuple(register.items), tuple(register.components)))
     key = register_log_key(task_id)
     log_ = json.loads(storage.get_critique(key) or "[]")
     log_.append({"at": datetime.now().isoformat(timespec="seconds"), "by": str(agent), "log_at": log_at,

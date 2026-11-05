@@ -126,6 +126,16 @@ class PlanWatch:
             self._seen[key] = now
             self._bus.emit_info("graph", f"{key}: the plan changed")
 
+    def update_task(self, task_id, **fields):
+        """`StoragePort.update_task`, told like any write of the plan."""
+        key = str(task_id)
+        self._seen.setdefault(key, _plan_of(self._s.get_task(task_id)))
+        task = self._s.update_task(task_id, **fields)
+        if self._seen[key] != (now := _plan_of(task)):
+            self._seen[key] = now
+            self._bus.emit_info("graph", f"{key}: the plan changed")
+        return task
+
     def add_dep_edge(self, edge) -> None:
         self._s.add_dep_edge(edge)
         self._bus.emit_info("graph", f"{edge.to_id}: a dependency record changed")

@@ -19,6 +19,7 @@ from gfso.core.graph.model import admission_key
 from gfso.core.types import settled_positive
 from gfso.core.types.enums import Verdict
 from gfso.delegate import Dispatcher, _auto_validate
+from gfso.driver import _frontier_line
 from gfso.engine import loop
 from gfso.inflight import _inflight
 from gfso.roster import AgentRegistry
@@ -119,34 +120,18 @@ def _through_a_seam(e, agents, tid, **kw):
     e.wait_idle()
 
 
-def _the_race(e, agents, monkeypatch, verdict="PASS"):
-    """One pass starts the root's validation and the issuer's turn; the turn lands its child while the validator runs."""
-    running, landed, out = threading.Event(), threading.Event(), {}
+def _the_race(e, agents, verdict="PASS"):
+    """The validator is running when a part lands: the signature's own step reads it."""
+    out = {}
 
-    def settle(engine, ag, task_id, question, actor, verbs):
-        if "turn" in out:
-            return {"status": "gone"}
-        running.wait(20)      # …a turn landing before the pass reads the frontier leaves no VALIDATE step in that pass
-        out["turn"] = I.issuer_turn(engine, task_id, question, actor, _llm=_Issuer(LATE))
+    def turn():
+        out["turn"] = I.issuer_turn(e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))
         e.wait_idle()
-        landed.set()
-        return out["turn"]
 
-    monkeypatch.setattr(I, "settle", settle)
-    v = _Validator(e, "root", verdict=verdict, first=lambda: (running.set(), landed.wait(20)))
-
-    def validator(engine, task_id, ag, **k):
-        out["validated"] = _auto_validate(engine, task_id, ag, _llm=v, **k)
-        return out["validated"]
-
-    d = Dispatcher(e, agents, poll=30, max_concurrent=2, runner=lambda *a: None, consent_runner=lambda *a: None,
-                   validator_runner=validator)
-    started = d.dispatch_once()
-    assert "validate:root" in started, started
-    _until(lambda: "validated" in out, f"the validation did not end: {out}")
+    out["validated"] = _auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root", verdict=verdict, first=turn))
     e.wait_idle()
     assert out["turn"]["status"] == "applied", out
-    return d, out
+    return None, out
 
 
 # ── the real route: git, the plan gate on, sessions and joins for real ──
@@ -166,6 +151,8 @@ class _Run:
         monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=None, busy=_inflight, review=self._review, refine=None))
         monkeypatch.setattr(I, "settle", self._settle)
         self.first, self.verdicts, self.at_done, self.runs, self.over_open = {}, {}, [], 0, []
+        self.answer, self.in_turn, self.go, self.validated = None, threading.Event(), threading.Event(), []
+        self.go.set()
         e.on_transition(self._at_done)                 # …ahead of the dispatcher's own: a reader before its join is marked
         self.d = Dispatcher(e, self.agents, poll=30, runner=self._execute, consent_runner=self._consent,
                             validator_runner=self._validate)
@@ -190,7 +177,15 @@ class _Run:
     def _settle(self, e, agents, tid, question, actor, verbs):
         if question == "plan" and I.review_due(e, tid):
             return I._review(e, tid, verbs)
-        return {"status": "gone"}       # …the `outside` question is the test's to answer, at the moment it is about (`attach`)
+        if question != "outside":
+            return {"status": "gone"}
+        if self.answer is None:         # …unread: the validation starts, and the row is the test's to answer when it is about it (`attach`)
+            return {"status": "unparsed"}
+        if e.graph.get_state(tid) != State.VALIDATING:      # …the turn this file is about: over the delivery
+            return {"status": "gone"}
+        self.in_turn.set()
+        self.go.wait(20)
+        return I.issuer_turn(e, tid, question, actor, _llm=_Issuer(self.answer))
 
     def attach(self):
         assert I.issuer_turn(self.e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))["status"] == "applied"
@@ -208,6 +203,7 @@ class _Run:
         return {"status": "accepted"}
 
     def _validate(self, e, tid, agents, **k):
+        self.validated.append((str(tid), len([x for x in e.audit_log(tid) if x.signal == Signal.DELIVER and not x.rejected])))
         row = [{"what": SEEN, "evidence": "printed NULL"}] if str(tid) == "root.kid" else []
         said = self.verdicts.get(str(tid)) or ["PASS"]
         return _auto_validate(e, tid, agents, _llm=_Validator(e, tid, verdict=said.pop(0) if len(said) > 1 else said[0], outside=row,
@@ -310,7 +306,75 @@ def test_an_add_child_stepped_after_the_pass_attaches_nothing_and_leaves_no_reco
         assert e.next_steps()["complete"] is True and e.graph.get_task(root).reopens == 0
         assert run.in_base("kid.txt") and run.in_base("root.txt") and not run.in_base("late.txt")
         assert [o["what"] for o in e.outside_the_criteria(root, own=False)] == [SEEN], "the row stands, unanswered"
+        assert SEEN in str(e.next_steps(root)["questions_left_standing"]) and SEEN in str(e.next_steps()["questions_left_standing"])
     finally:
+        e.stop()
+
+
+def _issuer_first(tmp_path, monkeypatch, answer):
+    """The root delivered with the part's row standing and the issuer's turn held open: no pass starts its validation."""
+    run = _Run(tmp_path, monkeypatch)
+    run.answer = answer
+    run.go.clear()
+    run.drive(lambda: run.in_turn.is_set())
+    assert run.state() == State.VALIDATING and ("root", 1) not in run.validated
+    assert not [s for s in run.d.dispatch_once() if s == "validate:root"] and ("root", 1) not in run.validated
+    run.go.set()
+    return run
+
+
+def test_the_issuers_part_comes_before_any_validation_of_the_whole(tmp_path, monkeypatch):
+    run = _issuer_first(tmp_path, monkeypatch, LATE)
+    try:
+        run.drive()
+        assert [v for v in run.validated if v[0] == "root"] == [("root", 2)], run.validated
+        assert run.over_open == [] and "questions_left_standing" not in run.e.next_steps()
+        _the_part_stands_in_the_base(run)
+    finally:
+        run.e.stop()
+
+
+def test_nothing_attached_the_delivery_is_validated_as_it_stands(tmp_path, monkeypatch):
+    run = _issuer_first(tmp_path, monkeypatch, {"move": "decline", "justification": "NULL there is the SQL's own answer"})
+    e, root = run.e, TaskId("root")
+    try:
+        run.drive(lambda: e.next_steps(root).get("complete") is True and not e.joins.joining_nodes())
+        assert [v for v in run.validated if v[0] == "root"] == [("root", 1)], run.validated
+        assert "questions_left_standing" not in e.next_steps(root) and e.graph.get_task(TaskId("root.late")) is None
+    finally:
+        e.stop()
+
+
+def test_a_question_never_answered_holds_no_validation_and_the_person_hears_it(tmp_path, monkeypatch):
+    """A turn that ended leaving it open is the issuer's say: the question goes on at its rate, the validation starts, and a
+    goal ending over it says what stood."""
+    run = _Run(tmp_path, monkeypatch)
+    e, root = run.e, TaskId("root")
+    said, emit = [], e.emit_info
+    monkeypatch.setattr(e, "emit_info", lambda src, msg: (said.append(msg), emit(src, msg))[1])
+    try:
+        run.drive(lambda: run.d._over())
+        assert ("root", 1) in run.validated and e.graph.get_state(root) == State.DONE
+        for out in (e.next_steps(), e.next_steps(root)):
+            assert out["complete"] is True and SEEN in str(out["questions_left_standing"]), out
+        assert SEEN in _frontier_line(e.next_steps())
+        run.d.dispatch_once()
+        assert [m for m in said if "the goal is over" in m and SEEN in m], said
+    finally:
+        e.stop()
+
+
+def test_a_turn_that_never_ends_holds_the_delivery_no_longer_than_its_bound(tmp_path, monkeypatch):
+    run = _Run(tmp_path, monkeypatch)
+    run.answer, _ = LATE, run.go.clear()
+    e, root = run.e, TaskId("root")
+    try:
+        run.drive(lambda: run.in_turn.is_set())
+        e.send_signal(SignalData(signal=Signal.TIMEOUT, task_id=root))
+        e.wait_idle()
+        assert e.graph.get_state(root) == State.ESCALATED and (root, "escalation") in I.open_questions(e)
+    finally:
+        run.go.set()
         e.stop()
 
 
@@ -539,7 +603,7 @@ def test_a_standing_pass_is_not_replayed_over_a_part_attached_since(tmp_path):
 def test_the_verdict_stays_on_the_record_superseded(tmp_path, monkeypatch):
     e, agents = _delivered_whole(tmp_path)
     try:
-        _, out = _the_race(e, agents, monkeypatch)
+        _, out = _the_race(e, agents)
         assert e.graph.get_state(TaskId("root")) == State.OFFERED and out["validated"] == "rejected", out
         rec = e.get_exec_verdict(TaskId("root"))
         assert rec["superseded_verdict"] == "PASS" and rec["per_criterion"]
@@ -550,7 +614,7 @@ def test_the_verdict_stays_on_the_record_superseded(tmp_path, monkeypatch):
 def test_a_fail_over_open_parts_stays_signed(tmp_path, monkeypatch):
     e, agents = _delivered_whole(tmp_path)
     try:
-        _, out = _the_race(e, agents, monkeypatch, verdict="FAIL")
+        _, out = _the_race(e, agents, verdict="FAIL")
         assert out["validated"] == "fail" and e.graph.get_state(TaskId("root")) == State.REWORKING, out
     finally:
         e.stop()
@@ -561,7 +625,7 @@ def test_where_the_system_does_not_issue_it_waits_and_its_bound_hands_it_over(tm
     e, agents = _delivered_whole(tmp_path)
     try:
         monkeypatch.setattr(DG, "_system_issues", lambda *a: False)
-        _, out = _the_race(e, agents, monkeypatch)
+        _, out = _the_race(e, agents)
         assert out["validated"] == "rejected" and e.graph.get_state(TaskId("root")) == State.VALIDATING, out
         assert e.get_exec_verdict(TaskId("root"))["verdict"] == "PASS"
         assert "root.late" in {s["task_id"] for s in e.next_steps()["steps"]}, "a part with no one moving it (Inv-8)"

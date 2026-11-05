@@ -190,8 +190,7 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
         # nothing for the checker to say about them, and that is a current answer, not a missing one.
         # A round that passed the gate has stored its own record (above), so what `verified` vouches for is
         # always this round's reading — a "no verdict" reading included, which the gate reads as not clean.
-        node.verified = bool(critique.gate_passed)
-        engine._graph.save_task(node)
+        engine._graph.update_task(node.id, verified=bool(critique.gate_passed))
     _log_critique(engine, critique)
     return critique
 

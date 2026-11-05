@@ -191,6 +191,10 @@ that would establish one (E3) has shown so far, and what not, is in the README a
 - A part attached to a whole being validated is worked and in the result: a machine's PASS reads its active parts in its own
   step, and the delivery is presented again. A part arriving after that PASS attaches nothing, its parent settled (§12.7), so
   no node stands DONE over an open part under `auto`. Nothing in the system reopens a settled node, and the directive says so.
+- A machine validation of a whole starts after its issuer has had his say on the question standing on it. A question still
+  unanswered when the node above it closes is named beside `complete` (`questions_left_standing`) and at the goal's end.
+- A write of one field of a node beside a transition no longer puts the node's old state back: a PASS or a DELIVER stayed in the
+  log while the node read as before it.
 - What a validator tried on its own is filed as a refutation only where its report says it refuted; and a finding of its own
   stands while it is reproduced: a later validator whose report ran a shell and names that very command, what it printed and why
   the finding was wrong ends it, on the record (`findings_not_reproduced`), and `return_finding` brings it back. A finding the

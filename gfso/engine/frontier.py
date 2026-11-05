@@ -638,6 +638,14 @@ def _not_complete_while_open(engine, open_now: list[str]) -> dict:
                                       for n in sorted(closed)))}
 
 
+def _left_standing(left: list[str]) -> dict:
+    """What `complete` must not leave out: what a validator saw and no issuer answered before the node above it closed."""
+    return {"questions_left_standing": left,
+            "questions_left_standing_note": ("observed outside the criteria, not answered when the node above it closed: "
+                                             "neither in the verdict nor worked. Under a settled node nothing is owed "
+                                             "(§12.7), so no one is asked it any more; it is yours to weigh.")} if left else {}
+
+
 class Frontier:
     """The walk over the graph: every node that owes a move, in order, and — when none does — why nothing is open, how
     the root closed, or what holds it (`next_step(s)`)."""
@@ -850,7 +858,7 @@ class Frontier:
         check can establish that a self-named reviewer is independent (§15.7) — so a correct override
         must stay finishable. What must not happen is that it finishes SILENTLY.
         """
-        extra: dict = {}
+        extra: dict = _left_standing(self.engine.questions_left_standing(root_id))
         if _open_plan := self.engine.closed_over_an_open_plan_review(root_id):
             extra |= {"closed_over_an_open_plan_review": _open_plan,
                       "closed_over_an_open_plan_review_note":

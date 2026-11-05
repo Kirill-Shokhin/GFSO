@@ -35,7 +35,7 @@ from gfso.core.protocol.procedure import BOUND_SPENT, criterionless, probes_from
 from gfso.core.types import (HOST, TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
                              Verdict, Action, Mode, PlaceUnavailable,
                              SPAWNABLE_ACTIONS, files_at, passed, register_of, system_decides)
-from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, signal_ok as _signal, system_mover,
+from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, answer_owed_first, signal_ok as _signal, system_mover,
                           split_has_a_mover)
 from gfso.adapters.llm.chat import answers, is_address
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among, what_stopped
@@ -858,12 +858,14 @@ class Dispatcher:
         """An issuer's answer is in: the node's question may be asked again. Only an ANSWERED dispute
         re-opens the node's own rounds — a rejection returns the executor to the same generation — so
         only then are its round keys freed; freed on any answer they let a second run be claimed while
-        the first is in flight. The loop is woken only then too: an answer that moved nothing backs off."""
+        the first is in flight. The loop is woken then too, and for a delivery whose validation waited on this turn: any
+        other answer that moved nothing backs off."""
         self._seen.discard(f"q:{task_id}")
         t = self._engine.graph.get_task(task_id)
         if redispatch and t is not None:
             for key in (self._round_key(t), self._round_key(t, "consent")):
                 self._seen.discard(key)
+        if t is not None and (redispatch or t.state == State.VALIDATING):
             self._dirty.set()
 
     def _drop_keys(self, tid: str) -> None:
@@ -987,6 +989,17 @@ class Dispatcher:
                 f"would be refused at the gate, so none is spent. Drive those nodes; "
                 f"validation follows by itself.")
 
+    def _issuer_speaks_first(self, task) -> bool:
+        """Does a machine validation of this node wait for its issuer: a turn in flight on it, or a question he has not
+        had his say on (`issuer.answer_owed_first`)?"""
+        asked = answer_owed_first(self._engine, self._agents, self._issuer_attempts, task)
+        if asked or f"q:{task.id}" in self._seen:
+            self._say_once(f"first:{self._round_key(task)}#{asked}",
+                           f"{task.id}: delivered, and its issuer answers first ({asked or 'a turn in flight'}): "
+                           f"his answer and the signature are one party's, so the validation starts after it")
+            return True
+        return False
+
     def _dispatch_validation(self, s: dict, task, it: tuple, started: list) -> bool:
         """Act on a delivery that is waiting to be validated. True when this step is done with.
 
@@ -1059,6 +1072,8 @@ class Dispatcher:
                     f"criteria, §2, and over an empty set it is vacuously true). No instrument is "
                     f"spent on it. Give it criteria (`edit_criteria`) and it is validated on the next "
                     f"delivery.")
+                return True
+            if _sign and self._issuer_speaks_first(task):
                 return True
             if _sign and _pass_held_by_parts_outside(self._engine, self._agents, task.id, it):
                 return True                             # …not paid for: no verdict on that commit could be signed
@@ -1234,6 +1249,8 @@ class Dispatcher:
             if (any(m.state == State.VALIDATING for m in members) and (not ready or all(
                     m.state in (State.VALIDATING, State.DONE) for m in members))):
                 sign = self._issuer_is_automated(top.id) and not self._engine.holder_signs(top.id)
+                if sign and self._issuer_speaks_first(top):
+                    continue
                 if self._claim(self._scope_key(members, "sv:")):
                     started.append(f"validate-scope:{top.id}")
                     threading.Thread(target=self._validate_scope_guarded,
@@ -1402,6 +1419,9 @@ class Dispatcher:
         self._publish_the_roster()
         self._clear_what_waited()
         if self._engine.paused() or self._over():
+            if standing := self._engine.questions_left_standing() if self._over() else None:
+                self._say_once(f"standing:{','.join(standing)}", f"the goal is over with what no issuer answered, on the "
+                                                                 f"record: {'; '.join(standing)}")
             self._rest()
             return []      # the user's STOP: nothing new starts; running sessions finish and their signals land
         self._rested = False

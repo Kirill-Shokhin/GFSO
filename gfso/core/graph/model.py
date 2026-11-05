@@ -479,6 +479,10 @@ class Graph:
     def save_task(self, task: Task) -> None:
         self._storage.save_task(task)
 
+    def update_task(self, task_id: TaskId, **fields) -> Task:
+        """These fields of the node, off the log's pump (`StoragePort.update_task`)."""
+        return self._storage.update_task(task_id, **fields)
+
     def build_context(self, task_id: TaskId) -> GraphContext:
         """The node plus its neighbourhood — parent, children, dep edges — as the AI layer reads it."""
         task = self._storage.get_task(task_id)
