@@ -10,8 +10,6 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 from gfso import delegate as DG, issuer as I, tools as T
 from gfso.adapters import worktrees as W
 from gfso.adapters.llm.stub import StubLLM
@@ -263,17 +261,54 @@ def test_a_session_s_uncommitted_work_reaches_both_parts(tmp_path, monkeypatch):
         e.stop()
 
 
-def test_a_one_child_split_of_a_node_owed_its_split_is_refused_and_its_authors_next_answer_lifts_it(tmp_path):
+def test_a_refines_one_part_answer_is_refused_and_its_next_round_lifts_it(tmp_path):
     e, agents, _ = _ring(tmp_path, {"pp": False, "fe": True, "cg": True})
+    rounds = []
+
+    def refine(en, node):
+        t = en.graph.get_task(TaskId(node))
+        rounds.append(node)
+        if len(rounds) > 1:
+            return _Author(en)(en, node)
+        try:
+            T.decompose(en, node, [{"task_id": f"{node}.all", "covers": [c.name for c in t.spec.criteria], "spec": {
+                "description": "all of it", "criteria": [criterion("all_ok", "it holds")]}}], accepted_risks=REGISTER)
+        except AdmissionRefused as no:                # …as `decompose_into`'s repair loop reads it
+            return {"error": str(no)}
+        return {"stats": []}
+
+    verbs = I.Verbs(llm=None, busy=_inflight, review=None, refine=refine)
     try:
         node = _merge(e)
-        one = [{"task_id": f"{node.id}.all", "covers": [c.name for c in node.spec.criteria], "spec": {
-            "description": "all of it", "criteria": [criterion("all_ok", "it holds")]}}]
-        with pytest.raises(AdmissionRefused, match="split of one part"):
-            T.decompose(e, str(node.id), one, accepted_risks=REGISTER)
-        assert not e.graph.get_active_children(node.id)
-        _Author(e)(e, str(node.id))
+        out = I.settle(e, agents, node.id, "split", str(node.assignee), verbs)
+        assert out["status"] == "refused" and "split of one part" in out["why"] and not e.graph.get_active_children(node.id), out
+        assert I.settle(e, agents, node.id, "split", str(node.assignee), verbs)["status"] == "applied"
         assert len(e.graph.get_active_children(node.id)) == 2
+    finally:
+        e.stop()
+
+
+def test_a_holders_one_part_at_a_time_on_a_node_owed_its_split_stands(tmp_path):
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    e.project_name = "p"
+    e.workforce.publish_executor_pool({"exec-1": "p"})
+    e.set_mode(Mode.SOLO, None, AgentId("agent"))
+    T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G")]})
+    e.wait_idle()
+    root = TaskId("root")
+    try:
+        assert str(e.graph.get_task(root).assignee) == "agent"
+        e.record_session_fit(root, "about 4000 lines", False)
+        assert e.split_owed(root) is not None
+        part = {"description": "a first part", "criteria": [criterion("a_ok", "A")]}
+        # …bare on a childless node the split's register is what is owed (CHECK-4), its own rule and its lift named
+        said = T.create_task(e, "root.a", part, parent_id="root", covers=["g"])
+        assert "CHECK-4" in said["error"] and "split of one part" not in said["error"], said
+        T.decompose(e, "root", [{"task_id": "root.a", "covers": ["g"], "spec": part}], accepted_risks=REGISTER)
+        out = T.create_task(e, "root.b", {"description": "the next", "criteria": [criterion("b_ok", "B")]}, parent_id="root", covers=["g"])
+        e.wait_idle()
+        assert "error" not in str(out)[:40] and {str(k.id) for k in e.graph.get_active_children(root)} == {"root.a", "root.b"}, out
     finally:
         e.stop()
 

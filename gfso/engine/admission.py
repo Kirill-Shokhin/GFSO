@@ -312,13 +312,16 @@ def _refuse_ids_alike(graph: Graph, children: list) -> None:
 def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], covers: Optional[dict] = None, *,
           replace: bool = False, register: Optional[Register] = None, drops: tuple = (), contract=None,
           max_iterations: Optional[int] = None, send, revise=None, reopen_refusal=None,
-          check: bool = True, deps: Optional[dict] = None) -> Split:
+          check: bool = True, deps: Optional[dict] = None, by_the_system: bool = False) -> Split:
     """A split's admission (§11.5) — ONE act for every door: the engine's `decompose_task`, a child created into a
     split, and a host embedding the core with no `Engine`. Whole or nothing: everything the act names is classified
     and every refusal read BEFORE the first write, over the split as it will stand (`Split`); then the writes apply
     that split — the node's contract (`revise`, the issuer's act), its declared E_Dep edges (§15.1), the children's
     ASSIGNs (`send`, the protocol's own signals) producers first, the node's coverage, the drops, the register.
     Assembled once per door, the act was refused after it had written five rounds in a row (critics r5–r10).
+
+    `by_the_system`: its decomposer is the system's, who answers again by its own round (a holder's next child is his next
+    truthful move, §12.16 (ii)), so a split of one part of a node owed its split is refused to it.
 
     `children`: (id, spec, assignee[, deadline]) — created, or re-issued under its id. `deps`: child → the declared
     edges into it, whole (`declared_by`). `covers`: child → criteria; `replace` = those are the node's WHOLE coverage,
@@ -333,6 +336,10 @@ def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], cover
     if contract is not None and contract != parent.spec and revise is None:
         raise ValueError(f"{parent.id}'s contract changes with its split, and only its issuer revises it (§10.1)")
     before = (set(parent.criterion_mappings), parent.register, parent.spec)
+    if by_the_system and len(children) == 1 and split_owed(graph, parent) is not None:
+        one = (f"{parent.id} is judged larger than one session, and a split of one part carries it whole, above κ still "
+               f"(§3.7): admit its parts in one act, each one session's")
+        raise AdmissionRefused(one, (one,))
     defaults = _refuse_before_writing(graph, parent, children, reopen_refusal, drops, register, declared,
                                       contract or parent.spec, carried)
     split = refuse_unless_syntactic(graph, parent, children, covers, register, replace, drops, contract, check,
@@ -391,10 +398,6 @@ def _refuse_before_writing(graph: Graph, parent, children: list[tuple], reopen_r
     deadline still ahead — is not read of it (critic r15: a passed child named with its spent deadline refused the act);
     the edges the act declares into it are read all the same."""
     refuse_what_the_act_cannot_take(graph, parent, children, reopen_refusal or _settled, drops, register)
-    if len(children) == 1 and split_owed(graph, parent) is not None:
-        one = (f"{parent.id} is judged larger than one session, and a split of one part carries it whole, above κ still "
-               f"(§3.7): admit its parts in one act, each one session's")
-        raise AdmissionRefused(one, (one,))
     changed = [c for c in children if not named_unchanged(graph, parent, c)]
     for cid, spec, *_ in changed:
         refuse_a_d_cycle(graph, cid, parent.id)

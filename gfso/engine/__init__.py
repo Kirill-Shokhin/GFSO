@@ -1963,7 +1963,9 @@ class Engine:
 
     def _admit(self, parent_id, children, covers, **act):
         """The engine's hands for the act: its signals, its issuer's revision, its R′ gate, its log."""
+        parent = self._graph.get_task(TaskId(str(parent_id)))
         return _admit(self._graph, self._storage, lambda: len(self._audit), parent_id, children, covers,
+                      by_the_system=parent is not None and AgentId(parent.assignee) in self.workforce.executor_pool(),
                       send=self.send_signal_sync, reopen_refusal=self.reopen_refusal, check=act.pop("check", self._validate),
                       revise=lambda c: self._revise(TaskId(str(parent_id)), c,
                                                     self._graph.issuer_of(TaskId(str(parent_id)))), **act)
