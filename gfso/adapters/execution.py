@@ -1791,6 +1791,10 @@ class Volume:
             if labels.get(HOME) != _home():
                 raise PlaceUnavailable(self.execution, f"the volume {v} is not this installation's making (its labels: {labels or 'none'}): "
                                                        f"nothing runs on it. If it holds nothing of yours, `docker volume rm {v}` lifts this")
+            # …nor another project's: `default` + `ab-w` and `default-ab` + `w` spell one name, and the newcomer's start emptied the other's work, silently (critic, ran)
+            if (theirs := labels.get(PROJECT, self.project)) != self.project:
+                raise PlaceUnavailable(self.execution, f"the volume {v} is the project {theirs}'s, whose execution and name spell the same as this "
+                                                       f"one's: nothing runs on it; name this project or its execution otherwise")
 
     def ready(self, image: str, host: Path, old: Path, places: dict, dirs: list) -> None:
         """Both volumes as the project's record names them, else made now, ONCE. Made: each created with its labels,

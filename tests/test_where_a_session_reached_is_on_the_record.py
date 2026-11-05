@@ -23,6 +23,7 @@ import pytest
 
 from gfso.adapters import children, door, execution as E
 from gfso import config as C, runtime as RT
+from gfso.engine import admission as AD
 from gfso.adapters import worktrees as W
 from gfso.mcp import server as S
 from gfso.adapters import netrecord as N
@@ -329,6 +330,16 @@ def test_an_unlabelled_empty_volume_gives_a_project_its_name_back_and_one_holdin
     assert not E._empty_gone("v") and not [c for c in calls if c[:3] == ["docker", "volume", "rm"]]
 
 
+def test_a_volume_of_another_project_spelled_alike_is_never_this_one_s(monkeypatch):
+    """`default` + `ab-w` and `default-ab` + `w` name one volume: the newcomer's start emptied the other's whole work, silently (critic, ran)."""
+    v = SimpleNamespace(execution="default-ab", project="w", record=(lambda k: None,), name="n", state="s", _roles=lambda: {"places": "n"},
+                        _labels=lambda name: {E.HOME: E._home(), E.PROJECT: "ab-w"})
+    with pytest.raises(PlaceUnavailable, match="the project ab-w's"):
+        E.Volume.require(v, ["type=volume,src=n,dst=/x"])
+    v.project = "ab-w"
+    E.Volume.require(v, ["type=volume,src=n,dst=/x"])
+
+
 def test_a_volume_deleted_is_no_ledger_s_any_more():
     """A new project of the name read it by a mount: Docker made it again unlabelled, and the name was lost for good (critic, ran)."""
     ledger = E.DiskLedger()
@@ -336,6 +347,13 @@ def test_a_volume_deleted_is_no_ledger_s_any_more():
     ledger.put[(("v", "a"), "p")] = (1, 1)
     ledger.forget("v")
     assert list(ledger.base) == [("w", "a")] and not ledger.system and not ledger.put
+
+
+def test_ids_alike_by_case_are_refused_beside_a_finished_one_too():
+    g = SimpleNamespace(all_tasks=lambda: [SimpleNamespace(id="a")])
+    with pytest.raises(ValueError, match="differ only by case"):
+        AD._refuse_ids_alike(g, [("A", None, None)])
+    AD._refuse_ids_alike(g, [("a", None, None), ("b", None, None)])
 
 
 def test_a_project_spelled_otherwise_is_the_project_as_it_was_made(tmp_path):

@@ -471,6 +471,10 @@ class Graph:
         task = self.get_task(task_id)
         return task.assignee if task is not None else None
 
+    def all_tasks(self) -> list[Task]:
+        """Every node, settled or not."""
+        return self._storage.get_all_tasks()
+
     def active_tasks(self) -> list[Task]:
         """Every node not in a terminal state. What "settled" means is the graph's to say, and it says
         it once: two spellings of it disagreed about an ESCALATED child and cost a paid run."""

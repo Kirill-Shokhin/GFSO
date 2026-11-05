@@ -302,7 +302,7 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple], declared
 def _refuse_ids_alike(graph: Graph, children: list) -> None:
     """Two ids a file system's case merges are one node's temp and session on a Windows server: a sibling read another's file with no edge
     between them, and the second's session crashed (critic, ran). Refused before anything stands: the plan is the one to rename."""
-    seen = {str(t.id).casefold(): str(t.id) for t in graph.active_tasks()}
+    seen = {str(t.id).casefold(): str(t.id) for t in graph.all_tasks()}
     for child in children:
         name = str(child[0])
         if seen.setdefault(name.casefold(), name) != name:
