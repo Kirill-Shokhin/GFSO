@@ -535,8 +535,6 @@ def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> set[s
             raise NotTheDelivery(f"the delivery's own store cannot give back what DELIVER recorded ({commit[:12]}): "
                                  f"{err.strip()[-300:]}")
         raise OSError(f"{place} could not pack {commit[:12]}: {err.strip()[-300:]}")
-    if past := W.past_disk(ex, at, commit):
-        raise NotTheDelivery(past)
     if r.returncode == 4 and ended_by_watch(ex):
         raise Uncopied(WATCHED)
     if r.returncode == 4:
@@ -545,6 +543,8 @@ def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> set[s
     if r.returncode:
         raise OSError(f"the copy {at} could not take its delivery {commit[:12]}: {(r.stderr or '').strip()[-300:]}")
     W.lfs_into_copy(W.base_of(str(place)) or str(place), place, at, commit, execution)
+    if past := W.tree_past_place(ex, at, commit, src, place, (at / ".git" / "lfs" / "objects",)):
+        raise NotTheDelivery(past)
     r = ex.run([*end, "checkout", str(at), commit, tree, *W.apart(execution)], cwd=str(at.parent), timeout=1800,
                env=env)
     # …ended past the copy's memory bound, the same each time it is asked: a FAIL that says so (§8.4), not a copy waited

@@ -235,6 +235,11 @@ class _Bucket:
 _UPSTREAM = _Bucket(RATE, BURST)
 
 
+def _declared(length) -> int:
+    """A request's declared length: one that is no number is past the cap, a traceback on the log for each no more (critic, ran)."""
+    return int(length) if str(length or 0).isdecimal() else MAX_BODY + 1
+
+
 def _refusal(keyed: bool, body, n: int) -> int:
     """A refusal's status: 403 for no key alone: a client reads it as its credential refused, and the system marks that spent (critic)."""
     return 403 if not keyed else 413 if body is None and n else 400
@@ -276,7 +281,7 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
         protocol_version, timeout = "HTTP/1.1", WAIT
 
         def _pass(self):
-            n, path = int(self.headers.get("content-length") or 0), self.path.split("?")[0]
+            n, path = _declared(self.headers.get("content-length")), self.path.split("?")[0]
             keyed = self.headers.get(name) == key
             # …the key and the size before the body is read: any container on the bridge, keyless, ran four 400 MB bodies
             # into memory at once and the door was killed, its address free for the next container to take (critic)

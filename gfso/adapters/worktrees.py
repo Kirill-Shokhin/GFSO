@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 
 from gfso.adapters import children, lfs
-from gfso.config import node_disk, subprocess_env
+from gfso.config import subprocess_env
 from gfso.adapters.execution import NODES, READ_REF, ContainerExecution, LocalExecution, fetched_on_host, stored_on_host
 from gfso.core.types import base_named
 
@@ -203,43 +203,58 @@ def kept_out(base, execution=None) -> dict:
             if (b := _fs(execution).files.read_bytes(str(Path(base) / ".git" / "info" / n))) is not None}
 
 
-#: what a tree would lay on disk by what it records, an LFS file at the size its pointer says: bytes, files. Read in the copy's own
-#: container from objects the system holds, as `_CHECKOUT`
-_LAID = r'''
-import re, subprocess, sys
-commit, *apart = sys.argv[1:]
-git = ["git", *apart]
-listed = subprocess.run([*git, "ls-tree", "-r", "-l", "-z", commit], stdout=subprocess.PIPE, check=True).stdout
+#: what a tree would lay on disk by what it records, in KiB, stopping past `limit`: a name's cost beside its bytes, and an LFS file at the
+#: size its pointer says where a store here holds its object (without one it stays a pointer). Streamed: a reading that held the listing
+#: died first on the trees it is for (critic). Read where the tree's objects are the system's
+_LAID = r"""
+import os, re, subprocess, sys
+limit, stores, commit, *apart = sys.argv[1:]
+limit, stores, git = int(limit) * 1024, [s for s in stores.split(os.pathsep) if s], ["git", *apart]
+listing = subprocess.Popen([*git, "ls-tree", "-r", "-l", "-z", commit], stdout=subprocess.PIPE)
 batch = subprocess.Popen([*git, "cat-file", "--batch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-size = files = 0
-for entry in listed.split(b"\0"):
-    meta = entry.split(b"\t")[0].split()
-    if len(meta) < 4:
-        continue
-    files += 1
-    n = int(meta[3]) if meta[3].isdigit() else 0
-    if 0 < n < 256:
-        batch.stdin.write(meta[2] + b"\n")
-        batch.stdin.flush()
-        batch.stdout.readline()
-        said = re.search(rb"^version https://git-lfs\S*\n(?:.*\n)*?size (\d+)", batch.stdout.read(n + 1), re.M)
-        n = int(said[1]) if said else n
-    size += n
-print(size, files)
-'''
+size, rest = 0, b""
+while size <= limit and (chunk := listing.stdout.read(2 ** 16)):
+    *entries, rest = (rest + chunk).split(b"\0")
+    for entry in entries:
+        meta = entry.split(b"\t")[0].split()
+        n = int(meta[3]) if len(meta) > 3 and meta[3].isdigit() else 0
+        if 0 < n < 256:
+            batch.stdin.write(meta[2] + b"\n")
+            batch.stdin.flush()
+            batch.stdout.readline()
+            text = batch.stdout.read(n + 1)
+            oid, said = re.search(rb"oid sha256:(\w{64})", text), re.search(rb"^size (\d+)", text, re.M)
+            if text.startswith(b"version https://git-lfs") and oid and said:
+                o = oid[1].decode()
+                if any(os.path.exists(os.path.join(s, o[:2], o[2:4], o)) for s in stores):
+                    n = int(said[1])
+        size += n + 256
+listing.kill()
+print(size // 1024)
+"""
 
 
-def past_disk(ex, at, commit: str) -> str | None:
-    """Why a commit's tree may not be laid at `at`: past what a node may add (`config.node_disk`). Its own place never held it: one blob
-    under many names, kept from the place's disk by the index, took 2.0 GiB of copy from a 509 KB pack, a system's write and no one's
-    charge, and nothing bounded it but Docker's disk, every project's (critic, ran). An honest tree fits its place's bound."""
-    r = ex.run([ex.python, "-I", "-c", _LAID, commit, *APART], cwd=str(at), timeout=600, env=_env())
-    size, files = ((r.stdout or "").split() + ["", ""])[:2]
-    bytes_, most = node_disk()
-    if r.returncode or not size.isdigit() or not files.isdigit() or (int(size) <= bytes_ and int(files) <= most):
+#: what a tree may lay past what its place holds on disk: its files are charged there, a name costs a little more than the place shows
+LAY_MARGIN_KIB = 2 ** 20
+
+
+def tree_past_place(ex, at, commit: str, holder, place, stores: tuple = ()) -> str | None:
+    """Why a commit's tree may not be laid at `at` from the place `place` read by `holder`: it records more than that place holds on disk.
+    One blob under many names, kept from the place's disk by the index, took 2.0 GiB of copy from a 509 KB pack, a system's write and no
+    one's charge, bounded by nothing but Docker's disk, every project's (critic, ran). Against the place, not a node's bound: that bound
+    is what a node adds, and a whole of accepted parts, or a large repository, lay past it honestly (critic, ran); a tree as large as its
+    place costs what the place already did. Unread is not refused: the checkout says what it finds."""
+    held = holder.run(["du", "-sk", "."], cwd=str(place), timeout=600, env=_env())
+    kib = (held.stdout or "").split()[:1]
+    if not kib or not kib[0].isdigit():
         return None
-    return (f"the tree of {commit[:12]} would lay {size} bytes in {files} files, past what a node may add "
-            f"({bytes_} bytes, {most} files): no copy of it is made")
+    limit = int(kib[0]) + LAY_MARGIN_KIB
+    r = ex.run([ex.python, "-I", "-c", _LAID, str(limit), os.pathsep.join(map(str, stores)), commit, *APART], cwd=str(at), timeout=600, env=_env())
+    laid = (r.stdout or "").strip()
+    if r.returncode or not laid.isdigit() or int(laid) <= limit:
+        return None
+    return (f"the tree of {commit[:12]} would lay over {limit} KiB, past what its place holds on disk ({kib[0]} KiB): "
+            f"it names content its files do not hold, and no copy of it is made; commit files as they stand")
 
 
 def _start(base, place: Path, branch: str, start_from, execution, rev: str = "HEAD") -> None:
@@ -254,7 +269,8 @@ def _start(base, place: Path, branch: str, start_from, execution, rev: str = "HE
         held = git(start_from, "cat-file", "-e", f"{rev}^{{commit}}", execution=execution).returncode == 0
         start = _carry(base, start_from, place, rev if held else "HEAD", execution)
     # …a parent's commit laid here is this place's baseline, charged to no one: the same tree a delivery's copy refuses
-    if past := past_disk(_fs(execution).session(str(place)), place, start):
+    if past := tree_past_place(_fs(execution).session(str(place)), place, start, _fs(execution).session(str(start_from)), start_from,
+                               _stores(base, place) if _lfs_in(execution) else ()):
         raise OSError(f"{place} could not start {branch}: {past}")
     r = git(place, "checkout", "-q", "-B", branch, start, execution=execution)
     if r.returncode != 0:

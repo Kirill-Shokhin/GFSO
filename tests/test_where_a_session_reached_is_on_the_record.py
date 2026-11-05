@@ -307,6 +307,11 @@ def test_a_door_holds_what_has_arrived_of_bodies_and_one_address_at_most_one_of_
     door._Room.now, door._Room.by_address = 0, {}
 
 
+def test_a_length_that_is_no_number_is_past_a_door_s_cap():
+    """Each wrote a traceback on the log, no key asked (critic, ran)."""
+    assert door._declared("abc") > door.MAX_BODY and door._declared("-5") > door.MAX_BODY and door._declared(None) == 0 and door._declared("7") == 7
+
+
 def test_a_door_opens_the_provider_at_its_rate():
     """28 requests a second from one session took host ports past every bound, under every switch, unspent on the model (critic, ran)."""
     now = [0.0]

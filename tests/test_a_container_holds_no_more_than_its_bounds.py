@@ -99,30 +99,32 @@ def _ran_here(argv, cwd=None, timeout=None, env=None):
 
 
 @pytest.mark.skipif(not shutil.which("sh"), reason="no sh here")
-def test_a_delivery_whose_tree_is_past_a_node_s_bound_is_never_laid(tmp_path, monkeypatch):
-    """One blob under many names, kept from the place's disk by the index: 2.0 GiB of copy from a 509 KB pack, charged to no one (critic, ran)."""
+def test_a_tree_past_what_its_place_holds_is_never_laid_and_an_honest_one_always(tmp_path, monkeypatch):
+    """One blob under many names, kept from the place's disk by the index: 2.0 GiB of copy from a 509 KB pack (critic, ran). Not a node's bound:
+    a whole of accepted parts and a repository of LFS pointers with no objects lay past that honestly (critic, ran)."""
     def git(*a, **k):
-        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=tmp_path, capture_output=True, text=True, check=True, **k)
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=tmp_path, capture_output=True, check=True, **k).stdout.decode().strip()
     git("init", "-q")
-    blob = git("hash-object", "-w", "--stdin", input="A" * 1000).stdout.strip()
+    blob = git("hash-object", "-w", "--stdin", input=b"A" * 2 ** 20)
     for i in range(5):
         git("update-index", "--add", "--cacheinfo", f"100644,{blob},f{i}")
     git("commit", "-q", "-m", "c")
-    commit = git("rev-parse", "HEAD").stdout.strip()
     ex = SimpleNamespace(run=_ran_here, python=sys.executable)
-    monkeypatch.setattr(W, "node_disk", lambda: (4999, 100))
-    assert "5000 bytes in 5 files" in W.past_disk(ex, tmp_path, commit), "its names, not its pack"
-    monkeypatch.setattr(W, "node_disk", lambda: (5000, 100))
-    assert W.past_disk(ex, tmp_path, commit) is None
-    monkeypatch.setattr(W, "node_disk", lambda: (5000, 4))
-    assert "past what a node may add" in W.past_disk(ex, tmp_path, commit)
-    assert W.past_disk(ex, tmp_path, "0" * 40) is None, "unread is not refused: the checkout says what it finds"
-    pointer = f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 900000\n"
-    named = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=tmp_path, input=pointer.encode(), capture_output=True, check=True).stdout.decode().strip()
-    git("update-index", "--add", "--cacheinfo", f"100644,{named},big")
+    past = lambda stores=(): W.tree_past_place(ex, tmp_path, git("rev-parse", "HEAD"), ex, tmp_path, stores)
+    monkeypatch.setattr(W, "LAY_MARGIN_KIB", 0)
+    assert "past what its place holds" in past(), "its names, not its pack"
+    monkeypatch.setattr(W, "LAY_MARGIN_KIB", 8192)
+    assert past() is None, "within what its place holds and the margin"
+    assert W.tree_past_place(ex, tmp_path, "0" * 40, ex, tmp_path) is None, "unread is not refused: the checkout says what it finds"
+    oid = "ab" * 32
+    pointer = f"version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize 90000000\n".encode()
+    git("update-index", "--add", "--cacheinfo", f"100644,{git('hash-object', '-w', '--stdin', input=pointer)},big")
     git("commit", "-q", "-m", "lfs")
-    monkeypatch.setattr(W, "node_disk", lambda: (100000, 100))
-    assert "905000 bytes" in W.past_disk(ex, tmp_path, git("rev-parse", "HEAD").stdout.strip()), "an LFS file at the size its pointer says"
+    store = tmp_path / "store"
+    assert past((store,)) is None, "no object: it stays a pointer, whatever it names"
+    (store / oid[:2] / oid[2:4]).mkdir(parents=True)
+    (store / oid[:2] / oid[2:4] / oid).write_bytes(b"x")
+    assert "past what its place holds" in past((store,)), "an LFS file at the size its pointer says, where it would be written"
 
 
 @pytest.mark.parametrize("rc, said", [(6, "rewritten"), (1, "Errno 6"), (137, "memory bound")])

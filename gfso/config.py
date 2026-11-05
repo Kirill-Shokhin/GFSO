@@ -378,6 +378,10 @@ def memory_ceiling(total: int) -> int:
     return int(total * CEILING_SHARE)
 
 
+#: what a container prints: Docker's log lies past every directory the disk bound reads, and a process of its own writes it (critic, ran)
+CONTAINER_LOG = ("--log-driver", "json-file", "--log-opt", "max-size=20m", "--log-opt", "max-file=1")
+
+
 def container_limits() -> list[str]:
     """`docker run`'s bounds on every container the system makes for a project, a session, a judge's batch, a check or
     its own copy — `GFSO_CONTAINER_MEMORY` (default 4g, no swap past it) and `GFSO_CONTAINER_PIDS` (default 4096).
@@ -391,8 +395,7 @@ def container_limits() -> list[str]:
     except ValueError:
         pids = CONTAINER_PIDS
     pids = pids if pids >= 64 else CONTAINER_PIDS        # …0 and -1 are Docker's "unbounded"
-    # …and what it prints: Docker's log of a container lies past every directory the disk bound reads, and a process of its own writes it (critic, ran)
-    return ["--memory", mem, "--memory-swap", mem, "--pids-limit", str(pids), "--log-driver", "json-file", "--log-opt", "max-size=20m", "--log-opt", "max-file=1"]
+    return ["--memory", mem, "--memory-swap", mem, "--pids-limit", str(pids), *CONTAINER_LOG]
 
 
 def validator_retry_model() -> str | None:

@@ -30,7 +30,7 @@ from pathlib import Path
 
 from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, WORK_PATH, ExecutionPort,
                              FilesPort, PlaceUnavailable, base_named, nodes_dir, place_name)
-from gfso.config import (DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
+from gfso.config import (CONTAINER_LOG, DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
                          memory_ceiling, network_record_off, new_flows, HELD_FLOWS, node_disk, executions, executions_path, host_env, subprocess_env)
 from gfso.adapters import door, egress, lfs, shell
 from gfso.adapters.records import append, said_of
@@ -917,7 +917,7 @@ def _system_run(name: str, image: str, flags: list, script: Path, args: list, mi
     (`container_limits`)."""
     if not {"--memory", "--pids-limit"} <= set(flags):
         raise ValueError(f"{name}: a system container starts bounded in memory and processes")
-    run(["docker", "run", "-d", "--init", "--name", name, *flags, *ceiling(), "--label", f"gfso.log={mirror}",
+    run(["docker", "run", "-d", "--init", "--name", name, *flags, *CONTAINER_LOG, *ceiling(), "--label", f"gfso.log={mirror}",
          "--tmpfs", f"{OWN}:size={3 * door.LOG_CAP // 2 ** 20}m,mode={mode}", image,
          "/bin/sh", "-c", f'export PATH={SYSTEM_PATH}:$PATH; until [ -f {OWN}/run.py ]; do sleep 0.1; done; exec python3 {OWN}/run.py "$@"', "sh", *args],
         timeout=120).check_returncode()
