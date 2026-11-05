@@ -330,6 +330,13 @@ def test_an_unlabelled_empty_volume_gives_a_project_its_name_back_and_one_holdin
     assert not E._empty_gone("v") and not [c for c in calls if c[:3] == ["docker", "volume", "rm"]]
 
 
+def test_two_pairs_that_spell_alike_have_two_stacks_and_a_plain_one_keeps_its_name():
+    assert E.container_name("default", "off-api") == E.container_name("default-off", "api"), "what the case is"
+    assert E._stack_name("default", "off-api") != E._stack_name("default-off", "api")
+    assert E._stack_name("Off", "a") != E._stack_name("off", "a")
+    assert E._stack_name("default", "p") == E.container_name("default", "p"), "an installation's own default: its containers keep their names"
+
+
 def test_a_volume_of_another_project_spelled_alike_is_never_this_one_s(monkeypatch):
     """`default` + `ab-w` and `default-ab` + `w` name one volume: the newcomer's start emptied the other's whole work, silently (critic, ran)."""
     v = SimpleNamespace(execution="default-ab", project="w", record=(lambda k: None,), name="n", state="s", _roles=lambda: {"places": "n"},

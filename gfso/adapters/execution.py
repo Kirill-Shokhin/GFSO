@@ -1792,7 +1792,7 @@ class Volume:
                 raise PlaceUnavailable(self.execution, f"the volume {v} is not this installation's making (its labels: {labels or 'none'}): "
                                                        f"nothing runs on it. If it holds nothing of yours, `docker volume rm {v}` lifts this")
             # …nor another project's: `default` + `ab-w` and `default-ab` + `w` spell one name, and the newcomer's start emptied the other's work, silently (critic, ran)
-            if (theirs := labels.get(PROJECT, self.project)) != self.project:
+            if (theirs := labels.get(PROJECT, self.project)).casefold() != self.project.casefold():
                 raise PlaceUnavailable(self.execution, f"the volume {v} is the project {theirs}'s, whose execution and name spell the same as this "
                                                        f"one's: nothing runs on it; name this project or its execution otherwise")
 
@@ -2315,6 +2315,15 @@ def container_name(execution: str, project: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "-", f"gfso-{execution}-{project}").lower()
 
 
+def _stack_name(execution: str, project: str) -> str:
+    """What every container, network, door and switch of a project is keyed by, one pair one name. `default` + `off-api` and `default-off` + `api`
+    spelled one: the one's start turned the other's closed switch open and it reached the internet, silently, and each start or stop ended the other's
+    work (critic, ran). Two pairs can spell alike only where an execution's name holds a hyphen or case to lose: such a one takes a digest. Its volumes
+    keep their stem, whose own label refuses another project's (`Volume.require`)."""
+    plain = re.fullmatch(r"[a-z0-9_.]+", execution)
+    return container_name(execution, project) + ("" if plain else f"-{hashlib.sha256(f'{execution}/{project}'.encode()).hexdigest()[:6]}")
+
+
 def _home(data: Path | None = None) -> str:
     """This installation's state home — or the one whose state directory is `data` —, as a volume's label names it: two
     servers on one machine delete theirs alone."""
@@ -2419,7 +2428,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
                              f"provider's, set by `gfso credential <provider>`, never the container's")
         self.name, self.image, self.env_file = name, image, env_file
         # …and this installation's: by name alone a second one removed a first's running container and its network
-        self.container = f"{container_name(name, project)}-{_home()}"
+        self.container = f"{_stack_name(name, project)}-{_home()}"
         b, self.project_name = self.base.name, component(project or DEFAULT_PROJECT)
         self.way = WayOut(self.container, name, image, Path(state), self.project_name)
         # …one per container, whichever object of it asks: two roles' objects kept a door each, and a switch one turned
