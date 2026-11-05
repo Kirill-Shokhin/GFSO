@@ -1842,15 +1842,15 @@ _USERS_DISPUTE = ("{0}'s dispute asks to rule {1} outside the user's goal, and u
                   "made; the user's door to it stays open.")
 
 
-def _challenge_answered_by_split(engine, task, issuer_id: str, answer: dict) -> dict:
-    """A report that its work is more than a session: the true answer no rejection is, and it needs no contact. The
-    challenge is closed by the protocol's one exit keeping the contract, its split then owed."""
-    if refused := _owe_the_split(engine, task, str(engine.challenge_reason(task.id) or "")):
+def _challenge_closed_keeping_the_contract(engine, task, issuer_id: str, answer: dict, split: bool) -> dict:
+    """The protocol's one exit of a dispute keeping the contract (§12.4): a rejection, or, on a report that the work is more
+    than a session, its split owed: the true answer no rejection is, its parts then carrying this contract."""
+    if split and (refused := _owe_the_split(engine, task, str(engine.challenge_reason(task.id) or ""))):
         return {"task_id": str(task.id), "status": "refused", "why": refused}
-    ok, why = _signalled(engine, task.id, Signal.REJECT_CHALLENGE, issuer_id, justification=str(
-        answer.get("justification") or "") or "the report stands: its split is owed, and its parts carry this contract")
-    engine.emit_info("issuer", f"{task.id}: its split owed on its executor's report, by {issuer_id}"
-                               + ("" if ok else f" — REFUSED: {why}"))
+    ok, why = _signalled(engine, task.id, Signal.REJECT_CHALLENGE, issuer_id, justification=str(answer.get("justification", "")) or (
+        "the report stands: its split is owed" if split else "the contract stands"))
+    engine.emit_info("issuer", f"{task.id}: " + (f"its split owed on its executor's report, by {issuer_id}" + ("" if ok else f" — REFUSED: {why}")
+                                                 if split else f"dispute {'REJECTED' if ok else 'reject REFUSED'} by {issuer_id}"))
     return {"task_id": str(task.id), "status": "rejected" if ok else "refused", "why": why}
 
 
@@ -1872,9 +1872,7 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
     said = findings.named(engine.challenge_reason(task_id) or "", [s for ps in engine.regression_probes(task_id).values()
                                                                     for p in ps if (s := p.get("id"))])
     retire = [i for i in retire if i in said]
-    if decision == "split":
-        return _challenge_answered_by_split(engine, task, issuer_id, answer)
-    if answer is None or decision not in ("accept", "reject"):
+    if answer is None or decision not in ("accept", "reject", "split"):
         # an acceptance names the contract it installs; falling through to a rejection would send the
         # executor back carrying a justification written to mean the issuer AGREED with him
         _cb(f"{task_id}: the issuer's adjudication decided nothing — the dispute stands")
@@ -1887,11 +1885,8 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
                 "why": f"the {'rejection' if decision == 'reject' else 'ruling on the findings'} ran nothing: run the "
                        f"disputed checks in the workspace and decide on what they show, quoting each command and its "
                        f"output"}
-    if decision == "reject":
-        ok, why = _signalled(engine, task_id, Signal.REJECT_CHALLENGE, issuer_id,
-                             justification=str(answer.get("justification", "")) or "the contract stands")
-        engine.emit_info("issuer", f"{task_id}: dispute {'REJECTED' if ok else 'reject REFUSED'} by {issuer_id}")
-        return {"task_id": str(task_id), "status": "rejected" if ok else "refused", "why": why}
+    if decision in ("reject", "split"):
+        return _challenge_closed_keeping_the_contract(engine, task, issuer_id, answer, decision == "split")
     # …AND A PLAN HANDED IN IS CLOSED AT EVERY DEPTH: ruled below its root the finding went and the check stayed, a loop;
     # the run stops with the signal instead (`settle`)
     if retire and engine.users_plan():
