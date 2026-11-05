@@ -73,7 +73,7 @@ def test_a_request_without_the_doors_key_is_refused_and_said(served):
 def test_under_a_closed_switch_the_door_passes_the_model_alone(served, path, body, method):
     """No way out of its own: a server tool would fetch for the session what the switch shuts (critic over the door)."""
     s, log = served(True)
-    assert _ask(s, path, body=body, method=method) == 403
+    assert _ask(s, path, body=body, method=method) == 400, "keyed: 403 would read as its credential refused"
     assert "refused: " in log.read_text(encoding="utf-8")
     s.shutdown()
 
@@ -106,7 +106,7 @@ def test_under_every_switch_the_door_passes_the_models_messages_alone(served):
     """The credential opens the whole account — its files, batches, profile; the door, its model (critic over the door
     v3)."""
     s, log = served(False)
-    assert _ask(s, "/v1/files", method="GET") == 403 and _ask(s, "/api/oauth/profile", method="GET") == 403
+    assert _ask(s, "/v1/files", method="GET") == 400 and _ask(s, "/api/oauth/profile", method="GET") == 400
     assert "refused: not the model's messages" in log.read_text(encoding="utf-8")
     s.shutdown()
 
@@ -136,7 +136,7 @@ def test_a_door_reads_no_body_before_its_key_nor_past_its_cap(served, monkeypatc
     real = D.model_alone
     monkeypatch.setattr(D, "model_alone", lambda b: read.append(b) or real(b))
     s, log = served(True)
-    assert _ask(s, key="other", body=b"x" * 1000) == 403 and _ask(s, body=b"{" + b" " * 100 + b"}") == 403
+    assert _ask(s, key="other", body=b"x" * 1000) == 403 and _ask(s, body=b"{" + b" " * 100 + b"}") == 413
     assert read == []
     text = log.read_text(encoding="utf-8")
     assert "refused: not this door's key" in text and "refused: the body is over its cap" in text

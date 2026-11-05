@@ -16,6 +16,7 @@ the session's reach, written as it happens — a passed one when its answer star
 written, so a flood of them cannot erase or crowd out what was passed, while every passed request still is. Stdlib
 only — it runs on the execution's own image, which must have `python3`."""
 import contextlib
+import ctypes
 import http.client
 import json
 import os
@@ -30,6 +31,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 with contextlib.suppress(ImportError):      # …POSIX's: the door runs in a container, its tests may not
     import resource
+_TRIM = int                                 # …glibc's where it is: what a large body left in the heap goes back to the system
+with contextlib.suppress(OSError, TypeError, AttributeError):
+    _TRIM = ctypes.CDLL(None).malloc_trim
 
 #: where the system lays the credential for the door to read once (a tmpfs of the door's container)
 RUN = "/gfso-door-run"
@@ -57,9 +61,10 @@ PER_CLIENT = 16
 FULL = "refused: past its share of connections"
 #: the largest request body a door reads — the provider's own cap on a messages request
 MAX_BODY = 32 * 2 ** 20
-#: the address space a door may take, under its container's 256 MiB (`_SMALL`), and a thread's stack in it
-#: (and room beside it for its 20 MiB log, which its memory-backed disk counts)
-MEMORY, STACK, READER_STACK = 224 * 2 ** 20, 2 ** 19, 16 * 2 ** 20
+#: the address space a door may take, under its container's `execution.DOOR_MEMORY_MB` and room for its 20 MiB log beside it: the bodies
+#: (`BODIES`), one parsed: a character past the BMP makes all its text 4 bytes each, decoded, and a client's own attribution holds one,
+#: so one of the largest costs about 300 MiB; at 224 a session reading images died at 8.8 MiB (critic, a real client)
+MEMORY, STACK, READER_STACK = 600 * 2 ** 20, 2 ** 19, 16 * 2 ** 20
 #: the bodies a door holds at once, what has arrived of them: a heap grown to its bound stays there, and threads for others no
 #: longer start (critic, ran); one address holds at most one of the largest, so two trickling ones left a project no model (critic, ran)
 BODIES = 3 * MAX_BODY
@@ -199,12 +204,14 @@ class _Room:
         return b"".join(got)
 
     def free(self) -> None:
-        """All it holds, back."""
+        """All it holds, back, and the heap's room with it where it held much: a door kept 181 MiB for ten minutes after a client (critic)."""
         with self.lock:
             _Room.now -= self.held
             self.by_address[self.address] = self.by_address.get(self.address, 0) - self.held
             if self.by_address[self.address] <= 0:
                 del self.by_address[self.address]
+        if self.held > 2 ** 20:
+            _TRIM(0)
         self.held = 0
 
 
@@ -226,6 +233,11 @@ class _Bucket:
 
 
 _UPSTREAM = _Bucket(RATE, BURST)
+
+
+def _refusal(keyed: bool, body, n: int) -> int:
+    """A refusal's status: 403 for no key alone: a client reads it as its credential refused, and the system marks that spent (critic)."""
+    return 403 if not keyed else 413 if body is None and n else 400
 
 
 def _within_memory(h, log: str, answer) -> None:
@@ -278,7 +290,7 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
                 if status:
                     _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {status}")
                     status = "said"
-                    return self.send_error(403)
+                    return self.send_error(_refusal(keyed, body, n))
                 if not _UPSTREAM.take():
                     _say(log, f"{self.client_address[0]} {self.command} {path[:200]} refused: past the door's rate")
                     status = "said"
@@ -287,7 +299,7 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
                 headers[name] = value_of.format(cred["value"])
                 up = http.client.HTTPSConnection(upstream, 443, context=tls, timeout=600)
                 up.request(self.command, self.path, body=body, headers=headers)
-                room.free()
+                body = room.free()      # …the room and the memory back as it is sent on, not at the answer's end (critic, ran)
                 r = up.getresponse()
                 # …written as the answer starts: a door ended mid-stream still leaves the passed request on record
                 _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {r.status}", passed=True)

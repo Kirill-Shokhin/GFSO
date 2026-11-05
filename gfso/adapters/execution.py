@@ -253,6 +253,8 @@ def _unavailable(ex, storage: bool):
 
 #: the bounds of a door or a gateway: a few small processes of the system's own, no swap past them
 _SMALL = ("--memory", "256m", "--memory-swap", "256m", "--pids-limit", "256")
+#: …a door's, whose memory bounds what it reads (`door.MEMORY`); a limit, nothing is held until a large body comes
+DOOR_MEMORY_MB = 640
 
 #: the one cgroup of Docker's VM every installation's containers stand in, its memory the machine's ceiling (`ceiling`)
 CEILING_GROUP = "gfso"
@@ -1490,7 +1492,8 @@ class Door:
         _DOORS.add(name)                      # …before it runs: a start cut after this still ends with the server
         _system_run(name, self.way.image, [
             *labelled(self.way.name, self.way.project), *grouped(self.way.container, "door"),
-            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", *_SMALL,
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+            "--memory", f"{DOOR_MEMORY_MB}m", "--memory-swap", f"{DOOR_MEMORY_MB}m", "--pids-limit", "256",
             "--sysctl", "net.ipv4.ip_forward=0", "--tmpfs", f"{door.RUN}:size=64k,mode=1777",
             "-e", "MALLOC_ARENA_MAX=1",           # …each thread's arena reserves address space, and the door's is bounded: `door.main`
             *(["--network", self.way.net, "--network-alias", name] if closed else [])],
