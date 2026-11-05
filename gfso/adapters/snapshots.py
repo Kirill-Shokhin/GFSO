@@ -543,7 +543,8 @@ def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> set[s
     if r.returncode:
         raise OSError(f"the copy {at} could not take its delivery {commit[:12]}: {(r.stderr or '').strip()[-300:]}")
     W.lfs_into_copy(W.base_of(str(place)) or str(place), place, at, commit, execution)
-    if past := W.tree_past_place(ex, at, commit, src, place, (at / ".git" / "lfs" / "objects",)):
+    root = W.base_of(str(place)) or str(place)
+    if past := W.tree_past_place(ex, at, commit, src, place, (execution.session(root), root), (at / ".git" / "lfs" / "objects",)):
         raise NotTheDelivery(past)
     r = ex.run([*end, "checkout", str(at), commit, tree, *W.apart(execution)], cwd=str(at.parent), timeout=1800,
                env=env)

@@ -209,7 +209,7 @@ def kept_out(base, execution=None) -> dict:
 _LAID = r"""
 import os, re, subprocess, sys
 limit, stores, commit, *apart = sys.argv[1:]
-limit, stores, git = int(limit) * 1024, [s for s in stores.split(os.pathsep) if s], ["git", *apart]
+limit, stores, git = int(limit) * 1024, [s for s in stores.split("\n") if s], ["git", *apart]
 listing = subprocess.Popen([*git, "ls-tree", "-r", "-l", "-z", commit], stdout=subprocess.PIPE)
 batch = subprocess.Popen([*git, "cat-file", "--batch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 size, rest = 0, b""
@@ -218,7 +218,7 @@ while size <= limit and (chunk := listing.stdout.read(2 ** 16)):
     for entry in entries:
         meta = entry.split(b"\t")[0].split()
         n = int(meta[3]) if len(meta) > 3 and meta[3].isdigit() else 0
-        if 0 < n < 256:
+        if 0 < n <= 1024:              # …as far as LFS reads a pointer: padded past a shorter reading, twelve names of one object passed (critic, ran)
             batch.stdin.write(meta[2] + b"\n")
             batch.stdin.flush()
             batch.stdout.readline()
@@ -238,21 +238,34 @@ print(size // 1024)
 LAY_MARGIN_KIB = 2 ** 20
 
 
-def tree_past_place(ex, at, commit: str, holder, place, stores: tuple = ()) -> str | None:
+def _laid_kib(ex, at, commit: str, limit: int, stores) -> int | None:
+    """What `commit`'s tree lays by `_LAID`, up to `limit` and a little past it; None unread."""
+    r = ex.run([ex.python, "-I", "-c", _LAID, str(limit), "\n".join(map(str, stores)), commit, *APART], cwd=str(at), timeout=600, env=_env())
+    laid = (r.stdout or "").strip()
+    return int(laid) if not r.returncode and laid.isdigit() else None
+
+
+def tree_past_place(ex, at, commit: str, holder, place, base: tuple | None = None, stores: tuple = ()) -> str | None:
     """Why a commit's tree may not be laid at `at` from the place `place` read by `holder`: it records more than that place holds on disk.
     One blob under many names, kept from the place's disk by the index, took 2.0 GiB of copy from a 509 KB pack, a system's write and no
     one's charge, bounded by nothing but Docker's disk, every project's (critic, ran). Against the place, not a node's bound: that bound
     is what a node adds, and a whole of accepted parts, or a large repository, lay past it honestly (critic, ran); a tree as large as its
-    place costs what the place already did. Unread is not refused: the checkout says what it finds."""
+    place costs what the place already did, and what the user's own imported commit `base` (its session, its path) records is credited, no agent
+    writing it: a file git lays with holes reads little in `du`, and a part may have removed from the whole what a sibling's ground still holds
+    (critic, ran). NOT HELD: a large file a part made and a sibling then removed parks that sibling. Unread is not refused: the checkout says."""
     held = holder.run(["du", "-sk", "."], cwd=str(place), timeout=600, env=_env())
     kib = (held.stdout or "").split()[:1]
     if not kib or not kib[0].isdigit():
         return None
     limit = int(kib[0]) + LAY_MARGIN_KIB
-    r = ex.run([ex.python, "-I", "-c", _LAID, str(limit), os.pathsep.join(map(str, stores)), commit, *APART], cwd=str(at), timeout=600, env=_env())
-    laid = (r.stdout or "").strip()
-    if r.returncode or not laid.isdigit() or int(laid) <= limit:
+    laid = _laid_kib(ex, at, commit, limit, stores)
+    if laid is None or laid <= limit:
         return None
+    if base and (credit := _laid_kib(base[0], base[1], "HEAD", 2 ** 50, ())):
+        limit += credit
+        laid = _laid_kib(ex, at, commit, limit, stores)
+        if laid is None or laid <= limit:
+            return None
     return (f"the tree of {commit[:12]} would lay over {limit} KiB, past what its place holds on disk ({kib[0]} KiB): "
             f"it names content its files do not hold, and no copy of it is made; commit files as they stand")
 
@@ -270,7 +283,7 @@ def _start(base, place: Path, branch: str, start_from, execution, rev: str = "HE
         start = _carry(base, start_from, place, rev if held else "HEAD", execution)
     # …a parent's commit laid here is this place's baseline, charged to no one: the same tree a delivery's copy refuses
     if past := tree_past_place(_fs(execution).session(str(place)), place, start, _fs(execution).session(str(start_from)), start_from,
-                               _stores(base, place) if _lfs_in(execution) else ()):
+                               (_fs(execution).session(str(base)), base), _stores(base, place) if _lfs_in(execution) else ()):
         raise OSError(f"{place} could not start {branch}: {past}")
     r = git(place, "checkout", "-q", "-B", branch, start, execution=execution)
     if r.returncode != 0:

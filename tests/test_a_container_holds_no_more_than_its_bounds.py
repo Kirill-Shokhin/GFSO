@@ -110,9 +110,10 @@ def test_a_tree_past_what_its_place_holds_is_never_laid_and_an_honest_one_always
         git("update-index", "--add", "--cacheinfo", f"100644,{blob},f{i}")
     git("commit", "-q", "-m", "c")
     ex = SimpleNamespace(run=_ran_here, python=sys.executable)
-    past = lambda stores=(): W.tree_past_place(ex, tmp_path, git("rev-parse", "HEAD"), ex, tmp_path, stores)
+    past = lambda stores=(), base=None: W.tree_past_place(ex, tmp_path, git("rev-parse", "HEAD"), ex, tmp_path, base, stores)
     monkeypatch.setattr(W, "LAY_MARGIN_KIB", 0)
     assert "past what its place holds" in past(), "its names, not its pack"
+    assert past(base=(ex, tmp_path)) is None, "what the user's own commit records is credited: holes, or a part's removal, lay no more than it"
     monkeypatch.setattr(W, "LAY_MARGIN_KIB", 8192)
     assert past() is None, "within what its place holds and the margin"
     assert W.tree_past_place(ex, tmp_path, "0" * 40, ex, tmp_path) is None, "unread is not refused: the checkout says what it finds"
@@ -124,7 +125,11 @@ def test_a_tree_past_what_its_place_holds_is_never_laid_and_an_honest_one_always
     assert past((store,)) is None, "no object: it stays a pointer, whatever it names"
     (store / oid[:2] / oid[2:4]).mkdir(parents=True)
     (store / oid[:2] / oid[2:4] / oid).write_bytes(b"x")
-    assert "past what its place holds" in past((store,)), "an LFS file at the size its pointer says, where it would be written"
+    assert "past what its place holds" in past((store, tmp_path / "other")), "an LFS file at the size its pointer says, where it would be written"
+    padded = pointer + b"ext-0-x sha256:" + b"0" * 500 + b"\n"
+    git("update-index", "--add", "--cacheinfo", f"100644,{git('hash-object', '-w', '--stdin', input=padded)},big")
+    git("commit", "-q", "-m", "padded")
+    assert "past what its place holds" in past((store,)), "padded past a shorter reading, it stays a pointer LFS reads"
 
 
 @pytest.mark.parametrize("rc, said", [(6, "rewritten"), (1, "Errno 6"), (137, "memory bound")])
