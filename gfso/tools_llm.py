@@ -28,7 +28,7 @@ from typing import Optional, Union
 
 from gfso import runtime
 from gfso.llm import llm_factory
-from gfso.workspaces import declaring_role, execution_of
+from gfso.workspaces import declaring_role, execution_of, validation_execution
 from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snapshot, swap
 from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, left_out,
                                      scratch_of)
@@ -1464,7 +1464,7 @@ def validate_scope(engine: Engine, top_id: str, workdir: Optional[str], validato
             if k is not None:
                 engine.claims.end_validation(k)
         return {"task_id": str(top_id), "verdicts": {}, "inflight": bool(nodes)}
-    llm = _llm or llm_factory(model, execution=execution_of(engine))
+    llm = _llm or llm_factory(model, execution=validation_execution(engine))
     try:
         llm.on_tick = _cb = emit_cb(engine, "validate_result")
         llm.stage_hint = f"{top_id} scope-validator({validator or 'standalone'})"

@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from gfso.config import MODEL_DEFAULT, agents_path, executions
+from gfso.config import MODEL_DEFAULT, agents_path, executions, project_made
 from gfso.places import cheap_to_ask, disk_place, same_place, text_place
 
 
@@ -225,6 +225,11 @@ class AgentRegistry:
             workdir = os.path.abspath(workdir)
         with self._lock:
             self._reread()            # …whatever anyone else wrote since we last looked (see _write)
+            # …a role's name is the installation's: taken here, another project lost its execution with no word, and the session it was starting
+            # ran on the host (critic, ran). A project deleted holds no role
+            held = (self._agents.get(agent_id) or {}).get("project")
+            if held and project and held != project and project_made(held):
+                raise ValueError(f"the role {agent_id!r} belongs to project {held!r}: name this project's roles otherwise, as `{project}-exec`")
             self._agents[agent_id] = {"kind": kind, "model": model, "workdir": workdir,
                                       "validator": validator}
             if project:

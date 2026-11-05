@@ -2318,9 +2318,9 @@ def container_name(execution: str, project: str) -> str:
 def _stack_name(execution: str, project: str) -> str:
     """What every container, network, door and switch of a project is keyed by, one pair one name. `default` + `off-api` and `default-off` + `api`
     spelled one: the one's start turned the other's closed switch open and it reached the internet, silently, and each start or stop ended the other's
-    work (critic, ran). Two pairs can spell alike only where an execution's name holds a hyphen or case to lose: such a one takes a digest. Its volumes
+    work (critic, ran). Two pairs can spell alike only where an execution's name holds a hyphen, a dot or case to lose: such a one takes a digest. Its volumes
     keep their stem, whose own label refuses another project's (`Volume.require`)."""
-    plain = re.fullmatch(r"[a-z0-9_.]+", execution)
+    plain = re.fullmatch(r"[a-z0-9_]+", execution)
     return container_name(execution, project) + ("" if plain else f"-{hashlib.sha256(f'{execution}/{project}'.encode()).hexdigest()[:6]}")
 
 

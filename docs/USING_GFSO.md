@@ -170,9 +170,9 @@ parallel, gates each start on its producers, wraps every report into the protoco
 delivery:
 
 ```
-register_agent("exec-1", "llm-executor", workdir="<project dir>", max_turns=50)
-register_agent("val-1",  "llm-validator", workdir="<a scratch dir>")
-reassign("parser", "exec-1")      # …and then just watch the graph
+register_agent("<project>-exec", "llm-executor", workdir="<project dir>", max_turns=50)
+register_agent("<project>-val",  "llm-validator", workdir="<a scratch dir>")
+reassign("parser", "<project>-exec")      # …and then just watch the graph
 ```
 
 Those executors work with nobody watching their commands, so they run in a container. `gfso setup`
@@ -185,7 +185,7 @@ round stops the project with that cause, nothing of the node run. A validator
 judging work you do in your own chat runs on your machine either way.
 
 The roster is the server's, shared by every session on it, so take your roles off when you are done:
-`unregister_agent("exec-1", workdir="<project dir>")` removes the role only while it still points at
+`unregister_agent("<project>-exec", workdir="<project dir>")` removes the role only while it still points at
 that directory (without `workdir` it removes it unconditionally, and refuses a role another project
 registered — a guard against accidents, not an owner check; a role registered with no project can be
 removed by anyone). The answer lists your live nodes the role was carrying or had issued.
@@ -448,7 +448,7 @@ work in it, changing it takes your own words as `user_said`.
 
 ### Which model runs a role, and on whose account
 
-Each role names its model as `provider/model` — `register_agent("exec-1", "llm-executor", model="ollama/qwen3:32b")`;
+Each role names its model as `provider/model` — `register_agent("<project>-exec", "llm-executor", model="ollama/qwen3:32b")`;
 a bare model name is Claude's, through the Claude Code CLI. `gfso provider-check <spec>` says which roles a
 provider can hold. A provider's credentials live in one place: `gfso credential claude --kind token` (or
 `--kind api`) reads the value from stdin and never prints it; a provider holds several named ones (`--name`),

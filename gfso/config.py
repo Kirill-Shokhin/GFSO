@@ -36,6 +36,11 @@ def home() -> Path:
     return ROOT if (ROOT / "pyproject.toml").exists() else Path.home() / ".gfso"
 
 
+def project_made(name: str) -> bool:
+    """Does the project `name` stand in this installation's state?"""
+    return (data_dir() / f"{name}.db").is_file()
+
+
 def data_dir() -> Path:
     """THE state directory: `GFSO_DATA_DIR` if set, else `data/` under the home."""
     return Path(os.environ.get("GFSO_DATA_DIR") or (home() / "data"))

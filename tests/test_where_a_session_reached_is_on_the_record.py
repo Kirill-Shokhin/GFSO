@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from gfso.adapters import children, door, execution as E
-from gfso import config as C, runtime as RT
+from gfso import config as C, roster as RO, runtime as RT, workspaces as WS
 from gfso.engine import admission as AD
 from gfso.adapters import worktrees as W
 from gfso.mcp import server as S
@@ -335,6 +335,32 @@ def test_two_pairs_that_spell_alike_have_two_stacks_and_a_plain_one_keeps_its_na
     assert E._stack_name("default", "off-api") != E._stack_name("default-off", "api")
     assert E._stack_name("Off", "a") != E._stack_name("off", "a")
     assert E._stack_name("default", "p") == E.container_name("default", "p"), "an installation's own default: its containers keep their names"
+
+
+def test_a_session_is_held_to_the_gate_at_the_reading_that_binds_it(monkeypatch):
+    """The roster read again after the gate moved a session of a container project onto the host, under `off` (critic, ran)."""
+    monkeypatch.setattr(WS, "execution_of", lambda e, a=None: SimpleNamespace(agents_refused=lambda: "no word here"))
+    monkeypatch.setattr(WS, "llm_factory", lambda *a, **k: pytest.fail("a model bound past the gate"))
+    with pytest.raises(PlaceUnavailable, match="no word here"):
+        WS.project_llm(None, "m")
+    monkeypatch.setattr(WS, "execution_of", lambda e, a=None: E.LocalExecution())
+    held = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: "v" if k == E.VOLUME + "places" else None))
+    with pytest.raises(PlaceUnavailable, match="stand in volumes"):
+        WS.validation_execution(held)
+    free = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None))
+    assert isinstance(WS.validation_execution(free), E.LocalExecution), "work in chat validates on the host, as it did"
+
+
+def test_a_role_another_project_holds_is_not_taken(data, tmp_path):
+    C.data_dir().mkdir(parents=True, exist_ok=True)
+    (C.data_dir() / "p1.db").write_bytes(b"")
+    r = RO.AgentRegistry()
+    r.register("exec", "llm-executor", workdir=str(tmp_path), project="p1")
+    with pytest.raises(ValueError, match="belongs to project 'p1'"):
+        r.register("exec", "llm-executor", workdir=str(tmp_path), project="q1")
+    r.register("exec", "llm-executor", workdir=str(tmp_path), project="p1")
+    (C.data_dir() / "p1.db").unlink()
+    r.register("exec", "llm-executor", workdir=str(tmp_path), project="q1")
 
 
 def test_a_volume_of_another_project_spelled_alike_is_never_this_one_s(monkeypatch):

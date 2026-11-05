@@ -17,7 +17,7 @@ from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task, grounds_key, root_of
-from gfso.core.types import HOST, MADE, NODES, VOLUME, Signal, TaskId, State, base_named, hold_places, nodes_dir
+from gfso.core.types import HOST, MADE, NODES, THIS_HOST, VOLUME, PlaceUnavailable, Signal, TaskId, State, base_named, hold_places, nodes_dir
 from gfso.core.protocol.procedure import round_of
 from gfso.engine.findings import record_round
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
@@ -466,8 +466,22 @@ def drop_execution(project: str) -> None:
 
 
 def project_llm(engine, model: str, agents: "AgentRegistry | None" = None):
-    """The model a session of this project runs on, started where the project's work runs."""
-    return llm_factory(model, execution=execution_of(engine, agents))
+    """The model a session of this project runs on, started where the project's work runs: held at this one reading to what the gate holds a
+    start to. The roster read again after the gate, a place's making later, and a role just taken by another project's registration moved the
+    session onto the user's machine, under `off`, reaching the internet and the server's door, on no record (critic, ran)."""
+    ex = execution_of(engine, agents)
+    if why := ex.agents_refused():
+        raise PlaceUnavailable(THIS_HOST, why)
+    return llm_factory(model, execution=ex)
+
+
+def validation_execution(engine):
+    """Where a validation of this project runs: never the host for a project whose places stand in volumes. Work in chat with no execution
+    declared validates on the host, as it always did; a project that had one and lost its roles has only lost its roles."""
+    ex = execution_of(engine)
+    if isinstance(ex, LocalExecution) and engine.graph.setting(VOLUME + "places"):
+        raise PlaceUnavailable(THIS_HOST, "this project's places stand in volumes and none of its roles declares their execution now: register them back")
+    return ex
 
 
 def session_key(*parts) -> str:
@@ -488,7 +502,7 @@ def conversation_of(engine, task_id, executor_id, role: str) -> str:
 def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
     """At the root's PASS every joined part is in the base: its worktree, branch and executor's conversation go (a node's tree is a whole
     checkout, so kept they cost the base's size each), and what did not join stays where it is, named."""
-    left, seen, llm = [], set(), project_llm(engine, MODEL_DEFAULT, agents)   # its conversations live where it ran
+    left, seen, llm = [], set(), llm_factory(MODEL_DEFAULT, execution=execution_of(engine, agents))   # its conversations live where it ran
     for t in engine.all_tasks():
         for role in CONVERSING_ROLES:          # the work its conversations served is settled
             llm.forget(conversation_of(engine, t.id, t.assignee, role))
