@@ -2,7 +2,7 @@
 // the ledger. Each read writes S (state.js) and draws nothing; the views render what S holds, and main.js orders the
 // reads and the drawings.
 import {S, procs, myRole, begun} from './state.js';
-import {api, getJSON, post} from './api.js';
+import {api, getJSON, post, bounded} from './api.js';
 import {buildRun, busyNow} from './run.js';
 import {contested, isVerdict, terminal} from './vocab.js';
 
@@ -19,7 +19,7 @@ export async function loadGraph() {
     try { return await readGraph(); } finally { if (!--reading) heard.clear(); }
 }
 async function readGraph() {
-    const [gr, tr] = await Promise.all([api('/api/graph?next=0'), api('/api/tasks')]);
+    const [gr, tr] = await Promise.all([api('/api/graph?next=0', bounded()), api('/api/tasks', bounded())]);
     if (gr.status === 404) {
         S.missing = (await gr.json().catch(() => ({}))).detail || 'no such project';
         S.tasks = [];
@@ -37,7 +37,7 @@ async function readGraph() {
 
 // The system's reports about itself and the plan's quality metrics: reads, kept in S until the next one answers.
 export async function loadReports() {
-    try { S.reports = S.tasks.length ? (await (await post('/api/run/tech_reports', {})).json()).reports || [] : []; }
+    try { S.reports = S.tasks.length ? (await (await post('/api/run/tech_reports', {}, bounded())).json()).reports || [] : []; }
     catch (e) { /* a read: the last answer stands */ }
     // what the system's own records say of a run, where a run's end is read: a session that hid where it went cannot hide that
     // it did (SECURITY.md). A server before this read says nothing.
@@ -53,7 +53,7 @@ export async function loadFrontier() {
     // the last answer stands while this one is out: a header drawn in the gap read the system's move as a person's (critic)
     if (!begun()) S.frontier = null;
     else try {
-        const r = await post('/api/run/next_steps', myRole() ? {actor: myRole()} : {});
+        const r = await post('/api/run/next_steps', myRole() ? {actor: myRole()} : {}, bounded());
         if (!r.ok) throw r.status;
         const f = await r.json();
         // the nodes where the move is this page's person's, with the move: their panel keeps that move under a mode (panel.js)
@@ -101,7 +101,7 @@ async function currentVerdicts(audit) {
     const ids = Object.keys(seen).filter(id => verdicts[id]?.n !== seen[id]);
     if (!ids.length) return;
     try {
-        const r = await post('/api/verdicts', ids);
+        const r = await post('/api/verdicts', ids, bounded());
         if (r.ok) for (const [id, v] of Object.entries(await r.json())) verdicts[id] = {n: seen[id], ...v};
     } catch (e) { /* the log's reading stands */ }
 }

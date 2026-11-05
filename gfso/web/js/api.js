@@ -11,12 +11,14 @@ export const leave = () => { location.search = ''; };
 
 export const api = (url, opts) => fetch(PROJECT && !url.includes('project=')
     ? url + (url.includes('?') ? '&' : '?') + 'project=' + encodeURIComponent(PROJECT) : url, opts);
-export const getJSON = async url => (await api(url)).json();
+// A READ THAT NEVER ANSWERS ENDS AS A FAILED ONE: one read at a time (`singleFlight`) means a hung one silences every later one
+export const bounded = () => ({signal: AbortSignal.timeout(30e3)});
+export const getJSON = async url => (await api(url, bounded())).json();
 // one node's record, or a facet of it (`/verdict`, `/critique`, `/actions?…`)
 export const taskUrl = (id, sub = '') => `/api/tasks/${encodeURIComponent(id)}${sub}`;
 export const task = (id, sub) => getJSON(taskUrl(id, sub));
-export const post = (url, body) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
-                                             body: JSON.stringify(body)});
+export const post = (url, body, opts) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                   body: JSON.stringify(body), ...opts});
 
 // The engine's no, as the engine wrote it, or '' — the server's contract (server.py): a malformed call or a `refused`
 // is a 422 carrying `detail` or the verb's dict, an `accepted: false` / `recorded: false` / `error` a 200 saying so.
