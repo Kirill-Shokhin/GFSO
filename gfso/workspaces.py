@@ -4,6 +4,7 @@ whole (`join_whole`), and clearing them at the root's PASS (`clear_workspaces`).
 places were made (`made`)."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
@@ -60,13 +61,20 @@ def _workspace(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | 
     return w if w is not None and cheap_to_ask(w[0]) and W.is_repo_top(w[0]) else None
 
 
+def _place_key(node) -> str:
+    """A node's id as its place's name, one id one place: `db/schema` and `db_schema` spelled one, and two siblings shared a place, its
+    branch and each other's files with nothing on the plan or the log to say so (critic, ran); so did what a file system's case merges."""
+    key = component(node)
+    return key if key == str(node) and key == key.lower() else f"{key}-{hashlib.sha256(str(node).encode()).hexdigest()[:8]}"
+
+
 def _place_of(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | None:
     """(base, place, branch) as `_workspace` derives them, asking git nothing — so a caller that must not wait on a
     subprocess (the transition bus) can ask whether a place was ever made (`made`)."""
     base = (performer(engine, agents, task.assignee)[1] or {}).get("workdir") if task is not None else None
     if not base:
         return None
-    key, proj = component((session_scope(engine, agents, task) or task).id), component(engine.project_name or DEFAULT_PROJECT)
+    key, proj = _place_key((session_scope(engine, agents, task) or task).id), component(engine.project_name or DEFAULT_PROJECT)
     return base, str(Path(base).parent / nodes_dir(Path(base).name) / proj / key), f"gfso/{proj}/{key}"
 
 

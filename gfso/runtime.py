@@ -111,6 +111,15 @@ class ProjectRegistry:
         """The project this process is pointed at right now."""
         return self._active
 
+    def _spelled(self, name: str) -> str:
+        """A project's name as it was made: a file system deaf to case found `caps.db` for `Caps`, and a second engine and dispatcher stood
+        over one project, its containers read as this host's work (critic, ran)."""
+        if name in self._engines:
+            return name
+        low = name.casefold()
+        made = [*self._engines, *(f[:-3] for f in os.listdir(self._dir) if f.endswith(".db"))] if os.path.isdir(self._dir) else [*self._engines]
+        return next((m for m in made if m == name), next((m for m in made if m.casefold() == low), name))
+
     def engine(self, project: str | None = None, create: bool = True) -> Engine:
         """The project's engine, created lazily; None/'' → the ACTIVE project.
 
@@ -122,6 +131,7 @@ class ProjectRegistry:
         name = project or self._active
         if not self._NAME_RE.match(name):
             raise ValueError(f"bad project name {name!r} (allowed: [A-Za-z0-9_-], ≤64)")
+        name = self._spelled(name)
         if (name not in self._engines and not create
                 and name != DEFAULT_PROJECT
                 and not os.path.exists(os.path.join(self._dir, f"{name}.db"))):

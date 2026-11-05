@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from gfso.adapters import children, door, execution as E
-from gfso import config as C
+from gfso import config as C, runtime as RT, workspaces as WS
 from gfso.mcp import server as S
 from gfso.adapters import netrecord as N
 from gfso.core.types import PlaceUnavailable
@@ -305,6 +305,19 @@ def test_a_door_holds_what_has_arrived_of_bodies_and_one_address_at_most_one_of_
     big.free()
     assert door._Room("c").read(_body(10)[0], 10), "room back"
     door._Room.now, door._Room.by_address = 0, {}
+
+
+def test_two_ids_that_spell_one_name_have_two_places():
+    keys = [WS._place_key(i) for i in ("db/schema", "db_schema", "m.", "m", "k:1", "k;1", "Case", "case")]
+    assert len(set(keys)) == len(keys), keys
+    assert WS._place_key("db_schema") == "db_schema" and WS._place_key("root") == "root", "a plain id's place keeps its name"
+
+
+def test_a_project_spelled_otherwise_is_the_project_as_it_was_made(tmp_path):
+    (tmp_path / "Caps.db").write_bytes(b"")
+    r = SimpleNamespace(_engines={}, _dir=str(tmp_path))
+    assert RT.ProjectRegistry._spelled(r, "caps") == "Caps" and RT.ProjectRegistry._spelled(r, "Caps") == "Caps"
+    assert RT.ProjectRegistry._spelled(r, "other") == "other"
 
 
 def test_a_length_that_is_no_number_is_past_a_door_s_cap():

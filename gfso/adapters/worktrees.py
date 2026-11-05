@@ -223,12 +223,12 @@ while size <= limit and (chunk := listing.stdout.read(2 ** 16)):
             batch.stdin.flush()
             batch.stdout.readline()
             text = batch.stdout.read(n + 1)
-            oid, said = re.search(rb"oid sha256:(\w{64})", text), re.search(rb"^size (\d+)", text, re.M)
-            if text.startswith(b"version https://git-lfs") and oid and said:
-                o = oid[1].decode()
-                if any(os.path.exists(os.path.join(s, o[:2], o[2:4], o)) for s in stores):
-                    n = int(said[1])
-        size += n + 256
+            if text.startswith(b"version https://git-lfs.github.com/spec/v1\n"):      # …as `lfs.parse` reads one: the last of a key twice (critic, ran)
+                keys = dict(line.split(b" ", 1) for line in text.splitlines() if b" " in line)
+                o, said = keys.get(b"oid", b"").removeprefix(b"sha256:").decode("ascii", "replace"), keys.get(b"size", b"")
+                if said.isdigit() and any(os.path.exists(os.path.join(s, o[:2], o[2:4], o)) for s in stores):
+                    n = int(said)
+        size += n + 4096
 listing.kill()
 print(size // 1024)
 """
@@ -240,7 +240,10 @@ LAY_MARGIN_KIB = 2 ** 20
 
 def _laid_kib(ex, at, commit: str, limit: int, stores) -> int | None:
     """What `commit`'s tree lays by `_LAID`, up to `limit` and a little past it; None unread."""
-    r = ex.run([ex.python, "-I", "-c", _LAID, str(limit), "\n".join(map(str, stores)), commit, *APART], cwd=str(at), timeout=600, env=_env())
+    try:
+        r = ex.run([ex.python, "-I", "-c", _LAID, str(limit), "\n".join(map(str, stores)), commit, *APART], cwd=str(at), timeout=600, env=_env())
+    except OSError:
+        return None
     laid = (r.stdout or "").strip()
     return int(laid) if not r.returncode and laid.isdigit() else None
 
@@ -253,8 +256,10 @@ def tree_past_place(ex, at, commit: str, holder, place, base: tuple | None = Non
     place costs what the place already did, and what the user's own imported commit `base` (its session, its path) records is credited, no agent
     writing it: a file git lays with holes reads little in `du`, and a part may have removed from the whole what a sibling's ground still holds
     (critic, ran). NOT HELD: a large file a part made and a sibling then removed parks that sibling. Unread is not refused: the checkout says."""
-    held = holder.run(["du", "-sk", "."], cwd=str(place), timeout=600, env=_env())
-    kib = (held.stdout or "").split()[:1]
+    try:
+        kib = (holder.run(["du", "-sk", "."], cwd=str(place), timeout=600, env=_env()).stdout or "").split()[:1]
+    except OSError:                       # …a host with no `du` on its path: unread, as the docstring says (critic, ran)
+        return None
     if not kib or not kib[0].isdigit():
         return None
     limit = int(kib[0]) + LAY_MARGIN_KIB
@@ -267,7 +272,7 @@ def tree_past_place(ex, at, commit: str, holder, place, base: tuple | None = Non
         if laid is None or laid <= limit:
             return None
     return (f"the tree of {commit[:12]} would lay over {limit} KiB, past what its place holds on disk ({kib[0]} KiB): "
-            f"it names content its files do not hold, and no copy of it is made; commit files as they stand")
+            f"it names content its files do not hold, or files git lays with holes that a part delivered, and no copy of it is made")
 
 
 def _start(base, place: Path, branch: str, start_from, execution, rev: str = "HEAD") -> None:

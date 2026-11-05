@@ -1842,8 +1842,8 @@ class Volume:
                                       *lfs.filter_args(ContainerExecution.python)[1::2]], "import", user or "0",
                                      stdin=stream, interactive=True)
         if got.returncode:
-            raise OSError(f"{self.name}: the base could not be imported "
-                          f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
+            raise OSError(f"{self.name}: the base could not be imported, whole history asked: a shallow clone wants `git fetch --unshallow` "
+                          f"and a sha256 repository is not taken ({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
         self.record[1](VOLUME + IMPORTED, json.dumps({"for": root, "commit": commit or "tree", "read": 1,
                                                        "at": time.strftime("%Y-%m-%dT%H:%M:%S")}))
         self.said(f"the base is imported into the project's volume from {self.base}: "

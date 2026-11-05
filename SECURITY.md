@@ -4,7 +4,7 @@
 
 Work the system dispatches runs unattended, so it runs in Docker, which the installation requires (the one exception is your
 word, `GFSO_LOCAL_AGENTS=allow`, which puts it on your machine, with none of what follows). Under either network switch, for that work:
-- Nothing of your disk is mounted where an agent runs. Your repository enters as its committed HEAD with all its history, which
+- Nothing of your disk is mounted where an agent runs. Your repository enters as its committed HEAD with all its history, so a shallow clone or a sha256 repository is refused at import with that cause, which
   every session can read: clean a secret out of the history first. What is uncommitted does not enter, and the project's log says so.
   The root's accepted result comes back as the branch `gfso/<project>/accepted`, your working tree and branches untouched.
 - No agent process holds your provider's credential: one small container does, and it passes the model's messages alone.
@@ -41,7 +41,7 @@ What the server does refuse is a web page: it answers only to its own host names
 at 127.0.0.1 is not served), and from a browser page that is not its own it serves no write and no
 live socket — and nothing at all to a browser that says the page is another site's (`Sec-Fetch-Site`).
 What agents write is shown on that page escaped, and a policy under it (`Content-Security-Policy`) runs no script but its own and
-its pinned library's, should the escaping miss.
+what the library's host serves, should the escaping miss: the page's own tags pin its libraries by hash, the policy that host.
 A server started on another name (`gfso serve --host`) answers to that name; any further name is added
 by hand in `GFSO_ALLOWED_HOSTS` (comma-separated). A front that forwards such a name to the server (a
 reverse proxy, `tailscale serve`) gives whatever reaches the front the server's every door: the
@@ -174,7 +174,7 @@ container there, and writes those of this installation alone. A container is kno
     one pipe into a git the system makes in the copy's container, with no configuration, hook, filter
     or rule of the executor's or the base's; every object is hashed again against its id there before
     anything is checked out, so nothing the executor can write is read after that check. Nothing of it
-    passes through the server's memory, and no size limit applies but the disk, as a copy costs what its place does: a tree that would lay more than its place holds on disk, what the imported commit records and 1 GiB, by what it records and an LFS file whose object is held at its pointer's size, is no delivery that can be copied and FAILs naming it, and a parent's such commit starts no child. A large file a part made, delivered and a later part removed from the whole, past that margin, stops a sibling that started before the removal: honest and rare, its node parks. A delivery's own commit does: it is
+    passes through the server's memory, and no size limit applies but the disk, as a copy costs what its place does: a tree that would lay more than its place holds on disk, what the imported commit records and 1 GiB, by what it records and an LFS file whose object is held at its pointer's size, is no delivery that can be copied and FAILs naming it, and a parent's such commit starts no child. Two honest cases past that margin meet it too, each rare and within its project: a large file a part made and a later part removed stops a sibling that started before the removal, its node parking; and a part's file of more than 1 GiB that git lays with holes, past the imported commit's size, FAILs the whole it joined. A delivery's own commit does: it is
     carried from its place into the project, and at a join into its whole, through the server's memory, to 512 MiB beyond what the target
     holds (an LFS file apart). Past that the delivery is not handed in, its executor told why, or the join is refused, the cause in the whole's packet.
   - The Git LFS objects the recorded tree's pointers name are streamed the same way from the place's
@@ -391,7 +391,7 @@ every signal, including whatever text your specs, results and verdicts carry.
 
 **The UI page fetches three scripts from a CDN.** The graph view loads its rendering libraries
 (cytoscape, dagre) from `unpkg.com`, each pinned by a subresource-integrity hash: a file the CDN serves
-changed does not run, in a tab that can drive the local tool surface. Everything else is local:
+changed does not run, in a tab that can drive the local tool surface. Everything else is local, the page's web font and that library's host aside:
 the engine, the API and every verb work with no network at all, and on a machine that cannot reach
 that host the page comes up without the graph.
 

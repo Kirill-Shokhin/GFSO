@@ -99,6 +99,12 @@ def _ran_here(argv, cwd=None, timeout=None, env=None):
 
 
 @pytest.mark.skipif(not shutil.which("sh"), reason="no sh here")
+def test_a_host_with_no_du_reads_no_size_and_refuses_nothing(tmp_path):
+    def gone(*a, **k):
+        raise FileNotFoundError("du")
+    assert W.tree_past_place(SimpleNamespace(run=_ran_here, python=sys.executable), tmp_path, "0" * 40, SimpleNamespace(run=gone), tmp_path) is None
+
+
 def test_a_tree_past_what_its_place_holds_is_never_laid_and_an_honest_one_always(tmp_path, monkeypatch):
     """One blob under many names, kept from the place's disk by the index: 2.0 GiB of copy from a 509 KB pack (critic, ran). Not a node's bound:
     a whole of accepted parts and a repository of LFS pointers with no objects lay past that honestly (critic, ran)."""
@@ -126,6 +132,10 @@ def test_a_tree_past_what_its_place_holds_is_never_laid_and_an_honest_one_always
     (store / oid[:2] / oid[2:4]).mkdir(parents=True)
     (store / oid[:2] / oid[2:4] / oid).write_bytes(b"x")
     assert "past what its place holds" in past((store, tmp_path / "other")), "an LFS file at the size its pointer says, where it would be written"
+    twice = b"version https://git-lfs.github.com/spec/v1\nsize 1\n" + pointer.split(b"\n", 1)[1]
+    git("update-index", "--add", "--cacheinfo", f"100644,{git('hash-object', '-w', '--stdin', input=twice)},big")
+    git("commit", "-q", "-m", "twice")
+    assert "past what its place holds" in past((store,)), "a key twice reads as LFS reads it, the last"
     padded = pointer + b"ext-0-x sha256:" + b"0" * 500 + b"\n"
     git("update-index", "--add", "--cacheinfo", f"100644,{git('hash-object', '-w', '--stdin', input=padded)},big")
     git("commit", "-q", "-m", "padded")
