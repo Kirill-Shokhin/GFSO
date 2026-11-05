@@ -1002,8 +1002,9 @@ chown -R "$u" /to /state'''
 _EXPORT = r'''b=$1
 note() { printf 'NOTE: %s\n' "$*" >&2; }
 mkdir -p /tmp/x || exit 1
-(cd /from && tar -c --exclude=./.gfso-sys --exclude=./.gfso-tmp .) | tar -x -C /tmp/x || note "files it could not read are not exported"
+(cd /from && tar -c -S --exclude=./.gfso-sys --exclude=./.gfso-tmp .) | tar -x -C /tmp/x || note "files it could not read are not exported"
 chmod -R u+rwX /tmp/x 2>/dev/null
+find /tmp/x -type f -size +1M -printf '%S %p\n' | awk '$1 < 0.5 { sub(/^[^ ]+ /, ""); print }' | while read -r s; do rm -f -- "$s"; note "${s#/tmp/x/}: a sparse file, its holes real bytes on the host's disk: not exported"; done
 find /tmp/x -iname .git ! -type d -print -delete | while read -r g; do note "${g#/tmp/x/}: a .git that is no directory, removed"; done
 cat > /tmp/one <<'ONE'
 note() { printf 'NOTE: %s\n' "$*" >&2; }

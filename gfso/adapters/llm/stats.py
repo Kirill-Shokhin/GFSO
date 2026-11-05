@@ -46,8 +46,9 @@ def is_unauthorized(error) -> bool:
 
 
 def is_limit(error) -> bool:
-    """Was this call's error the account's limit?"""
-    e = str(error or "").lower()
+    """Was this call's error the account's limit? The CLI says of a server's own 429 "(not your usage limit)": read as the account's,
+    a door's or a provider's throttling marked the credential spent and moved every project off it (critic, ran)."""
+    e = str(error or "").lower().replace("not your usage limit", "")
     return any(m in e for m in ACCOUNT_LIMIT)
 
 

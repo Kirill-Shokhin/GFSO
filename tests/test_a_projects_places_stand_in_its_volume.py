@@ -561,6 +561,20 @@ def _two_clones(tmp_path):
 
 
 @live
+def test_live_a_sparse_file_is_not_a_terabyte_on_the_host_at_export(tmp_path):
+    """A hole costs a session nothing against its bound and the host its whole length: `truncate -s 1G` wrote 1 GiB of real bytes (critic, ran)."""
+    x = _two_clones(tmp_path)
+    out, a = tmp_path / "out", x.own / "a"
+    try:
+        x.session(str(a)).run(["sh", "-c", "truncate -s 1G holes && echo kept > kept"], cwd=str(a), timeout=120)
+        _export(x, out)
+    finally:
+        x.stop()
+        x.volume.remove()
+    assert not (out / "p" / "a" / "holes").exists() and (out / "p" / "a" / "kept").read_text() == "kept\n"
+
+
+@live
 def test_live_an_export_runs_nothing_an_agent_wrote_and_carries_none_of_it(tmp_path):
     """F1/F5 (critic over 247e374): the export's git ran a's `core.fsmonitor` as root and it forged b's exported
     clone; and an exported clone carried its agent's config and hooks to the host. An export is inert."""

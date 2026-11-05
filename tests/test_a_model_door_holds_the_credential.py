@@ -9,6 +9,8 @@ import threading
 
 import pytest
 
+from gfso.adapters.llm import stats
+
 from gfso.adapters import door as D
 from gfso.adapters import execution as E
 from gfso.adapters.execution import PLACEHOLDER, LocalExecution
@@ -126,6 +128,12 @@ def test_what_is_typed_a_tool_call_carries_no_fetch_beside_its_input(asked):
     """Only a tool call's `input` is the client's: typing a request, a message or a call so let a URL under it pass a
     closed switch (critic over the door v4)."""
     assert D.model_alone(json.dumps(asked).encode()) is False
+
+
+def test_a_server_s_own_429_is_no_account_s_limit():
+    """The CLI's words on a door's or a provider's throttling: read as a limit, one session moved every project off a credential (critic, ran)."""
+    assert not stats.is_limit("API Error: Server is temporarily limiting requests (not your usage limit) · status code (no body)")
+    assert stats.is_limit("You've hit your usage limit") and stats.is_limit("usage_limit_reached")
 
 
 def test_a_door_reads_no_body_before_its_key_nor_past_its_cap(served, monkeypatch):

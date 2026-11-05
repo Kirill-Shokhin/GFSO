@@ -27,7 +27,7 @@ from typing import Optional
 
 from gfso.adapters import worktrees as W
 from gfso.adapters.execution import ended_by_watch, past_disk
-from gfso.config import subprocess_env
+from gfso.config import node_disk, subprocess_env
 from gfso.core.types import IN_THE_WORKS_PATH, LAID, PlaceUnavailable
 
 log = logging.getLogger(__name__)
@@ -507,6 +507,23 @@ verify(list(dict.fromkeys([tree.encode(), *(meta[2] for meta, _ in items)])))
 '''
 
 
+#: what a tree would lay on disk, by what it records: bytes, files
+_LAID = 'c=$1; shift; git "$@" ls-tree -r -l "$c" | awk \'{ if ($4 != "-") s += $4; n++ } END { printf "%.0f %d", s, n }\''
+
+
+def _past_disk(ex, at: Path, commit: str, env: dict) -> Optional[str]:
+    """Why the delivery cannot be laid: past what a node may add (`config.node_disk`). Its own place never held it: one blob under many
+    names, kept from the place's disk by the index, took 2.0 GiB of copy from a 509 KB pack, a copy being the system's writing and no
+    one's charge, and nothing bounded it but Docker's disk, every project's (critic, ran). An honest tree fits its place's bound."""
+    r = ex.run(["sh", "-c", _LAID, "sh", commit, *W.APART], cwd=str(at), timeout=600, env=env)
+    size, files = ((r.stdout or "").split() + ["", ""])[:2]
+    bytes_, most = node_disk()
+    if r.returncode or not size.isdigit() or not files.isdigit() or (int(size) <= bytes_ and int(files) <= most):
+        return None
+    return (f"the tree DELIVER recorded ({commit[:12]}) would lay {size} bytes in {files} files, past what a node may add "
+            f"({bytes_} bytes, {most} files): no copy of it is made")
+
+
 def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> set[str]:
     """`at` made the checkout of `commit` (`_CHECKOUT`), its objects STREAMED from the place's container, where `_PACK`
     packs them, into the copy's, which takes them in — one pipe between the two (`ExecutionPort.pipe`): nothing of the
@@ -535,6 +552,8 @@ def _checkout(place: Path, at: Path, tree: str, commit: str, execution) -> set[s
             raise NotTheDelivery(f"the delivery's own store cannot give back what DELIVER recorded ({commit[:12]}): "
                                  f"{err.strip()[-300:]}")
         raise OSError(f"{place} could not pack {commit[:12]}: {err.strip()[-300:]}")
+    if past := _past_disk(ex, at, commit, env):
+        raise NotTheDelivery(past)
     if r.returncode == 4 and ended_by_watch(ex):
         raise Uncopied(WATCHED)
     if r.returncode == 4:

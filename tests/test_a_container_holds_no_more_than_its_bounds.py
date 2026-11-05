@@ -92,6 +92,31 @@ def test_live_a_runaway_dies_alone_and_its_session_goes_on(project, monkeypatch)
     assert after.returncode == 0 and after.stdout.strip() == "alive", "the session's container goes on"
 
 
+def _ran_here(argv, cwd=None, timeout=None, env=None):
+    return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+
+
+@pytest.mark.skipif(not shutil.which("sh"), reason="no sh here")
+def test_a_delivery_whose_tree_is_past_a_node_s_bound_is_never_laid(tmp_path, monkeypatch):
+    """One blob under many names, kept from the place's disk by the index: 2.0 GiB of copy from a 509 KB pack, charged to no one (critic, ran)."""
+    def git(*a, **k):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=tmp_path, capture_output=True, text=True, check=True, **k)
+    git("init", "-q")
+    blob = git("hash-object", "-w", "--stdin", input="A" * 1000).stdout.strip()
+    for i in range(5):
+        git("update-index", "--add", "--cacheinfo", f"100644,{blob},f{i}")
+    git("commit", "-q", "-m", "c")
+    commit = git("rev-parse", "HEAD").stdout.strip()
+    ex = SimpleNamespace(run=_ran_here)
+    monkeypatch.setattr(S, "node_disk", lambda: (4999, 100))
+    assert "5000 bytes in 5 files" in S._past_disk(ex, tmp_path, commit, {}), "its names, not its pack"
+    monkeypatch.setattr(S, "node_disk", lambda: (5000, 100))
+    assert S._past_disk(ex, tmp_path, commit, {}) is None
+    monkeypatch.setattr(S, "node_disk", lambda: (5000, 4))
+    assert "past what a node may add" in S._past_disk(ex, tmp_path, commit, {})
+    assert S._past_disk(ex, tmp_path, "0" * 40, {}) is None, "unread is not refused: the checkout says what it finds"
+
+
 @pytest.mark.parametrize("rc, said", [(6, "rewritten"), (1, "Errno 6"), (137, "memory bound")])
 def test_a_judges_copy_its_bound_ended_is_the_deliverys_fail_with_its_cause(rc, said, tmp_path):
     """Nothing else runs in the copy's container while its delivered files are checked: what ends it there — the
