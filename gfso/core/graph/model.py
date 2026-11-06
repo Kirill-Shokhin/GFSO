@@ -483,6 +483,11 @@ class Graph:
     def save_task(self, task: Task) -> None:
         self._storage.save_task(task)
 
+    @property
+    def one_write(self):
+        """The store's lock that makes a read and its write one step (`StoragePort._one_write`)."""
+        return self._storage.one_write
+
     def update_task(self, task_id: TaskId, **fields) -> Task:
         """These fields of the node, off the log's pump (`StoragePort.update_task`)."""
         return self._storage.update_task(task_id, **fields)

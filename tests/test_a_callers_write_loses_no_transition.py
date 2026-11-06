@@ -125,3 +125,33 @@ def test_a_field_written_beside_a_transition_keeps_it(tmp_path, site, move, befo
         assert e.graph.get_state(ROOT) == after, (site, e.graph.get_state(ROOT))
     finally:
         e.stop()
+
+
+def test_the_pumps_read_and_write_of_a_transition_keep_a_callers_field(tmp_path):
+    """The other side of the same rule: the pump reads the node, moves its state and writes it whole; a caller's field
+    written between the two was put back by the pump's stale copy (`verified`, `register`, a mapping). The caller sent in
+    at the pump's write waits on the store's lock and lands after it."""
+    e = _graph(tmp_path)
+    store, test, landed = e.graph._storage._s, threading.current_thread(), threading.Event()
+    write, armed = store.save_task, [1]
+
+    def caller():
+        e.graph.update_task(ROOT, verified=True)
+        landed.set()
+
+    def writing(task):
+        if armed and str(task.id) == "root" and threading.current_thread() is not test and task.state == State.VALIDATING:
+            armed.clear()
+            threading.Thread(target=caller, daemon=True).start()
+            landed.wait(0.5)
+        write(task)
+
+    store.save_task = writing
+    try:
+        _deliver(e)
+        assert landed.wait(5), "the caller never wrote"
+        e.wait_idle()
+        t = e.graph.get_task(ROOT)
+        assert not armed and t.state == State.VALIDATING and t.verified is True, (t.state, t.verified)
+    finally:
+        e.stop()

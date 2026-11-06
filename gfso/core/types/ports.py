@@ -58,6 +58,11 @@ class StoragePort(ABC):
     #: what makes `update_task`'s read and write one step, in a store with concurrent writers
     _one_write = contextlib.nullcontext()
 
+    @property
+    def one_write(self):
+        """That step's lock, for a writer that reads a node and writes it whole (the log's pump, `mutations.apply`)."""
+        return self._one_write
+
     def update_task(self, task_id: TaskId, **fields) -> Task:
         """Write these fields of the node as it stands now, nothing else of it: a verb off the log's pump writes its own
         field beside a pump that moves the state."""

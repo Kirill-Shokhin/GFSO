@@ -188,6 +188,9 @@ that would establish one (E3) has shown so far, and what not, is in the README a
 - With no mode set the system answers disputes at a seam only; a dispute a node's own issuer raises is its holder's.
 
 ### Fixed
+- A field written beside a transition keeps both: the log's pump reads a node, moves its state and writes it in one step
+  under the store's lock, as a caller's one-field write already did, so a review's verdict, a register or a mapping written
+  in between is no longer put back by the pump's earlier copy.
 - A part attached to a whole being validated is worked and in the result: a machine's PASS reads its active parts in its own
   step, and the delivery is presented again. A part arriving after that PASS attaches nothing, its parent settled (§12.7), so
   no node stands DONE over an open part under `auto`. Nothing in the system reopens a settled node, and the directive says so.

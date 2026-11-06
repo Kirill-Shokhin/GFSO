@@ -39,7 +39,15 @@ class InvariantViolation(Exception):
 
 
 def apply(graph: Graph, effect: MutateGraph) -> list[TaskId]:
-    """Apply a mutation to the graph. Returns affected child task_ids for cascade."""
+    """Apply a mutation to the graph. Returns affected child task_ids for cascade.
+
+    ONE STEP UNDER THE STORE'S LOCK, as a caller's `update_task` is: the pump reads the node and writes it whole, and a
+    field a caller wrote in between (`verified`, `register`, a mapping) was put back by the pump's stale copy."""
+    with graph.one_write:
+        return _apply(graph, effect)
+
+
+def _apply(graph: Graph, effect: MutateGraph) -> list[TaskId]:
     task = graph.get_task(effect.task_id)
 
     match effect.mutation:
