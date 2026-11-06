@@ -3932,3 +3932,20 @@ judge of §13.50's form; 20 plans per arm on E2's ten tasks, 3 per arm on the sm
   three plans, 9 → 8 of 10, ranging 3–9 and 6–9.
 - **Which change costs what is not distinguished.** The old re-check's question against the new, n = 4 per arm on two tasks: a
   difference of −1.00 at a standard error of 2.47; about 50 plans per arm would be needed, and none was spent.
+
+### 13.53 A bare agent on the small tasks, one task with an oracle through a real client, and a lighter plan (2026-11-05/06)
+
+**Bare Sonnet 5.5 on the five small requests of §13.52**, the words asking for gfso removed, one control script per task written from the request before either result was read (mutants of two results scored 10/14 and 6/13, so the controls bite): both arms 78 of 78. Bare: 10–30 s, $0.04–0.07 a task; through gfso: 12–27 min, $0.31–0.78 (system and client). Four of five bare clients said they had not run what they wrote. n = 1 a task. On tasks of this size the path runs and adds a verdict signed by another party, nothing the controls could see.
+
+**`coreutils` through a real client**, Haiku 5.5 for every role of the system, the addendum in the request, network `off` (`GD_coreutils_door1`): DONE (promise kept), second number 1.000 on the signed branch, 67.5 min (plan 28.7), system $1.82, client $0.93; the harness's own-plan row (`GB_coreutils_tnzimp748`) read 1.000 in 77 min, $2.27. The two doors share the authoring code and differ after it: the harness's review is a gate with rounds acted on by the system's issuer; the client's is one pass written into the file, acted on by its note (here Sonnet's note took the root's criteria from 12 to 19). Bare Haiku 5.5 reads 100 % on this task, so "no difference seen" is not "no difference".
+
+**A lighter plan** (pre-registered; search and first fold kept; goal reading, pins by part, the checker, the sufficiency fold, re-reading and review removed; a script customer through the client's verbs; network `off`; one row a cell):
+
+| task | plan | verdict | second number | wall | system $ | checks |
+|---|---|---|---|---|---|---|
+| coreutils | light | DONE (promise kept) | 1.000 | 31.7 min | 0.53 | 32 |
+| sql_database | light | DONE (promise kept) | 1.000 | 53.1 min | 0.73 | 14 |
+| sql_database | full | DONE (promise kept) | 1.000 | 107 min | 2.29 | 80 |
+| c_compiler | light | NOT DONE at 14,400 s | 0.204, the starter tree | 4 h | 3.41 | 12 |
+
+Both easier tasks sit at the ceiling, where a loss of coverage cannot show; most of the saving came after the go, from checks the full plan made that correct work could not meet. On `c_compiler`, where bare Haiku 5.5 reads 0.74–0.946 and a given plan 0.986–0.997, the light plan's end-to-end checks made parts wait on each other, the system merged them into one node holding the whole compiler, and no program compiled in four hours. The row was a debugging one: an engine defect held it 40 minutes and the build changed during it. The full plan on `c_compiler` has not run.
