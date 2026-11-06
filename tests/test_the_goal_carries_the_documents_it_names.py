@@ -6,6 +6,7 @@ workdir (spreadsheet_engine, AUTO haiku — EVIDENCE_LOG §13.38).
 """
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,7 +14,7 @@ import gfso.tools_llm as TL
 from gfso.core.graph.model import USERS_PLAN_KEY
 from gfso.core.types import TaskId
 from gfso.roster import AgentRegistry
-from tests.support import REGISTER, criterion, make_engine
+from tests.support import REGISTER, a_repository, criterion, make_engine
 
 _PLAN = {"name": "g", "root_criteria": [criterion("g", "G holds")],
          "subtasks": [{"id": "a", "name": "a", "description": "part a", "criteria": [criterion("a_ok", "a holds")]}],
@@ -89,24 +90,27 @@ def test_a_plan_the_system_writes_carries_the_files_its_place_names(tmp_path, mo
 
 
 
-def test_a_project_in_a_container_carries_its_documents_as_its_base_holds_them(tmp_path, monkeypatch):
-    """The names came from the container, the text from the host's live tree: an uncommitted edit, an ignored file and an
-    untracked `.env` went to the provider and into every session's contract (critic, ran). Read where the work runs."""
+def test_a_project_in_a_container_carries_its_documents_as_its_next_root_imports_them(tmp_path, monkeypatch):
+    """Read from the host's live tree, an uncommitted edit and an untracked `.env` went to the provider and into every
+    session's contract (critic, ran); read from the volume, a second goal's contract quoted what the earlier root's
+    executors left in its base (critic, read). The user's committed HEAD is what the next root imports: that is read."""
     reg = AgentRegistry(str(tmp_path / "roster.json"))
-    (tmp_path / "base").mkdir()
-    for name, text in (("spec.md", "UNCOMMITTED edit"), (".env", "TOKEN=SECRET")):
-        (tmp_path / "base" / name).write_text(text, encoding="utf-8")
-    reg.register("exec-1", "llm-executor", workdir=str(tmp_path / "base"), project="p")
-    committed = {(tmp_path / "base" / "spec.md").as_posix(): b"spec as committed"}
-    held = SimpleNamespace(files=SimpleNamespace(
-        exists=lambda p: Path(p).as_posix() in committed, is_dir=lambda p: False,
-        read_bytes=lambda p, size=None: committed.get(Path(p).as_posix())))
+    base = a_repository(tmp_path / "base")
+    (base / "spec.md").write_text("spec as committed", encoding="utf-8")
+    subprocess.run(["git", "-C", str(base), "add", "spec.md"], check=True)
+    subprocess.run(["git", "-C", str(base), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "spec"], check=True)
+    (base / "spec.md").write_text("UNCOMMITTED edit", encoding="utf-8")
+    (base / ".env").write_text("TOKEN=SECRET", encoding="utf-8")
+    reg.register("exec-1", "llm-executor", workdir=str(base), project="p")
+    left = SimpleNamespace(files=SimpleNamespace(exists=lambda p: True, is_dir=lambda p: False,
+                                                 read_bytes=lambda p, size=None: b"what the earlier root's executor wrote"))
     monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
-    monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: held)
+    monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: left)
     e = make_engine(validate_signals=True, state_timeout=0)
     e.project_name = "p"
-    carried = TL._named_documents(e, f"see spec.md and {(tmp_path / 'base' / '.env').as_posix()}")
-    assert "spec as committed" in carried and "UNCOMMITTED" not in carried and "SECRET" not in carried
+    carried = TL._named_documents(e, f"see spec.md and {(base / '.env').as_posix()}")
+    assert "spec as committed" in carried, carried
+    assert not any(x in carried for x in ("UNCOMMITTED", "SECRET", "earlier root")), carried
 
 
 def test_a_plan_handed_in_whole_is_recorded_as_the_users(tmp_path, monkeypatch):

@@ -21,7 +21,8 @@ Under `off` your code still goes to the model's provider, as far as an agent sen
 where every role, the system's own too (`set_mode(system_model=, planner_model=)`), names a local model. Not promised: a boundary
 against an escape from Docker or its kernel, which every project shares (no VM per task); a check a validation writes itself, which the
 delivered code it runs can reach, where only a pinned one is out of its reach; a model validator's reading, which what it reads can argue with, where only a check pinned with `exact: true` decides by itself; anything for what runs on your machine, namely the work your
-own agent does in its chat, the validator of that work, and the reader of a plan's documents. What the agents wrote reaches that
+own agent does in its chat, the validator of that work, and the reader of a plan's documents of a project with no
+execution declared. What the agents wrote reaches that
 agent of yours as text, in what a check printed and in a plan's words, past every container: it is told to take these as data, which
 a model can be argued out of, measured on one plain instruction alone (a cheap model followed it in none of six tries, told or not); a result is read before it is run
 on your machine. The rest of this file says how each of these holds, and what stays open.
@@ -65,8 +66,10 @@ a server started without it is restarted). Without that, the first such round st
 the cause named, nothing of the node having run or been consented to, and the project stays
 stopped until the word is given or an execution is declared; a mode that would dispatch such work
 is not set as ready. Work your own agent does in its chat, the validator that
-checks it, and the reader of a plan's documents a goal you hand `auto_decompose` names (read-only tools)
-run on your machine as before: a person asked for them. With the word, dispatched work runs on
+checks it, and, for a project with no execution declared, the reader of a plan's documents a goal you hand
+`auto_decompose` names (read-only tools) run on your machine as before: a person asked for them. A project in a
+container reads them in its container, and the documents a goal names enter its contract as your committed HEAD holds
+them, what its root imports: never an uncommitted edit, an ignored file, nor what an earlier root's work left. With the word, dispatched work runs on
 your machine unattended, with what is said below for a session with no execution.
 Docker is part of the installation: `gfso setup` builds the agents' image from the file the package
 ships (no credential and no agent state in it; built from a base named by its digest and a CLI

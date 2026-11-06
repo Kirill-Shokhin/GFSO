@@ -2247,6 +2247,13 @@ def _unfetched(base: Path, missing: list) -> str:
             f"(`git rev-list --objects --missing=print HEAD` lists them) and start again")
 
 
+def committed(base: Path, rel: str) -> bytes | None:
+    """One file as the import carries it: `rel` at the user's HEAD, read by their own git on the host — None where HEAD
+    holds no such file. What a new root imports, never what a volume's earlier root left nor an uncommitted edit."""
+    got = _host_git(base)("cat-file", "blob", f"HEAD:{rel}", input=b"")
+    return got.stdout if got.returncode == 0 else None
+
+
 def _carried_in(base: Path, project: str, d: Path) -> tuple:
     """(the commit, a tar under `d`, what of the user's it leaves out) of what the base imports (`_IMPORT`) — made on
     the host by the user's own git, reading their repository and nothing else: a bundle of HEAD and of the project's

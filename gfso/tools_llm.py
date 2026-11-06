@@ -30,10 +30,10 @@ from gfso import runtime
 from gfso.llm import llm_factory
 from gfso.workspaces import declaring_role, execution_of, where_it_runs
 from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snapshot, swap
-from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, left_out,
+from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, committed, left_out,
                                      scratch_of)
 from gfso.issuer import CONTACT_ROUND as _CONTACT
-from gfso.core.types import (BATCH, LAID, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
+from gfso.core.types import (BATCH, HOST, LAID, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
                              Verdict, passed)
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (SYSTEMS_ACT, canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
@@ -1508,11 +1508,13 @@ def _named_documents(engine: Engine, request: str) -> str:
     The plan author, its auditors and the root's reviewer are zero-tool completions: a request saying
     "implement what prompt.md specifies" reached them as its one-paragraph summary, and the plan's criteria
     contradicted the 12 KB statement the root's executor then read in its workdir (spreadsheet_engine, AUTO
-    haiku, 2026-10-10 — EVIDENCE_LOG §13.38). Whoever reads the contract now reads what the executor reads: read where
-    the work runs (`execution_of`), a container's base holding only what was committed — read on the host, a project in a
-    container carried an uncommitted edit, an ignored file and an untracked `.env` into the contract and to the provider
-    (critic, ran)."""
+    haiku, 2026-10-10 — EVIDENCE_LOG §13.38). Whoever reads the contract now reads what the executor reads: in the
+    user's chat the tree as it stands; elsewhere what the new root imports, the user's committed HEAD (`committed`) — read
+    from the live tree, a project in a container carried an uncommitted edit and an untracked `.env` to the provider (critic,
+    ran); read from its volume, a second goal's contract quoted what the earlier root's executors left there (critic)."""
     bases, files = _work_places(engine), execution_of(engine).files
+    read = ((lambda b, p: files.read_bytes(str(p), _DOC_MAX + 1) if files.exists(str(p)) and not files.is_dir(str(p)) else None)
+            if files is HOST else (lambda b, p: committed(b, p.relative_to(b).as_posix())))
     seen, parts = set(), []
     for tok in re.findall(r"[^\s`'\"(),;<>\[\]]+", request or ""):
         tok = tok.rstrip(".:")
@@ -1523,10 +1525,9 @@ def _named_documents(engine: Engine, request: str) -> str:
         # the first base the name stands in is the one it names; a name met again is the same document
         for b in bases:
             p = Path(os.path.normpath(Path(tok) if Path(tok).is_absolute() else b / tok))
-            if not p.is_relative_to(b) or not files.exists(str(p)) or files.is_dir(str(p)):
+            if not p.is_relative_to(b) or (raw := read(b, p)) is None:
                 continue
-            raw = files.read_bytes(str(p), _DOC_MAX + 1) if p not in seen else None
-            if raw is not None and len(raw) <= _DOC_MAX and b"\0" not in raw:
+            if p not in seen and len(raw) <= _DOC_MAX and b"\0" not in raw:
                 parts.append(f"## {p.relative_to(b).as_posix()}\n\n{raw.decode('utf-8', errors='replace')}")
             seen.add(p)
             break
