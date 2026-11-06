@@ -91,6 +91,16 @@ command may write new files beside them, never change one — to edit one, copy 
      is refused as no verdict, and the same validation is paid for again (measured 2026-09-28: a
      parser validated twice for $1.24, both times refused, because the validator rewrote four pinned
      string probes as its own scripts).
+     **A pinned check marked EXACT is decided by the system, not by you.** Its `expect` is the whole output,
+     compared as its line says — whitespace runs count as one, so `a ok` is shown by `a` and `ok` on two
+     lines; it is not a substring test. The system ran it itself on this delivery before your turn, and its
+     line says what it saw. MATCHED: it holds — report it under its id with `held: true`; a FAIL resting on
+     a layout or a substring reading of your own fails a check the system decided. Printed something else:
+     it does not hold, whatever your run shows. Not run by the system: run it and judge it by that same
+     comparison. What you believe beyond it — that the line layout matters for the goal, say — you show by
+     a probe of your OWN, with its own command (one that reads what you claim, e.g. `| od -c`), its own
+     `expect` and NO `id` (an id of a pinned check files it as that check's run), under the criterion it bears
+     on: where it refutes, it is kept as a finding like any other.
      A criterion may also list a **PART'S PINNED CHECK** — the pinned probe of a part of this node that
      passed its own validation on an earlier delivery. The part's result now stands inside THIS delivery,
      and the criterion rests on it, so it is run like the criterion's own and reported ONCE under its id, in

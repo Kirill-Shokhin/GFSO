@@ -1293,7 +1293,8 @@ def _unjudged(parts: list, e: Exception) -> tuple:
 
 
 def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
-                     edits: Optional[list] = None, built: Optional[list] = None, ex=None) -> list:
+                     edits: Optional[list] = None, built: Optional[list] = None, ex=None,
+                     seen: Optional[dict] = None) -> list:
     """The validator's reports over the parts' deliveries — one run, or one per batch at the same time (`_run_each`),
     each batch carrying a disjoint share of the probes the validation owes over one unchanging set of deliveries, so
     their conjunction is the verdict whatever order they finish in (§2 V = ⋀ cᵢ; `_scope_batches`, `_conjoined`). A
@@ -1302,21 +1303,22 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
     not a pass, §2.3), and on a rich contract one report did: 44 refused against 57 recorded, two E3 runs stalled at 25
     and 42 root criteria (2026-08-21) — so a long contract is batched, every owed probe carried exactly once.
     `GFSO_VALIDATION_BATCH=0` restores the single run, whatever the size. Each copy is built before its run, what ran
-    appended to `built`; a build that fails raises `BuildFailed` (`snapshots._build`)."""
+    appended to `built`; a build that fails raises `BuildFailed` (`snapshots._build`). `seen`: what the system's own
+    runs of the exact checks observed (`_observe_exact`), told to the validator in its packet."""
     system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
     batches = _scope_batches(engine, parts, validation_batch())
     ex, delivered = ex or validation_execution(engine), engine.delivered(*(t.id for t, *_ in parts))
 
     def _run(batch, client=None, place=None) -> str:
         if inside is not None:
-            body = (_scope_validator_packet(engine, batch, workdir, place or scratch, inside)
+            body = (_scope_validator_packet(engine, batch, workdir, place or scratch, inside, seen)
                     + schema_instruction(_SCOPE_VALIDATOR_SCHEMA))
             cap = lambda: _scope_cap(batch, engine.graph)
         else:
             (task, deliverable, crits, *carry), = batch
             body = (_validator_packet(engine, task, deliverable, workdir, place or scratch,
                                       criteria=None if len(crits) == len(task.spec.criteria) else crits,
-                                      carry=carry[0] if carry else None)
+                                      carry=carry[0] if carry else None, seen=seen)
                     + schema_instruction(_VALIDATOR_SCHEMA))
             cap = lambda: _validation_cap(task, engine.graph)
         # RUNS SIDE BY SIDE EACH IN A COPY OF THE PLACE OF ITS OWN (`adapters.snapshots`): sharing the place, one run's
@@ -1397,7 +1399,7 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
             _cb(f"{top_id}: the system ran {len(observed)} exact pinned check(s) on a fresh copy of the delivery — "
                 f"{sum(o.get('matched') is True for o in observed.values())} print what they pin, "
                 f"{sum('matched' not in o for o in observed.values())} could not be run")
-        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built, ex)
+        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built, ex, observed)
     except ValueError as ex:
         return {"task_id": top_id, "error": str(ex)}, ""
     except (BuildFailed, NotTheDelivery) as ex:       # …the delivery's FAIL, nothing checked (`_unjudged`)

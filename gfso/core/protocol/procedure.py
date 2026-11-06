@@ -1041,9 +1041,14 @@ def as_read(s: str) -> str:
     return " ".join(str(s or "").replace("\\t", "\t").replace("\\n", "\n").split())
 
 
+#: How an exact check's output is compared with its `expect` (`as_read`) — said in these words to its author and to
+#: its validator alike: told nothing of it, a validator read `a ok` against `a` and `ok` on two lines as no substring
+#: and failed six rounds the system's own runs had matched (gf-cc root.preprocessor.pp-rest, 2026-11-06).
+EXACT_READ = "whitespace runs count as one, `\\n` as a newline"
+
 #: What an author is told `exact` means — one text for every schema that pins a probe (`Probe.exact`).
-EXACT_TEXT = ("true when `expect` is the COMPLETE output the command prints on correct work (whitespace runs count as "
-              "one, `\\n` as a newline) — its standard output, or that followed by its errors; where the two streams "
+EXACT_TEXT = ("true when `expect` is the COMPLETE output the command prints on correct work (" + EXACT_READ
+              + ") — its standard output, or that followed by its errors; where the two streams "
               "alternate, merge them in the command (`2>&1`). The system then runs the command itself, as written, on "
               "the delivered tree in a fresh copy, and a different output fails the criterion whatever the validator "
               "says. So an exact command builds what it runs (`make -s prog && ./prog …`), creates any state it reads "

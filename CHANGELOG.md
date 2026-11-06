@@ -188,6 +188,12 @@ that would establish one (E3) has shown so far, and what not, is in the README a
 - With no mode set the system answers disputes at a seam only; a dispute a node's own issuer raises is its holder's.
 
 ### Fixed
+- A validator is told what an exact pinned check is and what the system saw of it: its packet marks every exact check,
+  says how its output is compared in the words its author is given (`procedure.EXACT_READ`, whitespace runs as one), and
+  says what the system's own run of it on this delivery observed — matched, or what it printed, or why it could not run.
+  Its prompt says a matched exact check holds, and that what it believes beyond it, a line layout say, it shows by a
+  probe of its own. Told only "must show: a ok", a validator read the pin as a substring and failed a node six rounds
+  the system's runs had matched.
 - The issuer rules on a dispute over what the validation laid: its turn lays the parts' pinned inputs as well as the
   node's own and shows each finding's command over them; a finding is named by its hash, so a dispute naming it under
   one criterion lets the ruling retire it under every criterion it stands on, and a bare hash retires all of them; an id

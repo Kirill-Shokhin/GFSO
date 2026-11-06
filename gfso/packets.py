@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from gfso.core.protocol.procedure import INPUTS_TOKEN, laid, materialize_inputs, probe_id, same_probe, unrerunnable
+from gfso.core.protocol.procedure import EXACT_READ, INPUTS_TOKEN, laid, materialize_inputs, probe_id, same_probe, unrerunnable
 from gfso.core.types import Signal, TaskId, files_at, set_aside_of
 from gfso.engine import Engine
 from gfso.engine.audit import rejected_on_current_version
@@ -164,6 +164,19 @@ def as_shown(expect) -> str:
     packet's line: "must show: ERR" and a stray "(+ " under it, read by executor, validator and issuer as ERR alone
     (sql rows, 2026-10-27: an issuer's dispute round, six tech reports, citations of "ERR" as the expectation)."""
     return " ⏎ ".join(str(expect or "").splitlines())
+
+
+def _exact_said(p, seen: Optional[dict]) -> str:
+    """What a validator is told of an EXACT pinned check: that it is one, how its output is compared (`EXACT_READ`), and
+    what the system's own run of it on this delivery observed (`tools_llm._observe_exact`). Shown only "must show",
+    a validator read an exact pin as a substring and failed what the system had matched (gf-cc pp-rest, six rounds)."""
+    if not p.exact:
+        return ""
+    ran = ("" if not seen else " The system ran it on this delivery: it MATCHED — decided, it holds"
+           if seen.get("matched") is True else
+           f" The system ran it on this delivery: it printed «{_flat(seen.get('out'))}», not that — it does not hold"
+           if seen.get("matched") is False else f" The system could not run it ({seen.get('note')}): yours to observe")
+    return f"\n      (EXACT: the whole output, compared with {EXACT_READ}.{ran})"
 
 
 def _flat(out) -> str:
@@ -501,12 +514,13 @@ def owed_probes(engine: Engine, task, crits) -> list:
 
 
 def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir: Optional[str] = None,
-                   carry: Optional[dict] = None) -> str:
+                   carry: Optional[dict] = None, seen: Optional[dict] = None) -> str:
     """The criteria one run validates, each with the pinned probes it must run and the once-refuting probes it
     must re-run — over this round's inputs directories, laid down under `scratch` from the contract.
 
     `carry`: {probe id: the criterion it is written under} for the probes THIS run carries, when one validation is
-    split between runs by what it owes (`tools_llm._scope_batches`); None = everything `owed_probes` lists."""
+    split between runs by what it owes (`tools_llm._scope_batches`); None = everything `owed_probes` lists.
+    `seen`: {(node, probe id): the system's own run of that exact probe on this delivery} (`tools_llm._observe_exact`)."""
     tid = str(task.id)
     # THE PROCEDURE EACH CRITERION PINS, handed over as part of the contract. It is not advice: a
     # PASS that skips a pinned probe is refused at the record, so the validator has to see them — and
@@ -540,7 +554,7 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
         pid = probe_id(c.name, p)
         d = _dirs.get(pid)
         return (f"    - {'PART’S ' if part else ''}PINNED CHECK [{pid}] — {p.behaviour}: run `{_cmd(c, p)}` → must show: "
-                f"{as_shown(p.expect)}"
+                f"{as_shown(p.expect)}" + _exact_said(p, (seen or {}).get((tid, pid)))
                 + ("\n      (the part it belongs to passed its own validation on an earlier delivery; its result "
                    "now stands inside THIS delivery, and this criterion rests on it — run it here and report it ONCE, "
                    "under this id, in the probe list of any one criterion that rests on it, with `held`: true if it "
@@ -622,16 +636,18 @@ def _evidence_short(defects: str) -> bool:
 
 
 def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[str],
-                      scratch: Optional[str] = None, criteria=None, carry: Optional[dict] = None) -> str:
+                      scratch: Optional[str] = None, criteria=None, carry: Optional[dict] = None,
+                      seen: Optional[dict] = None) -> str:
     """The validator's self-contained input: contract + seams + ACCEPTED_RISKS + the DELIVER report.
     Embedded by the system — the validator has no graph access (read-only instrument, §10.3).
 
     `criteria` names the SUBSET this run validates (all of them by default). A rich contract is validated
     in batches whose conjunction is the same verdict (§2 V = ⋀ cᵢ), because the coverage discipline
-    is what one report fails when the contract is long. `carry`: the probes this run carries (`_criteria_text`)."""
+    is what one report fails when the contract is long. `carry`: the probes this run carries; `seen`: the system's own
+    runs of its exact ones (`_criteria_text`)."""
     tid = str(task.id)
     _crits = tuple(criteria if criteria is not None else task.spec.criteria)
-    crits = _criteria_text(engine, task, _crits, scratch, workdir, carry)
+    crits = _criteria_text(engine, task, _crits, scratch, workdir, carry, seen)
     ups = _seam_lines(engine, task)
     # WHAT THE LAST ATTEMPT ON THIS DELIVERY WAS MISSING. Measured across every run this
     # installation has recorded (2026-09-05): the validator is 56.5% of all spend — $441.77 of
@@ -679,7 +695,7 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
 
 
 def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str], scratch: Optional[str],
-                            inside: frozenset) -> str:
+                            inside: frozenset, seen: Optional[dict] = None) -> str:
     """ONE validator's input over a scope's deliveries: every node under its own heading, with its criteria,
     pinned probes and regression lines, its seams from outside the scope, its ACCEPTED_RISKS and its own
     DELIVER report — the single-node packet's content, node by node."""
@@ -693,7 +709,7 @@ def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str],
         blocks.append(f"## Node `{tid}` — {task.spec.name}\n\n{task.spec.description}\n"
                       + (f"\nYOUR PREVIOUS REPORT ON THIS DELIVERY WAS REFUSED: {gap}\n" if gap else "")
                       + f"\n### Criteria of `{tid}` this run validates — report each with task_id `{tid}`\n"
-                      f"{_criteria_text(engine, task, crits, place, workdir, *carry)}\n\n"
+                      f"{_criteria_text(engine, task, crits, place, workdir, *carry, seen=seen)}\n\n"
                       f"### Upstream dependencies from outside the scope (edges, not criteria — a stub where "
                       f"one should be goes in the `seams` advisory)\n{ups}\n\n"
                       f"### ACCEPTED_RISKS of `{tid}` — the plan set these aside; none retires a criterion, "
