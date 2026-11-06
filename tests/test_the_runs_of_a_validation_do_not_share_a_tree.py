@@ -24,7 +24,7 @@ from gfso.adapters import snapshots as S
 from gfso.adapters import worktrees as W
 from gfso.adapters.execution import ContainerExecution, LocalExecution, scratch_of
 from gfso.delegate import _classify_no_verdict
-from tests.support import criterion
+from tests.support import criterion, a_repository
 from tests.test_validate_result import _eng, _fenced
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="a node's place is a git worktree")
@@ -316,7 +316,7 @@ def test_what_an_executor_made_unreadable_in_its_place_does_not_stop_its_copy(tm
     if not (image := _image()):
         pytest.skip("no docker image")
     root = tmp_path / "w"
-    (base := root / "base").mkdir(parents=True)
+    a_repository(base := root / "base")
     (root / "state").mkdir()
     ex = ContainerExecution("snap", image, None, str(root / "state"), str(base), "chmodprobe", network=network)
     sh = lambda cmd, cwd: ex.run(["sh", "-c", cmd], cwd=str(cwd), timeout=60)

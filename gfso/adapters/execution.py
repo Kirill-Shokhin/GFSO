@@ -2249,8 +2249,12 @@ def _unfetched(base: Path, missing: list) -> str:
 
 def committed(base: Path, rel: str) -> bytes | None:
     """One file as the import carries it: `rel` at the user's HEAD, read by their own git on the host — None where HEAD
-    holds no such file. What a new root imports, never what a volume's earlier root left nor an uncommitted edit."""
-    got = _host_git(base)("cat-file", "blob", f"HEAD:{rel}", input=b"")
+    holds no such file. What a new root imports, never what a volume's earlier root left nor an uncommitted edit; and
+    only of a top with a commit, as only one is imported (`_carried_in`): git walks up from any other, and a home kept as
+    a repository of its dotfiles gave the contract its committed token for a project's own file (critic, ran)."""
+    if not _is_top(base, git := _host_git(base)):
+        return None
+    got = git("cat-file", "blob", f"HEAD:{rel}", input=b"")
     return got.stdout if got.returncode == 0 else None
 
 

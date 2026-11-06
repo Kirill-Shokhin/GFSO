@@ -1561,6 +1561,11 @@ def _work_place_documents(engine: Engine, request: str, model: str) -> str:
     GB_sql_database_tmu9cb784, 0.09 held-out). Criteria take their content from contact with the work (d6, §4.1)."""
     named: list = []
     ex = execution_of(engine)
+    # …not over a base no session of its project may run in: a volume of a base with no git, from before such bases
+    # were refused, gave the reader its `.env` and ignored files, and the reader gave them to the provider (critic)
+    if ex.files is not HOST and (why := ex.agents_refused()):
+        engine.emit_info("plan", f"the work's place is not read for the plan: {why}")
+        return ""
     for base in _work_places(engine):
         llm = llm_factory(model, execution=ex)
         llm.stage_hint = f"root place-reader({engine.project_name})"   # named like every role's trace, so it is read

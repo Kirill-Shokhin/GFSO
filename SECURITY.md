@@ -69,7 +69,10 @@ is not set as ready. Work your own agent does in its chat, the validator that
 checks it, and, for a project with no execution declared, the reader of a plan's documents a goal you hand
 `auto_decompose` names (read-only tools) run on your machine as before: a person asked for them. A project in a
 container reads them in its container, and the documents a goal names enter its contract as your committed HEAD holds
-them, what its root imports: never an uncommitted edit, an ignored file, nor what an earlier root's work left. With the word, dispatched work runs on
+them, what its root imports: never an uncommitted edit, an ignored file, nor what an earlier root's work left. Which
+files that reader names can still follow what an earlier root's work left in the volume, the new root's import coming
+only once the goal is set: a name it gives is read from your HEAD or not at all, and the documents your request names
+always come in. With the word, dispatched work runs on
 your machine unattended, with what is said below for a session with no execution.
 Docker is part of the installation: `gfso setup` builds the agents' image from the file the package
 ships (no credential and no agent state in it; built from a base named by its digest and a CLI

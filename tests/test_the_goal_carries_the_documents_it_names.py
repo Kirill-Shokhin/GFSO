@@ -7,9 +7,12 @@ workdir (spreadsheet_engine, AUTO haiku — EVIDENCE_LOG §13.38).
 from __future__ import annotations
 
 import subprocess
+
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
+import gfso.adapters.execution as E
 import gfso.tools_llm as TL
 from gfso.core.graph.model import USERS_PLAN_KEY
 from gfso.core.types import TaskId
@@ -113,6 +116,29 @@ def test_a_project_in_a_container_carries_its_documents_as_its_next_root_imports
     assert not any(x in carried for x in ("UNCOMMITTED", "SECRET", "earlier root")), carried
 
 
+def test_a_base_that_is_no_repositorys_top_carries_no_other_repositorys_file(tmp_path):
+    """git walks up from such a base: a home kept as a repository of its dotfiles gave the goal's contract its committed
+    `settings.json`, a token in it, for a project's own (critic, ran). Only a top with a commit is read."""
+    home = a_repository(tmp_path / "home")
+    (home / "settings.json").write_text('{"token": "HOME-SECRET"}', encoding="utf-8")
+    for a in (["add", "settings.json"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "dot"]):
+        subprocess.run(["git", "-C", str(home), *a], check=True, capture_output=True)
+    (proj := home / "newproj").mkdir()
+    (proj / "settings.json").write_text("the project's own", encoding="utf-8")
+    assert E.committed(proj, "settings.json") is None
+    assert E.committed(home, "settings.json") == b'{"token": "HOME-SECRET"}', "a top with a commit is read"
+
+
+def test_the_place_reader_reads_no_base_its_projects_sessions_may_not_run_in(tmp_path, monkeypatch):
+    """A volume of a base with no git, from before such bases were refused, gave the reader its `.env` (critic, read)."""
+    said = []
+    refused = SimpleNamespace(files=SimpleNamespace(), agents_refused=lambda: "no places of its own")
+    monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: refused)
+    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: pytest.fail("a reader started over a refused base"))
+    e = SimpleNamespace(emit_info=lambda kind, text: said.append(text), project_name="p")
+    assert TL._work_place_documents(e, "a summary", "m") == "" and "no places of its own" in said[-1]
+
+
 def test_a_plan_handed_in_whole_is_recorded_as_the_users(tmp_path, monkeypatch):
     """`auto_decompose` with `spec` on an empty project builds the user's own plan, and the project records it so: under
     AUTO the system does not re-split it (`Engine.users_plan`, `issuer.settle`); a plan the system authors is not."""
@@ -138,7 +164,7 @@ def test_where_places_stand_apart_the_reader_works_beside_the_base_not_in_it(tmp
             seen.update(cwd=cwd, user=user)
             return super().run_agent(system, user, allowed_tools, cwd=cwd, **kw)
     apart = SimpleNamespace(files=SimpleNamespace(holds=lambda p: True, mkdir=made.append),
-                            temp_root=lambda: str(tmp_path / "tmp"))
+                            temp_root=lambda: str(tmp_path / "tmp"), agents_refused=lambda: None)
     monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
     monkeypatch.setattr(TL, "llm_factory", lambda model=None, **_: Reader())
     monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: apart)

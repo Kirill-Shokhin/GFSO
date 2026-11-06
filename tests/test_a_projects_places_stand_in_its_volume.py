@@ -393,7 +393,7 @@ def test_live_a_project_whose_volumes_its_record_names_otherwise_is_down_never_s
     would mount. Started on new, empty ones, the project would run on nothing while its work stood elsewhere: it is
     down, both names said, until the operator declares it back or removes the record (then it starts afresh)."""
     a_repository(base := tmp_path / "ws")
-    (other := tmp_path / "other" / "ws2").mkdir(parents=True)
+    a_repository(other := tmp_path / "other" / "ws2")
     kept: dict = {}
     xs = [_fresh(tmp_path, base, kept)]
     try:
