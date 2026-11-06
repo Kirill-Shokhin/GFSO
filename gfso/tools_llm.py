@@ -1512,7 +1512,8 @@ def _named_documents(engine: Engine, request: str) -> str:
     user's chat the tree as it stands; elsewhere what the new root imports, the user's committed HEAD (`committed`) — read
     from the live tree, a project in a container carried an uncommitted edit and an untracked `.env` to the provider (critic,
     ran); read from its volume, a second goal's contract quoted what the earlier root's executors left there (critic)."""
-    bases, files = _work_places(engine), execution_of(engine).files
+    ex = execution_of(engine)
+    bases, files = _work_places(engine, ex), ex.files
     read = ((lambda b, p: files.read_bytes(str(p), _DOC_MAX + 1) if files.exists(str(p)) and not files.is_dir(str(p)) else None)
             if files is HOST else (lambda b, p: committed(b, p.relative_to(b).as_posix())))
     seen, parts = set(), []
@@ -1535,9 +1536,12 @@ def _named_documents(engine: Engine, request: str) -> str:
             + "\n\n".join(parts)) if parts else ""
 
 
-def _work_places(engine: Engine) -> list:
+def _work_places(engine: Engine, ex) -> list:
     """The directories this project's registered roles work in — this project's own only: an unscoped or another
-    project's role stands in someone else's place."""
+    project's role stands in someone else's place. Where the work runs apart, its one base (`ex.base`), the one imported:
+    another role's workdir, a typo or a role left from a name reused, gave the contract a repository never imported (critic, ran)."""
+    if ex.files is not HOST:
+        return [Path(os.path.normpath(ex.base))]
     return sorted({Path(os.path.normpath(w)) for c in _roster().list().values()
                    if (c or {}).get("kind") in ("llm-executor", "llm-validator")
                    and c.get("project") and c.get("project") == engine.project_name
@@ -1566,7 +1570,7 @@ def _work_place_documents(engine: Engine, request: str, model: str) -> str:
     if ex.files is not HOST and (why := ex.agents_refused()):
         engine.emit_info("plan", f"the work's place is not read for the plan: {why}")
         return ""
-    for base in _work_places(engine):
+    for base in _work_places(engine, ex):
         llm = llm_factory(model, execution=ex)
         llm.stage_hint = f"root place-reader({engine.project_name})"   # named like every role's trace, so it is read
         try:

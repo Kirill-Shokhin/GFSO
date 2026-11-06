@@ -105,15 +105,20 @@ def test_a_project_in_a_container_carries_its_documents_as_its_next_root_imports
     (base / "spec.md").write_text("UNCOMMITTED edit", encoding="utf-8")
     (base / ".env").write_text("TOKEN=SECRET", encoding="utf-8")
     reg.register("exec-1", "llm-executor", workdir=str(base), project="p")
-    left = SimpleNamespace(files=SimpleNamespace(exists=lambda p: True, is_dir=lambda p: False,
+    other = a_repository(tmp_path / "another")          # …a second role's workdir: a typo, or a role left from a name reused
+    (other / "README.md").write_text("OTHER-REPO-SECRET", encoding="utf-8")
+    for a in (["add", "README.md"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "r"]):
+        subprocess.run(["git", "-C", str(other), *a], check=True, capture_output=True)
+    reg.register("val-1", "llm-validator", workdir=str(other), project="p")
+    left = SimpleNamespace(base=str(base), files=SimpleNamespace(exists=lambda p: True, is_dir=lambda p: False,
                                                  read_bytes=lambda p, size=None: b"what the earlier root's executor wrote"))
     monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
     monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: left)
     e = make_engine(validate_signals=True, state_timeout=0)
     e.project_name = "p"
-    carried = TL._named_documents(e, f"see spec.md and {(base / '.env').as_posix()}")
+    carried = TL._named_documents(e, f"see spec.md, README.md and {(base / '.env').as_posix()}")
     assert "spec as committed" in carried, carried
-    assert not any(x in carried for x in ("UNCOMMITTED", "SECRET", "earlier root")), carried
+    assert not any(x in carried for x in ("UNCOMMITTED", "SECRET", "earlier root")), carried   # OTHER-REPO-SECRET too
 
 
 def test_a_base_that_is_no_repositorys_top_carries_no_other_repositorys_file(tmp_path):
@@ -137,6 +142,17 @@ def test_the_place_reader_reads_no_base_its_projects_sessions_may_not_run_in(tmp
     monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: pytest.fail("a reader started over a refused base"))
     e = SimpleNamespace(emit_info=lambda kind, text: said.append(text), project_name="p")
     assert TL._work_place_documents(e, "a summary", "m") == "" and "no places of its own" in said[-1]
+
+
+def test_a_volume_holding_its_base_as_a_live_tree_is_refused_whatever_the_base_is_now(tmp_path):
+    """Imported as a tree before such bases were refused, it holds their ignored files: the refusal's own advice, `git init`,
+    made the host base a top and let the plan's reader over that tree again (critic)."""
+    x = E.ContainerExecution("e", "img", None, str(tmp_path / "state"), str(a_repository(tmp_path / "ws")), "p")
+    record = {}
+    x.volume.record = (record.get, record.__setitem__)
+    assert x.agents_refused() is None, "a top with a commit, imported as one"
+    record[E.VOLUME + E.IMPORTED] = '{"commit": "tree"}'
+    assert "live tree" in x.agents_refused()
 
 
 def test_a_plan_handed_in_whole_is_recorded_as_the_users(tmp_path, monkeypatch):
@@ -164,7 +180,7 @@ def test_where_places_stand_apart_the_reader_works_beside_the_base_not_in_it(tmp
             seen.update(cwd=cwd, user=user)
             return super().run_agent(system, user, allowed_tools, cwd=cwd, **kw)
     apart = SimpleNamespace(files=SimpleNamespace(holds=lambda p: True, mkdir=made.append),
-                            temp_root=lambda: str(tmp_path / "tmp"), agents_refused=lambda: None)
+                            temp_root=lambda: str(tmp_path / "tmp"), agents_refused=lambda: None, base=str(tmp_path / "base"))
     monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
     monkeypatch.setattr(TL, "llm_factory", lambda model=None, **_: Reader())
     monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: apart)

@@ -106,7 +106,8 @@ and nothing of your disk is mounted into any of its containers:
   refuse does not land, the cause said), nothing of the agents' configuration travels, and your working tree and branches
   are not touched; a
   base that is no repository's top with a commit is never carried in: a container refuses it, the cause said, before any
-  of it is read. `gfso export-places`, which holds in memory only the names of what it carries, writes the
+  of it is read; a volume that holds one as a tree from an earlier build is refused by that record, whatever the base is
+  now. Where the work runs apart, a goal's documents come from the one base its root imports, never another role's workdir. `gfso export-places`, which holds in memory only the names of what it carries, writes the
   places out for reading, no link leading out of them, with the configuration and hooks of every
   repository replaced, each known by its shape whatever its directory is called, and a `.git` that is a file removed; a
   directory shaped as one loses its `config` and `hooks` though it was none. On a disk that reads two spellings as one

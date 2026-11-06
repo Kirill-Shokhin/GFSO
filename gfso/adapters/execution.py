@@ -2247,6 +2247,17 @@ def _unfetched(base: Path, missing: list) -> str:
             f"(`git rev-list --objects --missing=print HEAD` lists them) and start again")
 
 
+def _refused_over(ex) -> str | None:
+    """Why no session of `ex`'s project runs: its base has no places (`_no_places`) — or its volume holds it as a live tree,
+    imported before such bases were refused, its ignored files and `.env` with it: refused by that record, whatever the base
+    is now; a `git init` after the refusal let the plan's reader over that tree again (critic)."""
+    if json.loads(ex.volume.record[0](VOLUME + IMPORTED) or "{}").get("commit") == "tree":
+        return ("this project's volume holds its base as a live tree, imported before such bases were refused, its ignored "
+                "files with it: export what it holds (`gfso export-places`), remove the project's volumes and its `volume:` "
+                "settings, then start it again")
+    return _no_places(ex.base)
+
+
 def committed(base: Path, rel: str) -> bytes | None:
     """One file as the import carries it: `rel` at the user's HEAD, read by their own git on the host — None where HEAD
     holds no such file. What a new root imports, never what a volume's earlier root left nor an uncommitted edit; and
@@ -2580,8 +2591,8 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
     def unavailable(self, storage: bool = False):
         return _unavailable(self, storage)
 
-    #: dispatched work refused over a base that has no places (`_no_places`)
-    agents_refused = lambda self: _no_places(self.base)  # noqa: E731
+    #: dispatched work, and the plan's reader, refused over a base with no places or held as a tree (`_refused_over`)
+    agents_refused = lambda self: _refused_over(self)  # noqa: E731
 
     def storage_down(self, why: str):
         """`why` an I/O error AND the system's own probe of the storage failing: a place down — never the words alone,

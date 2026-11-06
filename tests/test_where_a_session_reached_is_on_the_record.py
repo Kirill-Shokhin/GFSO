@@ -380,7 +380,7 @@ def test_every_reading_that_binds_work_refuses_the_host_for_a_project_in_volumes
     held = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: "v" if k == E.VOLUME + "places" else None))
     with pytest.raises(PlaceUnavailable, match="stand in volumes"):
         WS.execution_of(held)
-    monkeypatch.setattr(TL, "_work_places", lambda e: ["base"])
+    monkeypatch.setattr(TL, "_work_places", lambda e, ex=None: ["base"])
     with pytest.raises(PlaceUnavailable, match="stand in volumes"):
         TL._work_place_documents(held, "do it", "m")
     free = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None))
