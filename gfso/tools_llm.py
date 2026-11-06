@@ -28,12 +28,12 @@ from typing import Optional, Union
 
 from gfso import runtime
 from gfso.llm import llm_factory
-from gfso.workspaces import declaring_role, execution_of, validation_execution
+from gfso.workspaces import declaring_role, execution_of
 from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snapshot, swap
-from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, left_out,
+from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, LocalExecution, left_out,
                                      scratch_of)
 from gfso.issuer import CONTACT_ROUND as _CONTACT
-from gfso.core.types import (BATCH, LAID, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
+from gfso.core.types import (BATCH, LAID, THIS_HOST, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
                              Verdict, passed)
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (SYSTEMS_ACT, canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
@@ -533,7 +533,18 @@ def _run_each(llm, spawn, scratch: Optional[str], batches: list, run, ex) -> lis
     return texts
 
 
-def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm):
+def validation_execution(engine):
+    """Where a validation of this project runs, read ONCE for all of it — its model, scratch, exact checks and every batch: never the host
+    for a project whose places stand in volumes. Each read the roster again, and a role lost meanwhile put the later ones on the host. Work
+    in chat with no execution declared validates on the host, as it always did; a project that had one and lost its roles has only lost
+    its roles."""
+    ex = execution_of(engine)
+    if isinstance(ex, LocalExecution) and engine.graph.setting(VOLUME + "places"):
+        raise PlaceUnavailable(THIS_HOST, "this project's places stand in volumes and none of its roles declares their execution now: register them back")
+    return ex
+
+
+def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm, ex):
     """Should a validator run be spent here at all — and if not, the answer that says why.
 
     Six refusals, each bought by a run spent for nothing: an unknown node; children that
@@ -592,7 +603,7 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     # which is the defect this repository keeps paying for; both now read `cheap_to_ask`. A network
     # workdir is therefore not pre-checked: the validator opens it and reports what it finds.
     if _llm is None and cheap_to_ask(workdir) and not any(
-            q not in ("__pycache__", ".gfso-scratch") for q in workdir and execution_of(engine).files.listdir(workdir) or ()):
+            q not in ("__pycache__", ".gfso-scratch") for q in workdir and ex.files.listdir(workdir) or ()):
         # …and the way OUT of the refusal depends on whether the roster was able to answer. It used
         # to read "`list_agents` shows where this node's executor works" in both cases — advice that
         # is a dead end for a node held by a person, and homework the server has already done for a
@@ -808,11 +819,12 @@ def _ready_to_validate(engine, task_id, deliverable, workdir, validator, model, 
     the validator say — and the first had grown into the body of the second.
     """
     workdir = workdir or _registered_workdir(engine, task_id, validator)
-    _stop, task, deliverable = _refuse_validation(engine, task_id, deliverable, workdir, _llm)
+    ex = validation_execution(engine)
+    _stop, task, deliverable = _refuse_validation(engine, task_id, deliverable, workdir, _llm, ex)
     if _stop is not None:
         return _stop, None
     _cb = emit_cb(engine, "validate_result", _progress)
-    llm = _llm or llm_factory(model, execution=execution_of(engine))
+    llm = _llm or llm_factory(model, execution=ex)
     if not (llm.runs_agents if isinstance(llm, LLMProviderPort) else hasattr(llm, "run_agent")):
         return {"error": f"validate_result needs a provider that runs agents (tool calling): {model!r} answers "
                          f"one-shots only — `gfso provider-check {model}` names the roles it can hold"}, None
@@ -852,7 +864,7 @@ def _ready_to_validate(engine, task_id, deliverable, workdir, validator, model, 
                         "two reports it cannot decide, it parks the node and says so. Validating it "
                         "yourself — `record_verdict` with what you observed — is the door that does "
                         "not queue behind it."}, None
-    return None, (task, deliverable, llm, _cb, inflight_key, workdir)
+    return None, (task, deliverable, llm, _cb, inflight_key, workdir, ex)
 
 
 def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = None,
@@ -879,14 +891,14 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
                                  _llm, _progress)
     if _stop is not None:
         return _stop
-    task, deliverable, llm, _cb, inflight_key, workdir = _ctx
+    task, deliverable, llm, _cb, inflight_key, workdir, ex = _ctx
     try:
         llm.on_tick = _cb
         llm.stage_hint = f"{task_id} node-validator({validator or 'standalone'})"   # names whose trace it is
         _cb(f"{task_id}: independent validator (read-only agent) over the deliverable…")
         out, text = _validation_pass(engine, task_id, [(task, deliverable)], {task_id: inflight_key}, workdir,
                                      validator, model, llm,
-                                     _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=execution_of(engine))), _cb)
+                                     _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=ex)), _cb, ex=ex)
         out["state"] = task.state.name
         if out.get("error"):
             # The transport refuses to spawn an agent with no working directory (it would run in the state home
@@ -1217,7 +1229,7 @@ def _scope_cap(batch: list, graph) -> Optional[int]:
     return max((c for t, *_ in batch if (c := _validation_cap(t, graph))), default=None)
 
 
-def _observe_exact(engine: Engine, parts: list, workdir, built: Optional[list] = None) -> dict:
+def _observe_exact(engine: Engine, parts: list, workdir, built: Optional[list] = None, ex=None) -> dict:
     """{(node, probe id): {matched, out, note, …}} — every `exact` pinned probe of the criteria left to validate, own and
     parts', run by the system itself ON THE DELIVERY: a fresh copy of it with the inputs laid from the contract
     (`observe.run_checks`), once per validation and before any validator run. The validator's copy was no such run —
@@ -1234,7 +1246,7 @@ def _observe_exact(engine: Engine, parts: list, workdir, built: Optional[list] =
                    for p in (c.check or ()) if p.exact and p.command.strip() and (pid := probe_id(c.name, p))]
     if not probes:
         return {}
-    ex, rows = execution_of(engine), {}
+    ex, rows = ex or validation_execution(engine), {}
     shell = bool(workdir) and ex.shell()
     why = ("the delivery could not be copied" if shell else "no shell to run it in" if workdir else
            "the delivery has no place to copy")
@@ -1281,7 +1293,7 @@ def _unjudged(parts: list, e: Exception) -> tuple:
 
 
 def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
-                     edits: Optional[list] = None, built: Optional[list] = None) -> list:
+                     edits: Optional[list] = None, built: Optional[list] = None, ex=None) -> list:
     """The validator's reports over the parts' deliveries — one run, or one per batch at the same time (`_run_each`),
     each batch carrying a disjoint share of the probes the validation owes over one unchanging set of deliveries, so
     their conjunction is the verdict whatever order they finish in (§2 V = ⋀ cᵢ; `_scope_batches`, `_conjoined`). A
@@ -1293,7 +1305,7 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
     appended to `built`; a build that fails raises `BuildFailed` (`snapshots._build`)."""
     system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
     batches = _scope_batches(engine, parts, validation_batch())
-    ex, delivered = execution_of(engine), engine.delivered(*(t.id for t, *_ in parts))
+    ex, delivered = ex or validation_execution(engine), engine.delivered(*(t.id for t, *_ in parts))
 
     def _run(batch, client=None, place=None) -> str:
         if inside is not None:
@@ -1360,7 +1372,7 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
 
 
 def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, workdir, validator, model, llm, spawn,
-                     _cb, inside: Optional[frozenset] = None) -> tuple:
+                     _cb, inside: Optional[frozenset] = None, ex=None) -> tuple:
     """ONE validation pass over deliveries — a scope's (`inside` its members), or one node's, a scope of one: the
     validator's reports over every node's criteria left to validate (`_left_to_validate` keeps what a refused attempt
     already decided), then each node's OWN verdict recorded over its own entries (`_record_node`). Records only; the
@@ -1371,20 +1383,21 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     kept report and no `verdicts`."""
     left = {str(t.id): _left_to_validate(engine, t) for t, _ in nodes}
     parts = [(t, d, left[str(t.id)][0]) for t, d in nodes]
+    ex = ex or validation_execution(engine)
     # The validator runs WHERE THE WORK IS, with a private scratch BESIDE it (`_validation_place`): a shared scratch
     # let one run validate another's leftovers, and a scratch made the working directory opened the validator in an
     # empty tree, where it failed correct work saying nothing was there. A false FAIL at the seam is worse than none.
-    scratch, _before = _validation_place(top_id, workdir, execution_of(engine), tuple(
+    scratch, _before = _validation_place(top_id, workdir, ex, tuple(
         p.get("as_run") or p.get("command") for t in engine.all_tasks()
         for ps in engine.regression_probes(t.id).values() for p in ps), engine.graph, engine.project_name)
     edits, built, unbuilt = [], [], None
     try:
         # the system's own run of the exact checks FIRST, on the delivery as delivered (`_observe_exact`)
-        if observed := _observe_exact(engine, parts, workdir, built):
+        if observed := _observe_exact(engine, parts, workdir, built, ex):
             _cb(f"{top_id}: the system ran {len(observed)} exact pinned check(s) on a fresh copy of the delivery — "
                 f"{sum(o.get('matched') is True for o in observed.values())} print what they pin, "
                 f"{sum('matched' not in o for o in observed.values())} could not be run")
-        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built)
+        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built, ex)
     except ValueError as ex:
         return {"task_id": top_id, "error": str(ex)}, ""
     except (BuildFailed, NotTheDelivery) as ex:       # …the delivery's FAIL, nothing checked (`_unjudged`)
@@ -1458,13 +1471,14 @@ def validate_scope(engine: Engine, top_id: str, workdir: Optional[str], validato
     one of them, and no verdicts where the report did not parse."""
     members = engine.scope_members(TaskId(top_id))
     nodes = [t for t in members if t.state.name == "VALIDATING" and (only is None or str(t.id) in only)]
+    ex = validation_execution(engine) if nodes else None    # …before a claim: refused past them, they stood held until a restart
     keys = [engine.claims.begin_validation(t.id) for t in nodes]
     if not nodes or None in keys:
         for k in keys:
             if k is not None:
                 engine.claims.end_validation(k)
         return {"task_id": str(top_id), "verdicts": {}, "inflight": bool(nodes)}
-    llm = _llm or llm_factory(model, execution=validation_execution(engine))
+    llm = _llm or llm_factory(model, execution=ex)
     try:
         llm.on_tick = _cb = emit_cb(engine, "validate_result")
         llm.stage_hint = f"{top_id} scope-validator({validator or 'standalone'})"
@@ -1472,8 +1486,8 @@ def validate_scope(engine: Engine, top_id: str, workdir: Optional[str], validato
         out, _ = _validation_pass(engine, str(top_id), [(t, _last_deliver_result(engine, t.id) or "(none recorded)")
                                                         for t in nodes],
                                   {str(t.id): k for t, k in zip(nodes, keys)}, workdir, validator, model, llm,
-                                  _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=execution_of(engine))), _cb,
-                                  inside=frozenset(str(m.id) for m in members))
+                                  _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=ex)), _cb,
+                                  inside=frozenset(str(m.id) for m in members), ex=ex)
         out.pop("reports", None)
         out["verdicts"] = {tid: {"verdict": v["verdict"], "failed_criteria": v["failed_criteria"],
                                  **({"error": v["error"]} if v.get("error") else {})}

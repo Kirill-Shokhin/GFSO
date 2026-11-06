@@ -8,6 +8,7 @@ no container stood a listener; `gfso run` admitted nothing; fragments invented p
 CONTROLS: in `_Book.heard`, take the `try` off and the hostile lines stop the reader; `learn` without its grace and a freed
 address keeps its dead holder; `admit` passing on a failure and work runs off the record; the kernel filter back to TCP, UDP
 and ICMP and the live test's SCTP line goes; the filter's first two lines off and the inbound flood test goes red."""
+import ast
 import inspect
 import json
 import os
@@ -22,7 +23,7 @@ from types import SimpleNamespace
 import pytest
 
 from gfso.adapters import children, door, execution as E
-from gfso import config as C, roster as RO, runtime as RT, workspaces as WS
+from gfso import config as C, roster as RO, runtime as RT, tools_llm as TL, workspaces as WS
 from gfso.engine import admission as AD
 from gfso.adapters import worktrees as W
 from gfso.mcp import server as S
@@ -343,12 +344,34 @@ def test_a_session_is_held_to_the_gate_at_the_reading_that_binds_it(monkeypatch)
     monkeypatch.setattr(WS, "llm_factory", lambda *a, **k: pytest.fail("a model bound past the gate"))
     with pytest.raises(PlaceUnavailable, match="no word here"):
         WS.project_llm(None, "m")
-    monkeypatch.setattr(WS, "execution_of", lambda e, a=None: E.LocalExecution())
+    monkeypatch.setattr(TL, "execution_of", lambda e, a=None: E.LocalExecution())
     held = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: "v" if k == E.VOLUME + "places" else None))
     with pytest.raises(PlaceUnavailable, match="stand in volumes"):
-        WS.validation_execution(held)
+        TL.validation_execution(held)
     free = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None))
-    assert isinstance(WS.validation_execution(free), E.LocalExecution), "work in chat validates on the host, as it did"
+    assert isinstance(TL.validation_execution(free), E.LocalExecution), "work in chat validates on the host, as it did"
+
+
+def test_a_validation_reads_where_it_runs_once():
+    """Each of a validation's model, scratch, exact checks, reports and later batches read the roster again: a role lost
+    meanwhile put the later ones on the host, past the gate the first passed (critic's class, read)."""
+    for f in (TL._refuse_validation, TL._ready_to_validate, TL.validate_result, TL._validation_pass, TL._observe_exact,
+              TL._validator_texts, TL.validate_scope):
+        calls = [n for n in ast.walk(ast.parse(inspect.getsource(f).lstrip()))
+                 if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "execution_of"]
+        assert not calls, f"{f.__name__} reads the roster again"
+
+
+def test_a_validation_refused_its_place_holds_no_claim(monkeypatch, tmp_path):
+    """Refused after its claims were taken, a scope's validation left them held: its nodes read in flight until a restart."""
+    begun, ended = [], []
+    nodes = [SimpleNamespace(id="n", state=SimpleNamespace(name="VALIDATING"))]
+    engine = SimpleNamespace(scope_members=lambda t: nodes, claims=SimpleNamespace(
+        begin_validation=lambda t: begun.append(t) or "k", end_validation=ended.append))
+    monkeypatch.setattr(TL, "validation_execution", lambda e: (_ for _ in ()).throw(PlaceUnavailable("host", "volumes")))
+    with pytest.raises(PlaceUnavailable):
+        TL.validate_scope(engine, "top", str(tmp_path))
+    assert len(begun) == len(ended), "a claim held past the refusal"
 
 
 def test_a_role_another_project_holds_is_not_taken(data, tmp_path):

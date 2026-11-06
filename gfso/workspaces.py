@@ -476,15 +476,6 @@ def project_llm(engine, model: str, agents: "AgentRegistry | None" = None):
     return llm_factory(model, execution=ex)
 
 
-def validation_execution(engine):
-    """Where a validation of this project runs: never the host for a project whose places stand in volumes. Work in chat with no execution
-    declared validates on the host, as it always did; a project that had one and lost its roles has only lost its roles."""
-    ex = execution_of(engine)
-    if isinstance(ex, LocalExecution) and engine.graph.setting(VOLUME + "places"):
-        raise PlaceUnavailable(THIS_HOST, "this project's places stand in volumes and none of its roles declares their execution now: register them back")
-    return ex
-
-
 def session_key(*parts) -> str:
     """The id of ONE conversation per (project, node — its first issue, so a later goal reusing the id is another —,
     its executor, the role's session): a round cut at its turn cap is continued by the next one instead of starting
