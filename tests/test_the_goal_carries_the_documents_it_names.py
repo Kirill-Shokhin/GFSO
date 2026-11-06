@@ -89,6 +89,26 @@ def test_a_plan_the_system_writes_carries_the_files_its_place_names(tmp_path, mo
 
 
 
+def test_a_project_in_a_container_carries_its_documents_as_its_base_holds_them(tmp_path, monkeypatch):
+    """The names came from the container, the text from the host's live tree: an uncommitted edit, an ignored file and an
+    untracked `.env` went to the provider and into every session's contract (critic, ran). Read where the work runs."""
+    reg = AgentRegistry(str(tmp_path / "roster.json"))
+    (tmp_path / "base").mkdir()
+    for name, text in (("spec.md", "UNCOMMITTED edit"), (".env", "TOKEN=SECRET")):
+        (tmp_path / "base" / name).write_text(text, encoding="utf-8")
+    reg.register("exec-1", "llm-executor", workdir=str(tmp_path / "base"), project="p")
+    committed = {(tmp_path / "base" / "spec.md").as_posix(): b"spec as committed"}
+    held = SimpleNamespace(files=SimpleNamespace(
+        exists=lambda p: Path(p).as_posix() in committed, is_dir=lambda p: False,
+        read_bytes=lambda p, size=None: committed.get(Path(p).as_posix())))
+    monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
+    monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: held)
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.project_name = "p"
+    carried = TL._named_documents(e, f"see spec.md and {(tmp_path / 'base' / '.env').as_posix()}")
+    assert "spec as committed" in carried and "UNCOMMITTED" not in carried and "SECRET" not in carried
+
+
 def test_a_plan_handed_in_whole_is_recorded_as_the_users(tmp_path, monkeypatch):
     """`auto_decompose` with `spec` on an empty project builds the user's own plan, and the project records it so: under
     AUTO the system does not re-split it (`Engine.users_plan`, `issuer.settle`); a plan the system authors is not."""

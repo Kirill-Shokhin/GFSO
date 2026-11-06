@@ -1508,21 +1508,25 @@ def _named_documents(engine: Engine, request: str) -> str:
     The plan author, its auditors and the root's reviewer are zero-tool completions: a request saying
     "implement what prompt.md specifies" reached them as its one-paragraph summary, and the plan's criteria
     contradicted the 12 KB statement the root's executor then read in its workdir (spreadsheet_engine, AUTO
-    haiku, 2026-10-10 — EVIDENCE_LOG §13.38). Whoever reads the contract now reads what the executor reads."""
-    bases = _work_places(engine)
+    haiku, 2026-10-10 — EVIDENCE_LOG §13.38). Whoever reads the contract now reads what the executor reads: read where
+    the work runs (`execution_of`), a container's base holding only what was committed — read on the host, a project in a
+    container carried an uncommitted edit, an ignored file and an untracked `.env` into the contract and to the provider
+    (critic, ran)."""
+    bases, files = _work_places(engine), execution_of(engine).files
     seen, parts = set(), []
     for tok in re.findall(r"[^\s`'\"(),;<>\[\]]+", request or ""):
         tok = tok.rstrip(".:")
         # a word of prose is no file name; a path to a file that stands is one, `Makefile` included
         # …a share named here, by the request or by the reader's answer, is asked about from this host: not asked
-        if "://" in tok or not cheap_to_ask(tok) or not (Path(tok).suffix or (Path(tok).is_absolute() and Path(tok).is_file())):
+        if "://" in tok or not cheap_to_ask(tok) or not (Path(tok).suffix or Path(tok).is_absolute()):
             continue
         # the first base the name stands in is the one it names; a name met again is the same document
         for b in bases:
             p = Path(os.path.normpath(Path(tok) if Path(tok).is_absolute() else b / tok))
-            if not p.is_relative_to(b) or not p.is_file():
+            if not p.is_relative_to(b) or not files.exists(str(p)) or files.is_dir(str(p)):
                 continue
-            if p not in seen and p.stat().st_size <= _DOC_MAX and b"\0" not in (raw := p.read_bytes()):
+            raw = files.read_bytes(str(p), _DOC_MAX + 1) if p not in seen else None
+            if raw is not None and len(raw) <= _DOC_MAX and b"\0" not in raw:
                 parts.append(f"## {p.relative_to(b).as_posix()}\n\n{raw.decode('utf-8', errors='replace')}")
             seen.add(p)
             break
@@ -2208,8 +2212,9 @@ def _movable(engine: Engine, agents, which: Optional[list] = None) -> dict:
 _IN_CHAT_APART = ("this project's work runs in the container execution {!r}, where every place and the base "
                   "stand in the project's volume and only what stands there is judged; in_chat work is done on this "
                   "host, in none of them. Set `perform=\"dispatch\"` (a session of this project's executor performs "
-                  "your nodes in its own place), or run the project on this host (its roles registered with no "
-                  "`execution`: `unregister_agent` the ones that name one, and register them again without it).")
+                  "your nodes in its own place), or do in_chat work in a new project on this host, whose roles name no "
+                  "`execution`: this project's work stands in its volume and does not move to this host, and with its "
+                  "roles unregistered it does nothing until they are back.")
 
 
 def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
