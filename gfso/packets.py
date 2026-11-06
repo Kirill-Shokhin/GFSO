@@ -43,7 +43,7 @@ def _crit_line(c, dirs: dict) -> str:
     def _probe(p) -> str:
         d = dirs.get(probe_id(c.name, p))
         cmd = p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command
-        return (f"    - will be checked by — {p.behaviour}: `{cmd}` → must show: {as_shown(p.expect)}"
+        return (f"    - will be checked by — {p.behaviour}: `{cmd}` → {must_show(p)}"
                 + (f" (`{{inputs}}` = {d.as_posix()}: the {len(p.inputs)} file(s) pinned with the check — read them, "
                    f"never write there; the validator lays its own copy from the contract)" if d else ""))
     return "\n".join([f"- **{c.name}**: {c.description}"] + [_probe(p) for p in (c.check or ())])
@@ -166,10 +166,17 @@ def as_shown(expect) -> str:
     return " ⏎ ".join(str(expect or "").splitlines())
 
 
+def must_show(p, seen: Optional[dict] = None) -> str:
+    """What a pinned check must show, as EVERY reader of it is told — executor, validator, issuer: one rendering, or one
+    check is judged by two rules. Shown only "must show", a validator read an exact pin as a substring and failed what the
+    system had matched (gf-cc pp-rest, six rounds), and its executor, told no comparator either, disputed the FAIL eight
+    times against an issuer who ruled by it (same node, the next build)."""
+    return f"must show: {as_shown(p.expect)}" + _exact_said(p, seen)
+
+
 def _exact_said(p, seen: Optional[dict]) -> str:
-    """What a validator is told of an EXACT pinned check: that it is one, how its output is compared (`EXACT_READ`), and
-    what the system's own run of it on this delivery observed (`tools_llm._observe_exact`). Shown only "must show",
-    a validator read an exact pin as a substring and failed what the system had matched (gf-cc pp-rest, six rounds)."""
+    """Of an EXACT pinned check: that it is one, how its output is compared (`EXACT_READ`), and — to its validator —
+    what the system's own run of it on this delivery observed (`tools_llm._observe_exact`)."""
     if not p.exact:
         return ""
     ran = ("" if not seen else " The system ran it on this delivery: it MATCHED — decided, it holds"
@@ -553,8 +560,8 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
     def _probe_line(c, p, part: bool = False) -> str:
         pid = probe_id(c.name, p)
         d = _dirs.get(pid)
-        return (f"    - {'PART’S ' if part else ''}PINNED CHECK [{pid}] — {p.behaviour}: run `{_cmd(c, p)}` → must show: "
-                f"{as_shown(p.expect)}" + _exact_said(p, (seen or {}).get((tid, pid)))
+        return (f"    - {'PART’S ' if part else ''}PINNED CHECK [{pid}] — {p.behaviour}: run `{_cmd(c, p)}` → "
+                f"{must_show(p, (seen or {}).get((tid, pid)))}"
                 + ("\n      (the part it belongs to passed its own validation on an earlier delivery; its result "
                    "now stands inside THIS delivery, and this criterion rests on it — run it here and report it ONCE, "
                    "under this id, in the probe list of any one criterion that rests on it, with `held`: true if it "
@@ -591,7 +598,7 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
             lines.append("    - rests also on the PART’S PINNED CHECKS below, each observed by ANOTHER run of this "
                          "validation — shown as the contract pins them so you know what they run and must show; not "
                          "yours to run or report, and one observation of each serves this criterion:")
-            lines += [f"      · [{pid}] — {p.behaviour}: `{_cmd(pc, p)}` → must show: {as_shown(p.expect)}"
+            lines += [f"      · [{pid}] — {p.behaviour}: `{_cmd(pc, p)}` → {must_show(p)}"
                       for pid in again[None] for pc, p in [_part_probes[pid]]]
         # …AND WHAT IT OWES THAT ANOTHER RUN CARRIES: its verdict is the conjunction of the runs' verdicts on it
         if any(carry.get(pid) != c.name for pid, _ in items):
