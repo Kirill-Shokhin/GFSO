@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import pytest
+from tests.support import a_repository, carry_nothing_in
 
 import gfso.adapters.execution as E
 from gfso.adapters.execution import ContainerExecution
@@ -32,10 +33,17 @@ def _docker() -> bool:
 live = pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 
 
+
+@pytest.fixture(autouse=True)
+def _nothing_carried_in(monkeypatch, request):
+    """The import is not what these fakes of the docker client test; a live test imports for real."""
+    if not request.node.name.startswith("test_live"):
+        carry_nothing_in(monkeypatch)
+
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     monkeypatch.setattr(E, "_SESSIONS", {})
-    (work := tmp_path / "work" / "ws").mkdir(parents=True)
+    a_repository(work := tmp_path / "work" / "ws")
     ex = ContainerExecution("vol-v1", IMAGE, None, str(tmp_path / "state"), str(work), "p")
     ex.container = ex.way.container = f"vol-v1-files-{time.time_ns()}"
     ex.way.net, ex.way.gateway = f"{ex.container}-net", f"{ex.container}-gw"

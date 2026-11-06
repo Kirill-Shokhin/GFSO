@@ -47,7 +47,6 @@ HOSTS_OWN = {
     ("adapters/execution.py", "_carried_in",
      "(p := (base / git('rev-parse', '--git-path', f'info/{n}').stdout.strip())).is_file()"):
         "the user's repository, carried in",
-    ("adapters/execution.py", "_carried_in", "base.is_dir()"): "the user's repository, carried in",
     ("adapters/execution.py", "_is_top", "base.is_dir()"): "the user's repository, carried in",
     ("adapters/execution.py", "_is_top", "shutil.which('git')"): "this host's git",
     ("adapters/execution.py", "_lfs_of", "(f := Path(lfs.path_in(str(store), oid))).is_file()"):

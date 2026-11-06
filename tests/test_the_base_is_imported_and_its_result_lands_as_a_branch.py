@@ -168,38 +168,22 @@ def test_live_a_new_root_imports_again_unless_the_earlier_one_still_works_there(
     assert _imported(x)["for"] == WS.root_key(e)
 
 
-@live
-def test_live_a_base_with_no_git_is_imported_once_and_its_result_lands_beside_it(tmp_path, monkeypatch):
-    monkeypatch.setattr(E, "_SESSIONS", {})
-    monkeypatch.setattr(E, "_STARTED", {})
-    (base := tmp_path / "w" / "ws").mkdir(parents=True)
-    (base / "f.txt").write_text("the user's\n")
-    record: dict = {}
-    x = ContainerExecution(f"t{time.time_ns()}", IMAGE, None, str(tmp_path / "state"), str(base), "p")
-    x.volume.record = (record.get, record.__setitem__)
-    monkeypatch.setattr(WS, "execution_of", lambda engine, agents=None: x)
-    e = _engine(x, old := _root("old"))
-    try:
-        x.session(str(x.base)).run(["sh", "-c", "echo work > f.txt && echo new > w.txt"], cwd=str(x.base),
-                                   timeout=120).check_returncode()
-        assert _imported(x)["commit"] == "tree"
-        (base / "f.txt").write_text("the user's, changed\n")
-        x.stop()
-        old.state = State.DONE
-        e.tasks[:] = [new := _root("new")]
-        WS.root_created(e, None, new)
-        x.stop()
-        assert x.files.read_bytes(str(x.base / "f.txt")) == b"work\n" and x.files.exists(str(x.base / "w.txt")), \
-            "a root's work in a base with no git is never written over"
-        assert "imported once" in e.said[-1] and _imported(x)["for"] == WS.root_key(e)
-        assert WS.land_accepted(e, None, new) is None, e.said
-        out = tmp_path / "w" / ".gfso-accepted-ws" / "p"
-        assert (out / "f.txt").read_text() == "work\n" and (out / "w.txt").read_text() == "new\n"
-        assert json.loads(e.graph.setting(WS.LANDED)) == {"path": str(out)}, "the page reads where the result lies"
-        assert (base / "f.txt").read_text() == "the user's, changed\n", "the user's directory untouched"
-    finally:
-        x.stop()
-        x.volume.remove()
+def test_a_base_that_is_no_repositorys_top_is_never_carried_in(tmp_path):
+    """Its whole live tree went into the volume, ignored files and `.env` with it, and the plan's reader carried them to the
+    provider and the contract, while every session over it was refused (critic, ran): the import refuses by the same cause."""
+    (repo := tmp_path / "repo").mkdir()
+    _git(repo, "init", "-q")
+    (repo / "a.txt").write_text("committed")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "c")
+    for base in ((repo / "ws"), (tmp_path / "plain")):
+        base.mkdir()
+        (base / ".env").write_text("TOKEN=SECRET")
+        out = tmp_path / f"out-{base.name}"
+        out.mkdir()
+        with pytest.raises(PlaceUnavailable, match="not the top of a git repository"):
+            E._carried_in(base, "p", out)
+        assert not (out / "in.tar").exists() or b"SECRET" not in (out / "in.tar").read_bytes()
 
 
 @live

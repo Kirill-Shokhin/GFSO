@@ -18,7 +18,7 @@ from gfso.adapters.execution import ContainerExecution, LocalExecution
 from gfso.roster import AgentRegistry
 import gfso.tools_llm as TL
 from gfso.core.types import AgentId, Mode
-from tests.support import make_engine
+from tests.support import make_engine, a_repository, carry_nothing_in
 
 
 def _p(name, **settings):
@@ -34,8 +34,7 @@ def declared(tmp_path, monkeypatch):
     monkeypatch.setenv("GFSO_EXECUTIONS_PATH", str(p))
     monkeypatch.setattr(WS, "_EXECUTIONS", {})
     monkeypatch.setattr(E, "_SWITCH", {})
-    base = tmp_path / "w" / "base"
-    base.mkdir(parents=True)
+    base = a_repository(tmp_path / "w" / "base")
     return AgentRegistry(path=str(tmp_path / "agents.json")), base
 
 
@@ -55,6 +54,7 @@ def test_a_turned_network_switch_holds_for_every_holder(declared, tmp_path, monk
     """The switch is set outside, in the declaration. A session keeps the execution it started with, so a second object
     under the new switch would lose the container to the first one's next call (critic over the switch): the ONE object
     turns, and whoever holds it starts the container under the switch as declared now."""
+    carry_nothing_in(monkeypatch)
     agents, base = declared
     agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
     held = WS.execution_of(_p("p"), agents)

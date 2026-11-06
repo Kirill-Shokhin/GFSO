@@ -99,8 +99,8 @@ and nothing of your disk is mounted into any of its containers:
   unchecked — (what parses that pack, made where an agent writes, is your git; a bundle carrying history your git would
   refuse does not land, the cause said), nothing of the agents' configuration travels, and your working tree and branches
   are not touched; a
-  project whose base is no git repository gets its result in `.gfso-accepted-<base>/<project>/`
-  beside it. `gfso export-places`, which holds in memory only the names of what it carries, writes the
+  base that is no repository's top with a commit is never carried in: a container refuses it, the cause said, before any
+  of it is read. `gfso export-places`, which holds in memory only the names of what it carries, writes the
   places out for reading, no link leading out of them, with the configuration and hooks of every
   repository replaced, each known by its shape whatever its directory is called, and a `.git` that is a file removed; a
   directory shaped as one loses its `config` and `hooks` though it was none. On a disk that reads two spellings as one
@@ -254,7 +254,7 @@ What one session can still reach:
 - On a git base every session works in a place of its own, a root's executor, a parent's consent and the reader of
   the places a plan is made from included; a project's model-client state from an earlier version still holds what
   sessions then ran in the base wrote. A project whose base is no git repository with a
-  commit has no places, so a container runs none of its dispatched work: it stops with the cause, `git init` and a
+  commit has no places, so a container carries none of it in and runs none of its work, its plan's reading included: it stops with the cause, `git init` and a
   first commit named. On your machine, with the word, such a project's sessions all work in the base and can read
   each other's conversations.
 - A delivery with no recorded commit — a project dir that is no git repository, a DELIVER sent by an

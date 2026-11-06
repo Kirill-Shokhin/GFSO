@@ -252,13 +252,13 @@ in — files you changed or did not commit, submodules (empty inside), LFS files
 (pointers inside: `git lfs fetch` first), the objects a partial clone lacks — and the answer of the call that makes
 the root (`auto_decompose`, or `create_task` building it by hand), and of `start_project` before any import, says the
 same as `not_imported`. That import is the root's: no restart of the server, of Docker or of the container imports again, and
-only a new root of the project does, once the earlier root no longer works there. A project dir with no git is
-copied as a tree, once: nothing ever copies over the work done in it. Your working tree and your branches are
+only a new root of the project does, once the earlier root no longer works there. A project dir that is no git
+repository's top with a commit is not copied in at all: the container refuses it and names `git init` and a first commit
+(a subdirectory of a repository would carry its ignored files, `.env` among them). Your working tree and your branches are
 never written: when the root PASSes, its accepted result lands in your repository as the branch
 `gfso/<project>/accepted` (a `git fetch` of a bundle, without submodules, nothing else), to read, diff and merge
 when you choose; a later root's PASS moves that branch (its reflog keeps where it stood), and the landing is
-refused while the branch is checked out in any worktree of yours. A project dir with no git lands its result
-beside it, in `../.gfso-accepted-<dir>/<project>/`. So two projects on one project dir no longer see each other's
+refused while the branch is checked out in any worktree of yours. So two projects on one project dir no longer see each other's
 accepted work until you merge their branches. `perform="in_chat"` is refused under a container execution: work your own agent does
 on this host is not in the volume, and only what stands there is validated. To read the places, write them out:
 `gfso export-places <project> <dir>` puts them under `<dir>/<project>/` — the volume found by the project's

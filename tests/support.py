@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import subprocess
+import tarfile
 import time
 from pathlib import Path
 from typing import Optional
 
+import gfso.adapters.execution as E
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm import credentials
 from gfso.adapters.storage.memory import MemoryStorage
@@ -41,6 +44,22 @@ REGISTER = [n.to_dict() for n in REGISTER_ITEMS]
 #: the same register as the split's own carrier, for the engine's admission (`decompose_task(register=…)`)
 REGISTER_SPLIT = Register(REGISTER_ITEMS)
 DENIAL_ENTRY = DENIAL.to_dict()
+
+
+def a_repository(base: Path) -> Path:
+    """`base` made the top of a git repository with a commit: the only base a container carries in (`_carried_in`)."""
+    base.mkdir(parents=True, exist_ok=True)
+    for a in (["init", "-q"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "start"]):
+        subprocess.run(["git", "-C", str(base), *a], check=True, capture_output=True)
+    return base
+
+
+def carry_nothing_in(monkeypatch) -> None:
+    """For a fake of the docker client, whose host git is no git: an empty bundle carried in (`_carried_in`)."""
+    def carried(base, project, d):
+        tarfile.open(d / "in.tar", "w").close()
+        return "c0ffee", d / "in.tar", []
+    monkeypatch.setattr(E, "_carried_in", carried)
 
 
 def imports_of(py: Path, repo: Path) -> list:

@@ -14,6 +14,7 @@ import time
 from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
+from tests.support import a_repository, carry_nothing_in
 
 import gfso.adapters.execution as E
 from gfso.adapters.execution import ContainerExecution, _writable_root, scratch_of
@@ -24,8 +25,7 @@ IMAGE = os.environ.get("GFSO_TEST_IMAGE", "e3-linux-agent:2")   # CI: the produc
 
 @pytest.fixture
 def place(tmp_path):
-    base = tmp_path / "work" / "base"
-    base.mkdir(parents=True)
+    base = a_repository(tmp_path / "work" / "base")
     return base
 
 
@@ -160,6 +160,7 @@ def test_the_container_holds_only_the_projects_own_directories_and_no_cli_state(
 
 
 def test_a_call_is_started_inside_its_mapped_place_with_only_what_it_sets(place, tmp_path, monkeypatch):
+    carry_nothing_in(monkeypatch)
     ran, started = [], []
     monkeypatch.setattr(E, "run", lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(
         args, 0, "true" if args[:2] == ["docker", "inspect"] else "", ""))

@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.support import a_repository, carry_nothing_in
 
 import gfso.adapters.execution as E
 import gfso.adapters.worktrees as W
@@ -39,7 +40,7 @@ def project(tmp_path, monkeypatch):
     laid and read through its port (`lay`, `made`), gone with the test."""
     monkeypatch.setattr(E, "_SESSIONS", {})
     monkeypatch.setattr(E, "_SWITCH", {})
-    (base := tmp_path / "work" / "ws").mkdir(parents=True)
+    a_repository(base := tmp_path / "work" / "ws")
     (tmp_path / "e.env").write_text("NOTHING=1\n")
     x = ContainerExecution(f"t{time.time_ns()}", IMAGE, str(tmp_path / "e.env"), str(tmp_path / "state"), str(base),
                            "p")
@@ -215,6 +216,7 @@ def test_an_issuers_contact_is_a_round_of_the_nodes_own_scratch(project):
 
 
 def test_a_session_whose_directory_is_gone_is_stopped_and_one_started_by_its_project_stays_tracked(project, monkeypatch):
+    carry_nothing_in(monkeypatch)
     ran = []
     fake = lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(
         args, 0, "true" if args[:2] == ["docker", "inspect"] else "", "")

@@ -13,6 +13,7 @@ import threading
 import time
 
 import pytest
+from tests.support import a_repository, carry_nothing_in
 from gfso import config as C
 
 import gfso.adapters.execution as E
@@ -21,6 +22,13 @@ from gfso.adapters.execution import ContainerExecution
 IMAGE = os.environ.get("GFSO_TEST_IMAGE", "e3-linux-agent:2")   # CI: the product's own image
 
 
+
+@pytest.fixture(autouse=True)
+def _nothing_carried_in(monkeypatch, request):
+    """The import is not what these fakes of the docker client test; a live test imports for real."""
+    if not request.node.name.startswith("test_live"):
+        carry_nothing_in(monkeypatch)
+
 @pytest.fixture(autouse=True)
 def _switches(monkeypatch):
     monkeypatch.setattr(E, "_SWITCH", {})
@@ -28,7 +36,7 @@ def _switches(monkeypatch):
 
 def _ex(tmp_path, network=None, project="p"):
     base = tmp_path / "work" / "base"
-    base.mkdir(parents=True, exist_ok=True)
+    a_repository(base)
     return ContainerExecution("t", IMAGE, str(tmp_path / "e.env"), str(tmp_path / "state"), str(base), project, network)
 
 

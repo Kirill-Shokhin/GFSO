@@ -2251,13 +2251,13 @@ def _carried_in(base: Path, project: str, d: Path) -> tuple:
     """(the commit, a tar under `d`, what of the user's it leaves out) of what the base imports (`_IMPORT`) — made on
     the host by the user's own git, reading their repository and nothing else: a bundle of HEAD and of the project's
     node branches left from before the base moved in, but `accepted`, with the LFS objects HEAD's pointers name that
-    their store holds (`_lfs_of`); else, no git, its tree. Left out, said (`left_out`)."""
+    their store holds (`_lfs_of`). Left out, said (`left_out`). A base that is no repository's top with a commit is refused
+    by the cause every session over it is (`_no_places`): carried in as its live tree, its ignored files and `.env` went
+    into the volume and the plan's reader carried them to the provider (critic, ran)."""
     out, git = d / "in.tar", _host_git(base)
+    if not _is_top(base, git):
+        raise PlaceUnavailable(str(base), _no_places(base) or f"{base} is not the top of a git repository with a commit")
     with tarfile.open(out, "w") as t:
-        if not _is_top(base, git):
-            if base.is_dir():
-                t.add(base, arcname="tree")
-            return None, out, []
         commit = git("rev-parse", "--verify", "HEAD^{commit}").stdout.strip()
         if missing := _missing(git):
             raise OSError(_unfetched(base, missing))
