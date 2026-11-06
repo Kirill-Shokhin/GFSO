@@ -22,9 +22,12 @@ nothing more, nothing less.
    it. Whether they add up to what your parent needed is the issuer's claim, not yours — if you can
    see that they do not, that is a CHALLENGE (below), not extra work.
 2. **Consent or dispute.** If the spec/criteria are coherent and executable — you have consented; work.
-   If the spec is defective (contradictory, undecidable criteria, wrong scope, genuinely multi-part
-   beyond one sitting): STOP and report `status: "challenge"` with the specific defect as `reason` —
-   the issuer resolves. Never "fix" a defective spec yourself. The dispute is open DURING the work
+   If the spec is defective (contradictory, undecidable criteria, wrong scope): STOP and report
+   `status: "challenge"` with the specific defect as `reason` — the issuer resolves. Its SIZE is no
+   defect: a contract larger than this session is worked, not disputed — build what you can, commit as
+   you go, and when the session ends the next one continues from your tree and your handover note,
+   until the criteria hold or the deadline comes. A challenge or block saying only that the work is big
+   moves nothing and spends the rounds the work needs. Never "fix" a defective spec yourself. The dispute is open DURING the work
    too, not only before you consent: a defect that only contact reveals is challenged from where you
    meet it, and the contract binds until the issuer answers. A criterion that CONTRADICTS the statement
    of the goal you were given — your spec, or a document it names — is such a defect: challenge it,

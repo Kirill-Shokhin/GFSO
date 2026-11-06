@@ -244,8 +244,12 @@ def _whose_the_children_are(engine, d: dict, rid: TaskId, parent_del, C):
 
 def _record_the_session_fit(engine, d: dict, rid: TaskId, ns) -> None:
     """Keep the decomposer's count and judgement beside the contract, node by node (`record_session_fit`)."""
+    # …but a split of nothing — one part folded back into its whole (`_one_part_is_the_whole`) — makes the node a leaf
+    # (§3.7), worked over sessions: kept "over a session", it owed a split no session would start on, and the question
+    # came back as one part again (GL_cc_light1, six times)
     if "whole_fits_one_session" in d:
-        engine.record_session_fit(rid, str(d.get("whole_volume", "")), bool(d.get("whole_fits_one_session")))
+        engine.record_session_fit(rid, str(d.get("whole_volume", "")),
+                                  bool(d.get("whole_fits_one_session")) if d.get("subtasks") else None)
     for c in d.get("subtasks", []):
         if "fits_one_session" in c:
             engine.record_session_fit(TaskId(ns(str(c["id"]))), str(c.get("volume", "")),

@@ -1,32 +1,28 @@
 """The issuer's ruling that retires a validator's finding is part of his ACCEPT_CHALLENGE, names only the findings the
 CHALLENGE named by id, holds while the ruled criterion reads as that act left it, and over the user's own goal is the
-user's alone; a finding on a seam a merge drops keeps gating the merged child (`engine.findings`).
+user's alone (`engine.findings`).
 
 Measured by a critic over 868ede5, each reproduced: under AUTO the system answering a root's dispute retired a
 finding on the user's own criterion; a ruling on `conf` outlived a tightened `conf`, and the validator's re-filed FAIL
 was refused as "ruled outside this criterion"; a CHALLENGE naming one finding and mentioning another criterion in
-passing let the acceptance retire that criterion's findings too; a finding on a seam between two merged members went
-under a criterion the merged child has not, gating nothing; and the ruling, recorded after ACCEPT_CHALLENGE returned
+passing let the acceptance retire that criterion's findings too; and the ruling, recorded after ACCEPT_CHALLENGE returned
 and only while that was the node's last act, was lost — with an exception — when the dispatcher's ACCEPT came first.
 
 A critic over 3982699 found three more: a validator's `t.c` of one round took the id of another round's `t.c`, so a
 new program's FAIL was refused as a ruled finding's; the system answered an AUTO root's dispute it could not rule on,
-and the finding came back until the rework bound cancelled the root; a member all of whose criteria read another member
-handed its findings to no criterion of the merged child. A finding's id now carries the content of the scratch files
+and the finding came back until the rework bound cancelled the root. A finding's id now carries the content of the scratch files
 it ran; at an AUTO root a ruling on a finding is the user's alone (`Engine.users_dispute`) — the dispute itself the
 system still answers without one: barred from it altogether, a root sat CHALLENGED until the run's ceiling on a
 challenge that only said the findings could not be met (GB_sql_database_tn03ao788, 2026-10-16).
 
 CONTROLS: let the system rule on the user's goal (`answer_the_challenge`) or lock the door to the user's answer, and the
 AUTO test goes red; bar the system from the dispute (`system_mover`) and the rejection test goes red; stop lapsing rulings in `findings.rulings` and the tightening test goes red; let `ruling_defect`
-take a criterion's name in place of a finding's id and the incidental-mention test goes red; map a dropped seam to
-nothing in `_merged`'s `onto`, or an all-seam member to its own criteria alone, and the seam tests go red; fold the
+take a criterion's name in place of a finding's id and the incidental-mention test goes red; fold the
 round out of a finding's id without its files' content and the same-name test goes red; record the ruling apart from
 the signal (drop `retire_findings` from the log row) and the interleaving test goes red. Each has a paired control.
 """
 from __future__ import annotations
 
-import dataclasses
 import json
 
 import pytest
@@ -34,15 +30,14 @@ import pytest
 import gfso.tools as T
 from gfso import issuer as I
 from gfso.adapters.storage.sqlite import SqliteStorage
-from gfso.core.protocol.procedure import orphaned_regression, probe_id
-from gfso.core.types import Criteria, Mode, Signal, SignalData, TaskId
+from gfso.core.protocol.procedure import probe_id
+from gfso.core.types import Mode, Signal, SignalData, TaskId
 from gfso.packets import _validator_packet
-from tests.support import criterion, emptied, pinned
+from tests.support import criterion
 from tests.test_a_finding_binds_the_criterion_it_refuted import _OWN, _delivered, _id, _pinned, _refute, _seam
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
-from tests.test_the_mode_decides_who_holds_what import _Roster, _admit, _engine, _goal, _kid
+from tests.test_the_mode_decides_who_holds_what import _Roster, _engine, _goal
 from gfso.tools_llm import TOOLS as LOCKED
-from tests.test_two_parts_that_need_each_other_are_one import _found, _ring
 
 
 @pytest.fixture(autouse=True)
@@ -252,25 +247,6 @@ def test_a_ruling_only_on_the_twin_the_dispute_did_not_name_is_told_so_not_count
     e.stop()
 
 
-def test_a_finding_on_a_seam_the_merge_drops_gates_the_members_carried_criteria():
-    e = _ring()      # …libc's criterion that reads pp's result through a check of its own: a seam that is a criterion
-    e.revise(TaskId("root.libc"), dataclasses.replace(e.graph.get_task(TaskId("root.libc")).spec, criteria=e.graph.get_task(
-        TaskId("root.libc")).spec.criteria + (Criteria("dep__root.pp", "reads pp", depends_on=TaskId("root.pp"),
-                                                       check=pinned("dep__root.pp")),)), e.graph.issuer_of(TaskId("root.libc")))
-    e.wait_idle()
-    _found(e, "root.libc", "dep__root.pp", "./cc -E pp_out.c; echo exit=$?")
-    _found(e, "root.pp", "kp", "./cc -E macros.c; echo exit=$?")                    # control: not a seam
-    root = e.graph.get_task(TaskId("root"))
-    assert I.merge_the_refuted_cycle(e, root, str(root.assignee)) == {"status": "applied", "move": "merge"}
-    e.wait_idle()
-    merged = e.graph.get_task(TaskId("root.libc_pp"))
-    carried = e.regression_probes(merged.id)
-    assert {k: [p["carried_from"].split(":")[0] for p in v] for k, v in carried.items()} == {
-        "builds (libc)": ["root.libc"], "kl": ["root.libc"], "kp": ["root.pp"]}, carried
-    assert not orphaned_regression(merged.spec.criteria, carried), "a carried finding gates nothing"
-    e.stop()
-
-
 def _interleaved(e):
     """The dispatcher's ACCEPT for the re-offered node landing right after an accepted ACCEPT_CHALLENGE, before its
     sender reads the reply — as `send_signal_sync`'s wait allows."""
@@ -349,28 +325,4 @@ def test_a_finding_filed_under_an_id_of_before_still_gates_and_is_met_by_its_rer
     rerun = {"behaviour": "b", "command": cmd.replace("1791646628", "1791700000"), "expect": "exit=0"}
     report = [{**x, "probe": x["probe"] + [rerun]} if x["criterion"] == "conf" else x for x in _pinned(e)]
     assert e.record_exec_verdict("kid", "PASS", [], "validator", per_criterion=report)["verdict"] == "PASS"
-    e.stop()
-
-
-@pytest.mark.parametrize("libc_own", [False, True], ids=["all-seams", "control-own-criterion"])
-def test_a_member_whose_criteria_all_read_another_member_hands_its_findings_to_the_merged_work(libc_own):
-    e = _engine(Mode.AUTO)
-    T.TOOLS["create_task"](e, "root", {"description": "c", "criteria": [criterion("g"), criterion("h")]})
-    _admit(e, "root", _kid("root.pp", ["g"], criterion("kp", "macros expand")),
-           _kid("root.libc", ["h"], criterion("dep__pp", "reads pp's result", depends_on="root.pp"),
-                criterion("kl", "headers parse")))
-    e.add_dependency(TaskId("root.libc"), TaskId("root.pp"), discovered=True, glue="p_wide.c includes <wchar.h>")
-    e.wait_idle()
-    if not libc_own:      # an all-seams member is no packet the admission issues (§2.2): one stored before it held that
-        emptied(e, "root.libc", seams=True)
-    _found(e, "root.libc", "dep__pp", "./cc -E pp_out.c; echo exit=$?")
-    root = e.graph.get_task(TaskId("root"))
-    assert I.merge_the_refuted_cycle(e, root, str(root.assignee)) == {"status": "applied", "move": "merge"}
-    e.wait_idle()
-    merged = e.graph.get_task(TaskId("root.libc_pp"))
-    # the rule reads the packet that LANDS: the merged child decides criteria of its own, whatever a member held
-    assert any(not c.depends_on for c in merged.spec.criteria), merged.spec.criteria
-    carried = e.regression_probes(merged.id)
-    assert set(carried) == ({"kl"} if libc_own else {"kp"}), carried
-    assert not orphaned_regression(merged.spec.criteria, carried), "a carried finding gates nothing"
     e.stop()

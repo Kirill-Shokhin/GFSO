@@ -45,7 +45,6 @@ from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace, 
                              join_whole, land_accepted, made, node_workspace, root_created,
                              session_scope, stands, where_it_runs)
 from gfso.packets import _EXECUTOR_STATES, _scope_order
-from gfso.reports import committed_place
 from gfso.sessions import unattended_here, run_consent, run_executor, run_scope_executor
 
 log = logging.getLogger(__name__)
@@ -114,19 +113,11 @@ def _in_flight_as(name: str, fn):
     return run
 
 
-def _keep_the_place(engine, agents, node) -> None:
-    """What a node's place holds uncommitted, committed before its split, as a superseded version's work is (`reports`)."""
-    t = engine.graph.get_task(TaskId(node))
-    if (w := _place_of(engine, agents, t)) is not None and made(engine, w[1]):
-        if why := committed_place(engine, str(t.assignee), w, f"gfso: {node} work before its split")[1]:
-            engine.emit_info("delegate", f"{node}: its work before its split is not on the record — {why}")
-
-
 ISSUER_VERBS = Verbs(llm=llm_factory, busy=_inflight, review=_in_flight_as("review_decomposition", T.review_decomposition),
                      # the split is its node's EXECUTOR's move: authored by him, it re-authors no contract (Inv-1)
                      refine=lambda engine, node: T.SYSTEM_TOOLS["auto_decompose"](
                          engine, root_id=node, depth=1, author=str(engine.graph.get_task(node).assignee)),
-                     place=lambda engine, agents, node: _contact_place(engine, agents, node), keep=_keep_the_place,
+                     place=lambda engine, agents, node: _contact_place(engine, agents, node),
                      execution=lambda engine: execution_of(engine, default_agents()))
 
 

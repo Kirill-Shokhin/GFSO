@@ -1721,14 +1721,6 @@ class Engine:
         """The dropped children this node stands in for."""
         return json.loads(self._storage.get_critique(replaces_key(task_id)) or "[]")
 
-    def ancestors(self, task_id: TaskId) -> list[Task]:
-        """The nodes above this one, its parent first."""
-        up, t = [], self._graph.get_parent(task_id)
-        while t is not None:
-            up.append(t)
-            t = self._graph.get_parent(t.id)
-        return up
-
     def carried_work(self, task_id: TaskId) -> list[Task]:
         """The work a node carries on from what it replaced (§12.16 (ii): work-keeping): each child it stands in for,
         whatever that child carried in turn, and every PASSed node of their subtrees — a dropped child's committed work
@@ -1963,9 +1955,7 @@ class Engine:
 
     def _admit(self, parent_id, children, covers, **act):
         """The engine's hands for the act: its signals, its issuer's revision, its R′ gate, its log."""
-        parent = self._graph.get_task(TaskId(str(parent_id)))
         return _admit(self._graph, self._storage, lambda: len(self._audit), parent_id, children, covers,
-                      by_the_system=parent is not None and AgentId(parent.assignee) in self.workforce.executor_pool(),
                       send=self.send_signal_sync, reopen_refusal=self.reopen_refusal, check=act.pop("check", self._validate),
                       revise=lambda c: self._revise(TaskId(str(parent_id)), c,
                                                     self._graph.issuer_of(TaskId(str(parent_id)))), **act)

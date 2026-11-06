@@ -308,9 +308,9 @@ def test_a_node_judged_past_one_session_is_not_delivered_as_a_leaf_until_its_exe
     assert not D._signal(e, kid.id, Signal.DELIVER, str(kid.assignee), result="a.py", _why=refused)
     assert "split is owed" in refused[0] and "§3.7" in refused[0] and "auto_decompose" in refused[0]
     assert (e.pass_blocked_by(kid.id) or {}).get("kind") != "split_owed", "the issuer's PASS is not the refused act"
-    T.decompose(e, "root.a", [{"task_id": f"root.a.{n}", "spec": {"description": f"the part {n} of a",
-                                                                  "criteria": [criterion(f"{n}_ok", f"{n} holds")]},
-                               "covers": ["a_ok"]} for n in "xy"], accepted_risks=_RISK)   # admitted whole (§11.5)
+    T.decompose(e, "root.a", [{"task_id": "root.a.x", "spec": {"description": "a first part of a",
+                                                               "criteria": [criterion("x_ok", "x holds")]},
+                               "covers": ["a_ok"]}], accepted_risks=_RISK)   # admitted whole (§11.5)
     e.wait_idle()
     assert split_owed(e._graph, e.graph.get_task(kid.id)) is None, "the split is the lift"
     e.stop()
@@ -380,8 +380,9 @@ def test_a_node_whose_split_is_owed_gets_no_session_and_the_system_splits_it(tmp
 
     def _split(en, node):
         asked.append(node)
-        T.decompose(en, node, [{"task_id": f"{node}.{n}", "covers": ["a_ok"], "spec": {
-            "description": f"the part {n}", "criteria": [criterion(f"{n}_ok", f"{n} holds")]}} for n in "xy"], accepted_risks=_RISK)
+        T.decompose(en, node, [{"task_id": node + ".x", "covers": ["a_ok"],
+                                "spec": {"description": "a first part", "criteria": [criterion("x_ok", "x holds")]}}],
+                    accepted_risks=_RISK)
         en.wait_idle()
         return {"subtasks": [{"id": node + ".x"}]}
     out = settle(e, agents, TaskId("root.a"), "split", "exec-2", Verbs(llm=None, busy=None, review=None, refine=_split))

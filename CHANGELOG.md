@@ -193,10 +193,13 @@ that would establish one (E3) has shown so far, and what not, is in the README a
   no node stands DONE over an open part under `auto`. Nothing in the system reopens a settled node, and the directive says so.
 - A machine validation of a whole starts after its issuer has had his say on the question standing on it. A question still
   unanswered when the node above it closes is named beside `complete` (`questions_left_standing`) and at the goal's end.
-- Parts merged out of a dependency cycle whose plan judged them past a session owe their split before any work, its author told
-  the cycle, and each part starts from their work. An executor's report that its work is more than a session has an answer that
-  does it: the issuer's `split`, on a dispute, a block or an escalation, held to contact as a rejection is. What the session wrote
-  reaches the parts. A split of one part of a node owed its split is refused at its admission.
+- A node whose forecast did not hold (ESCALATED: its deadline or rework bound spent without a PASS) is answered by its
+  issuer, the decomposer of the split above it: a new contract, the split re-made in one admission (`redecompose`: it
+  leaves, the children he names replace it, each due before the parent), or a close; a root has no split above it. A
+  dependency order contact refuted is re-cut by its split's decomposer, no longer merged into one child by the system.
+  Nobody splits another's node: the issuer's `split`, a merged node's inherited size and the one-part refusal are gone.
+  The executor is told that a contract's size is no defect: work larger than one session is worked, each session handing
+  over to the next, and validated at its seam; a report that the work is too large is answered by the work going on.
 - A write of one field of a node beside a transition no longer puts the node's old state back: a PASS or a DELIVER stayed in the
   log while the node read as before it.
 - What a validator tried on its own is filed as a refutation only where its report says it refuted; and a finding of its own

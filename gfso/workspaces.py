@@ -284,10 +284,9 @@ def parts_of(engine, members: list) -> tuple[dict, dict]:
     waits = engine.start_waits()   # …and those a member waits on through its whole: a cousin's work it reads
     parts.update({f: engine.graph.get_task(TaskId(f)) for m in members for f in engine.producers_awaited(m.id, waits)
                   if f not in inside})
-    # …AND THE WORK OF WHAT IT REPLACES, PASSed or not: a child merged out of a cycle, or cut again, started from the
+    # …AND THE WORK OF WHAT IT REPLACES, PASSed or not: a child that replaces dropped ones started from the
     # base and redid what its dropped predecessors had committed (§12.16 (ii): the issuer's move keeps the work)
-    # …a part of such a node too: its whole never had a session to join it in, where its split was owed before work
-    kept = {str(x.id): x for m in members for a in (m, *engine.ancestors(m.id)) for x in engine.carried_work(a.id)}
+    kept = {str(x.id): x for m in members for x in engine.carried_work(m.id)}
     parts.update(kept)
     return parts, kept
 

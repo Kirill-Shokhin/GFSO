@@ -193,6 +193,19 @@ def test_a_split_into_one_part_is_built_as_the_leaf_it_is(monkeypatch):
     e.stop()
 
 
+def test_a_one_part_split_of_a_node_judged_over_a_session_leaves_no_split_owed(monkeypatch):
+    """Its author judged it larger than one session and cut one part: a leaf all the same, worked over sessions. Kept
+    owed, no session ever started on it and the split question came back as one part again (GL_cc_light1, 6×, $0.24)."""
+    (part, *_) = _PLAN["subtasks"]
+    patch = {"name": _PLAN["name"], "add_root_criteria": _PLAN["root_criteria"], "add_subtasks": [part],
+             "add_accepted_risks": _PLAN["accepted_risks"], "denial": _PLAN["denial"],
+             "whole_volume": "a compiler", "whole_fits_one_session": False}
+    e, out = _auto(monkeypatch, _Model(plans={1: patch}))
+    assert not e.graph.get_active_children(TaskId("root"))
+    assert e.split_owed(TaskId("root")) is None, e.session_fit(TaskId("root"))
+    e.stop()
+
+
 def test_a_leaf_s_obligations_are_said_and_not_repaired_at_authoring(monkeypatch):
     """No split to secure at an atomic root (§8.3): the rounds cost ~40% of a small task's plan (wordtop, 2026-11-03)."""
     leaf = {k: v for k, v in _PLAN.items() if k not in ("subtasks", "mappings")}
