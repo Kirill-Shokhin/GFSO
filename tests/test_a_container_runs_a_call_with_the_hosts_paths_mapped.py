@@ -224,7 +224,9 @@ def test_live_a_call_inside_is_sealed_mapped_and_ended_whole(place, tmp_path):
     env_file.write_text("NOTHING=1\n")
     x = ContainerExecution("t", IMAGE, str(env_file), str(tmp_path / "state"), str(place), f"live{time.time_ns()}")
     try:
-        (place / "in.txt").write_text("hello")
+        (place / "in.txt").write_text("hello")      # …committed: only what HEAD holds is carried in
+        for a in (["add", "in.txt"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "in"]):
+            subprocess.run(["git", "-C", str(place), *a], check=True, capture_output=True)
         p = x.popen(["sh", "-c", "pwd; cat in.txt; echo; cat; echo;"
                      " (timeout 3 bash -c 'echo > /dev/tcp/192.168.65.254/8000' && echo OPEN) 2>/dev/null || echo SHUT"],
                     env={}, cwd=str(place), stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)

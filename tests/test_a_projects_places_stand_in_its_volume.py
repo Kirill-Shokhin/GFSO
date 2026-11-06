@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.support import a_repository
 
 import gfso.adapters.door as D
 import gfso.adapters.execution as E
@@ -100,7 +101,7 @@ def test_live_a_projects_places_left_on_the_host_are_copied_in_once(tmp_path, mo
     """A live project from before its volume keeps its places on a restart: its host directory copied in, owned by the
     image's user — its session writes there — the origin recorded; a later start copies nothing over the volume."""
     monkeypatch.setattr(E, "_SESSIONS", {})
-    (base := tmp_path / "w" / "ws").mkdir(parents=True)
+    a_repository(base := tmp_path / "w" / "ws")
     (left := tmp_path / "w" / ".gfso-nodes-ws" / "p" / "a").mkdir(parents=True)
     (left / "f.txt").write_bytes(b"before\n")
     x = ContainerExecution(f"t{time.time_ns()}", IMAGE, None, str(tmp_path / "state"), str(base), "p")
@@ -165,7 +166,7 @@ def test_only_a_projects_deletion_removes_its_volume(tmp_path, monkeypatch):
     monkeypatch.setattr(E, "run", lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(
         args, 0, "its-v its-state" if args[:3] == ["docker", "volume", "ls"] else "", ""))
     monkeypatch.setattr(E.shutil, "which", lambda p: "docker")
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     x = ContainerExecution("e3-linux", "img", None, str(tmp_path / "state"), str(base), "p")
     x.stop()
     E.end_leftovers()
@@ -226,7 +227,7 @@ def test_live_an_agents_links_in_a_left_place_arrive_as_links_and_its_conversati
     """Copied in by Linux, a link reads as a link — Docker Desktop's `docker cp` skipped all three kinds and exited 0
     (critic over 71b49ad); and each place's CLI state of before the volume comes to its new name."""
     monkeypatch.setattr(E, "_SESSIONS", {})
-    (base := tmp_path / "w" / "ws").mkdir(parents=True)
+    a_repository(base := tmp_path / "w" / "ws")
     (left := tmp_path / "w" / ".gfso-nodes-ws" / "p" / "a").mkdir(parents=True)
     (left / "f.txt").write_bytes(b"x\n")
     subprocess.run(["docker", "run", "--rm", "--mount", f"type=bind,src={left},dst=/l", IMAGE, "sh", "-c",
@@ -254,7 +255,7 @@ def test_live_a_volume_lost_under_its_record_stops_the_place_and_is_never_refill
     """The project's record says its volume was made: the volume gone, the place is down with that reason — refilled
     from the host's stale copy, the project would go on over work it already did (critic over 71b49ad)."""
     monkeypatch.setattr(E, "_SESSIONS", {})
-    (base := tmp_path / "w" / "ws").mkdir(parents=True)
+    a_repository(base := tmp_path / "w" / "ws")
     (left := tmp_path / "w" / ".gfso-nodes-ws" / "p" / "a").mkdir(parents=True)
     (left / "f.txt").write_bytes(b"stale\n")
     kept = {}
@@ -302,7 +303,7 @@ def test_live_a_copy_in_cut_by_its_time_leaves_no_copy_running_and_the_next_star
     """Its own container gone with the cut, nothing recorded; the next start empties what it half wrote and copies
     whole — the orphan of a cut copy raced the retry and wrote over it (critic over 6202d19)."""
     monkeypatch.setattr(E, "_SESSIONS", {})
-    (base := tmp_path / "w" / "ws").mkdir(parents=True)
+    a_repository(base := tmp_path / "w" / "ws")
     (left := tmp_path / "w" / ".gfso-nodes-ws" / "p" / "a").mkdir(parents=True)
     for i in range(5000):            # …a copy no machine ends inside its time: 300 files in 0.2 s did on CI's runner, and nothing was cut
         (left / f"f{i}").write_bytes(b"x")
@@ -340,7 +341,7 @@ def _volume_stands(v: str) -> bool:
 def test_live_a_lost_volume_stays_lost_whoever_asks_the_storage(tmp_path):
     """F1 (critic over 28c8064): the storage probe's own mount made a lost volume again, empty, at every tick of the
     monitor — the place no longer read as lost, and the project ran on nothing."""
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     kept: dict = {}
     x = _fresh(tmp_path, base, kept)
     try:
@@ -363,7 +364,7 @@ def test_live_a_lost_volume_stays_lost_whoever_asks_the_storage(tmp_path):
 @live
 def test_live_two_installations_on_one_machine_hold_a_volume_each(tmp_path, monkeypatch):
     """F2: one execution, project and base under two state homes — B's first start emptied A's volume."""
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path / "home-a"))
     a = _fresh(tmp_path, base, {})
     xs = [a]
@@ -391,7 +392,7 @@ def test_live_a_project_whose_volumes_its_record_names_otherwise_is_down_never_s
     another name, or its state home moved with its settings — the record names other volumes than this execution
     would mount. Started on new, empty ones, the project would run on nothing while its work stood elsewhere: it is
     down, both names said, until the operator declares it back or removes the record (then it starts afresh)."""
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     (other := tmp_path / "other" / "ws2").mkdir(parents=True)
     kept: dict = {}
     xs = [_fresh(tmp_path, base, kept)]
@@ -420,7 +421,7 @@ def test_live_a_place_and_a_round_carried_in_stand_by_the_record_once_their_host
     """n5 (critic over f5d93ba): a place and a round from before the record of places made was kept fell back on the
     host's directory — gone once the copy-in consumed it, the node's place read as never made and its validations
     ran in the base. The copy-in records what it carries; once the volume is recorded, the host is never asked."""
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     (tmp_path / ".gfso-nodes-ws" / "p" / "a").mkdir(parents=True)
     (tmp_path / ".gfso-nodes-ws" / "p" / ".gfso-scratch-a" / "r1").mkdir(parents=True)
     graph = SimpleNamespace(d={})
@@ -442,7 +443,7 @@ def test_live_a_place_and_a_round_carried_in_stand_by_the_record_once_their_host
 def test_live_an_unlabelled_volume_under_the_projects_name_is_never_its_places(tmp_path):
     """n2/n3 (critic over f5d93ba): a volume made outside the system, or by Docker between the asking and the run,
     under the project's name, stood in for its places."""
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     kept: dict = {}
     x = _fresh(tmp_path, base, kept)
     try:
@@ -466,7 +467,7 @@ def test_live_a_source_the_host_would_not_move_aside_is_moved_at_the_next_start(
     """n4 (critic over f5d93ba): a file held open kept the host's directory from its rename after the record was
     written, and nothing tried again — a project made again under the name refilled from it. The host's refusal is
     made, not provoked: an open file refuses a rename on Windows only, and Linux renames it."""
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     (left := tmp_path / ".gfso-nodes-ws" / "p" / "a").mkdir(parents=True)
     (left / "f.txt").write_bytes(b"x")
     kept: dict = {}
@@ -494,7 +495,7 @@ def test_live_a_source_the_host_would_not_move_aside_is_moved_at_the_next_start(
 @live
 def test_live_a_projects_places_export_to_the_host_whole_its_clones_free_of_the_base(tmp_path):
     """What the E3 harness grades offline: each node's clone reads with the base and the volume gone."""
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     _git(base, "init", "-q")
     (base / "b.txt").write_text("base\n")
     _git(base, "add", "b.txt")
@@ -528,7 +529,7 @@ def _export(x, out) -> list:
 @live
 def test_live_an_export_holds_what_it_carries_in_no_memory(tmp_path):
     """Its stream was held whole in the process's memory, to all a project's places hold."""
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     _git(base, "init", "-q")
     (base / "b.txt").write_text("base\n")
     _git(base, "add", "b.txt")
@@ -553,7 +554,7 @@ def test_live_an_export_holds_what_it_carries_in_no_memory(tmp_path):
 
 def _two_clones(tmp_path):
     """A project of two node clones, `a` and `b`, each with a commit of its own."""
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     _git(base, "init", "-q")
     (base / "b.txt").write_text("base\n")
     _git(base, "add", "b.txt")
@@ -653,7 +654,7 @@ def test_live_a_lost_state_volume_is_the_place_down_and_a_project_made_again_inh
     """F5: the CLI state's volume lost under its record — the place down with that reason, no volume made of it. F4:
     a project deleted and made again under its name — the host's leftover and its old CLI state, consumed by the first
     copy-in, do not come in again."""
-    (base := tmp_path / "ws").mkdir()
+    a_repository(base := tmp_path / "ws")
     (left := tmp_path / ".gfso-nodes-ws" / "p" / "a").mkdir(parents=True)
     (left / "old.txt").write_bytes(b"OLD-WORK\n")
     kept: dict = {}

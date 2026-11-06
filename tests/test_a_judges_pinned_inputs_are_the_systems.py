@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.support import a_repository
 
 import gfso.adapters.execution as E
 import gfso.observe as O
@@ -31,7 +32,7 @@ PIN = Criteria("c", check=(Probe("prints what is pinned", "cd {inputs} && ./run"
 def project(tmp_path, monkeypatch):
     monkeypatch.setattr(E, "_SESSIONS", {})
     monkeypatch.setattr(E, "_SWITCH", {})
-    (base := tmp_path / "work" / "ws").mkdir(parents=True)
+    a_repository(base := tmp_path / "work" / "ws")
     (tmp_path / "e.env").write_text("NOTHING=1\n")
     x = ContainerExecution(f"t{time.time_ns()}", IMAGE, str(tmp_path / "e.env"), str(tmp_path / "state"), str(base),
                            "p")

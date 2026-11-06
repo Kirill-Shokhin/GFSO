@@ -7,6 +7,7 @@ import subprocess
 import time
 
 import pytest
+from tests.support import a_repository
 
 import gfso.adapters.execution as E
 from gfso.adapters.execution import ContainerExecution
@@ -19,7 +20,7 @@ from tests.test_a_session_holds_only_its_own_place import IMAGE, made
 def closed(tmp_path, monkeypatch):
     monkeypatch.setattr(E, "_SESSIONS", {})
     monkeypatch.setattr(E, "_SWITCH", {})
-    (base := tmp_path / "work" / "ws").mkdir(parents=True)
+    a_repository(base := tmp_path / "work" / "ws")
     (tmp_path / "e.env").write_text("NOTHING=1\n")
     x = ContainerExecution(f"t{time.time_ns()}", IMAGE, str(tmp_path / "e.env"), str(tmp_path / "state"), str(base), "p",
                            network={"mode": "off"})
