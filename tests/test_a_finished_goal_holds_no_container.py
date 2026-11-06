@@ -31,7 +31,7 @@ def _dispatcher(monkeypatch, states, joining=(), unjoined=(), landed=True):
     monkeypatch.setattr(e.joins, "root_landed", lambda t: landed)
     monkeypatch.setattr(e.graph, "get_parent", lambda tid: None)
     monkeypatch.setattr(DG, "in_flight", lambda: running)
-    monkeypatch.setattr(DG, "execution_of", lambda *a: N(stop=lambda: stops.append(1)))
+    monkeypatch.setattr(DG, "where_it_runs", lambda *a: N(stop=lambda: stops.append(1)))
     d = Dispatcher(e, N())
     d.running = running
     monkeypatch.setattr(d, "_publish_the_roster", lambda: None)
@@ -197,7 +197,7 @@ def test_what_ran_since_and_a_stop_that_failed_are_asked_again(monkeypatch):
         if len(tries) == 1:
             raise subprocess.TimeoutExpired("docker", 60)
 
-    monkeypatch.setattr(DG, "execution_of", lambda *a: N(stop=stop))
+    monkeypatch.setattr(DG, "where_it_runs", lambda *a: N(stop=stop))
     d.dispatch_once(), d.dispatch_once(), d.dispatch_once()
     assert tries == [1, 1]
 

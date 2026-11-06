@@ -172,7 +172,7 @@ def test_a_stopped_project_ends_its_containers_once_nothing_of_it_runs_and_keeps
     """Stopped, a project's containers stood up for as long as it stood, holding the machine's memory (engineering): they
     end once nothing of it runs, once per stop — its volumes kept, its next start makes them again."""
     rested, working = [], [{"project": "default"}]
-    monkeypatch.setattr(D, "execution_of", lambda *a, **k: type("X", (), {"stop": lambda self: rested.append(1)})())
+    monkeypatch.setattr(D, "where_it_runs", lambda *a, **k: type("X", (), {"stop": lambda self: rested.append(1)})())
     monkeypatch.setattr(D, "in_flight", lambda: working)
     e = make_engine()
     d = Dispatcher(e, _agents(tmp_path, ("exec-1", "llm-executor")))

@@ -344,7 +344,7 @@ def test_a_session_is_held_to_the_gate_at_the_reading_that_binds_it(monkeypatch)
     monkeypatch.setattr(WS, "llm_factory", lambda *a, **k: pytest.fail("a model bound past the gate"))
     with pytest.raises(PlaceUnavailable, match="no word here"):
         WS.project_llm(None, "m")
-    monkeypatch.setattr(TL, "execution_of", lambda e, a=None: E.LocalExecution())
+    monkeypatch.setattr(WS, "where_it_runs", lambda e, a=None: E.LocalExecution())
     held = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: "v" if k == E.VOLUME + "places" else None))
     with pytest.raises(PlaceUnavailable, match="stand in volumes"):
         TL.validation_execution(held)
@@ -364,12 +364,27 @@ def test_a_validation_reads_where_it_runs_once():
 
 def test_the_systems_git_makes_no_place_on_the_host_for_a_project_in_volumes(monkeypatch):
     """A role lost between the gate and the place's making put the system's git in the user's own repository (critic, read)."""
-    monkeypatch.setattr(WS, "execution_of", lambda e, a=None: E.LocalExecution())
+    monkeypatch.setattr(WS, "where_it_runs", lambda e, a=None: E.LocalExecution())
     monkeypatch.setattr(WS, "_where_it_joins", lambda *a: None)
     monkeypatch.setattr(W, "ensure", lambda *a, **k: pytest.fail("a place made on the host"))
     held = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: "v" if k == E.VOLUME + "places" else None, get_parent=lambda i: None))
     with pytest.raises(PlaceUnavailable, match="stand in volumes"):
         WS._ensure_place(held, None, SimpleNamespace(id="n"), ("base", "place", "b"))
+
+
+def test_every_reading_that_binds_work_refuses_the_host_for_a_project_in_volumes(monkeypatch):
+    """Held one call site at a time, a role lost after a gate still put a plan's reader on the user's live repository,
+    its uncommitted files to the provider (critic, ran): the refusal is `execution_of`'s own, and only ending or
+    freeing what runs reads past it."""
+    monkeypatch.setattr(WS, "where_it_runs", lambda e, a=None: E.LocalExecution())
+    held = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: "v" if k == E.VOLUME + "places" else None))
+    with pytest.raises(PlaceUnavailable, match="stand in volumes"):
+        WS.execution_of(held)
+    monkeypatch.setattr(TL, "_work_places", lambda e: ["base"])
+    with pytest.raises(PlaceUnavailable, match="stand in volumes"):
+        TL._work_place_documents(held, "do it", "m")
+    free = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None))
+    assert isinstance(WS.execution_of(free), E.LocalExecution), "work in chat runs on the host, as it did"
 
 
 def test_a_validation_refused_its_place_holds_no_claim(monkeypatch, tmp_path):

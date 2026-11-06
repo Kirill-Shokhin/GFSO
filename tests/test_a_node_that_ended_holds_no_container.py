@@ -18,7 +18,7 @@ def _dispatcher(monkeypatch, state, joining=(), scope=None, validating=False):
                              claims=SimpleNamespace(validation_in_flight=lambda tid: validating))
     monkeypatch.setattr(DL, "_place_of", lambda e, a, t: ("a", "/places/a", "gfso/a"))
     monkeypatch.setattr(DL, "made", lambda e, w: True)
-    monkeypatch.setattr(DL, "execution_of", lambda e, a=None: SimpleNamespace(release=released.append))
+    monkeypatch.setattr(DL, "where_it_runs", lambda e, a=None: SimpleNamespace(release=released.append))
     monkeypatch.setattr(DL, "release_rounds", lambda ex, p: released.append(f"rounds of {p}"))
     d = DL.Dispatcher.__new__(DL.Dispatcher)
     d._engine, d._agents = engine, None

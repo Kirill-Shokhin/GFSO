@@ -28,7 +28,7 @@ from typing import Optional, Union
 
 from gfso import runtime
 from gfso.llm import llm_factory
-from gfso.workspaces import declaring_role, execution_of, held_off_the_host
+from gfso.workspaces import declaring_role, execution_of, where_it_runs
 from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snapshot, swap
 from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, left_out,
                                      scratch_of)
@@ -538,7 +538,7 @@ def validation_execution(engine):
     for a project whose places stand in volumes. Each read the roster again, and a role lost meanwhile put the later ones on the host. Work
     in chat with no execution declared validates on the host, as it always did; a project that had one and lost its roles has only lost
     its roles."""
-    return held_off_the_host(engine, execution_of(engine))
+    return execution_of(engine)
 
 
 def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm, ex):
@@ -2417,7 +2417,7 @@ def _turn_the_way_out(engine: Engine) -> dict:
     next session's lookup — a session already out under the old one stays out until then (critic). The switch IN FORCE,
     the declaration's ceiling applied: asked `open` under a declared `off`, the user must not read "open" (review)."""
     try:
-        mode, hosts = execution_of(engine).way.network
+        mode, hosts = where_it_runs(engine).way.network
     except (ValueError, KeyError):
         mode, hosts = "off", ()             # an unreadable switch or declaration has shut the way out already
     return {"network_in_force": {"mode": mode, "hosts": list(hosts)}}

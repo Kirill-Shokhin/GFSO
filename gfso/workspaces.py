@@ -198,7 +198,7 @@ def join_whole(engine, agents: "AgentRegistry", task_id) -> str | None:
         _ensure_place(engine, agents, parent, pw)
     if (into := _where_it_joins(engine, agents, t, w)) is None:
         return None
-    ex = held_off_the_host(engine, execution_of(engine, agents))
+    ex = execution_of(engine, agents)
     ref, why = _accepted_ref(engine, t, w, ex)
     if ref is None:         # the accepted work is gone from its branch: nothing to merge, and nobody is told to
         why = f"{why} - {NOT_ON_ITS_BRANCH}: DO NOT merge that branch; its work has to be delivered again (reopen it)"
@@ -231,7 +231,7 @@ def _ensure_place(engine, agents: "AgentRegistry", task, w: tuple) -> None:
     if parent is not None and (pw := _workspace(engine, agents, parent)) is not None and pw[2] != w[2] \
             and same_place(pw[0], w[0]):
         _ensure_place(engine, agents, parent, pw)
-    W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=held_off_the_host(engine, execution_of(engine, agents)),
+    W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=execution_of(engine, agents),
              ground=lambda: parent is not None and json.loads(engine.graph.setting(grounds_key(parent.id)) or "{}").get(str(task.id)))
     _record(engine, w[1], True)
 
@@ -355,9 +355,17 @@ def _declared(engine, agents: "AgentRegistry | None" = None):
 
 
 def execution_of(engine, agents: "AgentRegistry | None" = None):
+    """WHERE this project's work runs (`where_it_runs`), never this host for a project whose places stand in volumes
+    (`held_off_the_host`): every reading that binds work refuses there, by default — one call site at a time, a role lost
+    after a gate still put a validation, a place's git and a plan's reader on the user's machine (critics)."""
+    return held_off_the_host(engine, where_it_runs(engine, agents))
+
+
+def where_it_runs(engine, agents: "AgentRegistry | None" = None):
     """WHERE this project's sessions and commands run: the execution its roles declare (`register_agent(execution=)`,
     one per project), in the place of the role that declared it — else this host. Its volume's making is the
-    project's own record (`Volume.record`): a volume lost under it is the place down, never refilled."""
+    project's own record (`Volume.record`): a volume lost under it is the place down, never refilled. Read bare only to
+    end or free what runs; work is bound through `execution_of`."""
     ex, d = _declared(engine, agents)
     if ex is None:
         return LocalExecution()
@@ -502,7 +510,7 @@ def conversation_of(engine, task_id, executor_id, role: str) -> str:
 def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
     """At the root's PASS every joined part is in the base: its worktree, branch and executor's conversation go (a node's tree is a whole
     checkout, so kept they cost the base's size each), and what did not join stays where it is, named."""
-    left, seen, llm = [], set(), llm_factory(MODEL_DEFAULT, execution=execution_of(engine, agents))   # its conversations live where it ran
+    left, seen, llm = [], set(), llm_factory(MODEL_DEFAULT, execution=where_it_runs(engine, agents))   # its conversations live where it ran
     for t in engine.all_tasks():
         for role in CONVERSING_ROLES:          # the work its conversations served is settled
             llm.forget(conversation_of(engine, t.id, t.assignee, role))
@@ -515,7 +523,7 @@ def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
             left.append(f"{w[1]} (`{w[2]}`)")
         else:
             _record(engine, w[1], False)
-    execution_of(engine, agents).stop()        # the goal is settled: its project's container goes too
+    where_it_runs(engine, agents).stop()        # the goal is settled: its project's container goes too
     if left:
         engine.emit_info("delegate", f"{root.id}: DONE - node workspaces not joined into the base are kept: "
                                      f"{'; '.join(left)}")

@@ -15,7 +15,7 @@ from gfso.core.types import THIS_HOST, PlaceUnavailable, TaskId, Signal, Stage, 
 from gfso.engine.events import emit_cb
 from gfso.issuer import signal_ok as _signal
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
-from gfso.workspaces import _enter_workspace, conversation_of, execution_of, performer, project_llm
+from gfso.workspaces import _enter_workspace, conversation_of, execution_of, performer, project_llm, where_it_runs
 from gfso.observe import observe_place
 from gfso.adapters import worktrees as W
 from gfso.adapters.execution import ended_past_disk, place_past_disk
@@ -103,14 +103,14 @@ def _fresh_disk(engine, agents, cwd) -> None:
     """A session starts: an end of the disk's watch nobody read for its place — its idle container ended between
     sessions — is not this session's (critic: it named a later ordinary cut)."""
     if cwd:
-        ended_past_disk(execution_of(engine, agents).session(cwd))
+        ended_past_disk(where_it_runs(engine, agents).session(cwd))
 
 
 def _past_disk(engine, agents, cwd) -> tuple:
     """(past, ended) of a session that left no report: `past`, its place's directories past its node's bound now
     (`place_past_disk`) — which no redial or retry lifts, every session there ended again; `ended`, why the disk's watch
     ended this one, if it did (`ended_past_disk`) — said, and lifted by the next session where its layer alone held it."""
-    ex = execution_of(engine, agents).session(cwd) if cwd else None
+    ex = where_it_runs(engine, agents).session(cwd) if cwd else None
     return (place_past_disk(ex), ended_past_disk(ex)) if ex is not None else (None, None)
 
 

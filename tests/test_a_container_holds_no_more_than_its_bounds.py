@@ -903,7 +903,7 @@ def test_a_plain_park_whose_last_end_was_the_disks_watch_says_it_and_keeps_its_m
     e.stop()
     (box := E.PlaceContainer.__new__(E.PlaceContainer)).container = "executor.n1-ab"
     monkeypatch.setattr(E, "_DISK_ENDED", {"executor.n1-ab-client": "OLD"})
-    monkeypatch.setattr(SS, "execution_of", lambda engine, agents=None: SimpleNamespace(session=lambda cwd: box))
+    monkeypatch.setattr(SS, "where_it_runs", lambda engine, agents=None: SimpleNamespace(session=lambda cwd: box))
     SS._fresh_disk(None, None, "/w")
     assert not E._DISK_ENDED, "an unread end is not the next session's"
 
