@@ -314,6 +314,18 @@ class AgentRegistry:
             self._write(deleted=(agent_id,))
         return {"unregistered": agent_id}
 
+    def forget_project(self, project: str) -> list:
+        """A project deleted takes its roles with it: kept, a project made again under the name inherited the old one's
+        workdir, execution and validator (critic, read)."""
+        with self._lock:
+            self._reread()
+            gone = tuple(a for a, c in self._agents.items() if c.get("project") == project)
+            for a in gone:
+                del self._agents[a]
+            if gone:
+                self._write(deleted=gone)
+        return list(gone)
+
     def _reread(self) -> bool:
         """Force a re-read of the file, ignoring the mtime cache. Called under the lock, before a
         mutation, so what we write is the file's content plus our one change. False = the file is

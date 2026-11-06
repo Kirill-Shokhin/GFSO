@@ -37,8 +37,8 @@ def home() -> Path:
 
 
 def project_made(name: str) -> bool:
-    """Does the project `name` stand in this installation's state?"""
-    return (data_dir() / f"{name}.db").is_file()
+    """Does the project `name` stand in this installation's state? The default one's graph is `db_path()`, never `default.db`."""
+    return db_path(None if name == DEFAULT_PROJECT else name).is_file()
 
 
 def data_dir() -> Path:

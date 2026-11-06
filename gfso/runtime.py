@@ -25,6 +25,7 @@ from gfso import config as _config
 from gfso.config import (data_dir as _config_data_dir, active_project,
                          remember_active_project, DEFAULT_PROJECT)
 from gfso.llm import llm_factory
+from gfso.roster import AgentRegistry
 from gfso.workspaces import drop_execution
 
 log = logging.getLogger(__name__)
@@ -226,6 +227,7 @@ class ProjectRegistry:
             if close:
                 close()
         drop_execution(name)       # …its engine loaded or not: a new project of the name inherits no volume
+        AgentRegistry().forget_project(name)    # …nor roles
         base = os.path.join(self._dir, f"{name}.db")
         for suffix in ("", "-wal", "-shm"):
             try:

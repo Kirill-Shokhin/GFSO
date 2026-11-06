@@ -8,7 +8,7 @@ word, `GFSO_LOCAL_AGENTS=allow`, which puts it on your machine, with none of wha
   every session can read: clean a secret out of the history first. What is uncommitted does not enter, and the project's log says so.
   The root's accepted result comes back as the branch `gfso/<project>/accepted`, your working tree and branches untouched.
 - No agent process holds your provider's credential: one small container does, and it passes the model's messages alone.
-- A role's name is the installation's, and registering one another project holds is refused. No session reads another node's files but by the plan's edges (two ids that differ only by case are refused at the plan, a finished one's among them), nor reaches the log of signals and verdicts, and no one validates its own
+- A role's name is the installation's, and registering one another project holds is refused; a role registered again keeps where it runs, and a project deleted takes its roles with it. A project whose places stand in volumes and that has lost its roles does no work and validates nothing on this host: it says so and waits for them. No session reads another node's files but by the plan's edges (two ids that differ only by case are refused at the plan, a finished one's among them), nor reaches the log of signals and verdicts, and no one validates its own
   delivery: the check is on a copy of the commit delivered, in a container of its own.
 
 The switch is yours, per execution or per project, and the default is `open`:

@@ -362,6 +362,16 @@ def test_a_validation_reads_where_it_runs_once():
         assert not calls, f"{f.__name__} reads the roster again"
 
 
+def test_the_systems_git_makes_no_place_on_the_host_for_a_project_in_volumes(monkeypatch):
+    """A role lost between the gate and the place's making put the system's git in the user's own repository (critic, read)."""
+    monkeypatch.setattr(WS, "execution_of", lambda e, a=None: E.LocalExecution())
+    monkeypatch.setattr(WS, "_where_it_joins", lambda *a: None)
+    monkeypatch.setattr(W, "ensure", lambda *a, **k: pytest.fail("a place made on the host"))
+    held = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: "v" if k == E.VOLUME + "places" else None, get_parent=lambda i: None))
+    with pytest.raises(PlaceUnavailable, match="stand in volumes"):
+        WS._ensure_place(held, None, SimpleNamespace(id="n"), ("base", "place", "b"))
+
+
 def test_a_validation_refused_its_place_holds_no_claim(monkeypatch, tmp_path):
     """Refused after its claims were taken, a scope's validation left them held: its nodes read in flight until a restart."""
     begun, ended = [], []
@@ -384,6 +394,33 @@ def test_a_role_another_project_holds_is_not_taken(data, tmp_path):
     r.register("exec", "llm-executor", workdir=str(tmp_path), project="p1")
     (C.data_dir() / "p1.db").unlink()
     r.register("exec", "llm-executor", workdir=str(tmp_path), project="q1")
+
+
+def test_the_default_project_holds_its_roles_too(monkeypatch, tmp_path):
+    """Its graph is `GFSO_DB_PATH`, never `default.db`: another project took its role, and with it its execution (critic, ran)."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "mine.db"))
+    monkeypatch.setenv("GFSO_AGENTS_PATH", str(tmp_path / "agents.json"))
+    (tmp_path / "mine.db").write_bytes(b"")
+    r = RO.AgentRegistry()
+    r.register("exec-1", "llm-executor", workdir=str(tmp_path), project=C.DEFAULT_PROJECT)
+    with pytest.raises(ValueError, match="belongs to project 'default'"):
+        r.register("exec-1", "llm-executor", workdir=str(tmp_path), project="q")
+
+
+def test_a_project_deleted_takes_its_roles_with_it(monkeypatch, tmp_path):
+    """Kept, a project made again under the name inherited the old one's workdir, execution and validator (critic, read)."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "mine.db"))
+    monkeypatch.setenv("GFSO_AGENTS_PATH", str(tmp_path / "agents.json"))
+    monkeypatch.delenv("GFSO_STORAGE", raising=False)
+    monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    (tmp_path / "gone.db").write_bytes(b"")
+    r = RO.AgentRegistry()
+    r.register("gone-exec", "llm-executor", workdir=str(tmp_path), project="gone")
+    r.register("kept-exec", "llm-executor", workdir=str(tmp_path), project="kept")
+    RT.ProjectRegistry().delete("gone")
+    assert RO.AgentRegistry().get("gone-exec") is None and RO.AgentRegistry().get("kept-exec") is not None
 
 
 def test_a_volume_of_another_project_spelled_alike_is_never_this_one_s(monkeypatch):

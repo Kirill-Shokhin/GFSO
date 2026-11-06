@@ -42,8 +42,8 @@ from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among, what
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.adapters.execution import release_rounds
 from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace, clear_workspaces, execution_of,
-                             join_whole, land_accepted, made, node_workspace, root_created, session_scope,
-                             stands)
+                             held_off_the_host, join_whole, land_accepted, made, node_workspace, root_created,
+                             session_scope, stands)
 from gfso.packets import _EXECUTOR_STATES, _scope_order
 from gfso.reports import committed_place
 from gfso.sessions import unattended_here, run_consent, run_executor, run_scope_executor
@@ -397,7 +397,8 @@ def _validate_with(engine, agents, task_id, task, validator_id, vcfg, sign, T,
         # per-criterion verdict (the integrity gate applies), then auto-signals below.
         generation = engine.graph.generation_of(task_id)     # the delivery THIS check reads (§10.3 gate)
         read_at = len(engine.audit_log())               # …and where the log stood when it read it
-        out = _checker_validate(engine, task_id, vcfg, node_workspace(engine, agents, task_id), execution_of(engine, agents))
+        ex = held_off_the_host(engine, execution_of(engine, agents))
+        out = _checker_validate(engine, task_id, vcfg, node_workspace(engine, agents, task_id), ex)
         if out.get("verdict") in (Verdict.PASS, Verdict.FAIL):
             try:
                 engine.record_exec_verdict(task_id, out["verdict"], out.get("failed_criteria") or [],

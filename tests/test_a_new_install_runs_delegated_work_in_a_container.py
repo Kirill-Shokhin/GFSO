@@ -65,6 +65,16 @@ def test_the_default_is_not_taken_where_the_work_is_attended_or_placed_already(h
     assert _registered(_dispatching(), home, "q-exec") is None, "the user's word for this host is the opt-out"
 
 
+def test_a_role_registered_again_keeps_the_execution_it_declares(home):
+    """Registered again to change its model, a project's declaring role came back with none, its project on the host and
+    its validations there, said nowhere (critic, ran)."""
+    _declare(home)
+    e = _dispatching()
+    assert _registered(e, home, "p-exec") == "default"
+    assert _registered(e, home, "p-exec", model="claude-sonnet-5-5") == "default"
+    assert isinstance(WS.execution_of(e, TL._roster()), ContainerExecution)
+
+
 def test_work_in_the_users_own_chat_keeps_its_project_on_this_host(home):
     """`in_chat` is refused under a container: the default would have made the user's own mode unusable."""
     _declare(home)

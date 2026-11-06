@@ -28,12 +28,12 @@ from typing import Optional, Union
 
 from gfso import runtime
 from gfso.llm import llm_factory
-from gfso.workspaces import declaring_role, execution_of
+from gfso.workspaces import declaring_role, execution_of, held_off_the_host
 from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snapshot, swap
-from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, LocalExecution, left_out,
+from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, left_out,
                                      scratch_of)
 from gfso.issuer import CONTACT_ROUND as _CONTACT
-from gfso.core.types import (BATCH, LAID, THIS_HOST, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
+from gfso.core.types import (BATCH, LAID, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
                              Verdict, passed)
 from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (SYSTEMS_ACT, canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
@@ -538,10 +538,7 @@ def validation_execution(engine):
     for a project whose places stand in volumes. Each read the roster again, and a role lost meanwhile put the later ones on the host. Work
     in chat with no execution declared validates on the host, as it always did; a project that had one and lost its roles has only lost
     its roles."""
-    ex = execution_of(engine)
-    if isinstance(ex, LocalExecution) and engine.graph.setting(VOLUME + "places"):
-        raise PlaceUnavailable(THIS_HOST, "this project's places stand in volumes and none of its roles declares their execution now: register them back")
-    return ex
+    return held_off_the_host(engine, execution_of(engine))
 
 
 def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm, ex):
@@ -2076,7 +2073,11 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
         return {"refused": True, "error": _IN_CHAT_APART.format(execution)
                 + " Set the mode again with `perform=\"dispatch\"` first."}
     agents = _roster(engine)
-    execution = execution or (_default_execution(engine, engine.mode(), agents) if kind == "llm-executor" else None)
+    # …a role of this project registered again keeps where it runs: to change its model, its project's only declaring role came back
+    # with none, the project on the host and its validations there, said nowhere (critic, ran)
+    own = agents.get(agent_id) or {}
+    kept = own.get("execution") if own.get("project") == engine.project_name else None
+    execution = execution or kept or (_default_execution(engine, engine.mode(), agents) if kind == "llm-executor" else None)
     out = agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
                           oracle_map=oracle_map, max_turns=max_turns, client=client, context_budget=context_budget,
                           project=engine.project_name, execution=execution)

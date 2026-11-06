@@ -198,7 +198,7 @@ def join_whole(engine, agents: "AgentRegistry", task_id) -> str | None:
         _ensure_place(engine, agents, parent, pw)
     if (into := _where_it_joins(engine, agents, t, w)) is None:
         return None
-    ex = execution_of(engine, agents)
+    ex = held_off_the_host(engine, execution_of(engine, agents))
     ref, why = _accepted_ref(engine, t, w, ex)
     if ref is None:         # the accepted work is gone from its branch: nothing to merge, and nobody is told to
         why = f"{why} - {NOT_ON_ITS_BRANCH}: DO NOT merge that branch; its work has to be delivered again (reopen it)"
@@ -215,6 +215,14 @@ def join_whole(engine, agents: "AgentRegistry", task_id) -> str | None:
     return why
 
 
+def held_off_the_host(engine, ex):
+    """`ex`, unless it is this host for a project whose places stand in volumes: a role lost after the gate gave the reading that binds
+    work there the user's machine — its validation, or the system's git making a place in the user's own repository (critic)."""
+    if isinstance(ex, LocalExecution) and engine.graph.setting(VOLUME + "places"):
+        raise PlaceUnavailable(THIS_HOST, "this project's places stand in volumes and none of its roles declares their execution now: register them back")
+    return ex
+
+
 def _ensure_place(engine, agents: "AgentRegistry", task, w: tuple) -> None:
     """The node's place, made if absent from where its whole works — that place made first, up the tree: cut from the
     base while its whole had none, a place missed what had already joined the whole (critic r6, 2026-10-04: a part
@@ -223,7 +231,7 @@ def _ensure_place(engine, agents: "AgentRegistry", task, w: tuple) -> None:
     if parent is not None and (pw := _workspace(engine, agents, parent)) is not None and pw[2] != w[2] \
             and same_place(pw[0], w[0]):
         _ensure_place(engine, agents, parent, pw)
-    W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=execution_of(engine, agents),
+    W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=held_off_the_host(engine, execution_of(engine, agents)),
              ground=lambda: parent is not None and json.loads(engine.graph.setting(grounds_key(parent.id)) or "{}").get(str(task.id)))
     _record(engine, w[1], True)
 
