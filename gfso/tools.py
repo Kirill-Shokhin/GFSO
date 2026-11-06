@@ -2320,7 +2320,9 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
     ok = bool(entry and not entry.rejected)
     out = {"accepted": ok, "state": st.name if st else None}
     if ok and retire_findings:
-        out["retired_findings"] = list(dict.fromkeys(map(str, retire_findings)))
+        # …as recorded, the full ids it retired (`loop._ruling_as_it_stood`): a bare hash echoed back hid that it landed
+        # under every criterion the finding stood on
+        out["retired_findings"] = list(dict.fromkeys(map(str, entry.retire_findings or retire_findings)))
     if ok:
         _what_an_ACCEPTED_signal_owes_its_sender(engine, task_id, sig, st, source, out)
     else:

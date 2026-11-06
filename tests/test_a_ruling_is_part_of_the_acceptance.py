@@ -34,7 +34,7 @@ from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import Mode, Signal, SignalData, TaskId
 from gfso.packets import _validator_packet
 from tests.support import criterion
-from tests.test_a_finding_binds_the_criterion_it_refuted import _OWN, _delivered, _id, _pinned, _refute, _seam
+from tests.test_a_finding_binds_the_criterion_it_refuted import _OTHER, _OWN, _delivered, _id, _pinned, _refute, _seam
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
 from tests.test_the_mode_decides_who_holds_what import _Roster, _engine, _goal
 from gfso.tools_llm import TOOLS as LOCKED
@@ -196,7 +196,7 @@ def test_control_a_ruling_stands_while_its_criterion_reads_the_same(tmp_path):
 
 def test_a_criterion_mentioned_in_passing_is_not_disputed():
     e = _seam()
-    _refute(e, _OWN, crits=("conf", "other"))
+    _refute(e, {"conf": _OWN, "other": _OTHER})
     cid, oid = _id(e, "conf"), _id(e, "other")
     T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"finding {cid} is libc's scope; the other criterion is fine")
     out = T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[cid, oid], justification="x")
@@ -224,22 +224,24 @@ def test_a_bare_hash_disputes_the_probe_under_every_criterion_it_stands():
 
 def test_the_machine_issuer_lands_what_the_dispute_named():
     """The executor named the probe under one criterion by its full id and the other in prose; the issuer ruled on
-    both. Refused whole, the same four ids came back three times; landed in part, the rest stays demanded."""
+    both. The probe is one finding whatever criterion is written beside its hash: cut to the one written, the ruling on
+    the same probe under three more criteria was dropped without a word and the node failed on it four times (c_compiler
+    pp-rest, 2026-11-06). Refused whole, the same four ids came back three times (root.tr, 2026-10-12)."""
     e = _seam()
     _refute(e, _OWN, crits=("conf", "other"))
     cid, oid = _id(e, "conf"), _id(e, "other")
     T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"Finding [{cid}] (and the same under the other) is libc's")
     llm = _ContactLLM({"decision": "accept", "justification": "libc's", "retire_findings": [cid, oid]}, ran={"Bash": 1})
     assert I.answer_the_challenge(e, TaskId("kid"), "me", _llm=llm)["status"] == "accepted"
-    assert set(e.regression_probes(TaskId("kid"))) == {"other"}
+    assert not e.regression_probes(TaskId("kid"))
     e.stop()
 
 
-def test_a_ruling_only_on_the_twin_the_dispute_did_not_name_is_told_so_not_counted_as_refused():
-    """Disputed `conf#h` by full id, ruled `other#h` only: the cut read the hash against the ruling's own list and kept
-    it, and the gate refused the ruling whole — a counted refusal (critic over the 10-12 cut)."""
+def test_a_ruling_only_on_a_finding_the_dispute_did_not_name_is_told_so_not_counted_as_refused():
+    """Disputed `conf#h` by full id, ruled another probe's `other#g` only: the cut kept it, and the gate refused the
+    ruling whole — a counted refusal (critic over the 10-12 cut)."""
     e = _seam()
-    _refute(e, _OWN, crits=("conf", "other"))
+    _refute(e, {"conf": _OWN, "other": _OTHER})
     T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"Finding {_id(e, 'conf')} is libc's")
     llm = _ContactLLM({"decision": "accept", "justification": "x", "retire_findings": [_id(e, "other")]}, ran={"Bash": 1})
     out = I.answer_the_challenge(e, TaskId("kid"), "me", _llm=llm)

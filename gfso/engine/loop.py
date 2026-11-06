@@ -27,6 +27,7 @@ from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolatio
 from gfso.core.handlers import run_all_checks, recommend
 from gfso.config import state_bound
 
+from .findings import regression, ruled
 from .audit import AuditLog, AuditEntry, VERSION_INSTALLING, consented_on_current_version
 from .verdicts import store_verdict
 from .events import EventBus
@@ -108,6 +109,17 @@ def event_loop(
             log.error(f"the step for {signal_data.task_id} raised and was dropped; the engine is "
                       f"still serving", exc_info=True)
         signal_queue.task_done()
+
+
+def _ruling_as_it_stood(sd: SignalData, graph, audit: AuditLog) -> SignalData:
+    """A ruling recorded as the full ids it retired when it was made (`findings.ruled` over the findings standing then,
+    the gate's own reading): stored as written, a bare hash was read again at every later read and retired a finding
+    filed afterwards under a criterion nobody disputed (critic over 6eec80c, a person's ruling)."""
+    if not (sd.retire_findings and sd.signal == Signal.ACCEPT_CHALLENGE):
+        return sd
+    standing = [i for ps in regression(graph._storage, audit.get_entries(sd.task_id), graph.get_task(sd.task_id)).values()
+                for p in ps if (i := p.get("id"))]
+    return replace(sd, retire_findings=tuple(ruled(sd.retire_findings, standing)[0]))
 
 
 def _refused(signal_data: SignalData, state: State, why: str, audit: AuditLog,
@@ -326,6 +338,7 @@ def process_signal(
 
     # Success
     log.info(f"{task_id}: {state.name} + {signal_data.signal.name} -> {new_state.name}")
+    signal_data = _ruling_as_it_stood(signal_data, graph, audit)
     audit.record(AuditEntry(
         timestamp=datetime.now(), task_id=task_id,
         signal=signal_data.signal, old_state=state,

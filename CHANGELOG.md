@@ -188,6 +188,11 @@ that would establish one (E3) has shown so far, and what not, is in the README a
 - With no mode set the system answers disputes at a seam only; a dispute a node's own issuer raises is its holder's.
 
 ### Fixed
+- The issuer rules on a dispute over what the validation laid: its turn lays the parts' pinned inputs as well as the
+  node's own and shows each finding's command over them; a finding is named by its hash, so a dispute naming it under
+  one criterion lets the ruling retire it under every criterion it stands on, and a bare hash retires all of them; an id
+  the ruling names that stands nowhere is refused by name, not dropped; and below the root the issuer is told, as at
+  an AUTO root, that retiring a finding over a settled part's pinned check stops that check under its criterion.
 - A field written beside a transition keeps both: the log's pump reads a node, moves its state and writes it in one step
   under the store's lock, as a caller's one-field write already did, so a review's verdict, a register or a mapping written
   in between is no longer put back by the pump's earlier copy.

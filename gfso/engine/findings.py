@@ -228,7 +228,7 @@ def rulings(storage, entries: list, task_id) -> list[dict]:
                      "seen": found[i][1].get("seen") or found[i][1].get("as_run"),
                      "as_run": found[i][1].get("as_run"), "expect": found[i][1].get("expect"),
                      "by_system": e.by_system, "ts": e.timestamp.isoformat()}
-                    for i in dict.fromkeys(e.retire_findings) if i in found]
+                    for i in ruled(e.retire_findings, found)[0]]
     return out
 
 
@@ -297,10 +297,10 @@ def return_finding(storage, task, finding: str, by: str, why: str) -> bool:
 
 def ruling_defect(storage, entries: list, task, ids: Iterable[str]) -> Optional[str]:
     """Why an ACCEPT_CHALLENGE may not retire `ids` on this node, or None. Each must stand on it, and the executor's
-    CHALLENGE — the one this act answers — must name it by its id: a ruling answers what was disputed."""
-    ids = list(ids)
-    standing = {p.get("id") for ps in regression(storage, entries, task).values() for p in ps}
-    if gone := [i for i in ids if i not in standing]:
+    CHALLENGE — the one this act answers — must name it by its hash (`named`): a ruling answers what was disputed."""
+    standing = [i for ps in regression(storage, entries, task).values() for p in ps if (i := p.get("id"))]
+    ids, gone = ruled(ids, standing)
+    if gone:
         return (f"no finding {', '.join(gone)} stands on {task.id} — the standing ones are "
                 f"{', '.join(sorted(standing)) or 'none'}")
     if wide := [i for i in ids if i not in named(_challenge(entries), standing)]:
@@ -319,18 +319,32 @@ def _challenge(entries: list) -> str:
     return next((e.reason or "" for e in reversed(entries) if e.signal == Signal.CHALLENGE and not e.rejected), "")
 
 
+def _hash(i: str) -> str:
+    return str(i).rsplit("#", 1)[-1]
+
+
 def named(said: str, standing: Iterable) -> list[str]:
-    """The standing finding ids `said` names: a full id as a word of its own names itself; its hash written any other
-    way — bare, or after a criterion spelled otherwise (`the_conf_criterion#…`) — names every standing finding that
-    ends in it, whatever criterion it stands under. The hash is the probe's COMMAND (`probe_id`), so one hash under two
-    criteria is one probe, and a dispute naming it unqualified disputes it wherever it stands. Read as naming neither, a
-    true dispute of one probe under two criteria was ruled on four times, each ruling refused whole, and the part
-    closed by count (AUTO haiku coreutils, root.tr, 2026-10-12)."""
+    """The standing finding ids a dispute's text `said` names. A finding's identity is its hash — the probe's COMMAND
+    (`probe_id`) — so its hash written in any form, bare or after any criterion, names it under every criterion it
+    stands on: the dispute is about the probe, and the ruling chooses where it lands (`ruled`). Read as naming
+    neither, a true dispute of one probe under two criteria was ruled on four times and the part closed by count (AUTO
+    haiku coreutils, root.tr, 2026-10-12); read as naming the one criterion written beside it, a ruling on the same
+    probe under three more was dropped without a word and the node failed on it four times (c_compiler pp-rest,
+    2026-11-06)."""
     ids = [str(s) for s in dict.fromkeys(standing) if s]
-    out = {s for s in ids if re.search(rf"(?<![\w#]){re.escape(s)}(?!\w)", said)}
-    for h in {s.rsplit("#", 1)[-1] for s in ids}:
-        mine = [s for s in ids if s.rsplit("#", 1)[-1] == h]
-        if any(not any(said[:m.start()].endswith(s[:-len(h)]) for s in mine)
-               for m in re.finditer(rf"(?<!\w){re.escape(h)}(?!\w)", said)):
-            out.update(mine)
-    return [s for s in ids if s in out]
+    return [s for s in ids if re.search(rf"(?<!\w){re.escape(_hash(s))}(?!\w)", said)]
+
+
+def ruled(items: Iterable, standing: Iterable) -> tuple[list[str], list[str]]:
+    """(the standing finding ids a ruling's `items` retire, the items that name none) — ONE reading of what a ruling
+    names, for the issuer that makes it, the gate that admits it (`ruling_defect`) and the record that keeps it
+    (`rulings`): a full id names itself, a bare hash the finding under every criterion it stands on. An item naming
+    nothing is refused by name, never dropped: the issuer lifts that by naming it right (§12.16 (ii))."""
+    ids = [str(s) for s in dict.fromkeys(standing) if s]
+    out: list[str] = []
+    none: list[str] = []
+    for i in map(str, items or ()):
+        hit = [s for s in ids if s == i or ("#" not in i and _hash(s) == i)]
+        out += [s for s in hit if s not in out]
+        none += [] if hit else [i]
+    return out, none

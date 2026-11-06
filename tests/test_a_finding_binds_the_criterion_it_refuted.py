@@ -45,6 +45,8 @@ _STANDS = lambda r: True
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY", "justification": "no precedent",
           "invalidation_condition": "one occurs", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]
 _OWN = "./cc p_wide.c; echo exit=$?"
+#: another probe, another hash: a finding the dispute of `_OWN`'s does not name
+_OTHER = "./cc q_wide.c; echo exit=$?"
 
 
 @pytest.fixture(autouse=True)
@@ -73,10 +75,13 @@ def _delivered(e, result="built it"):
 
 
 def _refute(e, command, crits=("conf",), workdir=None):
-    """A FAIL on `crits` by the validator's own probe `command`; the other criteria pass on their pinned checks."""
-    e.record_exec_verdict("kid", "FAIL", list(crits), "validator", workdir=workdir, per_criterion=[
+    """A FAIL on `crits` by the validator's own probe `command` — or by its own command per criterion, `command` a
+    {criterion: command} — the other criteria passing on their pinned checks."""
+    each = command if isinstance(command, dict) else dict.fromkeys(crits, command)
+    crits = list(each)
+    e.record_exec_verdict("kid", "FAIL", crits, "validator", workdir=workdir, per_criterion=[
         {"criterion": c, "verdict": "fail", "evidence": "it rejected the program",
-         "probe": [{"behaviour": "wide characters", "command": command, "expect": "exit=0"}]} for c in crits]
+         "probe": [{"behaviour": "wide characters", "command": each[c], "expect": "exit=0"}]} for c in crits]
         + [e_ for e_ in _pinned(e) if e_["criterion"] not in crits])
     T.signal(e, "kid", "FAIL", "me", failed_criteria=list(crits))
     e.wait_idle()
@@ -171,20 +176,20 @@ def test_a_ruling_on_a_finding_its_challenge_spelled_with_underscores_stands():
     e.stop()
 
 
-def test_a_hash_two_criteria_share_is_disputed_under_both_and_the_issuer_rules_by_full_id():
-    """One probe refuted two criteria (four nodes of the past rows): disputed by its bare hash it is disputed under
-    both, so a ruling on either stands (root.tr, 2026-10-12); but the ruling is the act, and an issuer retiring by the
-    bare hash is told the full ids to choose from — not that the probe is not demanded (critic over the 10-12 fix)."""
-    e = _seam()
-    _refute(e, _OWN, crits=("conf", "other"))
-    bare = _id(e).rsplit("#", 1)[-1]
-    T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"Finding [{bare}] is root.libc's scope")
-    llm = _ContactLLM({"decision": "accept", "justification": "libc's", "retire_findings": [bare]}, ran={"Bash": 1})
-    out = I.answer_the_challenge(e, TaskId("kid"), "me", _llm=llm)
-    assert out["status"] == "unparsed" and _id(e, "conf") in out["why"] and _id(e, "other") in out["why"], out
-    out = T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[_id(e, "other")], justification="libc's")
-    assert out["accepted"] and set(e.regression_probes(TaskId("kid"))) == {"conf"}, out
-    e.stop()
+def test_a_hash_two_criteria_share_is_disputed_under_both_and_the_issuer_rules_by_full_id_or_by_hash():
+    """One probe refuted two criteria (four nodes of the past rows): disputed by its hash it is disputed under both, so
+    a ruling on either stands (root.tr, 2026-10-12). The ruling is the act: a full id retires the finding under its
+    criterion, the bare hash under every criterion it stands on (c_compiler pp-rest, 2026-11-06)."""
+    for ruling, left in (("bare", set()), ("other", {"conf"})):
+        e = _seam()
+        _refute(e, _OWN, crits=("conf", "other"))
+        bare = _id(e).rsplit("#", 1)[-1]
+        T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"Finding [{bare}] is root.libc's scope")
+        named = bare if ruling == "bare" else _id(e, ruling)
+        llm = _ContactLLM({"decision": "accept", "justification": "libc's", "retire_findings": [named]}, ran={"Bash": 1})
+        out = I.answer_the_challenge(e, TaskId("kid"), "me", _llm=llm)
+        assert out["status"] == "accepted" and set(e.regression_probes(TaskId("kid"))) == left, (ruling, out)
+        e.stop()
 
 
 def test_retiring_one_criterions_finding_settles_nothing_of_the_other_the_same_probe_refuted():
@@ -369,13 +374,45 @@ def test_the_executor_is_told_a_finding_outside_its_criterion_is_a_challenge_not
 
 def test_a_ruling_retires_only_what_the_challenge_disputed():
     e = _seam()
-    _refute(e, _OWN, crits=("conf", "other"))
+    _refute(e, {"conf": _OWN, "other": _OTHER})
     T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"{_id(e, 'other')} asks for wide characters, root.libc's scope")
     out = T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[_id(e, "conf")], justification="both go")
     assert not out["accepted"] and "does not name" in out["error"], out
     out = T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[_id(e, "other")], justification="libc's")
     assert out["accepted"], out                        # the challenge named the finding by its id: it may go
     assert set(e.regression_probes(TaskId("kid"))) == {"conf"}
+    e.stop()
+
+
+def test_a_ruling_by_bare_hash_retires_what_stood_then_not_what_is_filed_later():
+    """Stored as written, a bare hash was read again at every read and retired the same probe's finding filed later
+    under a criterion nobody disputed (critic over 6eec80c, a person's ruling through the door)."""
+    e = _seam()
+    _refute(e, _OWN)
+    bare = _id(e).rsplit("#", 1)[-1]
+    T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"{_id(e)} is root.libc's scope")
+    out = T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[bare], justification="libc's")
+    assert out["accepted"] and out["retired_findings"] == [f"conf#{bare}"], out   # what it retired, as recorded
+    _delivered(e, "again")
+    _refute(e, _OWN, crits=("other",))
+    assert set(e.regression_probes(TaskId("kid"))) == {"other"}, e.regression_probes(TaskId("kid"))
+    e.stop()
+
+
+def test_a_machine_ruling_past_the_dispute_says_what_stays_demanded(monkeypatch):
+    """Landed in part, the ruling read as whole to its issuer, and the node failed four times on what it believed it had
+    lifted (GF_cc_full1). What the dispute did not name stays demanded, and the log says so."""
+    e = _seam()
+    _refute(e, {"conf": _OWN, "other": _OTHER})
+    said, emit = [], e.emit_info
+    monkeypatch.setattr(e, "emit_info", lambda src, msg: (said.append(msg), emit(src, msg))[1])
+    T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"{_id(e, 'other')} asks for wide characters, root.libc's scope")
+    llm = _IssuerLLM({"decision": "accept", "justification": "both libc's",
+                      "retire_findings": [_id(e, "other"), _id(e, "conf")]})
+    assert I.answer_the_challenge(e, TaskId("kid"), "me", _llm=llm)["status"] == "accepted"
+    e.wait_idle()
+    assert set(e.regression_probes(TaskId("kid"))) == {"conf"}
+    assert any("stay demanded" in m and "conf" in m for m in said), said
     e.stop()
 
 

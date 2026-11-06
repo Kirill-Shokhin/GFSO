@@ -45,9 +45,9 @@ from gfso.config import LIMIT_RETRY_S, agent_id as _config_agent_id
 from gfso.core.graph.model import on_the_wall, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
-from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, as_read, materialize_inputs, same_probe, shows,
-                                          PROBE_S, pinned_files, probe_id, probes_from as _checks_of, unrerunnable,
-                                          with_named_files)
+from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, as_read, inputs_token, laid as over_dirs,
+                                          materialize_inputs, same_probe, shows, PROBE_S, pinned_files, probe_id,
+                                          probes_from as _checks_of, unrerunnable, with_named_files)
 from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, IN_THE_WORKS_PATH, PlaceUnavailable, Register, RevisionReason,
                              Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of,
                              system_decides)
@@ -314,15 +314,16 @@ def _what_happened(engine, task) -> list[str]:
     return out
 
 
-def _standing_findings(engine, task_id, lists: "str | None" = None, ex=None) -> str:
+def _standing_findings(engine, task_id, lists: "str | None" = None, ex=None, laid_dirs: "dict | None" = None) -> str:
     """The node's regression set, a line per finding with its id, as run, as the engine demands it — bounded as the
     executor's packet is (`capped`): the whole set inline, 562k characters, would end the dispute's issuer session
     `prompt_too_long` (GB_sql_database_tmxu0n436). `lists`: where its file goes (`list_key`) — the contact's own round,
     where each finding's files are laid from the system's record and its command shown over them
-    (`Engine.lay_probe_files`, through `ex`): the contact mounts no earlier round."""
+    (`Engine.lay_probe_files`, through `ex`): the contact mounts no earlier round. A command over a pinned probe's
+    inputs (`{inputs:<id>}`) is shown over the directory this turn laid them in (`laid_dirs`), as the validator's is."""
     workdir, up = (engine.get_exec_verdict(task_id) or {}).get("workdir"), findings.round_stands(engine.graph)
-    run = lambda p, why: (engine.lay_probe_files(p["as_run"], lists, ex) if lists and ex and p.get("as_run") and not why
-                          else p.get("seen") or p.get("as_run"))
+    run = lambda p, why: (engine.lay_probe_files(over_dirs(p["as_run"], laid_dirs), lists, ex)
+                          if lists and ex and p.get("as_run") and not why else p.get("seen") or p.get("as_run"))
     return "".join(f"\n- {c}:" + capped([f"[{p.get('id')}] {p.get('behaviour')}: `{run(p, why)}` "
                                          f"(recorded: «{p.get('expect')}»)" + (f" — {why}: shown, not demanded" if why
                                                                                else "")
@@ -331,31 +332,12 @@ def _standing_findings(engine, task_id, lists: "str | None" = None, ex=None) -> 
                    for c, ps in engine.regression_probes(task_id).items()).lstrip("\n")
 
 
-def _standing_ids(engine, task_id, named: list) -> list:
-    """The standing findings a ruling names, each by the full id the engine keeps: a bare hash only one of them has is
-    that one, and a finding no longer standing names nothing to retire. Unlike a dispute (`findings.named`), a ruling
-    is the act itself: a hash two criteria share names neither here, and the issuer is told both to choose from.
-    Named by its hash, the ruling was refused whole, the issuer fell back to rejecting a true challenge, and a part was
-    disputed and rejected a dozen times over 17 min (AUTO haiku coreutils, root.build, 2026-10-12)."""
-    standing = [str(p.get("id")) for ps in engine.regression_probes(task_id).values() for p in ps if p.get("id")]
-    out = []
-    for i in named:
-        hit = [s for s in standing if i in (s, s.split("#")[-1])]
-        if len(hit) == 1 and hit[0] not in out:
-            out.append(hit[0])
-    return out
-
-
 def _decided_nothing(engine, task_id, answer: dict) -> str:
     """Why an acceptance that changed and retired nothing is no decision, and the move that is one."""
-    standing = [str(p.get("id")) for ps in engine.regression_probes(task_id).values() for p in ps if p.get("id")]
-    named = [str(i) for i in answer.get("retire_findings") or ()]
-    if unresolved := {i: [s for s in standing if i in (s, s.split("#")[-1])] for i in named}:
-        return ("your acceptance retired nothing: " + "; ".join(
-            f"{i} names " + (" and ".join(c) + " — name the one you rule on by its full id" if len(c) > 1 else
-                             "a finding the dispute did not name — rule only on what it named" if c else
-                             "no standing finding")
-            for i, c in unresolved.items()) + ". Where the disputed probe is not demanded, REJECT the dispute saying so" + _LAST_CHECK)
+    if said := [str(i) for i in answer.get("retire_findings") or ()]:
+        return ("your acceptance retired nothing: " + ", ".join(said) + " names only findings the dispute did not name "
+                "— rule only on what it named. Where the disputed probe is not demanded, REJECT the dispute saying so"
+                + _LAST_CHECK)
     return ("your acceptance changed no criterion as it will stand and retired no standing finding, so it decided "
             "nothing. Where the disputed probe is not demanded — no standing finding carries it — the dispute has "
             "nothing to take back: REJECT it saying so, and the executor delivers" + _LAST_CHECK)
@@ -486,26 +468,30 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
         # …AND THE FINDINGS IT MAY BE DISPUTING. A FAIL can rest on a validator's own probe, which no criterion names
         # (a `<wchar.h>` program, a sibling's scope, failed root.pp round after round — GB_c_compiler_tmp5cb096); the
         # issuer judged the challenge with the contract alone in view and none of what was demanded under it
+        # …and what retiring one over a part's pinned check does, said wherever it may be ruled: told at an AUTO root
+        # only, a node below believed the part's pin was the part's contract and out of its reach (c_compiler pp-rest)
+        own = engine.plans_own_findings(task_id)
+        lifts = (f" {', '.join(own)} only say a settled part's pinned check does not hold. Run it: where it is false on "
+                 "correct work (it held only while a sibling's work was missing), accept, naming those ids in "
+                 "`retire_findings`: the part stays as it settled, this node's validation stops running that check under "
+                 "the criteria those ids stand on, and a later change of a criterion's text ends the ruling. Where the "
+                 "work broke it, reject." if own else "")
         out.append("## The validator's findings standing on this node — every PASS of it must re-run them\n"
                    # …a command copying out of `<round>.laid` reads a directory BESIDE the round, read-only: an issuer
                    # looked for it inside its round and ruled the finding unrunnable (row 4, c_compiler, 2026-10-30)
                    + (f"(A command that starts by copying out of `{laid_beside(lists).as_posix()}` reads the "
                       f"files the system recorded when the finding was filed, laid there beside your round, read-only: "
                       f"run it as shown.)\n" if lists else "")
-                   + (_standing_findings(engine, task_id, lists, ex) or "- none")
+                   + (_standing_findings(engine, task_id, lists, ex, laid) or "- none")
                    + ("\n\nUnder AUTO this node's criteria are the user's goal: only the user rules a finding of the "
                       "validator outside them — answer without `retire_findings`."
-                      + (f" Except a check of the plan, not of the goal: {', '.join(own)} only say a settled part's "
-                         "pinned check does not hold. Run it: where it is false on correct work (it held only while a "
-                         "sibling's work was missing), accept, naming those ids in `retire_findings`: the part stays as it "
-                         "settled, this node's validation stops demanding that check under those criteria, and a later "
-                         "change of a criterion's text ends the ruling. Where the work broke it, reject."
-                         if (own := engine.plans_own_findings(task_id)) else "")
-                      if is_auto_root(engine.graph, engine.graph.get_task(task_id)) or engine.users_plan() else
+                      + (" Except a check of the plan, not of the goal:" + lifts if lifts else "")
+                      if is_auto_root(engine.graph, task) or engine.users_plan() else
                       "\n\nA finding stays demanded until you rule it outside its criterion as written: accept, naming "
-                      "in `retire_findings` the id of a finding the dispute named by its id. Nothing else retires one "
-                      "— not a reworded criterion, not a conceded pinned probe — and a later change of that "
-                      "criterion's text ends the ruling."))
+                      "in `retire_findings` a finding the dispute named — its full id retires it under that criterion, "
+                      "its bare hash under every criterion it stands on. Nothing else retires one — not a reworded "
+                      "criterion, not a conceded pinned probe — and a later change of that criterion's text ends the "
+                      "ruling." + lifts))
     if question == "plan":
         # …AND THE NODE'S OWN REGISTER, which the context showed only as its parent's: a root has none above it,
         # so a hole on the root's register was asked about with the register itself nowhere in view.
@@ -1676,10 +1662,12 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
     # …WITH THE NODE'S PINNED INPUTS LAID DOWN, as a validator's are: a probe reading `{inputs}` run as written
     # printed "No such file" and then its `ok`, and a rejection "it prints ok" passed the shell rule having checked
     # nothing (critic over session a597fc08). The answer names the directory as `{inputs}` again.
+    # …ALL THE VALIDATION LAYS, its parts' too (`validation_procedure`): laid its own alone, an issuer ruling on findings
+    # over a settled part's pins found no file and ruled on the text (c_compiler pp-rest, 2026-11-06)
     at_place, text, laid = ex or LocalExecution(), "", {}
     try:
         with (_contact_place(where, at_place, engine.project_name) if where else contextlib.nullcontext()) as tmp,                 _round(engine, tmp):
-            laid = materialize_inputs(engine.graph.get_task(task_id).spec.criteria, tmp, at_place.files) if tmp else {}
+            laid = materialize_inputs(engine.validation_procedure(task_id), tmp, at_place.files) if tmp else {}
             packet = issuer_context(engine, task_id, question, refusal, laid, tmp, at_place) + schema_instruction(schema)
             with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):
                 if where:
@@ -1731,16 +1719,18 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
     if where and the_call_was_cut(llm, str(text)):   # an agent run of minutes is where calls are severed (critic 8)
         raise Unavailable("the contact run was cut before it answered")
     file_tech_reports(engine, answer := parse_structured(text, schema), "issuer", actor, task_id)
-    answer = _unlaid(answer, [d.as_posix() for d in laid.values()])
+    own = {probe_id(c.name, p) for c in engine.graph.get_task(task_id).spec.criteria for p in c.check or ()}
+    answer = _unlaid(answer, {d.as_posix(): INPUTS_TOKEN if i in own else inputs_token(i) for i, d in laid.items()})
     return answer, dict(llm.last_tool_calls) if where else None
 
 
-def _unlaid(x, dirs: list):
-    """The answer with every directory the inputs were laid down in named `{inputs}` again — the contract pins the
-    files, not one turn's temporary place."""
+def _unlaid(x, dirs: dict):
+    """The answer with every directory the inputs were laid down in named by its token again (`dirs`: {directory:
+    token}) — `{inputs}` for the node's own probe, `{inputs:<id>}` for a part's — the contract pins the files, not one
+    turn's temporary place."""
     if isinstance(x, str):
-        for d in dirs:
-            x = x.replace(d, INPUTS_TOKEN)
+        for d in sorted(dirs, key=len, reverse=True):
+            x = x.replace(d, dirs[d])
         return x
     if isinstance(x, list):
         return [_unlaid(v, dirs) for v in x]
@@ -1763,6 +1753,24 @@ _USERS_DISPUTE = ("{0}'s dispute asks to rule {1} outside the user's goal, and u
                   "made; the user's door to it stays open.")
 
 
+def _ruling(engine, task_id, answer) -> tuple[list, str]:
+    """(the standing findings the answer's ruling retires, why it is refused — '' where it is not), read as the gate
+    reads it (`findings.ruled`). It lands what the dispute named; the rest stays demanded and the executor may dispute
+    it by name — refused whole, the same four ids were ruled on three times and the part closed by count (root.tr,
+    2026-10-12). What it names that stands nowhere is refused by name, never dropped: the issuer names it right."""
+    standing = [s for ps in engine.regression_probes(task_id).values() for p in ps if (s := p.get("id"))]
+    retire, unknown = findings.ruled((answer or {}).get("retire_findings") or (), standing)
+    said = findings.named(engine.challenge_reason(task_id) or "", standing)
+    # …and what it names past the dispute is SAID to stay, never left for the issuer to believe retired: a ruling that
+    # landed in part read as whole, and the node failed four times on what it thought it lifted (GF_cc_full1)
+    if kept := [i for i in retire if i not in said]:
+        engine.emit_info("issuer", f"{task_id}: the ruling's {', '.join(kept)} stay demanded — the dispute did not name "
+                                   f"them; the executor may dispute them by name")
+    return [i for i in retire if i in said], (
+        f"your ruling names {', '.join(unknown)}, which no finding standing on {task_id} is — the standing ones are "
+        f"{', '.join(standing) or 'none'}: name each by its id as shown, or by its bare hash" if unknown else "")
+
+
 def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb=lambda s: None,
                          refusal: str = "", verbs: "Verbs | None" = None, where: "str | None" = None) -> dict:
     """The ISSUER's answer to a dispute (§12.4's CHALLENGED): accept with the corrected contract (a new
@@ -1775,12 +1783,7 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
         return {"task_id": str(task_id), "status": "gone"}
     answer, ran = _ask(engine, task_id, "dispute", issuer_id, ISSUER_SCHEMA, refusal, verbs, _llm, where)
     decision = str((answer or {}).get("decision", "")).strip().lower()
-    retire = _standing_ids(engine, task_id, [str(i) for i in (answer or {}).get("retire_findings") or ()])
-    # the ruling lands what the dispute named; the rest stays demanded and the executor may dispute it by name. Refused
-    # whole, the same four ids were ruled on three times and the part closed by count (root.tr, 2026-10-12)
-    said = findings.named(engine.challenge_reason(task_id) or "", [s for ps in engine.regression_probes(task_id).values()
-                                                                    for p in ps if (s := p.get("id"))])
-    retire = [i for i in retire if i in said]
+    retire, unknown = _ruling(engine, task_id, answer)
     if answer is None or decision not in ("accept", "reject"):
         # an acceptance names the contract it installs; falling through to a rejection would send the
         # executor back carrying a justification written to mean the issuer AGREED with him
@@ -1814,6 +1817,9 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
         if not (retire := [i for i in retire if i in own]):
             theirs = [i for i in asked if i not in own]
             return {"task_id": str(task_id), "status": "users", "why": _USERS_DISPUTE.format(task_id, ", ".join(theirs))}
+    # …AND WHAT IT NAMES THAT STANDS NOWHERE IS REFUSED BY NAME, never dropped: the issuer names it right (§12.16 (ii))
+    if unknown:
+        return {"task_id": str(task_id), "status": "refused", "why": unknown}
     try:
         # …below an AUTO root, a node of the user's plan takes additions only — no re-pin: its expected outputs are the
         # user's, and one re-pinned to what the build printed contradicted the root's own (GB_sql_database_tne9fg736)

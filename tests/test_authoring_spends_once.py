@@ -11,7 +11,7 @@ from gfso.adapters.llm.stats import readings
 from gfso.adapters.llm.structured import RETRY_SHORTER, RETRY_SUFFIX
 from gfso.core.types.ports import LLMProviderPort
 from gfso.critic import runner as R
-from gfso.issuer import _standing_ids
+from gfso.engine.findings import ruled
 from tests.support import make_engine, spec
 from gfso.core.types import AgentId, TaskId
 
@@ -103,11 +103,8 @@ def test_independent_readings_run_at_once_and_each_call_carries_its_stage():
 
 def test_a_ruling_names_its_findings_as_the_engine_keeps_them():
     """Named by a bare hash, the issuer's ruling was refused whole and a true challenge was rejected a dozen times over
-    17 min (root.build, 2026-10-12); a finding that no longer stands names nothing to retire — and an acceptance left
-    with nothing to retire and no criterion changed decides nothing (re-offered unchanged, it was challenged ten times)."""
-    class _E:
-        def regression_probes(self, _):
-            return {"Dispatch": [{"id": "Dispatch#94cafe8f"}], "Other": [{"id": "Other#0f075147"}]}
-
-    assert _standing_ids(_E(), "n", ["94cafe8f", "gone#123", "Other#0f075147", "94cafe8f"]) == \
-        ["Dispatch#94cafe8f", "Other#0f075147"]
+    17 min (root.build, 2026-10-12); a finding that no longer stands names nothing to retire and is said back by name
+    (`answer_the_challenge` refuses it) — and an acceptance left with nothing to retire and no criterion changed decides
+    nothing (re-offered unchanged, it was challenged ten times)."""
+    assert ruled(["94cafe8f", "gone#123", "Other#0f075147", "94cafe8f"], ["Dispatch#94cafe8f", "Other#0f075147"]) == \
+        (["Dispatch#94cafe8f", "Other#0f075147"], ["gone#123"])
