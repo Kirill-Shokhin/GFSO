@@ -182,7 +182,8 @@ into it; `execution=<name>` on `register_agent` picks another one you declared (
 must be a git repository with a commit. On your machine instead, they start only with
 `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` (then `gfso up`); without it or a container the first
 round stops the project with that cause, nothing of the node run. A validator
-judging work you do in your own chat runs on your machine either way.
+judging work you do in your own chat, and the system's answer to a dispute that work raises, run on your machine either
+way; so does the reader of a plan's documents for a project with no execution declared.
 
 The roster is the server's, shared by every session on it, so take your roles off when you are done:
 `unregister_agent("<project>-exec", workdir="<project dir>")` removes the role only while it still points at

@@ -12,7 +12,7 @@ from gfso.adapters import worktrees as W
 from gfso.adapters.worktrees import base_of
 from gfso.adapters.netrecord import forget
 from gfso.adapters.execution import (IMPORTED, ContainerExecution, LocalExecution, component, node_key, drop_volumes,
-                                     network_of, stricter)
+                                     held_as_tree, network_of, stricter)
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
@@ -357,8 +357,13 @@ def _declared(engine, agents: "AgentRegistry | None" = None):
 def execution_of(engine, agents: "AgentRegistry | None" = None):
     """WHERE this project's work runs (`where_it_runs`), never this host for a project whose places stand in volumes
     (`held_off_the_host`): every reading that binds work refuses there, by default — one call site at a time, a role lost
-    after a gate still put a validation, a place's git and a plan's reader on the user's machine (critics)."""
-    return held_off_the_host(engine, where_it_runs(engine, agents))
+    after a gate still put a validation, a place's git and a plan's reader on the user's machine (critics). Nor a volume
+    that holds its base as a live tree (`held_as_tree`): its plan reader, validator and issuer's contact each read it, one
+    call site found at a time (critics)."""
+    ex = held_off_the_host(engine, where_it_runs(engine, agents))
+    if isinstance(ex, ContainerExecution) and (why := held_as_tree(ex)):
+        raise PlaceUnavailable(str(ex.base), why)
+    return ex
 
 
 def where_it_runs(engine, agents: "AgentRegistry | None" = None):

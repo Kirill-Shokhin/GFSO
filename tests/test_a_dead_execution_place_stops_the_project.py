@@ -20,7 +20,7 @@ from gfso.adapters.llm.headless import ClaudeCodeProvider
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.types import Mode, PlaceUnavailable, TaskId
 from gfso.delegate import Dispatcher
-from tests.support import criterion, hold_a_credential, make_engine
+from tests.support import criterion, hold_a_credential, make_engine, carry_nothing_in
 from tests.test_a_cut_call_does_not_spend_the_nodes_retry import _an_offer
 from tests.test_delegate import _agents
 from tests.test_the_mode_decides_who_holds_what import _admit, _engine, _kid
@@ -45,6 +45,7 @@ class _Docker:
 def _place(tmp_path, monkeypatch):
     hold_a_credential(monkeypatch, tmp_path)                    # …what stops a call here is its place, not its store
     monkeypatch.setattr(E, "run", docker := _Docker())
+    carry_nothing_in(monkeypatch)
     (base := tmp_path / "ws").mkdir(exist_ok=True)
     ex = E.ContainerExecution("e3-linux", "img", str(tmp_path / "env"), str(tmp_path / "state"), str(base), "p")
     monkeypatch.setattr(D, "execution_of", lambda *a, **k: ex)
@@ -228,7 +229,7 @@ def test_a_probe_that_raises_is_a_place_that_does_not_answer_and_the_monitor_liv
 def _dead_place(tmp_path, monkeypatch):
     hold_a_credential(monkeypatch, tmp_path)
     monkeypatch.setattr(E, "run", _Docker())
-    monkeypatch.setattr(E, "_refused_over", lambda ex: None)   # …the fake's git is none: the base is not this test's subject
+    carry_nothing_in(monkeypatch)
     (tmp_path / "ws").mkdir(exist_ok=True)
     ex = E.ContainerExecution("e3-linux", "img", str(tmp_path / "env"), str(tmp_path / "state"), str(tmp_path / "ws"), "p")
     monkeypatch.setattr(TL, "execution_of", lambda *a, **k: ex)

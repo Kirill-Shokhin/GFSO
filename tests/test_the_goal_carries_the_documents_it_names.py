@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import gfso.adapters.execution as E
 import gfso.tools_llm as TL
+import gfso.workspaces as WS
 from gfso.core.graph.model import USERS_PLAN_KEY
 from gfso.core.types import TaskId
 from gfso.roster import AgentRegistry
@@ -160,6 +161,21 @@ def test_a_volume_holding_its_base_as_a_live_tree_is_refused_whatever_the_base_i
             TL.validation_execution(e)          # …its validator read that tree, `.env` and all (critic)
     finally:
         TL.execution_of = was
+
+
+def test_a_volume_held_as_a_tree_binds_nothing_and_its_stop_does_not_lift_by_itself(tmp_path, monkeypatch):
+    """Refused one call site at a time — the plan's reader, the validator — the issuer's contact still read that tree, its
+    `.env` to the provider; and asked of Docker alone, its stop lifted every tick with nothing changed (critic, ran)."""
+    x = E.ContainerExecution("e", "img", None, str(tmp_path / "state"), str(a_repository(tmp_path / "ws")), "p")
+    record = {E.VOLUME + E.IMPORTED: '{"commit": "tree"}'}
+    x.volume.record = (record.get, record.__setitem__)
+    monkeypatch.setattr(WS, "where_it_runs", lambda engine, agents=None: x)
+    monkeypatch.setattr(E, "_unavailable", lambda ex, storage: None)
+    with pytest.raises(E.PlaceUnavailable, match="live tree"):
+        WS.execution_of(SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None)))
+    assert "live tree" in x.unavailable(storage=True)
+    record[E.VOLUME + E.IMPORTED] = '{"commit": "abc"}'
+    assert WS.execution_of(SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None))) is x and not x.unavailable(storage=True)
 
 
 def test_a_plan_handed_in_whole_is_recorded_as_the_users(tmp_path, monkeypatch):

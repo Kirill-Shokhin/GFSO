@@ -2251,11 +2251,18 @@ def _refused_over(ex) -> str | None:
     """Why no session of `ex`'s project runs: its base has no places (`_no_places`) — or its volume holds it as a live tree,
     imported before such bases were refused, its ignored files and `.env` with it: refused by that record, whatever the base
     is now; a `git init` after the refusal let the plan's reader over that tree again (critic)."""
+    return held_as_tree(ex) or _no_places(ex.base)
+
+
+def held_as_tree(ex) -> str | None:
+    """Why `ex`'s volume is read by nothing that binds work: it holds its base as a live tree (`commit: tree`), imported
+    before such bases were refused, its ignored files and `.env` with it. A read of the project's record only: asked at
+    every binding (`workspaces.execution_of`)."""
     if json.loads(ex.volume.record[0](VOLUME + IMPORTED) or "{}").get("commit") == "tree":
         return ("this project's volume holds its base as a live tree, imported before such bases were refused, its ignored "
                 "files with it: export what it holds (`gfso export-places`), then delete the project (`delete_project`, its "
                 "volumes and roles with it) and make it again over a repository's top with a commit")
-    return _no_places(ex.base)
+    return None
 
 
 def committed(base: Path, rel: str) -> bytes | None:
@@ -2589,7 +2596,8 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         return all(map(_up, [self.container] + ([self.way.gateway] if self.way.network[0] == "allowlist" else [])))
 
     def unavailable(self, storage: bool = False):
-        return _unavailable(self, storage)
+        # …and the cause no Docker answer lifts, as the host's own: asked of Docker alone, a refusal's stop lifted every tick (critic)
+        return _unavailable(self, storage) or (self.agents_refused() if storage else None)
 
     #: dispatched work, and the plan's reader, refused over a base with no places or held as a tree (`_refused_over`)
     agents_refused = lambda self: _refused_over(self)  # noqa: E731

@@ -55,11 +55,13 @@ def a_repository(base: Path) -> Path:
 
 
 def carry_nothing_in(monkeypatch) -> None:
-    """For a fake of the docker client, whose host git is no git: an empty bundle carried in (`_carried_in`)."""
+    """For a fake of the docker client, whose host git is no git: an empty bundle carried in (`_carried_in`), and no base
+    refused for what that git cannot say (`_refused_over` keeps its own record's refusal)."""
     def carried(base, project, d):
         tarfile.open(d / "in.tar", "w").close()
         return "c0ffee", d / "in.tar", []
     monkeypatch.setattr(E, "_carried_in", carried)
+    monkeypatch.setattr(E, "_refused_over", E.held_as_tree)
 
 
 def imports_of(py: Path, repo: Path) -> list:
