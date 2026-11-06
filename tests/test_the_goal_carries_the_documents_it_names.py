@@ -153,6 +153,13 @@ def test_a_volume_holding_its_base_as_a_live_tree_is_refused_whatever_the_base_i
     assert x.agents_refused() is None, "a top with a commit, imported as one"
     record[E.VOLUME + E.IMPORTED] = '{"commit": "tree"}'
     assert "live tree" in x.agents_refused()
+    e = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None))
+    TL.execution_of, was = (lambda engine, agents=None: x), TL.execution_of
+    try:
+        with pytest.raises(E.PlaceUnavailable, match="live tree"):
+            TL.validation_execution(e)          # …its validator read that tree, `.env` and all (critic)
+    finally:
+        TL.execution_of = was
 
 
 def test_a_plan_handed_in_whole_is_recorded_as_the_users(tmp_path, monkeypatch):

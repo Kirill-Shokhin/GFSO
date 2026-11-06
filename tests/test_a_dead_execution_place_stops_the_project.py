@@ -228,6 +228,7 @@ def test_a_probe_that_raises_is_a_place_that_does_not_answer_and_the_monitor_liv
 def _dead_place(tmp_path, monkeypatch):
     hold_a_credential(monkeypatch, tmp_path)
     monkeypatch.setattr(E, "run", _Docker())
+    monkeypatch.setattr(E, "_refused_over", lambda ex: None)   # …the fake's git is none: the base is not this test's subject
     (tmp_path / "ws").mkdir(exist_ok=True)
     ex = E.ContainerExecution("e3-linux", "img", str(tmp_path / "env"), str(tmp_path / "state"), str(tmp_path / "ws"), "p")
     monkeypatch.setattr(TL, "execution_of", lambda *a, **k: ex)

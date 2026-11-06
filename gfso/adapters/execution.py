@@ -2253,8 +2253,8 @@ def _refused_over(ex) -> str | None:
     is now; a `git init` after the refusal let the plan's reader over that tree again (critic)."""
     if json.loads(ex.volume.record[0](VOLUME + IMPORTED) or "{}").get("commit") == "tree":
         return ("this project's volume holds its base as a live tree, imported before such bases were refused, its ignored "
-                "files with it: export what it holds (`gfso export-places`), remove the project's volumes and its `volume:` "
-                "settings, then start it again")
+                "files with it: export what it holds (`gfso export-places`), then delete the project (`delete_project`, its "
+                "volumes and roles with it) and make it again over a repository's top with a commit")
     return _no_places(ex.base)
 
 

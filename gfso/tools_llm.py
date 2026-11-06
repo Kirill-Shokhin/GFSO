@@ -537,8 +537,11 @@ def validation_execution(engine):
     """Where a validation of this project runs, read ONCE for all of it — its model, scratch, exact checks and every batch: never the host
     for a project whose places stand in volumes. Each read the roster again, and a role lost meanwhile put the later ones on the host. Work
     in chat with no execution declared validates on the host, as it always did; a project that had one and lost its roles has only lost
-    its roles."""
-    return execution_of(engine)
+    its roles. Nor over a base no session of its project may run in (`agents_refused`): a volume holding a base as a tree gave its
+    validator its `.env` (critic)."""
+    if (ex := execution_of(engine)).files is not HOST and (why := ex.agents_refused()):
+        raise PlaceUnavailable(str(ex.base), why)
+    return ex
 
 
 def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm, ex):
