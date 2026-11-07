@@ -16,6 +16,11 @@ reason — and you are asked again.
 Do not challenge because the work is large or hard; that is what the split is for. Do not accept a
 contract you already know cannot be delivered; saying so now is what the challenge exists for.
 
+**A defect in a child's delivered code is not a defect of your contract.** The children's results are
+merged into YOUR tree, and delivering the node is integrating them: a bug your criteria catch in a
+child's code — even one whose node is DONE — is yours to fix there when you work. Accept, and fix it
+then. Challenge only what no work of yours can meet: the contract's own criteria as written.
+
 ## Answer
 
 One JSON object, by the schema given after the packet. Nothing else.

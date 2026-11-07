@@ -132,7 +132,7 @@ BASE_COUNT = {"private_reach": 2,   # ← `issuer_of` published (2026-08-22)
               # a private NAME imported from another module (`from gfso.x import _y`): the layering gate reads it as an
               # ordinary import, and nothing counted it (sync audit, D-F17, 2026-10-05) — measured, to fall from here;
               # 39 read as written, 53 resolved (relative imports: a package's own re-exports, gfso.engine's siblings)
-              "private_import": 50,   # ← stats.tag_stage published (D-F18)
+              "private_import": 50,   # ← stats.tag_stage published (D-F18); doctor's floor reads the execution's own
               "monkey_patch": 0, "foreign_path": 0,
               "duck_private": 0,
               # 2 (2026-09-03, S7): a `getattr` with a default over a DECLARED field says the
@@ -201,7 +201,7 @@ BASE_LITERAL = {# 2 and 1: V's two values are `Verdict`, a StrEnum whose members
                 "root": 2,
                 # 2, not 4: the roster and the database file are derived in `gfso.config` now, and
                 # the two remaining spellings are that owner and the doctor line that reports it.
-                "agents.json": 2, "gfso.db": 1,
+                "agents.json": 1, "gfso.db": 0,
                 # 2: the single-project `/api/projects` answer asked `gfso.config.DEFAULT_PROJECT`
                 # instead of spelling the name a third time (2026-09-02)
                 "default": 2,

@@ -21,6 +21,7 @@ from gfso.core.protocol.procedure import (coverage, materialize_inputs, probe_id
 from gfso.engine.verdicts import criterion_version
 from gfso.core.types import Criteria, Probe, Spec, TaskId, Task, State
 from gfso.adapters.storage.sqlite import SqliteStorage
+from gfso.core.types import HOST
 from tests.support import make_engine, REGISTER
 
 _CMD = "for f in {inputs}/*.c; do ./cc $f || echo FAIL $f; done; echo done"
@@ -58,10 +59,18 @@ def test_the_corpus_moving_moves_the_procedure_without_renaming_the_probe():
 
 def test_the_corpus_is_laid_down_by_the_system_where_the_validator_looks(tmp_path):
     crit = [Criteria("c", "compiles", check=(_probe(**{"sub/a.c": "int x;"}),))]
-    dirs = materialize_inputs(crit, tmp_path)
+    dirs = materialize_inputs(crit, tmp_path, HOST)
     (d,) = dirs.values()
     assert (d / "sub" / "a.c").read_text(encoding="utf-8") == "int x;"
     assert tmp_path in d.parents
+
+
+def test_a_pinned_input_is_laid_down_byte_for_byte(tmp_path):
+    """An expected file written in text mode on Windows came out CRLF, and `diff - lex.out` failed for every lexer inside
+    the project's Linux execution (gb-sql-database-tngdkx244 root.lexer, root.storage)."""
+    crit = [Criteria("c", "prints", check=(_probe(**{"lex.out": "a\nb\n", "crlf.txt": "x\r\ny\r\n"}),))]
+    (d,) = materialize_inputs(crit, tmp_path, HOST).values()
+    assert (d / "lex.out").read_bytes() == b"a\nb\n" and (d / "crlf.txt").read_bytes() == b"x\r\ny\r\n"
 
 
 def test_an_input_that_would_land_outside_its_directory_is_refused_at_admission(tmp_path):
@@ -79,7 +88,7 @@ def test_an_input_that_would_land_outside_its_directory_is_refused_at_admission(
         assert "outside" in str(out).lower(), out
         assert e.graph.get_task(f"leaf{i}") is None
         with pytest.raises(ValueError):            # and never laid down in part
-            materialize_inputs(crit, tmp_path / "m")
+            materialize_inputs(crit, tmp_path / "m", HOST)
         assert not (tmp_path / "escape.c").exists()
         assert check_procedure(Task(TaskId("t"), Spec("goal", tuple(crit)),
                                     state=State.IDLE)).passed is False
@@ -192,7 +201,7 @@ def test_the_record_counts_a_probe_the_gate_accepted(tmp_path):
     false red into the record (GB_c_compiler_tmokgz344, root.vec 0/1 over a probe that ran)."""
     p = _probe(**{"a.c": "int x;"})
     crit = [Criteria("c", "compiles", check=(p,))]
-    dirs = materialize_inputs(crit, tmp_path)
+    dirs = materialize_inputs(crit, tmp_path, HOST)
     ran = p.command.replace("{inputs}", next(iter(dirs.values())).as_posix())
     report = [{"criterion": "c", "verdict": "pass", "probe": [{"command": ran, "expect": "done"}]}]
     assert unrun_pinned(crit, report, dirs.items()) == {}, "the gate accepts it — the premise"

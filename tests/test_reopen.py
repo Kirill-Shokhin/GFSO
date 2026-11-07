@@ -20,7 +20,7 @@ from gfso.core.types import (
 from gfso.core.graph.metrics import q_V
 from gfso import tools as T
 from tests.support import criterion, make_engine, pinned, reviewer_passes, spec, REGISTER, REGISTER_SPLIT
-from gfso.core.types import CriterionMapping
+from gfso.core.types import CriterionMapping, DepEdge
 
 
 @pytest.fixture
@@ -234,13 +234,13 @@ def test_dep_consumer_built_on_result_locks_producer(engine):
     engine.assign_task(TaskId("goal"), spec("the goal", "gc1", "gc2"), AgentId("boss"))
     engine.wait_idle()
     cons_spec = Spec(description="consumer", criteria=(
-        Criteria("uses", "builds on prod output", depends_on=TaskId("prod")),
-        Criteria("own", "the consumer's own result holds", check=pinned("own"))))
+        Criteria("own", "the consumer's own result holds", check=pinned("own")),))
     # …the whole plan covers the goal BEFORE any child executes: admitted whole (CHECK-1, §9.5, §11.5)
     engine.decompose_task(TaskId("goal"), [(TaskId("prod"), spec(), AgentId("boss")),
                                            (TaskId("cons"), cons_spec, AgentId("boss"))],
                           [CriterionMapping("gc1", TaskId("prod")), CriterionMapping("gc2", TaskId("cons"))],
-                          register=REGISTER_SPLIT)
+                          register=REGISTER_SPLIT,
+                          deps={"cons": (DepEdge(TaskId("prod"), TaskId("cons"), glue="builds on prod output"),)})
     engine.wait_idle()
     for sd in (
         SignalData(signal=Signal.ACCEPT, task_id=TaskId("prod"), source=AgentId("boss")),

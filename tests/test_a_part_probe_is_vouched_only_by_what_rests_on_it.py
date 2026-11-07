@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from gfso.core.protocol.procedure import part_credit, part_criteria, parts_not_shown_holding, probe_id, unrun_parts
 from gfso.core.types import Criteria, Probe
+from gfso.tools_llm import _conjoined
 
 _P = part_criteria("root.cat", [Criteria("flags", check=(Probe("cat flags", "make test", "all 12 pass"),))])
 _PARTS = {"A": _P, "B": _P}
@@ -32,3 +33,14 @@ def test_an_unrelated_passed_criterion_does_not_vouch_for_a_part_probe():
 def test_control_the_criterion_that_rests_on_it_still_vouches():
     assert "A" not in unrun_parts(_PARTS, _report("A"), own=_OWN)
 
+
+
+def test_a_criterion_split_between_runs_does_not_vouch_either():
+    """Marking a passing share's probes `held` (to keep them out of the findings store) made a split X's citation a part's
+    credit — `held` is this gate's word; the share carries its own mark (critic, 2026-10-15)."""
+
+    x = _report("X")[0]
+    split = _conjoined([x, dict(x, probe=[])]) + _report("X")[1:]
+    assert unrun_parts(_PARTS, split, own=_OWN) == {"A": _IDS, "B": _IDS}
+    assert parts_not_shown_holding(_PARTS, _conjoined([x, dict(x, probe=[])]) + _report("X", verdict_b="fail")[1:],
+                                   own=_OWN)

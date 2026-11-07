@@ -6,7 +6,9 @@ back — the log is the record of change, and a mutable primitive would make it 
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Mapping, NewType, Optional
 
@@ -47,6 +49,11 @@ class Probe:
     # node that closed with `procedure_moved_since_authoring: false`. Carried here, the corpus is
     # part of the pinned procedure — its digest moves when it does, and nobody but the issuer moves it.
     inputs: tuple[tuple[str, str], ...] = ()
+    # `expect` is the WHOLE output the command prints on correct work, as `procedure.shows` reads it (escapes as the
+    # characters, whitespace runs as one) — so the system decides it by running the command itself, and a validator's
+    # `held: true` over an output that differs is the false PASS the engine overrules (`tools_llm._observe_exact`).
+    # False: `expect` describes the output in words or names a part of it, which only a reader can judge.
+    exact: bool = False
 
     def __post_init__(self):
         raw = self.inputs
@@ -63,14 +70,17 @@ class Probe:
         if isinstance(p, Probe):
             return p
         return cls(str(p.get("behaviour", "") or ""), str(p.get("command", "") or ""),
-                   str(p.get("expect", "") or ""), p.get("inputs") or ())
+                   str(p.get("expect", "") or ""), p.get("inputs") or (), p.get("exact") is True)
 
     def to_dict(self) -> dict:
         """The probe as a door serializes it — one writer, so a field cannot travel through one
-        door and be dropped by the next (the `check` field itself was lost that way once)."""
+        door and be dropped by the next (the `check` field itself was lost that way once). `exact` only when set:
+        every probe stored before it existed reads back, and digests, unchanged."""
         d = {"behaviour": self.behaviour, "command": self.command, "expect": self.expect}
         if self.inputs:
             d["inputs"] = dict(self.inputs)
+        if self.exact:
+            d["exact"] = True
         return d
 
 
@@ -82,8 +92,8 @@ class Criteria:
     expected: Optional[str] = None
     n: Optional[int] = None
     timeout: Optional[int] = None
-    depends_on: Optional[TaskId] = None  # §2: this criterion references a sibling's output (the glue)
-                                         # → induces a Dep edge (from=depends_on, to=this task)
+    depends_on: Optional[TaskId] = None  # §2.7: this criterion's pinned check reads that node's result,
+                                         # which implies the Dep edge (from=depends_on, to=this task)
     check: tuple[Probe, ...] = ()        # the pinned decision procedure (§2/A1): what will be run to
                                          # decide this criterion, authored with the criterion by the
                                          # ISSUER side and before execution — never invented at
@@ -196,6 +206,23 @@ class Spec:
         return tuple(n for n in self.accepted_risks if not n.denial)
 
 
+
+def seams_apart(spec: Optional["Spec"], to_id) -> tuple[Optional["Spec"], tuple["DepEdge", ...]]:
+    """(the spec without the entries that only declare a Dep edge, the declared edges every `depends_on` entry implies).
+    An entry that names a producer and pins no check is no predicate on this node's result — Dep is a relation, not a
+    criterion (§2.7, §7.5); left among the criteria it was a glue sentence a validator passed or failed by reading it
+    (9 of 416 archived FAILs rested on one alone). One that pins a check on the producer's result is a criterion, and
+    its edge is declared too. What an older engine, or a caller of the wire's `depends_on`, wrote is read so."""
+    if spec is None:
+        return None, ()
+    if bad := [c.name for c in spec.criteria if c.depends_on is not None and not isinstance(c.depends_on, str)]:
+        raise ValueError(f"criteria {bad}: `depends_on` names ONE producer — a Dep edge has one (§2.7)")
+    edges = tuple(DepEdge(TaskId(str(c.depends_on)), TaskId(str(to_id)), glue=c.description)
+                  for c in spec.criteria if c.depends_on)
+    bare = tuple(c for c in spec.criteria if c.depends_on and not c.check)
+    return (replace(spec, criteria=tuple(c for c in spec.criteria if c not in bare)) if bare else spec), edges
+
+
 @dataclass(frozen=True)
 class Register:
     """A split's ACCEPTED_RISKS register (§9.2) with the STD-3 components it groups them by (§9.4): its decomposer
@@ -225,14 +252,16 @@ class CriterionMapping:
 
 @dataclass(frozen=True)
 class DepEdge:
-    """Dependency edge (a cross-subtask seam).
+    """Dependency edge (a cross-subtask seam) — a record of its own, Dep being a primitive beside T (§2.7, §7.5).
 
-    Direction: `from_id` = PRODUCER, `to_id` = CONSUMER (to_id depends on from_id's
-    output — the consumer carries the `depends_on=from_id` criterion, §2).
-    glue = the anti-mock truth-maker (canon §2 / §3): what of `from_id`'s output
-    `to_id`'s criterion references, and what breaks if the edge is mishandled. A seam
-    without glue is the FM-1 forgotten-glue hole — so glue is first-class on the edge,
+    Direction: `from_id` = PRODUCER, `to_id` = CONSUMER (to_id depends on from_id's output).
+    glue = the anti-mock truth-maker (canon §2 / §3): what of `from_id`'s output `to_id` reads, and what breaks if the
+    edge is mishandled. A seam without glue is the FM-1 forgotten-glue hole — so glue is first-class on the edge,
     not folded into a node-local criterion (which would be mock-satisfiable).
+    discovered=False: DECLARED, by the act that declares it — an admission (§15.1), `add_dependency`, or a version whose
+    criterion's check reads the producer's result (§2.7). removed=True once a later act took the declaration out
+    (`remove_dependency`, a re-admission re-declaring its consumer's edges): no edge of E_Dep, and still in q_Dep's
+    population — it was declared (§15.5).
     discovered=True if found via BLOCK, not declared upfront.
     provisional=True while the two-phase record (§11.3/§15.5) awaits adjudication: BLOCK
     registers provisional, RESOLVE_BLOCK confirms/re-attributes/retracts; an escalated-
@@ -255,6 +284,7 @@ class DepEdge:
     closed: bool = False
     declared_first: bool = False
     refuted: bool = False
+    removed: bool = False
 
 
 @dataclass
@@ -378,6 +408,22 @@ class GraphContext:
     recommendation: Optional[Recommendation] = None
 
 
+_SYSTEM_DECIDES: ContextVar[bool] = ContextVar("system_decides", default=False)
+
+
+@contextmanager
+def system_decides(on: bool = True):
+    """Around a move the system makes itself. The signer stays the role the move belongs to (under AUTO a root's issuer
+    is the goal's, §10.1), so who decided is said apart from it (§11.6). Ambient, because a revision and a split reach
+    their signals through the verbs the doors call too: a party's own call runs outside it and carries nothing. It holds
+    on one thread, so it opens on the thread that builds the signal (`signal_ok`, `settle`), never around a spawn."""
+    token = _SYSTEM_DECIDES.set(on or _SYSTEM_DECIDES.get())
+    try:
+        yield
+    finally:
+        _SYSTEM_DECIDES.reset(token)
+
+
 @dataclass(frozen=True)
 class SignalData:
     """Data carried by a signal through the queue."""
@@ -406,6 +452,15 @@ class SignalData:
     external: bool = False                         # RESOLVE_BLOCK: blocker was non-producible (no producer node) →
                                                    # retract the provisional edge; the FM-5 currency line, not a Dep (§11.3)
     result: Optional[str] = None                   # DELIVER
+    # DELIVER: the identity of the artifact handed over (§11.2) — its tree, the same for the same files however many
+    # commits carry them; None where the work has no place of its own
+    artifact: Optional[str] = None
+    # …and the commit that carried it when it was handed over: what joins once a PASS accepts it, wherever the branch
+    # has moved since (the branch is the agents' to write)
+    commit: Optional[str] = None
+    # …and how its judge builds it before any check (a command run in the judge's copy; "" = nothing to build; None =
+    # not declared: `make` where the tree has a Makefile at its root, else nothing — `adapters.snapshots._build`)
+    build: Optional[str] = None
     self_validation: Optional[Verdict] = None      # DELIVER
     new_spec: Optional[Spec] = None                # ACCEPT_CHALLENGE
     # ACCEPT_CHALLENGE: the issuer's ruling — ids of the validator's findings the executor's CHALLENGE named that this
@@ -421,6 +476,7 @@ class SignalData:
     # a visit it never measured — in particular not on a fresh OFFERED entered by a new packet
     # version, whose deadline is its own (§12.3).
     visit: Optional[tuple] = None
+    by_system: bool = field(default_factory=_SYSTEM_DECIDES.get)   # `system_decides`, read where the signal is built
 
     @property
     def blockers(self) -> tuple[TaskId, ...]:

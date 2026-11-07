@@ -184,6 +184,20 @@ def test_source_fingerprint_is_the_same_on_every_platform(tmp_path, monkeypatch)
     assert serverctl.source_fingerprint() == h.hexdigest()[:12]
 
 
+def test_source_fingerprint_reads_one_commit_alike_in_crlf_and_lf(tmp_path, monkeypatch):
+    """One commit checked out by autocrlf as CRLF in the main tree and as LF in a clone is one build (measured
+    2026-10-21: 5c3a9515872a and 1c2234782402 for 55eb5e6); a changed line is still another."""
+    pkg = tmp_path / "gfso"
+    pkg.mkdir()
+    monkeypatch.setattr(serverctl, "ROOT", tmp_path)
+    (pkg / "a.py").write_bytes(b"x = 1\r\ny = 2\r\n")
+    crlf = serverctl.source_fingerprint()
+    (pkg / "a.py").write_bytes(b"x = 1\ny = 2\n")
+    assert serverctl.source_fingerprint() == crlf
+    (pkg / "a.py").write_bytes(b"x = 1\ny = 3\n")
+    assert serverctl.source_fingerprint() != crlf
+
+
 def test_drift_names_every_way_the_live_server_can_be_wrong():
     env = {"GFSO_VALIDATE_INTERNAL": "1", "GFSO_L2_GATE": "1", "GFSO_AGENTS_PATH": "/reg.json"}
     correct = {"code_version": "abc", "validate_internal": True, "l2_gate": True,
@@ -373,12 +387,9 @@ def test_a_port_held_by_something_else_is_not_a_running_server(monkeypatch):
     assert port_state()[0] == "gfso"
 
 
-def test_the_desktop_block_setup_prints_is_json(monkeypatch, capsys, tmp_path):
-    """`gfso setup` prints a config block for the user to paste, so it has to BE a config block.
-
-    Built by string interpolation, it was not: on Windows every backslash in the path is a JSON
-    escape, so the thing offered for pasting could not be parsed by the application it was for.
-    """
+def test_setup_says_one_line_of_desktop_and_prints_no_config(monkeypatch, capsys, tmp_path):
+    """Offered a config block, a fresh client ran `--desktop` and wrote the person's real file, unasked (e2e1, 2026-11-09):
+    with Desktop on the machine, setup says one line and offers nothing to paste. The entry `--desktop` writes stays JSON-built."""
     monkeypatch.setenv("GFSO_HOME", str(tmp_path))
     monkeypatch.setattr(doctor, "port_state", lambda: ("free", "nothing is listening"))
     monkeypatch.setattr(doctor, "webbrowser_open", lambda url: None)
@@ -389,10 +400,8 @@ def test_the_desktop_block_setup_prints_is_json(monkeypatch, capsys, tmp_path):
 
     doctor.setup()
     out = capsys.readouterr().out
-    block = out[out.index("{"):out.rindex("}") + 1]
-    parsed = json.loads(block)                       # the assertion IS the parse
-    assert "connect" in parsed["mcpServers"]["gfso"]["args"]
-    assert parsed["mcpServers"]["gfso"]["env"]["GFSO_HOME"] == str(tmp_path)
+    assert "Claude Desktop not touched; `gfso setup --desktop` only if the person names it." in out
+    assert "mcpServers" not in out and "{" not in out and not (tmp_path / "claude_desktop_config.json").exists()
 
 
 def test_setup_desktop_merges_and_keeps_a_backup(tmp_path, monkeypatch):
@@ -488,11 +497,12 @@ def test_busy_counts_concurrent_calls_of_one_verb():
     """`busy` decides whether a reconcile leaves the server alone. As a SET, the first of two
     concurrent validations to finish cleared the flag while the second was still running — and
     since every tool now runs in its own thread, concurrent calls of one verb are ordinary."""
-    verbs = lambda: [w["verb"] for w in in_flight()]
-    with TL._inflight("validate_result"):
-        with TL._inflight("validate_result"):
-            assert verbs() == ["validate_result"] * 2
-        assert verbs() == ["validate_result"], "the inner exit cleared the outer's flag"
+    verb = "a_verb_only_this_test_runs"  # the registry is the process's: another test's thread may be in it
+    verbs = lambda: [w["verb"] for w in in_flight() if w["verb"] == verb]
+    with TL._inflight(verb):
+        with TL._inflight(verb):
+            assert verbs() == [verb] * 2
+        assert verbs() == [verb], "the inner exit cleared the outer's flag"
     assert verbs() == []
 
 

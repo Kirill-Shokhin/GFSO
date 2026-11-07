@@ -8,12 +8,12 @@ import subprocess
 import sys
 import time
 
-from gfso.adapters.llm.headless import HeadlessClaudeLLM
+from gfso.adapters.llm.headless import ClaudeCodeProvider
 
 
 def test_a_child_that_writes_nothing_is_killed_at_the_cap():
     proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], stdout=subprocess.PIPE, text=True)
-    llm = HeadlessClaudeLLM()
+    llm = ClaudeCodeProvider()
     t0 = time.monotonic()
     envelope, text, _ = llm._read_stream(proc, t0, 2)
     assert time.monotonic() - t0 < 20, "the read ended near its cap, not when the child chose to"

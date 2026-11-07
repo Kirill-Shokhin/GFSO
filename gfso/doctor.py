@@ -14,21 +14,28 @@ because a setup that cannot say what it achieved is the same silence one layer u
 """
 from __future__ import annotations
 
+import getpass
+import hashlib
 import json
 import os
 import platform
+import re
+import shlex
 import shutil
 import subprocess
 import sys
 import sysconfig
+import time
 import webbrowser
 from pathlib import Path
 
 from gfso import __version__
 from gfso import serverctl
 from gfso.serverctl import port_state
+from gfso.adapters.execution import AGENT_DOCKERFILE, refused_docker
+from gfso.adapters.llm import credentials, headless, registry
 from gfso import config as _config
-from gfso.config import db_path as _config_db_path
+from gfso.config import DEFAULT_EXECUTION, db_path as _config_db_path
 
 
 def claude_cli() -> tuple[bool, str]:
@@ -40,8 +47,8 @@ def claude_cli() -> tuple[bool, str]:
     """
     exe = shutil.which("claude")
     if exe is None:
-        return False, ("not on PATH — install Claude Code (https://claude.com/claude-code), or set "
-                       "GFSO_PROVIDER=generic with GFSO_GENERIC_BASE_URL for an OpenAI-compatible one")
+        return False, ("not on PATH — install Claude Code (https://claude.com/claude-code), or name another "
+                       "provider in the model spec (`ollama/<model>`, `deepseek/<model>`: `gfso provider-check --list`)")
     try:
         out = subprocess.run([exe, "--version"], capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=30)
@@ -74,21 +81,145 @@ def mcp_registered() -> tuple[bool | None, str]:
                              env=_config.child_env(GFSO_NO_RECONCILE="1"))
         if out.returncode != 0:
             return None, f"`claude mcp list` exited {out.returncode}"
-        return ("gfso" in out.stdout), ("registered" if "gfso" in out.stdout else
-                                        "not registered — run `gfso setup`")
+        line = next((l for l in out.stdout.splitlines() if l.startswith("gfso:")), None)
+        if line is None:
+            return False, "not registered — run `gfso setup`"
+        if "Failed to connect" in line:
+            return False, "registered, and it did not connect just now (a stopped server does not; a session starts it)"
+        return True, "registered"
     except Exception as ex:
         return None, f"could not ask the CLI ({type(ex).__name__})"
 
 
+def _door_entry(exe: str) -> tuple[str, str, dict]:
+    """The scope the client reads the door from in this directory, the command it starts and its environment; empty where
+    it cannot tell. Asking starts the entry, and one that never answers takes the client's own half a minute."""
+    try:
+        out = subprocess.run([exe, "mcp", "get", "gfso"], capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=90, env=_config.child_env(GFSO_NO_RECONCILE="1"))
+    # the registration stands either way; this only asks whether it is this installation's
+    except Exception:
+        return "", "", {}
+    fields = dict(l.strip().split(": ", 1) for l in out.stdout.splitlines() if ": " in l)
+    held = out.stdout.partition("Environment:")[2].split("\n\n")[0].splitlines()
+    return fields.get("Scope", ""), fields.get("Command", ""), dict(l.strip().split("=", 1) for l in held if "=" in l)
+
+
+def _same_path(a, b) -> bool:
+    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
+
+
 def _assets_ok() -> tuple[bool, str]:
-    """The eleven files the wheel must carry. A missing one breaks a door with no error at the door."""
+    """The files the wheel must carry. A missing one breaks a door with no error at the door — the page's
+    script modules by their entry point, which imports every other one."""
     pkg = Path(__file__).parent
-    required = ("web/index.html", "web/gfso.css", "web/tokens.css", "web/icon.svg",
+    required = ("web/index.html", "web/gfso.css", "web/tokens.css", "web/icon.svg", "web/js/main.js",
                 "mcp/ORCHESTRATOR.md", "mcp/prompts/executor.md", "mcp/prompts/validator.md",
                 "decompose/prompts/search.md", "decompose/prompts/audit.md",
-                "critic/prompts/atomicity.md", "critic/prompts/checker.md")
+                "critic/prompts/atomicity.md", "critic/prompts/checker.md", "adapters/agent.Dockerfile")
     missing = [r for r in required if not (pkg / r).exists()]
     return (not missing), ("all present" if not missing else f"MISSING {missing} — reinstall gfso")
+
+
+#: the image a delegated session works in when the installation declares none of its own, and the execution naming it
+AGENT_IMAGE_FILE = AGENT_DOCKERFILE
+AGENT_IMAGE = "gfso-agent"
+
+
+def agent_image() -> str:
+    """The tag of the image this installation's file builds — named by the file, so an upgrade that changes it builds
+    anew and never runs the image of an older one."""
+    return f"{AGENT_IMAGE}:" + hashlib.sha256(AGENT_IMAGE_FILE.read_bytes()).hexdigest()[:12]
+
+
+def docker_state() -> tuple[bool, str]:
+    """Can this machine run a container? Unattended work runs only in one (`LocalExecution.agents_refused`)."""
+    exe = shutil.which("docker")
+    if exe is None:
+        return False, f"not on PATH — install Docker ({DOCKER_INSTALL.get(sys.platform, DOCKER_DOCS)}): delegated work runs in a container"
+    try:
+        out = subprocess.run([exe, "version", "--format", "{{.Server.Version}}|{{.Server.Platform.Name}}"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    except Exception as ex:
+        return False, f"found at {exe} but did not answer ({type(ex).__name__})"
+    if out.returncode != 0:
+        return False, f"installed, its daemon does not answer — start Docker ({exe})"
+    engine, _, desktop = out.stdout.strip().partition("|")
+    if refused := refused_docker(engine, desktop):
+        return False, refused
+    return True, f"engine {engine}" + (f" ({desktop})" if desktop else "")
+
+
+
+
+def image_present(tag: str) -> bool:
+    """Does this Docker hold the image `tag`?"""
+    return subprocess.run(["docker", "image", "inspect", tag], capture_output=True, timeout=60).returncode == 0
+
+
+def build_image(tag: str) -> tuple[bool, str]:
+    """Build the agent image from the shipped file, no context sent: it copies nothing of this machine."""
+    out = subprocess.run(["docker", "build", "-t", tag, "-"], input=AGENT_IMAGE_FILE.read_bytes(),
+                         capture_output=True, timeout=1800)
+    tail = out.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] or [""]
+    return out.returncode == 0, ("built" if out.returncode == 0 else f"build failed: {tail[0][:300]}")
+
+
+def declare_default(tag: str) -> str:
+    """Declare the execution "default" on `tag` — over one of that name only where setup declared it (its image one
+    of setup's own): an upgrade that changed the image moves to it; a user's own declaration is theirs. Roles
+    registered with no execution of their own take it (`tools_llm.register_agent`)."""
+    path = _config.executions_path()
+    got = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if (was := (got.get(DEFAULT_EXECUTION) or {}).get("image")) == tag:
+        return f"execution {DEFAULT_EXECUTION!r} declared on {tag}"
+    if DEFAULT_EXECUTION in got and not str(was).startswith(AGENT_IMAGE + ":"):
+        return f"execution {DEFAULT_EXECUTION!r} is your own ({was}): left as it is"
+    # …the image alone moves: a switch the user set here turned `open` at an upgrade, with nothing said (critic)
+    got[DEFAULT_EXECUTION] = {**(got.get(DEFAULT_EXECUTION) or {}), "image": tag}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(got, indent=1), encoding="utf-8")
+    return f"execution {DEFAULT_EXECUTION!r} declared on {tag} ({path})"
+
+
+def local_word() -> bool:
+    """Has the user said unattended work may run on this host (`config.local_agents`), as the server would take it?"""
+    return _config.local_agents(str(serverctl.declared().get("GFSO_LOCAL_AGENTS", "")))
+
+
+def _execution_report() -> tuple[list[tuple[str, str]], list[str]]:
+    """Where delegated work would run here: (rows, blocking). Without a container nothing unattended runs — unless
+    the user has opted out of isolation, which is named, not blocked."""
+    word = local_word()
+    ok, line = docker_state()
+    rows = [("docker", line if ok else ("NOT USABLE — " + line))]
+    blocking = [] if ok or word else ["Docker is not usable, and delegated work runs only in a container"]
+    try:
+        declared = _config.executions()
+    except ValueError as ex:
+        declared = {}
+        blocking.append(f"executions.json does not read ({ex})")
+    if word:
+        rows.append(("execution", "THIS HOST — GFSO_LOCAL_AGENTS=allow: delegated sessions run as you, unisolated"))
+    elif DEFAULT_EXECUTION in declared:
+        tag = declared[DEFAULT_EXECUTION].get("image", "")
+        present = ok and image_present(tag)
+        rows.append(("execution", f"{DEFAULT_EXECUTION!r} on {tag}" + ("" if present or not ok else
+                                                                      "   IMAGE ABSENT — run `gfso setup`")))
+        if ok and not present:
+            blocking.append(f"the default execution's image {tag} is absent")
+    else:
+        rows.append(("execution", (f"declared: {', '.join(declared)} (none is the default; a role names one)"
+                                   if declared else "NONE DECLARED — run `gfso setup`")))
+        if not declared:
+            blocking.append("no container execution is declared for delegated work")
+    if not word:
+        # …and a container holds no login of this machine: its model is reached only on a credential of the one store
+        has = bool(credentials.held())
+        rows.append(("credential", "set (`gfso credential` names them)" if has else
+                     "none — work in a container reaches a model only on one: `gfso credential claude --sign-in` (a window where you sign in and paste it) "
+                     "(work in your own chat uses your CLI's login)"))
+    return rows, blocking
 
 
 def _database_path() -> str:
@@ -118,14 +249,14 @@ def _home_report() -> tuple[bool, str, Path]:
 
 
 def _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg_line,
-                  live_notes, live, has_claude, home, script) -> None:
+                  live_notes, live, has_claude, home, script, where=()) -> None:
     """Print what this installation IS — one aligned row per fact.
 
     `doctor` does two things: it establishes the facts (home, assets, port, CLI, registration,
     what the live server is serving) and it prints them. The printing is the part a bug report
     carries, so it is its own function and reads as the report it is."""
     rows = [
-        ("gfso", f"{__version__}   (canon v4.0 is a separate line and is not this number)"),
+        ("gfso", f"{__version__}   (canon v4.1 is a separate line and is not this number)"),
         ("python", f"{platform.python_version()}  {sys.executable}"),
         ("executable", f"{script}" + ("" if script.exists() else "   MISSING")),
         ("platform", f"{platform.system()} {platform.release()}"),
@@ -137,6 +268,7 @@ def _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg
         ("assets", assets_line),
         ("claude CLI", claude_line if has_claude else f"NOT USABLE — {claude_line}"),
         ("agent door", reg_line),
+        *where,
     ]
     width = max(len(k) for k, _ in rows)
     print("gfso doctor")
@@ -201,11 +333,14 @@ def doctor() -> int:
     if not script.exists():
         blocking.append("the gfso executable is not where this installation says it is")
 
+    where, unrun = _execution_report()
+    blocking += unrun
+
     live, live_notes, live_drift = _live_server_report(serverctl, home)
     drift += live_drift
 
     _print_report(serverctl, home_line, assets_line, port_line, claude_line, reg_line,
-                  live_notes, live, has_claude, home, script)
+                  live_notes, live, has_claude, home, script, where)
 
     if not has_claude:
         print("\nThe engine, the UI, the gate and `gfso demo human_only` work without any model.")
@@ -215,8 +350,11 @@ def doctor() -> int:
         print("\nout of date (not blocking): " + "; ".join(drift))
     if blocking:
         print("\nblocking: " + "; ".join(blocking))
-        return 1
-    return 0
+    left = [*blocking, *([] if has_claude else ["the Claude Code CLI"]),
+            *(["the agent door (`gfso setup`)"] if reg_line.startswith("not registered") else []),
+            *([] if local_word() or credentials.held() else ["a credential (`gfso credential claude --sign-in`)"])]
+    print("\n" + (f"{len(left)} thing{'s' * (len(left) > 1)} left: " + "; ".join(left) if left else "ready"))
+    return 1 if blocking else 0
 
 
 def desktop_config_path() -> Path | None:
@@ -239,11 +377,16 @@ def desktop_entry() -> dict:
     not JSON, and the block offered for pasting could not be parsed by the application it was for.
     """
     env = {"GFSO_HOME": str(serverctl.home())}
-    if os.environ.get("GFSO_SHARED_URL"):
+    if url := _door_url():
         # Desktop inherits no shell environment, so an address that is not the default has to be
         # written into the entry or its `gfso connect` would go on talking to :8000.
-        env["GFSO_SHARED_URL"] = os.environ["GFSO_SHARED_URL"]
+        env["GFSO_SHARED_URL"] = url
     return {"command": str(console_script()), "args": ["connect"], "env": env}
+
+
+def _door_url() -> str:
+    """The address a door's entry must name; empty on the default."""
+    return os.environ.get("GFSO_SHARED_URL", "")
 
 
 def console_script() -> Path:
@@ -284,7 +427,7 @@ def install_desktop() -> str:
         if not isinstance(current, dict):
             return f"{path} does not contain a JSON object — left untouched."
     except (OSError, ValueError) as ex:
-        return f"{path} could not be read ({ex}) — left untouched; paste the block above by hand."
+        return f"{path} could not be read ({ex}) — left untouched."
     entry = desktop_entry()
     if current.get("mcpServers", {}).get("gfso") == entry:
         return f"Claude Desktop: already configured ({path})."
@@ -302,6 +445,92 @@ def install_desktop() -> str:
             f"claude_desktop_config.json.gfso-backup). Restart Desktop to load it.")
 
 
+#: How Docker is installed where it is not: the command an agent runs for the person, who confirms the installer's own
+#: prompt (the author: «сам ставит докер»; an installer asks for an administrator and its licence on first start).
+DOCKER_DOCS = "https://docs.docker.com/get-docker/"
+DOCKER_INSTALL = {"win32": "`winget install -e --id Docker.DockerDesktop --source winget --accept-source-agreements --accept-package-agreements` (minutes, behind the installer's administrator prompt), then start Docker Desktop once and accept it",
+                  "darwin": "Docker Desktop from https://docs.docker.com/desktop/setup/install/mac-install/, then open it once and accept it"}
+
+
+def start_docker(wait_s: int = 180) -> bool:
+    """Start an installed Docker Desktop whose daemon is down, waiting for it: a fresh client stopped there and handed
+    the person a step a command does (measured, 2026-11-08). Docker Engine on Linux starts under `sudo`: not here."""
+    exe = shutil.which("docker")
+    if exe is None or sys.platform not in ("win32", "darwin"):
+        return False
+    print(f"Docker: its daemon does not answer; starting Docker Desktop (up to {wait_s} s)…", flush=True)
+    try:
+        subprocess.run([exe, "desktop", "start", "--timeout", str(wait_s)], capture_output=True, timeout=wait_s + 30)
+    # a Docker with no `desktop` command or a start that hangs: the state below says what is so
+    except Exception:
+        pass
+    return docker_state()[0]
+
+
+def install_execution() -> str:
+    """The container delegated work runs in: Docker required, the agent image built, the execution "default" declared.
+    Docker is part of the installation (the author, 2026-10-30): without it nothing unattended runs."""
+    ok, line = docker_state()
+    if not ok and shutil.which("docker") and start_docker():
+        ok, line = docker_state()
+    if not ok:
+        return (f"Docker: {line}. Delegated work will not start until it runs; then `gfso setup` again. "
+                "(GFSO_LOCAL_AGENTS=allow in data/serve.json runs it on this host instead, unisolated.)")
+    tag = agent_image()
+    if not image_present(tag):
+        print(f"agent image: building {tag} (once per version; a few minutes)…", flush=True)
+        built, said = build_image(tag)
+        if not built:
+            return f"agent image: {said}"
+    return f"agent image: {tag}; " + declare_default(tag)
+
+
+def _register_door(exe: str) -> bool:
+    """Register the agent door for this user, naming this installation; whether a new session has it."""
+    # --scope user, deliberately. `claude mcp add` defaults to the project the caller stands
+    # in, and this door is not a property of one repository: registered locally, it is
+    # invisible from every other directory — measured, while a `claude mcp list` run inside
+    # the source tree reported it connected.
+    # ASKED BY ADDING, never by `mcp list`: the list names no scope, so a local entry read as this
+    # one and no user's was added; the add refuses only that scope's own entry, and starts no server.
+    # The ABSOLUTE console script, not the bare name: a user-scoped registration is used
+    # from every directory and from clients that do not share this PATH — `pip install
+    # --user` on Windows puts Scripts\ off PATH entirely, and a venv the user later leaves
+    # takes the name with it. The entry would then name a command that does not resolve,
+    # and the session would simply have no gfso tools, silently.
+    # …a server on another address is told by the entry: a client started without the variable would go to the default
+    url = _door_url()
+    add = [exe, "mcp", "add", "--scope", "user", "gfso", *(["-e", f"GFSO_SHARED_URL={url}"] if url else []), "--",
+           str(console_script()), "connect"]
+    out = subprocess.run(add, capture_output=True, text=True, encoding="utf-8",
+                         errors="replace", timeout=120)
+    door = out.returncode == 0 or "already exists" in out.stdout + out.stderr
+    print("agent door: " + ("registered for your user, so it is there in every directory"
+                            if out.returncode == 0 else
+                            "already registered for your user" if door else
+                            f"could not register ({out.stderr.strip()[:200]}); "
+                            f"run `claude mcp add --scope user gfso -- "
+                            f"{console_script()} connect` yourself"))
+    scope, command, env = _door_entry(exe) if door else ("", "", {})
+    if not command or (_same_path(command, console_script()) and (not url or env.get("GFSO_SHARED_URL") == url)):
+        return door
+    where = scope.split()[0].lower()
+    if where != "user":
+        print(f"agent door: in this directory its own entry goes first and starts {command}, not this "
+              f"installation: `claude mcp remove gfso -s {where}` to use yours here")
+        return door
+    # …this command means this installation, on this address: a person's check would run on the old one. What else the
+    # person set on the entry stays
+    keep = {**env, **({"GFSO_SHARED_URL": url} if url else {})}
+    again = ["mcp", "add", "--scope", "user", "gfso", *[x for k, v in keep.items() for x in ("-e", f"{k}={v}")], "--",
+             str(console_script()), "connect"]
+    subprocess.run([exe, "mcp", "remove", "gfso", "-s", "user"], capture_output=True, timeout=120)
+    door = subprocess.run([exe, *again], capture_output=True, timeout=120).returncode == 0
+    print(f"agent door: it started {command}; " + ("it now starts this installation" if door else
+          f"it could not be registered again, and has no entry now: `claude {' '.join(again)}`"))
+    return door
+
+
 def setup(desktop: bool = False) -> int:
     """Register the agent door, bring the one server up, open the UI, then report. Idempotent."""
     try:
@@ -314,42 +543,22 @@ def setup(desktop: bool = False) -> int:
         print(f"gfso setup: {port_line}")
         return 1
 
-    exe = shutil.which("claude")
+    exe, door = shutil.which("claude"), False
     if exe is None:
         print("Claude Code CLI not found, so the agent door was not registered. After installing it:")
         print(f"  claude mcp add --scope user gfso -- {console_script()} connect")
     else:
-        registered, _ = mcp_registered()
-        if registered:
-            print("agent door: already registered with Claude Code")
-        else:
-            # --scope user, deliberately. `claude mcp add` defaults to the project the caller stands
-            # in, and this door is not a property of one repository: registered locally, it is
-            # invisible from every other directory — measured, while a `claude mcp list` run inside
-            # the source tree reported it connected.
-            # The ABSOLUTE console script, not the bare name: a user-scoped registration is used
-            # from every directory and from clients that do not share this PATH — `pip install
-            # --user` on Windows puts Scripts\ off PATH entirely, and a venv the user later leaves
-            # takes the name with it. The entry would then name a command that does not resolve,
-            # and the session would simply have no gfso tools, silently.
-            out = subprocess.run([exe, "mcp", "add", "--scope", "user", "gfso", "--",
-                                  str(console_script()), "connect"],
-                                 capture_output=True, text=True, encoding="utf-8",
-                                 errors="replace", timeout=120)
-            print("agent door: " + ("registered for your user, so it is there in every directory"
-                                    if out.returncode == 0 else
-                                    f"could not register ({out.stderr.strip()[:200]}); "
-                                    f"run `claude mcp add --scope user gfso -- "
-                                    f"{console_script()} connect` yourself"))
+        door = _register_door(exe)
 
     # Claude Desktop is a separate application with a configuration file of its own, so it is
-    # written ONLY when named: `--desktop`. Otherwise the block is printed and the user decides.
+    # written ONLY when named: `--desktop`. Offered with its JSON, a fresh client wrote the person's real file unasked
+    # (e2e1, 2026-11-09), so the offer is one line.
     if desktop:
         print("\n" + install_desktop())
     elif desktop_config_path() is not None:
-        print("\nClaude Desktop is installed here. `gfso setup --desktop` adds this to its"
-              "\nclaude_desktop_config.json (keeping a backup), or paste it yourself:")
-        print(json.dumps({"mcpServers": {"gfso": desktop_entry()}}, indent=2))
+        print("\nClaude Desktop not touched; `gfso setup --desktop` only if the person names it.")
+
+    print("\n" + install_execution())
 
     # LEFT: `gfso.mcp.connect` imports the third-party `mcp` SDK at module level, and doctor is
     # the command that must still run on an installation where that dependency is missing.
@@ -363,7 +572,109 @@ def setup(desktop: bool = False) -> int:
     except Exception:
         pass
     print()
-    return doctor()
+    code = doctor()
+    # …said as what is left, not as done: told "installed", a fresh client stopped before setup, and after it handed the
+    # person steps the person had to ask for (11-08). In one list under "tell the person", the commands went to the person too (11-09)
+    held = credentials.held()
+    do_now = [*(["what `gfso doctor` names above as blocking, then `gfso setup` again"] if code != 0 else []),
+              *([] if held else ["`gfso credential claude --sign-in`: it opens a window (it may open behind this one) where the person "
+                                 "signs in and pastes the token, never in the chat; then `gfso credential claude --wait`, again until it is held"]),
+              "`gfso demo human_only`: a look that spends no model (the gate refusing a self-signed PASS)"]
+    if door and code == 0:
+        print("\nWhat it is: a task said in words becomes a plan whose checks are fixed before the work; agents in Docker "
+              "carry it out unattended, someone other than the executor signs each verdict, and the result comes as a "
+              "branch, the person's own untouched. Its tools explain the rest.")
+    print("\nDo now yourself, without asking:\n" + "\n".join(f"- {x}" for x in do_now))
+    if door:                     # …a client reads its servers at its start: a session already open has no gfso tools
+        # …measured: an open session never gets the tools, even by `/mcp`; left to itself a client did the task through
+        # `gfso run` here, no container, no branch (11-09). `claude -c` continues the conversation and has them.
+        print("\nTell the person:\n- Two commands, one after the other: `/exit`, then `claude -c`. An open session has no gfso "
+              "tools; the continued one does.\nThen stop: do any task only with those tools, after that, never through `gfso run`.")
+    if code == 0 and held:
+        print("\nInstalled.")
+    return code
+
+
+def what_for() -> str:
+    """Why gfso asks for the token at all, said before it is asked (the author: «ничего не написано куда идет токен что
+    это вообще для gfso»)."""
+    return ("What it is for: gfso's model calls — its agents working unattended in Docker, its planner on this machine — "
+            "never use your own Claude login; they reach Claude through this token, on your subscription's usage, as "
+            "Claude Code does.")
+
+
+def kept_where() -> str:
+    """What the person is told of the token they hand over: where it lies, what reads it, how it goes."""
+    return (f"gfso keeps the token in {credentials.where()}, readable by you alone. Only the claude processes gfso starts "
+            f"on this machine and each project's model door use it, to call {headless.UPSTREAM}; no agent's container is given it. "
+            f"`gfso credential {headless.PROVIDER} --remove` deletes it.")
+
+
+#: Win32's CREATE_NEW_CONSOLE, spelled here: `subprocess` holds it on Windows alone, and the window is opened from
+#: code a test on any system runs
+NEW_CONSOLE = 0x10
+
+
+def sign_in(gfso_cmd: str) -> bool:
+    """Open a window of its own where the person signs in and carries the subscription's token across: started from an
+    agent's tool, `claude setup-token` prints nothing to a pipe (measured, 2026-11-08), and its token must not pass the
+    chat (the author: «почему это не может инициировать агент?»; «чтобы не складывалось впечатление что gfso ворует
+    токены»). The window runs one gfso command, `sign_in_here`, so no shell text is generated per system; this returns
+    at once, an agent's call bounded below the person's pace. Linux: no window to open — the caller says the steps."""
+    here = [str(gfso_cmd), "credential", headless.PROVIDER, "--sign-in-here"]
+    if sys.platform == "win32":
+        subprocess.Popen(here, creationflags=NEW_CONSOLE)
+    elif sys.platform == "darwin":            # …waited for: a refused Automation permission opens no window
+        line = " ".join(shlex.quote(x) for x in here)
+        return subprocess.run(["osascript", "-e", f'tell application "Terminal" to do script {json.dumps(line, ensure_ascii=False)}',
+                               "-e", 'tell application "Terminal" to activate'], capture_output=True, timeout=60).returncode == 0
+    else:
+        return False
+    return True
+
+
+#: under a client's own limit on one command (two minutes by default), so `--wait` always answers it
+WAIT_S = 100
+
+
+def wait_signed_in(provider: str, every_s: float = 2.0) -> bool:
+    """Until `provider` holds a credential, at most WAIT_S: `--sign-in` returns at once, and the agent then waited for the
+    person to say "done" (fresh client, 2026-11-09), though the window writes the one store this reads."""
+    end = time.monotonic() + WAIT_S
+    while credentials.get(provider) is None:
+        if time.monotonic() >= end:
+            return False
+        time.sleep(every_s)
+    return True
+
+
+def sign_in_here(claude_cmd: str = "claude", attempts: int = 3) -> int:
+    """The window's side: Claude's own `claude setup-token` in this terminal, then the paste at a hidden prompt, each
+    step said where it is taken (the author: «токен получил а дальше не понятно что»; «может я дважды скопировал»)."""
+    print(what_for() + "\n\nStep 1 of 2: sign in to Claude in the browser that opens.\n", flush=True)
+    # …a sign-in that did not finish leaves no token to paste: said here, the window kept open to be read
+    try:
+        signed = subprocess.run([shutil.which(claude_cmd) or claude_cmd, "setup-token"]).returncode == 0
+    except OSError as ex:
+        print(f"Claude Code could not be started here ({ex}).")
+        signed = False
+    if not signed:
+        input("The sign-in did not finish, so nothing was kept. Press Enter to close, and ask your agent again.")
+        return 1
+    print("\nStep 2 of 2: copy the token shown above (it starts with sk-ant-oat) and paste it below, then press Enter. "
+          "Nothing appears as you paste.", flush=True)
+    for _ in range(attempts):
+        value = getpass.getpass("token: ").strip()
+        try:
+            registry.set_credential(headless.PROVIDER, "token", value)
+        except ValueError as ex:
+            print(ex, flush=True)
+            continue
+        print(f"\nDone: {registry.shown(value)}. {kept_where()}\nClose this window and go back to your chat; your agent sees this by itself.")
+        input("Press Enter to close.")
+        return 0
+    input("Nothing was kept. Press Enter to close, and ask your agent to open the window again.")
+    return 1
 
 
 def webbrowser_open(url: str) -> None:

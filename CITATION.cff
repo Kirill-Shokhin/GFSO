@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use GFSO, please cite it as below."
+title: "GFSO: Formal Guarantees for Compositional Task Validation in Hierarchical Organizations"
+type: software
+authors:
+  - family-names: Shokhin
+    given-names: Kirill
+repository-code: "https://github.com/Kirill-Shokhin/GFSO"
+license: MIT

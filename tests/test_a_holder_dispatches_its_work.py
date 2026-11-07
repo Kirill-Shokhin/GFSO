@@ -23,6 +23,7 @@ from gfso.core.graph.model import generation_of_task
 from gfso.core.types import AgentId, Mode, Signal, State, TaskId
 from gfso.decompose.build import build_graph_live
 from gfso.delegate import Dispatcher
+from tests.test_one_session_carries_a_scope import _drive
 from gfso.roster import AgentRegistry
 from gfso.config import VALIDATION_CLAIM_TTL
 from gfso.core.types.ports import SystemClock
@@ -71,11 +72,8 @@ def _dispatcher(e, agents, ran: list, llm=None):
                       consent_runner=lambda en, t, *a, **k: ran.append(("consent", str(t))) or {"status": "x"})
 
 
-def _pass(e, d, rounds=40):
-    for _ in range(rounds):
-        d.dispatch_once()
-        time.sleep(0.03)
-        e.wait_idle()
+def _pass(e, d, rounds=40, wait=True):
+    _drive(e, d, rounds=rounds, wait=wait)
 
 
 def _state(e, tid="root"):
@@ -270,7 +268,7 @@ def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_d
     e, agents = _project(tmp_path)
     assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
     e.wait_idle()
-    revised, live, overlap, places = threading.Event(), [], [], []
+    entered, revised, live, overlap, places = threading.Event(), threading.Event(), [], [], []
 
     class _Slow(_LLM):
         def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
@@ -279,6 +277,7 @@ def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_d
             overlap.append(list(live))
             live.append(n)
             if n == 0:                        # the first version's session outlives its version
+                entered.set()
                 revised.wait(10)
                 Path(cwd, "stale_v1.txt").write_text("written after v1 was superseded")
             out = super().run_agent(system, user, allowed_tools, cwd, timeout)
@@ -286,14 +285,20 @@ def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_d
             return out
     d = _dispatcher(e, agents, [], _Slow())
     d.dispatch_once()
-    time.sleep(0.3)
+    # the revision lands INSIDE v1's session: a sleep did not hold once the place is observed before the session (ab2e147)
+    assert entered.wait(30), "v1's session never started"
     T.edit_criteria(e, "root", [criterion("g2", "G2 holds")], agent="agent", reason="other")
     e.wait_idle()
     assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
     e.wait_idle()
     _pass(e, d, 10)
     revised.set()
-    _pass(e, d, 60)
+    # …and read once v2 HAS DELIVERED: v1's superseded commit and v2's observation are git on the host's clock (1.5 s
+    # measured on Windows), so a fixed count of passes ended the test before v2's session or its delivery commit
+    until = time.monotonic() + 60
+    while _state(e) == State.EXECUTING and time.monotonic() < until:
+        _pass(e, d, 1)
+    assert _state(e) in (State.VALIDATING, State.DONE), _signals(e)
     assert len(places) == 2 and overlap == [[], []], f"sessions overlapped: {overlap}"
     git = lambda *a: subprocess.run(["git", "-C", places[1], *a], capture_output=True, text=True).stdout
     assert "stale_v1.txt" not in git("show", "--stat", "--format=%s", "HEAD"), "v1's writes in v2's delivery"
@@ -311,7 +316,7 @@ def test_a_validation_queued_behind_other_sessions_is_the_systems_wait_not_the_h
     e.wait_idle()
     d._cap.opening.acquire()                          # every slot taken by other nodes' sessions
     try:
-        _pass(e, d, 10)
+        _pass(e, d, 10, wait=False)
         assert started == [] and _state(e) == State.VALIDATING
         steps = [s for s in TL.TOOLS["next_steps"](e).get("steps") or [] if s.get("task_id") == "root"]
         assert not any(s.get("mine") for s in steps), steps

@@ -28,6 +28,9 @@ from gfso.packets import _validator_packet
 from gfso.tools_llm import _VALIDATOR_SCHEMA, _listed_failed, _report_contradicts_itself
 from tests.support import DENIAL_ENTRY, UNMODELLED_FAULT, criterion, make_engine, REGISTER
 
+#: every round stands: these findings name none the system removed
+_STANDS = lambda r: True
+
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY", "justification": "no precedent",
           "invalidation_condition": "one occurs", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]
 ESC = "Escape decoding"
@@ -135,18 +138,31 @@ def test_a_seam_criterion_left_to_the_seams_note_is_refused_saying_what_to_add()
     assert len(d) == 1 and "own `per_criterion` entry" in d[0] and "criterion: 'dep__root.cat_core'" in d[0], d
 
 
-def test_the_validator_is_told_a_seam_criterion_needs_its_own_entry():
+def _consumer(check=None):
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "root", "criteria": [criterion("g", "G")]}, assignee="agent")
     T.decompose(e, "root", [{"task_id": k, "spec": {"description": k, "criteria": [criterion("k" + k, k.upper())]},
                              "assignee": "worker", "covers": ["g"]} for k in ("a", "b")], accepted_risks=REGISTER)
-    T.add_dependency(e, "a", "b", glue="b reads a")
+    T.add_dependency(e, "a", "b", glue="b reads a", check=check)
     e.wait_idle()
-    text = _validator_packet(e, e.graph.get_task(TaskId("b")), "built it", ".")
-    seam = text.split("**dep__a**", 1)[1].split("\n- **", 1)[0]
-    assert "SEAM criterion" in seam and "OWN `per_criterion` entry" in seam, seam
-    assert "SEAM criterion" not in text.split("**kb**", 1)[1].split("\n- **", 1)[0]
+    return e, e.graph.get_task(TaskId("b"))
+
+
+def test_a_dep_edge_is_no_criterion_and_the_validator_is_not_asked_for_it():
+    """A Dep is a relation, not a predicate on the consumer's result (§2.7): its glue was a sentence a validator passed
+    or failed by reading it (9 of 416 archived FAILs rested on one alone). It is an edge record, not in `criteria` —
+    the packet shows it as an edge, and a verdict over the node's own criteria stands."""
+    e, b = _consumer()
+    assert [c.name for c in b.spec.criteria] == ["kb"] and [(x.from_id, x.glue) for x in e.get_dependencies()] == [("a", "b reads a")]
+    text = _validator_packet(e, b, "built it", ".")
+    assert "**dep__a**" not in text and "b reads a" in text, text
+    e.stop()
+
+
+def test_a_seam_that_pins_a_consumer_side_check_is_a_conjunct():
+    e, b = _consumer(check=[{"behaviour": "reads a", "command": "grep -q a b.txt && echo ok", "expect": "ok"}])
+    assert sorted(c.name for c in b.spec.criteria) == ["dep__a", "kb"]
     e.stop()
 
 
@@ -162,10 +178,13 @@ def test_a_report_without_a_failed_list_parses_and_derives_it():
 
 
 def test_a_failed_list_that_disagrees_with_its_entries_is_still_refused():
-    """CONTROL — a list that is THERE is the report's own claim, and one naming what its entries pass decides nothing."""
+    """CONTROL — a FAIL claimed over entries that all pass names nothing observed, and decides nothing; with a red
+    entry the payload is that entry's, whatever the list names."""
     parsed = {"verdict": "FAIL", "failed_criteria": ["a"], "per_criterion": [{"criterion": "a", "verdict": "pass"},
-                                                                              {"criterion": "b", "verdict": "fail"}]}
-    assert _listed_failed(parsed) == ["a"] and "contradict" in _report_contradicts_itself(parsed)
+                                                                              {"criterion": "b", "verdict": "pass"}]}
+    assert "contradict" in _report_contradicts_itself(parsed)
+    assert "contradict" in _report_contradicts_itself({**parsed, "verdict": "PASS"})
+    assert _report_contradicts_itself({**parsed, "per_criterion": [{"criterion": "b", "verdict": "fail"}]}) is None
 
 
 def test_a_failed_list_short_of_its_entries_is_read_off_them():
@@ -175,7 +194,7 @@ def test_a_failed_list_short_of_its_entries_is_read_off_them():
     for listed in (["x"], []):
         parsed = {"verdict": "FAIL", "failed_criteria": listed, "per_criterion": reds}
         assert _listed_failed(parsed) == ["x", "y", "z"] and _report_contradicts_itself(parsed) is None
-    assert "contradict" in _report_contradicts_itself({"verdict": "PASS", "failed_criteria": [], "per_criterion": reds})
+    assert _report_contradicts_itself({"verdict": "PASS", "failed_criteria": [], "per_criterion": reds}) is None
 
 
 def test_the_root_build_shape_is_read_and_a_report_cut_short_is_not():
@@ -194,7 +213,8 @@ def test_a_criterion_short_on_another_count_is_refused_for_everything_it_is_shor
     criterion does not stand, and the behaviour named past the procedure is named in its refusal as before."""
     e = engine(SWEEP)
     regression = {ESC: [{"id": f"{ESC}#deadbeef", "command": "printf '\\0101' | ./echo -e"}]}
-    gaps = unaccounted_for(e.graph.get_task(TaskId("root")), [_entry(_ran(SWEEP))], False, "validator", regression)
+    gaps = unaccounted_for(e.graph.get_task(TaskId("root")), [_entry(_ran(SWEEP))], False, "validator", regression,
+                           standing=_STANDS)
     assert NAMED[1] in gaps[ESC] and any("REFUTED" in g for g in gaps[ESC]), gaps
 
 

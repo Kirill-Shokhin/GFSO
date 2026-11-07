@@ -4,7 +4,11 @@ from __future__ import annotations
 import dataclasses
 
 import json
-from typing import Optional
+import time
+from datetime import datetime, timedelta
+from typing import Callable, Optional
+
+from gfso.config import default_deadline_s
 
 from gfso.core.types import (
     TaskId, AgentId, Task, State, Signal, Verdict,
@@ -77,7 +81,7 @@ def coverage_history(storage, audit, parent_id) -> list:
         if isinstance(x, dict):
             cov = frozenset((c, k) for c, k in x.get("mappings", ()))
         elif cov is not None:
-            names = {c.get("name") for c in json.loads(x.spec).get("criteria", ())}
+            names = {c.get("name") for c in logged_criteria(x.spec)}
             cov = frozenset((c, k) for c, k in cov if c in names)
         if cov is not None:
             out.append((key, cov))
@@ -96,6 +100,18 @@ def admission_key(task_id) -> str:
     return f"admission:{task_id}"
 
 
+def grounds_key(task_id) -> str:
+    """{part: the commit of its whole's tree it starts from}: where the whole stood at the first join after the part
+    entered its split. The parts joined since are none of its input but by a Dep edge."""
+    return f"grounds:{task_id}"
+
+
+def goal_deps_key(task_id) -> str:
+    """Where the declarations of a ROOT's Dep edges are recorded — a root sits in no split to re-admit (§15.2: the goal's
+    issuer joins a second goal to it by Dep) — each with its producers as they then stand and its place in the log."""
+    return f"goal_deps:{task_id}"
+
+
 def replaces_key(task_id) -> str:
     """Where the dropped children a node was admitted to stand in for are recorded — whose work it carries on."""
     return f"replaces:{task_id}"
@@ -112,6 +128,94 @@ def root_issuer_key(task_id) -> str:
     return f"issuer:{task_id}"
 
 
+#: The project's STOP, the user's: {by, at, why} while the system starts nothing in it, or absent.
+PAUSE_KEY = "paused"
+#: The tech reports filed in the project — about the system, not the task (`Engine.tech_report`).
+TECH_KEY = "tech_reports"
+#: The root whose plan the user handed in whole (`auto_decompose` with `spec`): under AUTO it is the user's, as the root's
+#: criteria are, and the system does not re-split it (`Engine.users_plan`).
+USERS_PLAN_KEY = "users_plan"
+
+
+#: The seconds this project did NOT run, kept off its clocks. ONE RULE: its time runs only while its own monitor ticks
+#: over it and it is not stopped — a tick under a stop, a gap between two ticks (a host asleep), the gap since the last
+#: beat when its engine starts (a server down, the project not loaded) are left off, each wall second once. A bound times
+#: a party's wait (§12.2); where nothing runs the project, no party's move is made, and a deadline spent there was spent
+#: by nobody (measured: a row stopped 6.5 h woke with every work node ESCALATED). docs/notes/PROJECT_CLOCK.md.
+CLOCK_OFF_KEY = "clock_off_s"
+#: The wall time its engine last ticked over it (`loop.timeout_monitor`): the start of a gap nobody ran in.
+CLOCK_BEAT_KEY = "clock_beat"
+
+
+#: A gap between two of its monitor's ticks longer than this is time nobody ran the project in (a host asleep).
+NO_TICK_S = 120.0
+
+
+def _kept_off(graph: "Graph") -> float:
+    v = graph.setting(CLOCK_OFF_KEY) if graph is not None else None
+    return float(v) if v else 0.0
+
+
+def clock_off_s(graph: "Graph") -> float:
+    """How much wall time this project's clocks leave out NOW: what the ticks kept off (`CLOCK_OFF_KEY`), plus what is
+    pending since the last beat by the same rule — all of it under a stop, all of a gap too long to be a tick — so a bound
+    read between two ticks (a delivery landing right after a wake) already sees the sleep off (critic over the clock, r3)."""
+    if graph is None:
+        return 0.0
+    pending = 0.0
+    if beat := graph.setting(CLOCK_BEAT_KEY):
+        gap = time.time() - float(beat)
+        stopped = bool(json.loads(graph.setting(PAUSE_KEY) or "null"))
+        pending = gap if stopped or gap > NO_TICK_S else 0.0
+    return _kept_off(graph) + max(0.0, pending)
+
+
+def keep_off(graph: "Graph", seconds: float, beat: Optional[float] = None) -> None:
+    """Leave `seconds` of wall time off this project's clocks — and, with `beat`, move the beat with it, so what was
+    pending becomes kept without a second carrier: the beat first, then the off time (a reader between the two writes
+    sees the gap neither kept nor pending — never both)."""
+    if beat is not None:
+        graph.store_setting(CLOCK_BEAT_KEY, str(beat))
+    if seconds > 0:
+        graph.store_setting(CLOCK_OFF_KEY, str(_kept_off(graph) + seconds))
+
+
+def leave_off_the_gap(graph: "Graph") -> float:
+    """At an engine's start, before anything reads a bound: the wall time since the project's last beat is left off its
+    clocks, and the beat is kept at once, so a death in the next seconds counts nothing twice. Returns the beat."""
+    now = time.time()
+    was = graph.setting(CLOCK_BEAT_KEY)
+    keep_off(graph, now - float(was) if was else 0.0, beat=now)
+    return now
+
+
+def project_now(graph: Optional["Graph"]) -> datetime:
+    """THE PROJECT'S NOW — the one time every deadline and state bound is written in and read against: the wall clock
+    less the time the project did not run. Every stamp a bound is measured from is taken on it, so a stop or a down
+    server moves no wait closer to its end."""
+    return datetime.now() - timedelta(seconds=clock_off_s(graph))
+
+
+def door_off_s(graph: Optional["Graph"]) -> float:
+    """The off time EVERY DOOR converts with, both ways (`on_the_wall`, `tools._deadline`): `clock_off_s`, except that
+    while the project stands stopped it is the one taken at the stop (`Engine.pause`). Under a stop the project's time
+    stands while the wall runs, so a date shown grew every tick, and a client feeding it back (an unchanged child
+    re-admitted) had it taken off with a larger off — read as changed. Started again, a date reads the stop's length later."""
+    stop = json.loads(graph.setting(PAUSE_KEY) or "null") if graph is not None else None
+    return float(stop["off_s"]) if stop and stop.get("off_s") is not None else clock_off_s(graph)
+
+
+def on_the_wall(graph: Optional["Graph"], at: datetime) -> datetime:
+    """A time on the project's clocks as it reads outside: on the wall (`project_now`'s inverse at the doors)."""
+    return at + timedelta(seconds=door_off_s(graph))
+
+
+def project_deadline_s(graph: "Graph") -> float:
+    """How far ahead a deadline nobody typed is written in this project: its own setting, else the server's."""
+    v = graph.setting("deadline_s")
+    return float(v) if v is not None else default_deadline_s()
+
+
 class Graph:
     def __init__(self, storage: StoragePort):
         self._storage = storage
@@ -124,6 +228,14 @@ class Graph:
         # reading it defensively, which is how a rule silently becomes "empty set" on any graph the
         # dispatcher never touched.
         self.authorized_validators: set[str] = set()
+
+    def setting(self, key: str) -> Optional[str]:
+        """A setting of this graph's project as stored, or None — the user's choices for it (`set_mode`)."""
+        return self._storage.get_setting(key)
+
+    def store_setting(self, key: str, value: str) -> None:
+        """Keep a setting of this graph's project — the clocks' own record (`keep_off`, the monitor's beat)."""
+        self._storage.store_setting(key, value)
 
     def get_state(self, task_id: TaskId) -> Optional[State]:
         """The node's current state, or `None` if this id is not in the graph. `None` is what the
@@ -175,49 +287,48 @@ class Graph:
         live = {str(t.id) for t in self._storage.get_all_tasks()
                 if t.state not in (State.CANCELLING, State.ABANDONED)}
         out = list(declared)
+        waits = parent_waits(self)     # …a cycle through a parent's wait on its parts too (CHECK-2)
         for e in stored:
-            if not e.provisional and str(e.to_id) in live and not _closes_cycle(out, e):
+            if not e.provisional and str(e.to_id) in live and not _closes_cycle(out + waits, e):
                 out.append(e)
         return out
 
+    def declared_edges(self, to_id) -> list:
+        """The declared edges standing into `to_id` — the producers its versions read along Dep (§2.7)."""
+        return [e for e in self._storage.get_dep_edges()
+                if not e.discovered and not e.removed and str(e.to_id) == str(to_id)]
+
     def _dep_records(self, ever: bool = False) -> tuple[list, list]:
-        """(declared, stored-only). DECLARED edges are DERIVED from criteria (§2): a criterion with
-        `depends_on=X` means this task depends on X's output, with the criterion's description as the
-        glue (anti-mock truth-maker) — Dep is criteria-content, not a standalone stored record.
-        DISCOVERED edges (surfaced at runtime via BLOCK) remain stored. `ever`: the declared edges of cancelled
+        """(declared, discovered-only). DECLARED edges are records of their own, written by the act that declares
+        them (§15.1); DISCOVERED ones by the BLOCK that surfaced them (§11.3). `ever`: the declared edges of cancelled
         consumers too — the plan that was, which q_Dep counts "whatever state it reaches later" (§15.4); filtered,
         a declared edge left the population when its consumer was cancelled and a discovered one never did
         (critic B1: 0.5 → 0.0)."""
-        found = self._storage.get_dep_edges()      # discovered (BLOCK) / legacy-stored
-        # A PAIR ALREADY DISCOVERED STAYS DISCOVERED (§15.5). "Declared" means declared at
-        # admission, and the declared side is derived from the criteria as they stand NOW — so
-        # writing the seam into the plan after a BLOCK exposed it moved the edge from the
-        # denominator's discovered half into its declared half, and q_Dep — the share of the
-        # discoveries that WERE made that the plan had declared in advance (§15.5; it is not a share
-        # of S, which nobody observes) — rose for the repair.
+        found = self._storage.get_dep_edges()
+        # A PAIR ALREADY DISCOVERED STAYS DISCOVERED (§15.5): "a discovered edge never joins" the declared side, so
+        # declaring the seam after a BLOCK exposed it leaves the pair discovered — else q_Dep, the share of the
+        # discoveries that WERE made that the plan had declared in advance (not a share of S, which nobody
+        # observes), rose for the repair.
         pair = lambda e: (str(e.from_id), str(e.to_id))
-        records = [e for e in found if not e.refuted]     # a refuted record asks nothing and is no edge (§15.5)
-        _discovered = {pair(e) for e in records if e.discovered}
+        records = [e for e in found if e.discovered and not e.refuted]   # a refuted record asks nothing (§15.5)
+        _discovered = {pair(e) for e in records}
         if ever:
             # …and q_Dep reads DISCOVERIES, not records: a record whose pair a version had declared before its first
             # BLOCK met a known dependency (declared), and a pair a BLOCK named first and the issuer refuted is in
             # neither half — a later declaration does not make it "declared before any BLOCK named it" (§15.5)
-            _discovered = {pair(e) for e in records if e.discovered and not e.declared_first}
-            _out = {pair(e) for e in found if e.refuted and not e.declared_first}
-        edges = [
-            DepEdge(from_id=c.depends_on, to_id=t.id, glue=c.description,
-                    discovered=(str(c.depends_on), str(t.id)) in _discovered)
-            for t in self._storage.get_all_tasks()
-            if ever or t.state not in (State.CANCELLING, State.ABANDONED)  # cancellation excluded (§12.6)
-            for c in t.spec.criteria
-            if c.depends_on
-        ]
-        _have = {(str(e.from_id), str(e.to_id)) for e in edges}
+            _discovered = {pair(e) for e in records if not e.declared_first}
+            _out = {pair(e) for e in found if e.discovered and e.refuted and not e.declared_first}
+        tasks = {str(t.id): t for t in self._storage.get_all_tasks()}
+        edges = [dataclasses.replace(e, discovered=pair(e) in _discovered) for e in found
+                 if not e.discovered and not e.removed and str(e.to_id) in tasks
+                 and (ever or tasks[str(e.to_id)].state not in (State.CANCELLING, State.ABANDONED))]  # §12.6
+        _have = {pair(e) for e in edges}
         if ever:
-            # …and the edges a LATER version took out: a dependency removed from its consumer's criteria
-            # (`remove_dependency`) was declared all the same, and §15.5 has no clause taking a declared edge out
-            # of the population — read off every version the log installed (Inv-7), not the criteria standing now
-            for frm, to, glue in logged_declarations(self._storage.load_audit()):
+            # …and the edges a LATER act took out: a declaration removed (`remove_dependency`, a re-admission) was
+            # declared all the same, and §15.5 has no clause taking a declared edge out of the population — its
+            # record, or, written by an older engine, every version the log installed (Inv-7)
+            for frm, to, glue in [(str(e.from_id), str(e.to_id), e.glue) for e in found if not e.discovered and e.removed] \
+                    + logged_declarations(self._storage.load_audit()):
                 if (frm, to) not in _have:
                     _have.add((frm, to))
                     edges.append(DepEdge(from_id=TaskId(frm), to_id=TaskId(to), glue=glue,
@@ -360,6 +471,10 @@ class Graph:
         task = self.get_task(task_id)
         return task.assignee if task is not None else None
 
+    def all_tasks(self) -> list[Task]:
+        """Every node, settled or not."""
+        return self._storage.get_all_tasks()
+
     def active_tasks(self) -> list[Task]:
         """Every node not in a terminal state. What "settled" means is the graph's to say, and it says
         it once: two spellings of it disagreed about an ESCALATED child and cost a paid run."""
@@ -367,6 +482,15 @@ class Graph:
 
     def save_task(self, task: Task) -> None:
         self._storage.save_task(task)
+
+    @property
+    def one_write(self):
+        """The store's lock that makes a read and its write one step (`StoragePort._one_write`)."""
+        return self._storage.one_write
+
+    def update_task(self, task_id: TaskId, **fields) -> Task:
+        """These fields of the node, off the log's pump (`StoragePort.update_task`)."""
+        return self._storage.update_task(task_id, **fields)
 
     def build_context(self, task_id: TaskId) -> GraphContext:
         """The node plus its neighbourhood — parent, children, dep edges — as the AI layer reads it."""
@@ -502,6 +626,96 @@ def _live_waits(graph: Graph) -> tuple[list, list]:
         if i in unfinished and t.parent_id is not None]
 
 
+def parent_waits(graph: Graph) -> list:
+    """(child → parent) for every live node under a parent: a parent waits on its parts, its PASS being their AND
+    (Thm 1). Read beside E_Dep wherever a cycle of waits is asked — a Dep closing one through it is a wait no order
+    ends (CHECK-2, §9.5)."""
+    live = {str(t.id): t for t in graph.subtree(None) if t.state not in (State.CANCELLING, State.ABANDONED)}
+    return [DepEdge(from_id=t.id, to_id=t.parent_id) for t in live.values()
+            if t.parent_id is not None and str(t.parent_id) in live]
+
+
+def start_waits(graph: Graph, unit: Callable[[Task], str]) -> tuple[dict, dict]:
+    """({node: the producers whose pass its start waits on}, {(node, producer): the cycle that wait would close}),
+    read over START UNITS: `unit(t)` is what starts with t — the top of the one session that carries it, else t.
+
+    DECLARED waits are E_Dep (§11.3): a node always waits for its own adopted sources — CHECK-2 refuses at declaration
+    an edge closing a cycle with them and the parents' waits, and a session is not formed over a subtree a declared
+    edge leaves and re-enters (`validation.scope_top`), so they close none. INFERRED waits are what a part takes from
+    a whole through φ (§2.7): an adopted edge p → a says a's criteria read p's result, and the part φ maps the
+    criterion carrying it to carries that reference, so it waits for p as a does — the carrying criteria a's on p
+    (`depends_on`), or all of a's where none names p (always under AUTO, whose plans write none: every mapped part
+    then waits for every producer of its whole, no stricter than the unsplit node); below the first part, every
+    criterion of the part. Not a part φ maps nothing of it to, nor one below an edge from a's own subtree or from its
+    ancestor (the whole reading its own part).
+
+    An inferred wait is not taken where it lies on a cycle of live unit waits — declared, parents', inferred, each
+    while its producer is unfinished — since no order ends it. Every such wait is left out at once, not one chosen by
+    an order, and returned with its cycle for the readers to say."""
+    live = {str(t.id): t for t in graph.subtree(None) if t.state not in (State.CANCELLING, State.ABANDONED)}
+    u = {i: unit(t) for i, t in live.items()}
+
+    def chain(i: str) -> list[str]:
+        """The live node `i` and its live ancestors, nearest first."""
+        out = []
+        while i in live:
+            out.append(i)
+            i = str(live[i].parent_id) if live[i].parent_id else ""
+        return out
+    adopted = graph.dep_edges(adopted=True)
+    declared = {(str(e.from_id), str(e.to_id)) for e in adopted if str(e.to_id) in live}
+    inferred: set = set()
+    for e in adopted:
+        p, a = str(e.from_id), live.get(str(e.to_id))
+        if a is None or str(a.id) in chain(p) or p in chain(str(a.id)):
+            continue
+        stack = [(a, {c.name for c in a.spec.criteria if str(c.depends_on or "") == p}
+                  or {c.name for c in a.spec.criteria})]
+        while stack:
+            n, carrying = stack.pop()
+            for k in sorted({str(m.child_id) for m in n.criterion_mappings if m.criterion_name in carrying}):
+                if ((part := live.get(k)) is not None and str(part.parent_id) == str(n.id)
+                        and (p, k) not in declared | inferred):
+                    inferred.add((p, k))
+                    stack.append((part, {c.name for c in part.spec.criteria}))
+
+    def waiting(p: str, t: str) -> bool:
+        """Does `t`'s start unit still wait on `p` — live, unfinished, in another unit?"""
+        return p in live and live[p].state != State.DONE and u[p] != u[t]
+    adj: dict[str, set] = {}
+    for p, t in declared | inferred | {(str(e.from_id), str(e.to_id)) for e in parent_waits(graph)}:
+        if waiting(p, t):
+            adj.setdefault(u[p], set()).add(u[t])
+    out: dict[str, set] = {}
+    for p, t in declared:
+        out.setdefault(t, set()).add(p)
+    dropped = {}
+    for p, t in inferred:
+        if waiting(p, t) and (path := _path(adj, u[t], u[p])):
+            dropped[(t, p)] = path
+        else:
+            out.setdefault(t, set()).add(p)
+    return out, dropped
+
+
+def _path(adj: dict, start: str, goal: str) -> list:
+    """The shortest path `adj` leads along from `start` to `goal` (ties by id), or []."""
+    prev, todo = {start: None}, [start]
+    while todo:
+        n = todo.pop(0)
+        if n == goal:
+            out = []
+            while n is not None:
+                out.append(n)
+                n = prev[n]
+            return out[::-1]
+        for m in sorted(adj.get(n, ())):
+            if m not in prev:
+                prev[m] = n
+                todo.append(m)
+    return []
+
+
 def _reach(adj: dict, start: str) -> set:
     """Every node `adj` leads to from `start`, `start` included."""
     seen, stack = set(), [start]
@@ -614,9 +828,20 @@ def non_leaf_ids(graph: Graph, children: list[Task]) -> set[str]:
     return {str(c.id) for c in children if graph.get_active_children(c.id)}
 
 
+def logged_criteria(raw) -> list[dict]:
+    """A logged version's criteria (its `spec` JSON) as the contract it installed: an entry an older engine wrote there
+    to declare a Dep edge — a `depends_on` pinning no check — is that edge (`logged_declarations`), no criterion
+    (`seams_apart`). Read as one, every node with a seam reads as having dropped a criterion since its authoring."""
+    try:
+        crits = json.loads(raw).get("criteria") or []
+    except (TypeError, ValueError, AttributeError):
+        return []
+    return [c for c in crits if isinstance(c, dict) and not (c.get("depends_on") and not c.get("check"))]
+
+
 def logged_declarations(log: list) -> list[tuple[str, str, str]]:
-    """(producer, consumer, glue) for every `depends_on` criterion of every packet version the log (`load_audit` rows)
-    installed."""
+    """(producer, consumer, glue) for every `depends_on` entry of every packet version the log (`load_audit` rows)
+    installed — the declarations an older engine kept among the criteria, and a criterion's reference since."""
     out = []
     for row in log:
         if row.get("rejected") or not row.get("spec"):

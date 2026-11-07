@@ -21,6 +21,7 @@ from gfso.core.types import Criteria, Probe
 from gfso.packets import _criteria_text, owed_probes
 from tests.support import criterion
 from tests.test_validate_result import _eng, _fenced
+from tests.support import FakeSpec
 
 # ── the measured shape ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -30,8 +31,10 @@ _SHAPE = {"F": (_POOL[:22], 24), "C": (_POOL[4:], 12), "B": (_POOL[10:23], 0), "
 
 
 class _Owed:
-    """The four reads `owed_probes` and the packet make — the measured root's procedure, nothing else."""
+    """The reads `owed_probes` and the packet make — the measured root's procedure, nothing else, and an empty record of
+    the rounds standing (its findings name none)."""
     def __init__(self):
+        self.graph = SimpleNamespace(setting=lambda k: None, store_setting=lambda k, v: None)
         self.crits = [Criteria(n, f"{n} holds", check=(Probe(f"{n} own", f"own {n}", "ok"),)) for n in _SHAPE]
 
     def parts_procedure(self, _):
@@ -50,7 +53,7 @@ class _Owed:
 
 def _measured():
     eng = _Owed()
-    task = SimpleNamespace(id="root", spec=SimpleNamespace(criteria=eng.crits))
+    task = SimpleNamespace(id="root", spec=FakeSpec(criteria=eng.crits))
     return eng, task, [(task, "delivered", eng.crits)]
 
 
@@ -179,3 +182,52 @@ def test_a_split_run_that_left_the_criterion_out_does_not_pass_it(monkeypatch):
     assert out["verdict"] != "PASS"
     assert (e.get_exec_verdict(T.TaskId("big")) or {}).get("verdict") != "PASS"
     e.stop()
+
+
+def test_a_part_probe_another_run_carries_is_shown_as_pinned_not_by_id_alone():
+    """A run whose criterion rests on a part's probe another run carries is shown that probe's command and expectation —
+    not asked to run it. By id alone, the root validators of GB_sql_database_tngtvm580 read three sorting checks as owed
+    and unrunnable, rebuilt them from their expected files as unsorted diffs, and filed `held: false`: every criterion
+    resting on them failed over a tree that passes all of them."""
+    eng, task, parts = _measured()
+    shown = 0
+    for run in TL._scope_batches(eng, parts, 16):
+        for t, _, crits, carry in run:
+            text = _criteria_text(eng, t, crits, None, None, carry)
+            for c in crits:
+                block = text.split(f"**{c.name}**")[1].split("\n- **")[0]
+                for pc in _SHAPE[c.name][0]:
+                    pid, p = probe_id(pc.name, pc.check[0]), pc.check[0]
+                    if pid in carry or f"[{pid}]" not in block:
+                        continue
+                    shown += 1
+                    assert f"[{pid}] — {p.behaviour}: `{p.command}` → must show: {p.expect}" in block
+                    assert f"PINNED CHECK [{pid}]" not in block            # …shown, not demanded a second time
+    assert shown
+
+
+def test_a_probe_already_owed_is_not_owed_again_under_another_id():
+    """A whole's check copied into a part, and a part's copied into another: the same command owed two or three times
+    under ids a weak validator mixed, landing under the first criterion ("build and hygiene") where it was read as out
+    of scope — six ⊥ validations of one sound sql root (2026-10-27). Owed once: the whole's own first, then each part's."""
+    eng, task, _ = _measured()
+    twin = part_criteria("root.integrate", [Criteria("F", check=(Probe("F own", "own F", "ok"),)),
+                                            Criteria("p0", check=(Probe("part 0", "run part 0", "ok"),))])
+    eng.parts_procedure = lambda _: {"B": twin, "F": [_POOL[0]]}
+    items = [(c.name, x) for c, it in owed_probes(eng, task, eng.crits) for _, x in it if isinstance(x, tuple)]
+    commands = [x[1].command for _, x in items]
+    assert sorted(commands) == sorted(set(commands)), commands
+    assert ("F", "own F") in [(n, x[1].command) for n, x in items if not x[2]]       # the whole's own stays its own
+
+
+def test_an_expectation_of_two_lines_reads_as_one_on_the_packets_line():
+    """Written raw, "ERR\n(+ " split the packet's line: "must show: ERR" and a stray "(+ " under it, which executor,
+    validator and issuer read as ERR alone — a dispute round and six tech reports on correct work (2026-10-27)."""
+    eng, task, _ = _measured()
+    eng.crits = [Criteria("deep", "deep input", check=(Probe("deep parens", "gen | x | cut -c1-3", "ERR\n(+ "),))]
+    task.spec = FakeSpec(criteria=eng.crits)
+    eng.parts_procedure = lambda _: {}
+    eng.regression_probes = lambda _: {}
+    text = _criteria_text(eng, task, eng.crits, None)
+    line = next(l for l in text.splitlines() if "must show:" in l)
+    assert line.rstrip().endswith("must show: ERR ⏎ (+"), line

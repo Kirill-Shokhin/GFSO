@@ -2,157 +2,104 @@
 
 # GFSO
 
-**Make a plan falsifiable — so when it fails, you know exactly which part was wrong.**
+**Make a plan falsifiable, then have agents carry it out.** GFSO (General Framework for Structured Operations) takes a plan with its checks fixed first, your own, or one it writes from your description, runs it with agents in Docker, and counts a result only when someone other than its executor has signed it.
 
+[![PyPI](https://img.shields.io/pypi/v/gfso)](https://pypi.org/project/gfso/)
+[![tests](https://github.com/Kirill-Shokhin/GFSO/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Kirill-Shokhin/GFSO/actions/workflows/tests.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.11%20%E2%80%93%203.13-blue)
-![Status](https://img.shields.io/badge/status-preliminary-orange)
 
-<img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/hero.gif" alt="A task graph building itself, each node stepping through its states to Done, live" width="860">
+[Results][results] · [Usage][using] · [Security][security] · [Theory][theory] · [Documents][docs]
+
+<img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/hero.gif" alt="A recorded run replayed in the web UI: parts of the plan run in parallel, each session on the timeline, a part and then the whole sent back and reworked, the goal delivered" width="860">
 <br>
-<sub>A goal becomes a live graph; each node is driven through its states to <code>DONE</code> — the protocol as agents and humans operate the same graph. <em>(a short capture, not the full flow)</em></sub>
+<sub>A recorded run, replayed: a goal's parts run in parallel; a part, then the whole, goes back until its checks pass.</sub>
 
 </div>
 
 ---
 
-**A plan is usually an unfalsifiable story.** It fails, and no one can say which part was wrong — the estimate, the interface, a missed dependency, or the one subtask everyone assumed was trivial. The post-mortem argues. The plan offered nothing to check against.
+Your agent reports its task done; the engine does not take its word. A separate session runs the checks fixed before the work, on the commit actually delivered. One fails, and that part goes back with the failure attached. When every check has passed, the result waits on its own branch.
 
-GFSO turns a decomposition into **pre-registered, separately refutable claims** — every subtask a decidable pass/fail criterion with a named owner, every join between subtasks an explicit claim that *these children, together, make the parent*. Something breaks, and the structure points at the exact false claim and who made it — not at "the project."
+Running alone on three tasks from a public benchmark, three models said "done" 19 times, and 6 of those deliveries scored 9–91% on the benchmark's hidden tests. Given a finished plan and the same task description, the same models under GFSO completed 14 goals, none below 98.6%.
 
-Two properties carry that promise, and neither is a design choice you could tune away.
+## Results
 
-**Failure localizes.** Under a correct decomposition a parent passes exactly when every child passes: `V(parent) = AND(V(children))`. One false leaf cannot hide behind a green parent; the failure pins to the node whose claim broke, at any depth.
+Three tasks of a public benchmark, three models, each with hidden tests no one sees during the work; the score is the share of them the delivery passes. Three of the nine cells, GFSO on a finished plan:
 
-**A claim cannot pass on its author's word.** Your agent reports its task done; the engine does not take its word. At every **delegation seam** — and the result handed out of a scope is always one — the verdict is signed by the issuer, never by the executor, over a check that is not the executor's (§10.3), and the engine refuses a `PASS` until a separate validator has run every criterion against the real deliverable — here, live:
+| task · model | | verdict | score | minutes | cost |
+|---|---|---|---|---|---|
+| `coreutils` · Haiku 4.5 | alone | done | 59–73% | 8–13 | $1.3–2.3 |
+| | GFSO | `PASS` | **100%** | 120–253 | $21–40 |
+| `c_compiler` · Haiku 5.5 | alone | not done | 74–92% | 19–36 | $1.4–4.4 |
+| | GFSO | **`PASS`** | **98.6–99.7%** | 71–92 | $5.5–9.3 |
+| `c_compiler` · Sonnet 5.5 | alone | done | 100% | 112–117 | $48–52 |
+| | GFSO | `PASS` | 99.0–99.7% | **35–43** | **$12–15** |
 
-<p align="center"><img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/gate.png" alt="The engine rejecting a self-signed PASS — verifier ≠ executor (§10.3)" width="820"></p>
+<sub>n = 2–3 per cell, earlier builds. The plan's checks were verified against the benchmark's oracle before the run; the cost excludes writing it, and how it was prepared is in the full results. `c_compiler` is counted on 293 of its 299 tests, here and above. Every row: [`docs/RESULTS.md`][results].</sub>
 
-Self-approval is not discouraged. At a seam it is structurally impossible; the one way a self-issued verdict comes to stand there — signed while the node was internal, then made public by a change of Delegation — is named, not hidden (§16.9 exception 15, §16.13). Inside one scope an agent does check its own work — and stakes every bit of it a public delivery carries on the single public verdict at that scope's edge (§10.3).
+<p align="center"><img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/ui-panel.png" alt="A node's panel: state, last verdict, and each criterion with its rounds — crosses where a round failed it, a dot where it passed" width="820"></p>
 
----
+One part of a SQL engine on Haiku 4.5: its validator refused `ordering, ties, LIMIT` ten rounds running (×), then it passed (●). Executor and validator were the same model, in separate sessions, on a copy of the delivered commit, against a check fixed before the work.
 
-## Why those two properties hold
+**Where it does not help.** Haiku 4.5 is too weak for the harder tasks (`c_compiler` and `sql_database`: no goal closed in five runs each, on this contract), and a strong model on work it can already do just costs more (Sonnet 5.5 on `coreutils`: 100% alone in minutes, four to six times the cost under GFSO). Writing its own plan from your description, on the same terms, GFSO completed `coreutils` and SQL at 91–100% on Haiku 5.5 and Sonnet 5.5. With the benchmark's hidden requirements left out of the task description, the same path on Haiku 5.5 reads 82–89%. It has no verdict yet on `c_compiler`.
 
-GFSO is not a good design. It is **derived** — from two axioms: that goals are verifiable (A1), and that complex tasks decompose (A2). Fix those, and almost none of the protocol is a choice.
+## The idea
 
-**Why `AND`, and not a weighted score?** Enumerate the sixteen binary aggregations. Require commutativity, associativity, that one failed necessary child fails the parent, and that the result not be constant. `AND` is the sole survivor (§7.2). Localization is not a feature bolted on — it is the only aggregation the axioms allow: under a correct split a passing parent cannot cover a failing leaf, and the failure has exactly one address.
+A plan is usually an unfalsifiable story: it fails, and no one can say which part was wrong. GFSO turns it into separately refutable claims: every part a decidable criterion with a named owner, every join a claim that these parts, together, make up the whole. In operation it is a loop against checks fixed before the work, and the engine enforces it: no executor can skip, move or sign its own check, only whoever issued the work can change a check, and the change is logged, and a failure comes back to the one part it belongs to. Two properties carry the promise.
 
-**Why binary acceptance, and not a percentage?** Because A1 already says it: a criterion is a decidable predicate returning pass/fail, and a conjunction of two-valued things is two-valued — the scale is fixed by the axiom, with no appeal to what you do about it (§7.1). The familiar argument — a verdict that maps to no distinct action is not a verdict, so by pigeonhole the scale collapses to two — is the *defense* against a graded scale, not the source, and it rests on there being exactly two actions (a covering claim, not a theorem: finer granularity lives in the tree). There is no "80% done" to shelter in; "in progress" lives in the state machine, not the scale.
+**Failure localizes.** Under a correct split a parent passes exactly when every child passes: `V(parent) = AND(V(children))`. One false part cannot hide behind a green whole; the failure has one address.
 
-**Why trust that you've listed every way it can break?** A decomposition's failures are not collected from experience — they are a basis, complete modulo one covering axiom. Compositional validation is a computation, characterized on two orthogonal axes: the function it evaluates, and the process in time that evaluates it. Split each, and you get **six failure modes with no room for a seventh** (§8.2, §8.8). A study of 216 public post-mortems found 0 that needed one.
+**A claim cannot pass on its author's word.** At every handoff the verdict belongs to whoever issued the work, over a check that is not the executor's, and the engine refuses a `PASS` until a separate validator has run every criterion against the real delivery:
 
-**Why can't the agent just game the protocol?** Because the protocol is minimal and incentive-compatible. One handoff runs as a peer-to-peer transaction over 12 signals and 11 states; remove any signal and a specific defect returns. Drop any incentive-critical rule and honesty stops being dominant for one named party, as far as that rule's row closes the behaviour (§11.4, §16.12). Where a deviation is detected and priced and p·cost(undetected defect) > cost(signal) — Prop 8's premise (§16.11) — and outside fifteen named exceptions (§16.9), honesty is made rational by the rules — not asked of people; below that threshold the rules do not make it so.
+<p align="center"><img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/gate.png" alt="The engine rejecting a self-signed PASS: verifier ≠ executor" width="760"></p>
 
-Two things then come for free. Quality is a five-vector read from the execution trace — all but the post-hoc runs of one term, triggered from outside — so faking a metric by signals means faking the process — though five named dials move a metric unpriced (§15.6). And every decision leaves a record by construction: the way double-entry bookkeeping structurally forbids an unbalanced ledger, GFSO forbids an unrecorded decision (§11.6).
+Neither is a design choice. Both follow from two axioms: goals are verifiable, complex tasks decompose. Require of an aggregation that it be commutative and associative, that a failed necessary part fail the whole, and that it not be constant, and of the sixteen binary Boolean functions only `AND` remains. The ways a decomposition breaks form a basis of six failure modes; of 216 public post-mortems, none needed a seventh.
 
----
+Where the guarantee stops: none of this proves your plan is the right plan. It proves the plan is checkable and that a failure points at the part that broke. Whether those parts truly make up the whole only contact with the domain can tell, and that part stays with the agent doing the work.
 
-## Where the guarantee stops
+**[The theory, derived in full →][theory]**
 
-None of this proves your decomposition is *correct*. It proves only that the plan is checkable, and that failure localizes.
+## Install
 
-Whether these children truly compose into that parent in the real world, the framework cannot decide — by construction. Two domains with the same formal graph can obey different real laws (Lemma 1), so the axioms do not fix which decomposition is faithful, and no amount of declaring it so grounds it (Lemma 2). That knowledge comes only from contact with the domain.
+You need Python 3.11–3.13, [pipx](https://pipx.pypa.io), [Claude Code][cc] and [Docker](https://docs.docker.com/get-docker/). Without Docker nothing unattended runs. Tested on Windows and Linux; on macOS only installation is tested. Claude is the model provider in live use; the provider layer accepts others (`ollama/…` and the like), so far tested only against a stand-in.
 
-That gap is where your agent — human or LLM — carries the weight. GFSO **derives** its necessity rather than assuming it: reliable domain knowledge cannot come from the apparatus, so an agent must supply it, and the exact thing it must supply is named (§3–4). A standard would stop at prescribing. This one also *explains* why competent work already succeeded — the agent carried enough tacit structure — and *predicts*, falsifiably, where the framework stops applying — and when an agent can be swapped, measured against a faithfulness proxy independent of the outcome (§4.6).
+1. `pipx install gfso`, then `gfso setup`. It registers the tools with Claude Code, starts Docker Desktop if it is installed, and tells you what remains. `gfso demo human_only` needs no model: one person signs off her own work, the engine refuses, a second signs, and the `PASS` is recorded.
+2. `gfso credential claude --sign-in`. A window opens where you sign in and paste a token (on Linux it prints the two commands instead). gfso's agents run separately from your Claude Code login, on their own token; they spend your subscription's usage, as Claude Code does.
+3. Restart Claude Code, which loads the tools at its start: inside a session `/exit`, then `claude -c`, and the conversation resumes; otherwise just `claude`.
+4. Describe the task and say "use gfso". Your agent reads the plan the system writes, gives the go-ahead, and hands you a link to watch. The verdict and the branch come back in the chat.
 
-The framework names exactly what it guarantees and exactly what it hands to the agent. Nothing in between is waved away.
+Or let your agent do it:
 
----
+> Install gfso: `pipx install gfso`, then `gfso setup`, then `gfso credential claude --sign-in` (I will sign in in the window it opens). Do it all without asking me. Then tell me to restart with `/exit` and `claude -c`.
 
-## What it is, and is not
+A first small task takes about 10–27 minutes, much of it spent on the plan, and costs about $0.1 for the system and $0.3–0.6 for your own Claude Code session. If something is wrong later, `gfso doctor` tells you what.
 
-**Planning ⊂ GFSO.** Classical planning and control — STRIPS, MDPs, HTN, A\*, MPC, RL — enter as a single sub-step, rewritten in GFSO's own terms: search over the estimated structure is one link in a longer chain (§19.2). The new mechanics are a narrow delta.
+## Security
 
-The value is not novelty of mechanism. It is **making-explicit** — moving decomposition out of private intuition into one axiom-derived, checkable, faithfulness-graded discipline that holds at every level. That is what makes planning falsifiable (§19.3). Scrum, in turn, embeds in GFSO's structure with named restrictions and relaxations (§19.4) — not as a special case: it relaxes GFSO requirements — the risk register, the per-decision log, the deadline rules.
+Agents here run unattended, with no one to approve a command, so the work runs in Docker:
 
-It is not a task tracker — Jira tracks tasks; GFSO tracks *decisions*: who split what, on what criteria, why. Not an ERP, not a chatbot, not an autopilot.
+- **None of your disk is mounted** where an agent or a check runs. Your repository goes in as its committed history.
+- **No agent holds your credential.** One small container holds the key and passes only the model's messages.
+- **Each validation runs in its own container**, on a copy of the delivered commit. No one validates their own delivery.
+- **Network `off` or `open`, per project.** `off` reaches only the model.
+- **The result is its own branch**, `gfso/<project>/accepted`. Your branches and working tree stay as they were.
 
----
+There is no per-task VM, your repository's full history goes in, and the model's provider reads what the agents send it. What is and is not guaranteed: [`SECURITY.md`][security].
 
-## The reference implementation
+## Formal status
 
-The two properties above are not a paper. They run.
-
-A reference implementation exercises the protocol end-to-end — a way to run the theory, not a finished product. One engine holds the logic; three doors are generated from one shared tool registry — an HTTP+WS API, a CLI, and an MCP surface for agents — and a web UI rides the same API, so humans and agents drive the *same* graphs and every write is mirrored live.
-
-```bash
-pipx install gfso        # or: uv tool install gfso — pip install gfso also works
-gfso setup               # registers the agent door, brings the one server up, opens the UI
-```
-
-<sub>Working on GFSO itself, rather than with it: `git clone https://github.com/Kirill-Shokhin/GFSO
-&& cd GFSO && pip install -e .`, then the same `gfso setup`.</sub>
-
-`gfso setup` is idempotent. It registers the door with Claude Code for your user — by the console script's absolute path, so it resolves from every directory and survives your leaving a virtualenv — and `--desktop` also writes the entry into Claude Desktop's configuration, keeping a backup. When something is wrong later, `gfso doctor` says what — and its output is what a bug report should carry.
-
-The engine, the UI and the gate cost nothing to run: no API key, no model. The four verbs that do call one — `auto_decompose`, `review_decomposition`, `validate_result`, and delegation to agent executors — ride the [Claude Code CLI][cc] as a subprocess, so they need no key of their own and spend the usage of whatever account that CLI is signed in to. Without it on your `PATH` they report that the provider answered nothing, and everything else still works.
-
-The gate, in one second and with no AI involved:
-
-```bash
-gfso demo human_only
-```
-
-Two people, one node: `ann` executes and signs her own `PASS`; the engine refuses it; `bob` records an independent verdict; the same `PASS` then lands and the node reaches `DONE`. Everything printed comes from the engine, not from the script.
-
-There is **one server**, always at `http://127.0.0.1:8000`, and the everyday commands take no port — projects, not ports, are the isolation boundary. `gfso up` makes it correct and current (start it if down, restart it if it serves stale code, leave a busy one alone); `gfso down` stops it. State lives in one home per user — `~/.gfso`, or the tree in a source checkout, overridable with `GFSO_HOME`. The working loop on a real project — hand-built decomposition, the Level-2 review before code, driving the graph from an agent session — is [`USING_GFSO.md`][using].
-
-The verifier ≠ executor gate from the opening runs in both of the system's regimes:
-
-- **Sequential** — one agent session structures a goal (`auto_decompose` runs the search↔audit method in one call), executes the frontier itself, and after each delivery gets a verdict from a fresh read-only validator that *runs* the criteria. The gate is on the node, not on the name signing it: at a seam a `PASS` needs a verdict for the delivery that stands, from the instrument or from a person recording what they observed.
-- **Delegated** — register executor and validator roles once, and assignment *is* delegation: a node assigned to a registered executor is picked up automatically, its report wrapped into the canonical signals, the validator auto-runs on delivery, and a failed criterion re-enters a bounded rework loop with the failure as feedback. Humans are never registered — a node assigned to a person simply waits for *their* signals. Mixed human/agent graphs are the normal case.
-
-The UI (shown at the top) surfaces every write live, and draws what a list of finished nodes cannot say: a node closed on a registered instrument's verdict, one closed on a person's word, and one standing at `PASS` over a record that contradicts it are three different greens, and the page tells them apart. Visual design beyond that is out of scope at this stage.
-
----
-
-## Status — preliminary
-
-This is a preliminary release. The theory is stated in full; the thing that will make it fuller and stronger — the empirical base — is in progress.
-
-**Theory.** Formal framework (6 theorems + 8 further results), the binary scale (sourced in A1) and the uniqueness of `AND` and the six-mode basis (complete modulo one named covering axiom), the agent-free ontology of the five links (§5), and a falsifiability register are in place. The canon is English (v4.1); the Russian working draft it was re-authored from stays frozen as the provenance record. **What the canon leaves falls in three classes**, kept apart by a criterion the document states and applies entry by entry (§20.1): named boundaries — questions inside the theory whose closure it shows unavailable from inside (§20.8); the questions around it whose answers would change none of its claims, where it says it stops (§20.9); and requirements not yet built or measured (§20.10). Its every load-bearing claim carries what would refute it in [`falsifiability.md`][fals]; that register, not a roadmap, is what would reopen the canon. The formal spine is a Lean 4 development on the language kernel — no mathlib, no `sorry` — that audits the axiomatic surface rather than standing in for the arguments: exactly three covering axioms carry the "no further kind" results inside it, every other postulate's placement is disclosed — the AI layer's covering of the inference types stands outside it — and a fail-closed CI guard rejects any axiom "outside the whitelist and Lean's three foundations" — the whitelist's six entries the three axioms and the three predicates they quantify over (§20.4; [`formal/README.md`][formal]). Three TLA+ models are model-checked, and of the five guards CI runs, that whitelist is one — the other four hold this README, the mirrors and the code to the canon's sections, names and counts, and their Lean and TLA citations to names that exist.
-
-**Implementation.** Protocol engine, production adapters, the web UI, `auto_decompose`, independent execution validation with the verifier ≠ executor gate, the Level-2 review of a decomposition before code exists, delegation with auto-validation and bounded rework, multi-project isolation, and a shared multi-session server — all working, across 1132 tests (6 of them exercise embedding the core into a foreign host, against a reference host carried in the suite; 6 more build the distribution, install the wheel into a fresh environment and drive it from a directory that is not this repository).
-
-**Empirical.**
-- **E0** — on 148 BCB-Hard tasks, explicit unit-test criteria raise Haiku 4.5's zero-shot solve rate from 29.1% to 63.5% — one attempt each, no rework loop; the spec-carrying prompt costs ×1.85 the tokens.
-- **E1** — the failure-mode taxonomy against 216 public post-mortems: **0 / 216** need a mode outside it (annotated over seven labels; every record carrying the seventh, withdrawn label carries one of the six).
-- **E2** — the search ↔ audit cycle raises coverage of a completeness-audited reference decomposition on 9 of 10 domains (74 → 81% average across ten diverse domains) and is productized as `auto_decompose`. Measured against a bare-built reference, this shows the cycle *converges* — not that the discipline itself pays off, which is **E3**.
-- **E3** *(open)* — whether compositional validation holds on real multi-agent engineering, where a decomposition's *faithfulness* to its domain is exercised, not just its structure. Long-horizon deployment validation follows.
-
-Each of those is recorded run by run, with its own boundaries, in [`EVIDENCE_LOG.md`][evidence]; what GFSO does to real engineering work is **not** among them — that is E3, and it is open.
-
-The permanent boundaries are stated, not buried: a domain-silent false-`pass` cannot be caught a priori by any discipline (Lemma 1); the causal correctness of a decomposition is a characterized boundary, not an open algorithm; global uniqueness of the basis cannot be derived from inside (a named boundary), while on the protocol side the same question is **settled negatively over bare adequacy** (over a fully pinned design vector it meets the same wall) — requirements pin which exits must exist, not where they go, so the rows demand eight roles, not distinct states, two more (CANCELLING, ESCALATED) are pinned by a stated design decision, and the rest is free design; over the log, named conditions force every cell up to REWORKING's label, their naturalness unsettled (§13.3, §13.4, §13.6, §20.7).
-
----
-
-## Documents
-
-**Canon** — [`applied_gfso_v4_en.md`][canon]: the framework itself (the theory of directed action → axioms → theorems → protocol → metrics), the single source of truth. Distilled for an operator in [`method_gfso.md`][method]; each load-bearing claim typed by what would refute it in [`falsifiability.md`][fals].
-
-**Using it** — [`USING_GFSO.md`][using]: the working loop on a real project. [`TASK_PACKET.md`][packet]: what a node must carry and the exact keys the engine reads. [`ORCHESTRATOR.md`][orch] is the same protocol as an agent session receives it.
-
-**Onboarding** — [`applied_gfso_vision.md`][vision]: applied FSM, per-metric analysis, intuition **(in Russian)**.
-
-**Derivation & evidence** — [`gfso_dependency_map.md`][depmap] · [`EVIDENCE_LOG.md`][evidence] · [`architecture.md`][arch]: the code-side mirror, starting from the FSM transition table that *is* the architecture.
-
-**Machine-checked core** — [`formal/README.md`][formal]: the Lean 4 audit of the axiomatic surface — what is checked, what is checked only modulo a named covering axiom, what is out of scope, and the code ↔ canon corners, with a per-result coverage table.
-
-**Embedding & examples** — [`embeddability_acceptance.md`][embed]: embedding the core as a library into your own host — the pre-registered acceptance suite that validates the claim, plus the embedder's wiring reference. [`gfso/examples/`][examples]: one working script per entry door (human-only · mixed · autonomous org · async precompute), shipped with the package so `gfso demo` runs them wherever it is installed.
-
-What the engine does on your machine, and how to report a vulnerability: [`SECURITY.md`][security]. Release notes: [`CHANGELOG.md`][changelog].
-
----
+The axiomatic surface is audited in Lean 4 (no mathlib, no `sorry`), and the protocol is model-checked in TLA+.
 
 ## Citation
 
 ```bibtex
-@article{shokhin2026gfso,
+@misc{shokhin2026gfso,
   title  = {GFSO: Formal Guarantees for Compositional Task Validation
             in Hierarchical Organizations},
   author = {Shokhin, Kirill},
   year   = {2026},
+  url    = {https://github.com/Kirill-Shokhin/GFSO},
   note   = {Preprint in preparation}
 }
 ```
@@ -161,21 +108,13 @@ What the engine does on your machine, and how to report a vulnerability: [`SECUR
 
 MIT
 
+<!-- mcp-name: io.github.Kirill-Shokhin/gfso -->
+
 <!-- Absolute URLs: this file is also the package's PyPI description, where relative links do not
      resolve. Reference style keeps the prose readable and the addresses in one place. -->
-[canon]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/applied_gfso_v4_en.md
-[method]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/method_gfso.md
-[fals]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/falsifiability.md
-[vision]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/applied_gfso_vision.md
-[depmap]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/gfso_dependency_map.md
-[evidence]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/EVIDENCE_LOG.md
-[arch]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/architecture.md
+[theory]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/THEORY.md
+[results]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/RESULTS.md
 [using]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/USING_GFSO.md
-[packet]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/TASK_PACKET.md
-[embed]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/embeddability_acceptance.md
-[formal]: https://github.com/Kirill-Shokhin/GFSO/blob/main/formal/README.md
-[orch]: https://github.com/Kirill-Shokhin/GFSO/blob/main/gfso/mcp/ORCHESTRATOR.md
-[examples]: https://github.com/Kirill-Shokhin/GFSO/tree/main/gfso/examples
 [security]: https://github.com/Kirill-Shokhin/GFSO/blob/main/SECURITY.md
-[changelog]: https://github.com/Kirill-Shokhin/GFSO/blob/main/CHANGELOG.md
+[docs]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/README.md
 [cc]: https://claude.com/claude-code

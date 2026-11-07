@@ -92,7 +92,7 @@ and not certified by the apparatus (§3.5; Art. II.9, III.1).
 
 **Art. I.10 (ACCEPTED_RISKS).** `[DERIVED]` for the register and STD-1's four fields — `factor`,
 `estimate (P, impact)`, `justification`, `invalidation_condition` (§2.4, §9.2); `[ADDITION]` for the
-fifth field, `predictability_verdict` (Art. II.6). An entry missing any of the five is incomplete
+fifth field, `predictability` (Art. II.6). An entry missing any of the five is incomplete
 under this constitution. What an entry may be — a risk event with an estimable P, never a scope
 boundary, a known fact or a criterion — what the register admits and what an admitted entry
 licenses: §9.2; its roll-up: §9.4.
@@ -229,7 +229,7 @@ whose failure would break the goal:
 domain's precedent (§8.3 "FM-1.b and the extraordinary"); what the extraordinary grade acquits:
 §9.3. Predictability is presumed.
 
-**The `predictability_verdict` field.** `[ADDITION]` — where: an ACCEPTED_RISKS entry, beyond STD-1's
+**The `predictability` field.** `[ADDITION]` — where: an ACCEPTED_RISKS entry, beyond STD-1's
 four fields (Art. I.10); why: it records per factor the burden STD-2 places (§9.3), which otherwise
 goes unwritten. For each factor state exactly one: (i) a precedent or a derivation existed at the
 fixing ⟹ the factor is ordinary or statistical — a mitigation child, or for a statistical one an
@@ -251,7 +251,7 @@ Pragmatic, CHECK-5 its Level-0 proxy (§9.10). The grouping method is an impleme
 
 *Failure modes:* a foreseeable factor undeclared — FM-1.b, or, where no criterion
 states the outcome it threatens, the task's FM-1.f if the fixing showed the requirement (§9.3); the register omitted — refused by CHECK-4,
-its proxy (§9.5); an entry without a `predictability_verdict` — an incomplete record under this
+its proxy (§9.5); an entry without a `predictability` — an incomplete record under this
 constitution's own field; a demonstrable node gap left unwritten — §8.3; ungrouped correlated risks —
 FM-1.c.
 
@@ -368,7 +368,7 @@ admissible per Art. IV.1, not members of the canon's battery:
   predictability, Art. II.6): declaring `(tⱼ, tⱼ₊₁)` κ-atomic presents that it is
   realizable-and-checkable in one act of contact within κ (Art. I.6) — else it is above κ, owes a
   split (Art. II.2) and hides a joint. Unproven κ-atomicity defaults to a candidate missed separator =
-  **[S-HYPOTHESIS]**, an ACCEPTED_RISKS entry with a `predictability_verdict` (Art. II.6). Using the
+  **[S-HYPOTHESIS]**, an ACCEPTED_RISKS entry with a `predictability` (Art. II.6). Using the
   κ-atomicity branch without presenting the κ bound when two readers disagree is a **¬holding**.
   **Splitting the outcome by articulability** (admissible per Art. IV.1.2 — it removes a point where
   two readers diverge): a discovered candidate omission splits as (i)/(ii) of Art. II.1(b).
@@ -378,7 +378,7 @@ admissible per Art. IV.1, not members of the canon's battery:
   NOT an ACCEPTED_RISKS entry: parking a real necessary passage in the register is inverted ballast, a
   missed joint disguised as a declared boundary. **(b) An inarticulable candidate** — a separator
   suspected from the list's incompleteness, the passage unnameable — only this is an
-  **[S-HYPOTHESIS]** → a mandatory ACCEPTED_RISKS entry with a `predictability_verdict`, part of the
+  **[S-HYPOTHESIS]** → a mandatory ACCEPTED_RISKS entry with a `predictability`, part of the
   split's own denial, licensing nothing (§9.2, §9.5) — **not FORM-closable** (a hypothesis about S,
   Art. II.9; Art. III.1/III.3). Declaring the joint list complete without this presentation is a
   domain `[DERIVED]` without contact (¬Art. III.1) — unlike the domain half of criteria completeness

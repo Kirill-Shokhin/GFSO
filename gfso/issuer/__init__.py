@@ -9,13 +9,14 @@ and only the canon's moves as answers, each checked by code before anything is s
 
 - plan       a split the plan gate holds (§11.5): fix it, dispute a finding, or refine it once
 - dispute    CHALLENGED: accept with the corrected contract, or reject with the reason
-- escalation ESCALATED: re-ASSIGN (deadline, budget, criteria, executor) or CANCEL
+- escalation ESCALATED: re-ASSIGN (deadline, budget, criteria, executor), re-decompose the split above it, or CANCEL
 - repair     contact refuted the decomposition: revise the covering child, or add one
 - split      a childless node judged larger than one session of its executor: its split is owed (§3.7)
 - parked     an executor round left the node in its hands twice: re-ASSIGN or CANCEL
 - external   BLOCKED on nothing the graph holds: resolve with an action, re-ASSIGN, or CANCEL
+- outside    a child's validator saw what no criterion writes: a split move that writes it, or a logged reason not to
 
-`plan`, `repair` and `split` are the moves of the node's own executor (the author of its split and the issuer of
+`plan`, `repair`, `split` and `outside` are the moves of the node's own executor (the author of its split and the issuer of
 its children); the other four are the node's issuer's. Under AUTO the root's criteria are append-only:
 the user's contract is changed only by the user — their text; a pinned check is re-pinned by an accepted dispute.
 """
@@ -25,7 +26,7 @@ import contextlib
 import dataclasses
 import logging
 import re
-import tempfile
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -34,26 +35,42 @@ from pathlib import Path
 from typing import Optional
 
 from gfso import tools as _tools
-from gfso.adapters.llm.stats import the_call_was_cut
+from gfso.adapters.execution import LocalExecution, scratch_of
+from gfso.adapters.snapshots import NotTheDelivery, Uncopied, snapshot, swap
+from gfso.adapters.worktrees import NODES as _NODES
+from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
-from gfso.config import MODEL_DEFAULT, agent_id as _config_agent_id
+from gfso.inflight import being_rewritten
+from gfso.config import LIMIT_RETRY_S, agent_id as _config_agent_id
+from gfso.core.graph.model import on_the_wall, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
-from gfso.core.protocol.procedure import (INPUTS_TOKEN, materialize_inputs, probe_id, probes_from as _checks_of,
-                                          unrerunnable)
-from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, Register, RevisionReason, Signal,
-                             SignalData, Spec, Stage, State, TaskId, register_of, set_aside_of)
+from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, as_read, inputs_token, laid as over_dirs,
+                                          materialize_inputs, same_probe, shows, PROBE_S, pinned_files, probe_id,
+                                          probes_from as _checks_of, unrerunnable, with_named_files)
+from gfso.core.types import (AgentId, Criteria, DEFAULT_MAX_ITERATIONS, IN_THE_WORKS_PATH, PlaceUnavailable, Register, RevisionReason,
+                             Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of,
+                             system_decides)
+from gfso.decompose.extract import extract_spec
+from gfso.decompose.seams import seam_problems
 from gfso.engine import findings, loose_finding_key
-from gfso.engine.validation import is_auto_root, party_kind
+from gfso.engine.parking import USERS_WAY
+from gfso.engine.validation import is_auto_root, party_kind, users_criteria, users_plan
+from gfso.packets import SHOWN_FINDINGS, must_show, answered_challenges, answers_given, as_shown, capped, list_key, outside_text
 from gfso.engine.events import emit_cb
-from gfso.packets import checkout_note
+from gfso.packets import TECH_REPORT, checkout_note, file_tech_reports
 
 log = logging.getLogger("gfso.issuer")
 
 PROMPT = Path(__file__).parent / "issuer.md"
 
-#: How many re-ASSIGNs out of ESCALATED this issuer grants one node before it answers CANCEL. A
-#: How many contracts this issuer writes for one node out of ESCALATED before the next must CHANGE what failed. Not a
+
+def _prompt() -> str:
+    """The issuer's instructions, the per-check bound said from its one owner (`procedure.PROBE_S`)."""
+    return PROMPT.read_text(encoding="utf-8").replace("<PROBE_S>", str(PROBE_S))
+
+#: How many contracts the machine writes for the AUTO ROOT out of ESCALATED before the next must CHANGE what failed — there
+#: it stands in for the user, the root's issuer, and nothing above bounds it; below the root no count (§12.15). Not a
 #: close by count: §12.15 — "a counter there would, exhausted, leave the owner of a live goal only CANCEL or silence …
 #: re-created by fiat" — and under AUTO the machine IS that owner. Past it the issuer is asked, told the count; it may
 #: write a contract that changes the criteria, the executor or the budget, or close with its reason (critic over
@@ -73,7 +90,7 @@ DELIVERY_TAIL = 4000
 TRAIL = 30
 
 #: The questions whose mover is the node's EXECUTOR (the author of its split); the rest are its issuer's.
-SPLIT_QUESTIONS = ("plan", "repair", "split")
+SPLIT_QUESTIONS = ("plan", "repair", "split", "outside")
 
 #: What the issuer answering a dispute may use in the node's workspace: the validator's envelope, read and run.
 #: A dispute says what the contract's checks do in the world — a fact about S, which only contact reads
@@ -99,7 +116,23 @@ CONTACT = ("# Contact\nYou are in the node's workspace, `{where}`, with a shell.
 
 class Unavailable(RuntimeError):
     """The model layer did not answer at all (a rate limit, a dropped transport): not the issuer's answer,
-    so not counted against the node — the question is asked again later."""
+    so not counted against the node — the question is asked again later. `limit`: the account's usage limit refused
+    it, which lifts at a time of day, not after a doubling (`LIMIT_RETRY_S`)."""
+
+    def __init__(self, why: str, limit: bool = False):
+        super().__init__(why)
+        self.limit = limit
+
+
+def unanswered(calls) -> Optional[Unavailable]:
+    """A run whose every model call ended in error answered nothing — the same fact for an issuer's turn and for a
+    review. Read as an answer that moved nothing, sixteen reviews an account's limit refused spent the free answers,
+    and every real answer after it waited 32, 64, 120 min (GB_sql_database_tnb3ow508, 2026-10-22)."""
+    errs = [str(c.get("error") or "") if isinstance(c, dict) else "" for c in calls or ()]
+    if errs and all(errs):
+        return Unavailable(f"every model call ended in error — {errs[-1]}",
+                           limit=refused_by_limit(calls))
+    return None
 
 
 @dataclass(frozen=True)
@@ -112,12 +145,52 @@ class Verbs:
     review: object       # (engine, node id) -> the review's reply
     refine: object       # (engine, node id) -> the refine round's reply
     place: object = None  # (engine, agents, node id) -> the directory the node's work is in, or None
+    execution: object = None  # engine -> where its project's sessions and commands run (`ExecutionPort`), None = here
 
 
+
+#: what names an issuer's contact among a node's validation rounds — the rounds' rotation leaves it alone
+CONTACT_ROUND = "issuer_"
+
+
+@contextlib.contextmanager
+def _contact_place(where: str, ex, project=None):
+    """Where an issuer's contact with a node lays its inputs and its copy of the place: a ROUND OF THAT NODE'S
+    VALIDATION SCRATCH, as a validator's run is (`tools_llm`) — its session reads the probes the node's standing
+    findings name as the system laid them from its record (`_standing_findings`), writes only its own round, and no
+    other node's session reaches it. A root's too where places stand apart: in the base it worked in its executor's
+    container and could change the delivery. On this host, where no copy is made (the base, a root's place), the temp
+    its session holds. `project`: whose places hold a base's rounds (`scratch_of`). Gone when the contact ends, with
+    what was laid beside it (`laid_beside`)."""
+    if _NODES not in str(where) and not ex.apart:
+        lent = ex.scratch("gfso-issuer-inputs-", dir=ex.temp_of(where))
+    else:
+        lent = ex.scratch(CONTACT_ROUND, dir=str(scratch_of(where, project)))
+    with lent as d:
+        yield d
+
+@contextlib.contextmanager
+def _round(engine, tmp):
+    """A contact's round in the record of the rounds standing (`findings.record_round`) while it stands."""
+    if tmp:
+        findings.record_round(engine.graph, tmp, True)
+    try:
+        yield
+    finally:
+        if tmp:
+            findings.record_round(engine.graph, tmp, False)
+
+
+def _execution(engine, verbs: "Verbs | None"):
+    return verbs.execution(engine) if verbs is not None and verbs.execution is not None else None
+
+
+@system_decides()
 def signal_ok(engine, task_id: TaskId, sig: Signal, source: str, _why: "list | None" = None,
               **kw) -> bool:
-    """Send one signal; True when the FSM took it. `_why` collects the refusal, when a caller
-    intends to SAY it rather than only log it — the reason existed and reached the log alone."""
+    """Send one signal for the system; a party's own comes by the door (`tools.signal`). True when the FSM took it. `_why`
+    collects the refusal, when a caller intends to SAY it rather than only log it — the reason existed and reached the
+    log alone."""
     entry = engine.send_signal_sync(SignalData(signal=sig, task_id=task_id,
                                                source=AgentId(source), **kw))
     ok = bool(entry and not entry.rejected)
@@ -133,8 +206,9 @@ def crit_block(c, laid: "dict | None" = None) -> str:
     id: the directory its pinned inputs were written to} — renders a probe runnable as shown, as a validator's is."""
     def _line(p):
         d = (laid or {}).get(probe_id(c.name, p))
-        return (f"    - decided by — {p.behaviour}: `{p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command}`"
-                f" → must show: {p.expect}"
+        return (f"    - decided by `{probe_id(c.name, p)}` — {p.behaviour}: "
+                f"`{p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command}`"
+                f" → {must_show(p)}"
                 + (f" (its {len(p.inputs)} pinned input file(s) are laid down in {d.as_posix()}; in an answer write "
                    f"`{INPUTS_TOKEN}` for that directory)" if d else
                    f" (+{len(p.inputs)} pinned input file(s))" if p.inputs else ""))
@@ -230,45 +304,43 @@ def _what_happened(engine, task) -> list[str]:
             for p in rec.get("per_criterion") or []))
     if delivered := engine.deliver_result(task.id):
         out.append(f"## The last delivery (tail)\n{str(delivered)[-DELIVERY_TAIL:]}")
+    # …and why its sessions stopped without a signal: told nothing, the issuer re-issued a root 38 times whose packet no
+    # longer fit the executor's window, each session ending `prompt_too_long` (GB_sql_database_tmxu0n436)
+    if stopped := [str(r.get("message")) for r in engine.pipeline_log()
+                   if str(r.get("message", "")).startswith(f"{task.id}: ")
+                   and any(k in str(r.get("message")) for k in ("DID NOT PARSE", "delivery held"))
+                   and not is_limit(r.get("message"))]:     # a limit window's probes would evict the real stop reasons
+        out.append("## Its sessions that stopped without a signal (latest)\n" + "\n".join(f"- {m}" for m in stopped[-3:]))
     return out
 
 
-def _standing_findings(engine, task_id) -> str:
-    """The node's regression set, a line per finding with its id, as run, as the engine demands it."""
-    return "\n".join(f"- {c} [{p.get('id')}] {p.get('behaviour')}: `{p.get('seen') or p.get('as_run')}` (recorded: "
-                     f"«{p.get('expect')}»)" + (f" — {why}: shown, not demanded" if (why := unrerunnable(
-                         p, None, (engine.get_exec_verdict(task_id) or {}).get("workdir"))) else "")
-                     for c, ps in engine.regression_probes(task_id).items() for p in ps)
-
-
-def _standing_ids(engine, task_id, named: list) -> list:
-    """The standing findings a ruling names, each by the full id the engine keeps: a bare hash only one of them has is
-    that one, and a finding no longer standing names nothing to retire. Unlike a dispute (`findings.named`), a ruling
-    is the act itself: a hash two criteria share names neither here, and the issuer is told both to choose from.
-    Named by its hash, the ruling was refused whole, the issuer fell back to rejecting a true challenge, and a part was
-    disputed and rejected a dozen times over 17 min (AUTO haiku coreutils, root.build, 2026-10-12)."""
-    standing = [str(p.get("id")) for ps in engine.regression_probes(task_id).values() for p in ps if p.get("id")]
-    out = []
-    for i in named:
-        hit = [s for s in standing if i in (s, s.split("#")[-1])]
-        if len(hit) == 1 and hit[0] not in out:
-            out.append(hit[0])
-    return out
+def _standing_findings(engine, task_id, lists: "str | None" = None, ex=None, laid_dirs: "dict | None" = None) -> str:
+    """The node's regression set, a line per finding with its id, as run, as the engine demands it — bounded as the
+    executor's packet is (`capped`): the whole set inline, 562k characters, would end the dispute's issuer session
+    `prompt_too_long` (GB_sql_database_tmxu0n436). `lists`: where its file goes (`list_key`) — the contact's own round,
+    where each finding's files are laid from the system's record and its command shown over them
+    (`Engine.lay_probe_files`, through `ex`): the contact mounts no earlier round. A command over a pinned probe's
+    inputs (`{inputs:<id>}`) is shown over the directory this turn laid them in (`laid_dirs`), as the validator's is."""
+    workdir, up = (engine.get_exec_verdict(task_id) or {}).get("workdir"), findings.round_stands(engine.graph)
+    run = lambda p, why: (engine.lay_probe_files(over_dirs(p["as_run"], laid_dirs), lists, ex)
+                          if lists and ex and p.get("as_run") and not why else p.get("seen") or p.get("as_run"))
+    return "".join(f"\n- {c}:" + capped([f"[{p.get('id')}] {p.get('behaviour')}: `{run(p, why)}` "
+                                         f"(recorded: «{p.get('expect')}»)" + (f" — {why}: shown, not demanded" if why
+                                                                               else "")
+                                         for p in ps for why in [unrerunnable(p, None, workdir, standing=up)]],
+                                        "standing findings", list_key(engine, task_id, c, "issuer", at=lists))
+                   for c, ps in engine.regression_probes(task_id).items()).lstrip("\n")
 
 
 def _decided_nothing(engine, task_id, answer: dict) -> str:
     """Why an acceptance that changed and retired nothing is no decision, and the move that is one."""
-    standing = [str(p.get("id")) for ps in engine.regression_probes(task_id).values() for p in ps if p.get("id")]
-    named = [str(i) for i in answer.get("retire_findings") or ()]
-    if unresolved := {i: [s for s in standing if i in (s, s.split("#")[-1])] for i in named}:
-        return ("your acceptance retired nothing: " + "; ".join(
-            f"{i} names " + (" and ".join(c) + " — name the one you rule on by its full id" if len(c) > 1 else
-                             "a finding the dispute did not name — rule only on what it named" if c else
-                             "no standing finding")
-            for i, c in unresolved.items()) + ". Where the disputed probe is not demanded, REJECT the dispute saying so")
+    if said := [str(i) for i in answer.get("retire_findings") or ()]:
+        return ("your acceptance retired nothing: " + ", ".join(said) + " names only findings the dispute did not name "
+                "— rule only on what it named. Where the disputed probe is not demanded, REJECT the dispute saying so"
+                + _LAST_CHECK)
     return ("your acceptance changed no criterion as it will stand and retired no standing finding, so it decided "
             "nothing. Where the disputed probe is not demanded — no standing finding carries it — the dispute has "
-            "nothing to take back: REJECT it saying so, and the executor delivers")
+            "nothing to take back: REJECT it saying so, and the executor delivers" + _LAST_CHECK)
 
 
 def _own_split(engine, task) -> str:
@@ -281,11 +353,26 @@ def _own_split(engine, task) -> str:
                      for k in engine.graph.get_active_children(task.id)) or "- none"
 
 
+def seam_findings(engine, task_id) -> list[str]:
+    """What the split's own claims of its seams contradict (`decompose.seams`) — the check its authoring ran, read again
+    wherever the split is repaired: the plan was checked when written, and a repair fed by contact was not."""
+    return seam_problems(extract_spec(engine, str(task_id))) if engine.graph.get_active_children(task_id) else []
+
+
+def _seams_text(seams: list) -> str:
+    """The seam findings as what they are: a report on the split, holding nothing — a child the repair adds or revises
+    is where they are met, and nothing waits on them."""
+    return ("## What this split's own claims about its seams contradict (reported — nothing waits on these; a child "
+            "you add or revise is where one is met)\n" + "\n".join(f"- {s}" for s in seams))
+
+
 def _gate_findings(engine, task_id) -> str:
     """What the plan gate holds open, each finding WITH its reason; ⊥ said as ⊥. Keys alone gave the issuer
     nothing to act on, and an absent review printed as "none" beside a question claiming findings were open —
     three samples, three invented moves (2026-09-25)."""
     holes = "\n".join(f"- {h.check_name}: {h.details}" for h in engine.split_holes(task_id)) or "- none"
+    if seams := seam_findings(engine, task_id):   # reported, never gated (§20.10, form item (4)): beside, not inside
+        holes += "\n\n" + _seams_text(seams)
     open_ = engine.open_l2_findings(task_id)
     if open_ is None:
         return (f"Syntactic holes:\n{holes}\n\nLevel-2: no current review of this version of the plan — "
@@ -299,12 +386,24 @@ def _gate_findings(engine, task_id) -> str:
                                                    and " ".join(w.split())[:60] in k), ""))
              for k in open_]
     own = sum(str(k).startswith("undecided: ") for k in open_)
+    # …and what the review reported without gating — a conflict with a settled child — to the party whose move lifts it:
+    # kept only in the stored record, no issuer saw it (critic over 2f8ddcc)
+    if told := [l for l in str(rec.get("semantic_findings") or "").splitlines() if l.startswith("[reported, not gating")]:
+        holes += ("\n\nReported, not gating (a settled child's criterion against a live one — a new pinned check of the "
+                  "contested behaviour on the live child decides which holds):\n" + "\n".join(f"- {l}" for l in told))
     return (f"Syntactic holes:\n{holes}\n\nLevel-2 findings (a `dispute` names one EXACTLY as written between "
             f"the backticks):\n" + ("\n".join(lines) or "- none")
+            + ("\n\nA finding that no child carries one of this node's own pinned probes is closed by giving a child "
+               "a criterion whose probe `carry`s that probe's id (shown after `decided by`) — the system copies it "
+               "exactly, its pinned inputs included." if lines else "")
             + (f"\n\n{own} of them (`undecided: …`) are requirements of this node's OWN goal that none of its OWN "
-               f"criteria writes: no move on a child closes one — the next review names it again word for word. "
-               f"`add_criterion` on this node closes them — one criterion listing the requirements of one component "
-               f"closes every one it lists — and `reshape` with `map` then gives it the child that delivers them."
+               f"criteria's PINNED CHECKS decides: no move on a child closes one — the next review names it again. "
+               f"What closes one is a NEW pinned check of the clause its finding says no check probes — `add_criterion` "
+               f"on this node with that check (a criterion over checks already pinned here decides nothing new and is "
+               f"refused), then `reshape` with `map` gives it the child that delivers it."
+               + ("" if is_auto_root(engine.graph, engine.graph.get_task(task_id)) else
+                  " A finding that only names another disguise of what a pinned check already refuses is that "
+                  "check's residue: `dispute` it, its reason naming that check's id.")
                if own else ""))
 
 
@@ -319,62 +418,80 @@ def _users_sentence(engine, task) -> str:
     return re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0][:160] or "(the goal as written above)"
 
 
-def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", laid: "dict | None" = None) -> str:
+def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", laid: "dict | None" = None,
+                   lists: "str | None" = None, ex=None) -> str:
     """Everything the issuer needs to answer about `task_id`, and nothing twice: the goal, why the node exists,
     its contract, and what the question needs — for the plan and the repair, the split's whole contracts; for the
     plan, the gate's findings with their reasons and nothing of the node's history (a holder asked what its plan
     decision rested on did not use the deadline or the rework count — one decision, 4 forks,
     experiments/e3_specbench/issuer_context_probe.py); for the others, what happened to the node. NOT CARRIED,
     a named residue: the source statement a goal points to and files in the workspace — the issuer has tools
-    only on a dispute (`CONTACT`), and the holder used both."""
+    only on a dispute (`CONTACT`), and the holder used both. `lists`: where a long list's file goes — the contact's
+    own round, which its session holds (`list_key`)."""
     task = engine.graph.get_task(task_id)
     out = _goal_and_why(engine, task)
     plan, split = question == "plan", question in SPLIT_QUESTIONS
     out.append(f"# The node: `{task.id}` — {task.spec.name}\n\n{task.spec.description}\n\n"
                f"State {task.state.name} · Del {task.assignee}"
                + ("" if plan else f" · rework {task.iteration}/{task.max_iterations} · deadline "
-                                  f"{task.deadline or 'none'}")
+                                  f"{on_the_wall(engine.graph, task.deadline) if task.deadline else 'none'}")
                + "\n\n## Its contract (the WHOLE obligation)\n"
                + ("\n".join(crit_block(c, laid) for c in task.spec.criteria) or "- (no criteria)"))
     if engine.graph.get_active_children(task.id):
         out.append(f"## Its own split\n{_own_split(engine, task) if split else _split_lines(engine, task)}")
     if not plan:   # a repair needs what was observed failing: the verdict and the delivery ride here
         out += _what_happened(engine, task)
+    # …and what validators saw beyond the criteria in the WHOLE split this question's moves lie in: FM-1.f met at contact
+    # (§8.3). Shown only the asking node's subtree, a split re-planned by promotions answering a sibling's block never
+    # saw the hole another child's validator wrote (critic over 5cad9c4)
+    holder = task.id if split or task.parent_id is None else task.parent_id
+    rows = engine.outside_the_criteria(holder, own=not split and task.parent_id is None)
+    out += [s for s in [outside_text(engine, holder, rows, lists)] if s]
     if question == "plan":
         out.append(f"## What the plan gate holds open\n{_gate_findings(engine, task_id)}")
-        # …and the issuer's answer to this node's last challenge: unseen, a rejected challenge was raised again
-        # unchanged, the findings being the same (critic, 2026-10-07)
-        # …only while it is the latest answer on the version in force: an accepted challenge or a new version since
-        # makes it news about a contract that is no longer this one (critic 3)
-        log = [a for a in engine.audit_log(task.id) if not a.rejected]
-        i = next((i for i in range(len(log) - 1, -1, -1) if log[i].signal in
-                  (Signal.REJECT_CHALLENGE, Signal.ACCEPT_CHALLENGE, Signal.ASSIGN)), None)
-        if i is not None and log[i].signal == Signal.REJECT_CHALLENGE:
-            asked = next((a.reason for a in reversed(log[:i]) if a.signal == Signal.CHALLENGE), None)
-            out.append(f"## Your last challenge of this contract was REJECTED by its issuer\n- you said: "
-                       f"{asked or '(no reason recorded)'}\n- the issuer: {log[i].justification or '(no justification)'}"
-                       f"\n\nRaise it again only with what this answer does not meet.")
+        # …and the issuer's answers to this node's challenges on the version in force: unseen, a rejected challenge was
+        # raised again unchanged, the findings being the same (critic, 2026-10-07) — the executor's packet reads the same
+        if said := answered_challenges(engine, task):
+            out.append(said.strip())
     if question == "repair":
-        out.append("## What contact refuted\n" + ("\n".join(
-            filter(None, (engine.decomposition_refuted(task_id), engine.dep_order_refuted(task_id))))
-            or "- a child consumes a producer that was cancelled (see the split above)"))
+        out.append("## What contact refuted\n" + (what_contact_refuted(engine, task_id)
+                                                   or "- a child consumes a producer that was cancelled (see the split above)"))
+        if seams := seam_findings(engine, task_id):
+            out.append(_seams_text(seams))
     if question == "external" and (order := engine.order_refuted_by(task_id)):
         out.append(f"## What its block names cannot come first\n{order}")
     if question == "dispute":
         out.append(f"## THE DISPUTE, in its executor's words\n"
                    f"{engine.challenge_reason(task_id) or '(no reason recorded)'}")
+        if given := answers_given(engine, task):
+            out.append(given.strip())
         # …AND THE FINDINGS IT MAY BE DISPUTING. A FAIL can rest on a validator's own probe, which no criterion names
         # (a `<wchar.h>` program, a sibling's scope, failed root.pp round after round — GB_c_compiler_tmp5cb096); the
         # issuer judged the challenge with the contract alone in view and none of what was demanded under it
+        # …and what retiring one over a part's pinned check does, said wherever it may be ruled: told at an AUTO root
+        # only, a node below believed the part's pin was the part's contract and out of its reach (c_compiler pp-rest)
+        own = engine.plans_own_findings(task_id)
+        lifts = (f" {', '.join(own)} only say a settled part's pinned check does not hold. Run it: where it is false on "
+                 "correct work (it held only while a sibling's work was missing), accept, naming those ids in "
+                 "`retire_findings`: the part stays as it settled, this node's validation stops running that check under "
+                 "the criteria those ids stand on, and a later change of a criterion's text ends the ruling. Where the "
+                 "work broke it, reject." if own else "")
         out.append("## The validator's findings standing on this node — every PASS of it must re-run them\n"
-                   + (_standing_findings(engine, task_id) or "- none")
+                   # …a command copying out of `<round>.laid` reads a directory BESIDE the round, read-only: an issuer
+                   # looked for it inside its round and ruled the finding unrunnable (row 4, c_compiler, 2026-10-30)
+                   + (f"(A command that starts by copying out of `{laid_beside(lists).as_posix()}` reads the "
+                      f"files the system recorded when the finding was filed, laid there beside your round, read-only: "
+                      f"run it as shown.)\n" if lists else "")
+                   + (_standing_findings(engine, task_id, lists, ex, laid) or "- none")
                    + ("\n\nUnder AUTO this node's criteria are the user's goal: only the user rules a finding of the "
                       "validator outside them — answer without `retire_findings`."
-                      if is_auto_root(engine.graph, engine.graph.get_task(task_id)) else
+                      + (" Except a check of the plan, not of the goal:" + lifts if lifts else "")
+                      if is_auto_root(engine.graph, task) or engine.users_plan() else
                       "\n\nA finding stays demanded until you rule it outside its criterion as written: accept, naming "
-                      "in `retire_findings` the id of a finding the dispute named by its id. Nothing else retires one "
-                      "— not a reworded criterion, not a conceded pinned probe — and a later change of that "
-                      "criterion's text ends the ruling."))
+                      "in `retire_findings` a finding the dispute named — its full id retires it under that criterion, "
+                      "its bare hash under every criterion it stands on. Nothing else retires one — not a reworded "
+                      "criterion, not a conceded pinned probe — and a later change of that criterion's text ends the "
+                      "ruling." + lifts))
     if question == "plan":
         # …AND THE NODE'S OWN REGISTER, which the context showed only as its parent's: a root has none above it,
         # so a hole on the root's register was asked about with the register itself nowhere in view.
@@ -385,8 +502,20 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
         out.append(f"## This node's own ACCEPTED_RISKS\n{_own}"
                    + (f"\n\nNaming one of this node's criteria (CHECK-4; `drop_risk` takes them out): "
                       + "; ".join(f"«{i}»" for i in _flag) if _flag else ""))
-    q = QUESTIONS[question]
-    out.append(f"# The question: {q['ask']}\n\nAdmissible moves: " + ", ".join(f"`{m}`" for m in moves_for(engine, task, question))
+    q, moves = QUESTIONS[question], moves_for(engine, task, question)
+    out.append(f"# The question: {ask_of(engine, task, question)}"
+               + ("\n\nIts offer lapsed: its contract never started, and a lapse shows nothing infeasible (an executor "
+                  "that finds a contract so challenges it) — continue it with a new contract whose deadline leaves what it "
+                  "waits on time; closing it is not a move here."
+                  if _offer_lapsed(engine, task) else
+                  "\n\nThis is the user's goal under AUTO: closing it is theirs, not yours — continue it with a contract "
+                  "the standing findings can be met under; unanswered, it closes by its bound."
+                  if "cancel" in q["moves"] and "cancel" not in moves else
+                  "\n\nThis node is part of the plan the user handed in: `cancel` does not close it here — it STOPS the "
+                  "whole run and tells the user this plan cannot be carried. Choose it only for that; a part that ran "
+                  "out of time while it waited on its producer is continued by a new contract."
+                  if "cancel" in moves and engine.users_plan() and users_criteria(engine.graph, task) else "")
+               + "\n\nAdmissible moves: " + ", ".join(f"`{m}`" for m in moves)
                + f"\n\nWrite every text you return in the same language as this sentence the user wrote: "
                  f"«{_users_sentence(engine, task)}» — even where other text in this packet is in another "
                  f"language"
@@ -403,16 +532,24 @@ QUESTIONS = {
                     "split repairs, challenge the contract to its issuer.",
              "moves": ("revise_child", "add_child", "drop_child", "reshape", "add_criterion", "drop_risk",
                        "resplit", "dispute", "refine", "challenge")},
-    "dispute": {"ask": "the executor CHALLENGED this contract. Can the contract be met as written?",
+    "dispute": {"ask": "the executor CHALLENGED this contract. Can the contract be met as written? A report that the "
+                       "work is more than one session names no defect: its sessions continue one another (each hands "
+                       "over to the next) until the criteria hold or the deadline; reject it "
+                       "saying so, the work goes on under the same contract.",
                 "moves": ("accept", "reject")},
-    "escalation": {"ask": "the node is ESCALATED — its executor's contract ended without a verdict "
-                          "(the trail says which route). Only you decide: a new contract, or close it.",
-                   "moves": ("reassign", "cancel")},
+    "escalation": {"ask": "the node is ESCALATED — its executor's contract ended without a verdict (the trail says "
+                          "which route): the forecast you issued it with, its deadline and rework bound, did not hold. "
+                          "Only you decide, by one of: `reassign` — a new contract for it (a later deadline, a larger "
+                          "bound, corrected criteria, another executor); `redecompose` — the split you hold, of which it "
+                          "is a part, re-made in one act: it leaves, and the `children` you name (each with `replaces` "
+                          "naming it where it stands in for it) carry what it covered; `cancel` — close it.",
+                   "moves": ("reassign", "redecompose", "cancel")},
     "repair": {"ask": "the split needs repair: contact REFUTED it (the node FAILED on criteria its children "
                       "cover while they passed — the covering child must carry what failed, or, where that "
                       "child is SETTLED, a new child must), or a confirmed dependency of a child runs against the plan's order (a "
-                      "producer that cannot finish before it: drop the child that is cut wrongly and add "
-                      "what replaces it, reading what it needs), or a child waits on a producer that was "
+                      "producer that cannot finish before it — only a re-decomposition restores it, §15.5: in ONE "
+                      "`reshape` drop the children the cycle runs through and add those that replace them, cut so "
+                      "that none waits on one that waits on it), or a child waits on a producer that was "
                       "cancelled (drop that Dep, and cover what it fed another way).",
                "moves": ("revise_child", "add_child", "drop_child", "reshape", "drop_dependency", "resplit")},
     "split": {"ask": "this childless node was judged larger than one session of its executor, so it is not a "
@@ -427,15 +564,27 @@ QUESTIONS = {
                         "cannot finish before it (its reason is in the trail). If what it lacks is something "
                         "this project can produce, PROMOTE it — a producer beside it in the split you hold, which "
                         "it then waits for (§11.3: mandatory for a producible blocker). Otherwise resolve it "
-                        "(what it names is not what it needs: the record is refuted and it resumes), re-issue it "
+                        "(what it names is not what it needs: the record is refuted and it resumes — a block that names "
+                        "only the size of its own work names nothing it lacks, and resumes so), re-issue it "
                         "(a contract it can meet without that), or close it.",
                  "moves": ("promote", "resolve_block", "reassign", "cancel")},
+    "outside": {"ask": "a validator of a child of this split observed what none of the criteria writes (listed above "
+                       "under «What validators observed outside the written criteria»); no verdict rests on it. Judge "
+                       "each against the goal: where the goal needs it, write it into the split — revise the child that "
+                       "should carry it, or, where that child is SETTLED, add a child (or reshape) that does; where it "
+                       "does not, `decline` with why. Either answers every observation listed, once.",
+                "moves": ("revise_child", "add_child", "reshape", "decline")},
 }
 
 _CRITERIA = {"type": "array", "items": {"type": "object", "properties": {
     "name": {"type": "string"}, "description": {"type": "string"},
     "check": {"type": "array", "items": {"type": "object", "properties": {
         "behaviour": {"type": "string"}, "command": {"type": "string"}, "expect": {"type": "string"},
+        "exact": {"type": "boolean", "description": EXACT_TEXT},
+        "carry": {"type": "string", "description": "the id of one of THIS node's own pinned probes, as shown after "
+                  "`decided by` (`criterion#hex`): the system copies that probe into this criterion exactly — command, "
+                  "expect and its pinned inputs with their content; the other fields of this probe are then ignored. "
+                  "Use it when the plan gate says a child does not carry the parent's probe."},
         "inputs": {"type": "array", "items": {"type": "object", "properties": {
             "path": {"type": "string"}, "content": {"type": "string"}},
             "required": ["path", "content"]}}},
@@ -445,6 +594,7 @@ _CRITERIA = {"type": "array", "items": {"type": "object", "properties": {
 MOVE_SCHEMA = {
     "type": "object",
     "properties": {
+        "tech_report": TECH_REPORT,
         "move": {"type": "string"},
         "justification": {"type": "string", "description": "why — in terms of the contract and the goal"},
         "criteria": {**_CRITERIA, "description": "reassign / revise_child: the WHOLE criteria set as it "
@@ -465,9 +615,10 @@ MOVE_SCHEMA = {
                                  "criteria; challenge: the contract's fields it questions (criterion names, "
                                  "`deadline`)"},
         "children": {"type": "array", "items": {"type": "object"},
-                     "description": "reshape: the children added, each as `add_child`'s `child`"},
+                     "description": "reshape / redecompose: the children added, each as `add_child`'s `child`"},
         "drop": {"type": "array", "items": {"type": "string"},
-                 "description": "reshape: ids of children leaving the split (active, not settled)"},
+                 "description": "reshape / redecompose: ids of children leaving the split (active, not settled); "
+                                "redecompose drops the escalated node itself unasked"},
         "map": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}},
                 "description": "reshape: children standing in the split → this node's criteria each now carries "
                                "(added to what it carries) — the split's mapping, no child revised"},
@@ -486,18 +637,29 @@ MOVE_SCHEMA = {
 ISSUER_SCHEMA = {
     "type": "object",
     "properties": {
+        "tech_report": TECH_REPORT,
         "decision": {"type": "string", "enum": ["accept", "reject"]},
         "justification": {"type": "string",
                           "description": "why — in terms of the contract. On a rejection this is "
                                          "what the executor is given to work from."},
         "criteria": {**_CRITERIA, "description":
-                     "ON ACCEPT ONLY: the corrected criteria, the WHOLE set as it will then stand "
-                     "(the ones you keep, unchanged, included — each with its pinned `check`)."},
+                     "ON ACCEPT ONLY, and only when the contract changes: on a node of a plan the user gave, only the "
+                     "criteria you ADD (the user's stand as written, and one you omit is kept); otherwise the WHOLE set "
+                     "as it will then stand, each with its pinned `check` — one you omit is dropped. An accept that "
+                     "only rules findings out (`retire_findings`) carries no criteria."},
         "retire_findings": {"type": "array", "items": {"type": "string"}, "description":
                             "ON ACCEPT ONLY: ids of the validator's standing findings (listed in the packet) that the "
                             "dispute named by id and you rule outside the criterion as written — no longer demanded "
                             "of this node while that criterion's text stands; your justification is recorded as why. "
                             "Leave out every finding the criterion does ask for."},
+        "derivations": {"type": "array", "items": {"type": "object", "properties": {
+            "criterion": {"type": "string"}, "probe": {"type": "string"}, "derived_by": {"type": "string"}},
+            "required": ["criterion", "probe", "derived_by"]}, "description":
+            "ON ACCEPT AT THE ROOT OF AN AUTO PROJECT, for every probe you change on a criterion that stands — the new "
+            "one AND the one it replaces: the criterion, the probe's command, and `derived_by` — a command that PRINTS "
+            "that probe's true expected output WITHOUT running the work under test (it runs where only the probe's "
+            "pinned inputs are, `{inputs}` naming them), e.g. python3 with its standard library, sqlite3 included. "
+            "The new probe's must print its `expect`; the replaced one's must not print its old `expect`."},
     },
     "required": ["decision", "justification"],
 }
@@ -516,20 +678,30 @@ def _probes(stored, answered: tuple) -> tuple:
         return stored.check
     by_cmd = {pr.command: pr for pr in stored.check}
     pinned = tuple({path: (path, body) for pr in stored.check for path, body in pr.inputs}.values())
+    # …and a probe that NAMES the files without their content gets the content this criterion pins (`with_named_files`):
+    # an accepted dispute re-pinned an integration node's commands and kept its 41 files named and empty (2026-10-22)
+    files = pinned_files([stored])
+    named = lambda pr: dataclasses.replace(pr, inputs=tuple(with_named_files(
+        {"name": stored.name, "check": [{"command": pr.command, "inputs": list(pr.inputs)}]}, files)["check"][0]
+        ["inputs"].items()))
     return tuple(dataclasses.replace(pr, inputs=by_cmd[pr.command].inputs) if pr.command in by_cmd and not pr.inputs
                  else dataclasses.replace(pr, inputs=pinned) if not pr.inputs and INPUTS_TOKEN in pr.command
-                 else pr for pr in answered)
+                 else named(pr) if pr.inputs else pr for pr in answered)
 
 
-def spec_with(task, criteria: list, additions_only: bool = False, repin: frozenset = frozenset()) -> Spec:
+def spec_with(task, criteria: list, additions_only: bool = False, repin: frozenset = frozenset(), split=()) -> Spec:
     """The node's contract with its criteria as the answer states them — merged BY NAME onto the stored
     ones, so what the answer does not speak to (Dep glue, composition, pinned inputs) is carried, not
-    silently dropped. A criterion the answer leaves out is dropped, except the engine-authored Dep glue.
+    silently dropped. A criterion the answer leaves out is dropped, except one whose check reads a producer's result
+    (`depends_on`), which carries its Dep edge.
     `additions_only`: every stored criterion's text stands exactly and none is dropped; the answer adds new names, and
     re-pins the check of a criterion named in `repin` — the ones a dispute questioned — never with fewer probes. The
     procedure is the issuer side's instrument, not the user's word: a probe its own criterion's text refutes was
     re-written eight times and dropped each time until the root closed by count (AUTO haiku sql_database, root
     «Comment handling», 2026-10-14); and the same answers restated every other criterion, one of them 3 probes → 1."""
+    criteria, why = _carry(task, criteria, split)   # a probe kept by its id is the stored one, never the placeholder beside it
+    if why:
+        raise ValueError(why)
     stored = {c.name: c for c in task.spec.criteria}
     if additions_only:
         answered = {str(c.get("name", "")): _checks_of(c) for c in criteria}
@@ -588,16 +760,131 @@ def narrowing_at_the_root(engine, task, new_spec: Spec) -> Optional[str]:
     return None
 
 
+#: Seconds a derivation of a re-pinned expectation may run (`underived_at_the_root`).
+DERIVE_TIMEOUT_S = 60
+
+
+def _derived(command: str, criterion, probe, execution=None) -> tuple[Optional[str], str]:
+    """(what the command printed, '') run in an EMPTY place holding only the probe's pinned inputs — where the project's
+    work runs, so a value is derived on the platform its check is decided on — or (None, why it could not run — with
+    its exit code and the tail of its stderr, so the next answer knows what to change)."""
+    ex = execution or LocalExecution()
+    if not (bash := ex.shell()):
+        return None, "could not run: no `bash` here"
+    with ex.scratch("gfso-derive-", system=True) as tmp:
+        try:
+            laid = materialize_inputs((criterion,), Path(tmp) / "inputs", ex.files)
+        except ValueError as e:
+            return None, f"could not lay down the probe's inputs ({e})"
+        cmd = command.replace(INPUTS_TOKEN, laid.get(probe_id(criterion.name, probe), Path(tmp)).as_posix())
+        try:
+            p = ex.session(tmp).run([bash, "-c", IN_THE_WORKS_PATH + cmd], cwd=tmp, timeout=DERIVE_TIMEOUT_S)   # a proposed command: its own container
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return None, f"did not finish ({type(e).__name__})"
+        if p.returncode:
+            return None, f"exited {p.returncode}: {p.stderr.strip()[-200:]!r}"
+        return p.stdout, ""
+
+
+def _runs_the_work(how: str, probe, where: Optional[str]) -> Optional[str]:
+    """What of the work under test a derivation names — the place the work stands in, or a program the probe runs from
+    it (`./x`) — or None. The empty place it runs in hides nothing a path reaches (critic over the first form: an
+    absolute path to the engine under test passed the rule unchanged)."""
+    text = how.replace("\\", "/")
+    places = {str(Path(where).resolve()).replace("\\", "/"), str(where).replace("\\", "/")} if where else set()
+    if hit := next((w for w in places if w and w in text), None):
+        return f"the work's place `{hit}`"
+    progs = set(re.findall(r"(?:^|[\s;&|(])\./([\w.+-]+)", probe.command or ""))
+    return next((f"`{x}`, which the probe runs from the work" for x in progs
+                 if re.search(rf"(?:^|[\s/;&|(]){re.escape(x)}\b", text)), None)
+
+
+def underived_at_the_root(engine, task, new_spec: Spec, answer: dict, where: Optional[str] = None,
+                          execution=None) -> Optional[str]:
+    """Under AUTO an expectation the system re-pins on a root criterion is a claim about the world made for the user, and
+    it is grounded by contact with something other than the delivery it will judge — else the work under test answers
+    its own check, verifier = executor in substance (§10.3, d6 §4.1). So each re-pinned probe names `derived_by`, a
+    command that computes the expected output without the delivery; the system runs it where only the pinned inputs
+    stand and the output must be the new `expect`. Below the root an ancestor's check still demands what a wrong re-pin
+    let through; above the root nothing does. Measured: the executor disputed `50000.0 * 1.1 > 55000` as false, the
+    system — having run only the engine under test — accepted and re-pinned the root's check to the engine's output, and
+    the root passed (GB_sql_database_tn74a0108, 2026-10-20); of 116 re-pins in the archive two were at a root, that one
+    and a true repair (`CASE WHEN a=b` with a = b = 2 is `eq`).
+
+    What it does NOT close, named: an issuer that writes the value down instead of computing it (`print('…')`) passes —
+    the rule puts a second, independent statement of the value on the log and catches the one who computes it wrongly
+    believed (python gives `50000.0 * 1.1 > 55000` as True), not one who asserts it — in a live replay of that dispute
+    on the same model, false re-pins landing went 5 of 5 → 2 of 5, one by a written-down value, one by a narrower
+    command, which the replaced probe's own derivation now refuses; and a re-pin that changes only a pinned input file
+    (an expected-output `.out` behind `diff`) changes no (command, expect) pair and is not seen."""
+    if not is_auto_root(engine.graph, task):
+        return None
+    old = {c.name: c for c in task.spec.criteria}
+    given = {(str(d.get("criterion", "")), " ".join(str(d.get("probe", "")).split())): str(d.get("derived_by", ""))
+             for d in answer.get("derivations") or () if isinstance(d, dict)}
+    pair = lambda p: (p.command, p.expect)
+    wrong = []
+
+    def derive(c, p, owed: str) -> Optional[str]:
+        """The probe's expected output computed without the work, or None with why said into `wrong`."""
+        how = given.get((c.name, " ".join(p.command.split())), "")
+        if not how.strip():
+            wrong.append(f"«{c.name}» `{p.command[:120]}`: no `derived_by` for this probe — {owed} (named by its "
+                         f"command exactly as pinned)")
+        elif used := _runs_the_work(how, p, where):
+            wrong.append(f"«{c.name}»: its derivation `{how[:120]}` runs the work under test — {used}")
+        else:
+            out, why = _derived(how, c, p, execution)
+            if out is not None:
+                return out
+            wrong.append(f"«{c.name}» `{p.command[:80]}`: its derivation `{how[:120]}` {why}")
+        return None
+
+    for c in new_spec.criteria:
+        if c.name not in old:
+            continue
+        now, was = {pair(p) for p in c.check or ()}, old[c.name].check or ()
+        for p in (p for p in c.check or () if pair(p) not in {pair(q) for q in was}):
+            if (out := derive(c, p, "the expectation it pins")) is not None and not shows(out, p.expect):
+                wrong.append(f"«{c.name}» `{p.command[:80]}`: its derivation prints {out.strip()[:200]!r}, not the "
+                             f"expectation {p.expect[:200]!r}")
+        # …AND THE PROBE IT REPLACES WAS WRONG: a new command can be honestly derived and still check a narrower thing
+        # (critic's live replay: `WHERE salary > 55000.0` after a raise, Bob only, the Alice row out of the check)
+        for q in (q for q in was if pair(q) not in now):
+            if (out := derive(c, q, "the user's probe it replaces must be shown wrong")) is not None \
+                    and shows(out, q.expect):
+                wrong.append(f"«{c.name}» `{q.command[:80]}`: the probe it replaces was right — its derivation "
+                             f"prints its expectation {q.expect[:200]!r}")
+    return ("under AUTO a re-pinned expectation of the user's goal is shown by a derivation that does not run the "
+            "delivery (`derivations`: the criterion, the probe's command, and `derived_by` — e.g. python3 with its "
+            "standard library, sqlite3 included); the system runs it with only the pinned inputs and finds: "
+            + "; ".join(wrong)) if wrong else None
+
+
 def seam_keeping_executor(engine, task, another: bool) -> Optional[AgentId]:
     """An executor for a re-issued node that keeps every seam around it: from this project's pool,
     not its parent's Del, not any child's Del — else a node would verify itself or its own work."""
     parent = engine.graph.get_task(task.parent_id) if task.parent_id else None
-    kids = {str(k.assignee) for k in engine.graph.get_active_children(task.id)}
-    ok = [a for a in engine.workforce.executor_pool()
-          if (parent is None or str(a) != str(parent.assignee)) and str(a) not in kids]
+    ok = engine.seam_keepers(parent.assignee if parent else None, task.id)
     if not another and str(task.assignee) in {str(a) for a in ok}:
         return task.assignee
     return ([a for a in ok if str(a) != str(task.assignee)] or ok or [None])[0]
+
+
+def what_can_change(engine, task) -> str:
+    """What a next contract may change once re-issues are spent — the executor only where another keeps the seams: at a
+    root, whose pool is its own executor and its children's, the hint sent the issuer after a move refused every time
+    (finder over 190f4db)."""
+    other = seam_keeping_executor(engine, task, True)
+    return ("the criteria, the executor (`another_executor`) or the rework budget (`max_iterations`)"
+            if other is not None and str(other) != str(task.assignee) else
+            "the criteria or the rework budget (`max_iterations`) — no other executor keeps this node's seams")
+
+
+def extensions_spent(engine, task) -> bool:
+    """Are the AUTO root's re-issues out of ESCALATED spent (`MAX_EXTENSIONS`)? Below the AUTO root never (§12.15): the
+    one rule `settle` tells the issuer and `_reassign` holds it to."""
+    return is_auto_root(engine.graph, task) and extensions_granted(engine, task.id) >= MAX_EXTENSIONS
 
 
 def extensions_granted(engine, task_id: TaskId) -> int:
@@ -614,7 +901,35 @@ def _signalled(engine, task_id, sig, actor, **kw) -> tuple[bool, str]:
     return signal_ok(engine, task_id, sig, actor, why, **kw), "; ".join(why)
 
 
+def _offer_lapsed(engine, task) -> bool:
+    """Did this node of the user's plan reach the issuer's decision by its offer lapsing (§12.4: OFFERED's timeout)? A
+    lapse is the executor's abstention, recorded without its reason (§12.9): it shows nothing infeasible — an executor
+    that finds the contract so says it by CHALLENGE — so the honest move is a new contract, and `cancel`, the run's stop
+    on this plan, would stop it on a clock: parts' offers lapsed while their producer worked and one was cancelled
+    (GB_c_compiler_tnj930660). Read off how the node ENTERED its decision, not off its producers now: one that passed
+    while the issuer's turn waited turned the same lapse into "cannot be carried" (critic over 2d7a0e5)."""
+    if not (engine.users_plan() and task is not None and task.state == State.ESCALATED):
+        return False
+    entered = next((e for e in reversed(engine.audit_log(task.id)) if not e.rejected and e.new_state == State.ESCALATED),
+                   None)
+    return bool(entered and entered.signal == Signal.TIMEOUT and entered.old_state == State.OFFERED)
+
+
 def _cancel(engine, task, actor, answer, why, verbs):
+    """CANCEL — or, on a node of the plan the user handed in, the run's STOP with the issuer's reason: that plan is the
+    user's to cut (the author, 2026-10-25: «остановка с сигналом … что внутри системы считают что план нерабочий»). A
+    part cancelled while its offer lapsed behind a working producer read as a refuted plan (GB_c_compiler_tnj930660);
+    without the move at all, a part that really cannot be carried churned to its deadlines (critic over f96e6f8)."""
+    if engine.users_plan() and users_criteria(engine.graph, task):
+        reason = (f"the system's issuer finds {task.id} cannot be carried as the plan the user gave writes it: "
+                  f"{why or 'no reason given'} — only the user re-plans it: hand a corrected plan as a new goal "
+                  f"(`refine_plan` on its file, then `auto_decompose(plan=path)` on a new project; or `auto_decompose` with `spec`), or `set_mode` (with `user_said`) to hold the plan "
+                  f"yourself; `start_project` alone asks its issuer again")
+        # …ALWAYS asked: `pause` keeps a person's stop and takes over one the system lifts by itself (the account's
+        # limit, a place down), which would otherwise lift with this verdict lost (critic over bc5fca4)
+        engine.pause("system", reason)
+        engine.emit_info("issuer", f"{task.id}: {reason}")
+        return True, reason
     return _signalled(engine, task.id, Signal.CANCEL, actor, reason=why or "the issuer closes it")
 
 
@@ -639,26 +954,30 @@ def _changes_what_failed(task, spec, to, budget) -> bool:
 
 
 def _reassign(engine, task, actor, answer, why, verbs):
-    spec = spec_with(task, answer["criteria"], additions_only=is_auto_root(engine.graph, task)) \
-        if answer.get("criteria") else task.spec
+    if (bad := _carry(task, answer.get("criteria"), _split_of(engine, task))[1]):
+        return False, bad
+    spec = spec_with(task, answer["criteria"], additions_only=users_criteria(engine.graph, task),
+                     split=_split_of(engine, task)) if answer.get("criteria") else task.spec
     if bad := narrowing_at_the_root(engine, task, spec):
         return False, bad
     to = seam_keeping_executor(engine, task, bool(answer.get("another_executor")))
     budget = min(max(1, int(answer.get("max_iterations") or task.max_iterations)), MAX_REWORK_BUDGET)
-    if extensions_granted(engine, task.id) >= MAX_EXTENSIONS and not _changes_what_failed(task, spec, to, budget):
+    # …AT THE AUTO ROOT ONLY: below it the parent's deadline bounds every re-issue (`Schedule`), and §12.15 counts no
+    # re-ASSIGN out of ESCALATED; at the AUTO root nothing above bounds the machine standing in for the user's patience
+    if extensions_spent(engine, task) and not _changes_what_failed(task, spec, to, budget):
         return False, (f"{MAX_EXTENSIONS} contracts were already written for this node and none reached a verdict: "
-                       f"another must change what failed — the criteria, the executor (`another_executor`) or the "
-                       f"rework budget — not only the date; or close it with the reason")
+                       f"another must change what failed — {what_can_change(engine, task)} — not only the date; or "
+                       f"close it with the reason")
     if to is None:
         return False, "no executor of this project keeps the seams around this node"
-    want = datetime.now() + timedelta(hours=min(MAX_EXTEND_HOURS, max(1.0, float(answer.get("extend_hours") or 24))))
+    want = project_now(engine.graph) + timedelta(hours=min(MAX_EXTEND_HOURS, max(1.0, float(answer.get("extend_hours") or 24))))
     # INSIDE the parent's deadline, BEFORE its consumers' and AFTER its producers' along Dep (§4.5 item 6, §2.7) — the
     # one writer of ordered deadlines (`Schedule`): written on the parent's, two Dep-linked siblings re-issued got one
     # equal deadline (critic r7, B2); re-issued before its producer, a consumer lapsed again. No ordered one ahead — the
     # parent already due — the issuer types the one it wants (§2.5), the crossing flagged (§12.10).
     parent = engine.graph.get_task(task.parent_id) if task.parent_id else None
-    deadline = Schedule(engine.graph, parent, {str(task.id): (None, producers_of(spec), None)}, want=want).defaults()[
-        str(task.id)] or want
+    reads = producers_of(spec, engine.graph.declared_edges(task.id))
+    deadline = Schedule(engine.graph, parent, {str(task.id): (None, reads, None)}, want=want).defaults()[str(task.id)] or want
     # TYPED (§15.6 dial 3 — the cause is the issuer's to give): a re-issue out of ESCALATED is routine, and a change
     # of executor to keep the seams is no capability mismatch; untyped, every machine re-issue counted against q_Del
     # (sync audit, C-F3). A criteria change here answers no spec defect the machine could name.
@@ -687,7 +1006,10 @@ def _revise_child(engine, task, actor, answer, why, verbs):
     if not (answer.get("criteria") or covers):
         return False, ("a revised child names its criteria as they will stand (`criteria`), or which of this "
                        "node's criteria it carries (`covers`)")
-    spec = spec_with(child, answer["criteria"]) if answer.get("criteria") else child.spec
+    crits, why = _carry(task, answer.get("criteria"), _split_of(engine, task))
+    if why:
+        return False, why
+    spec = spec_with(child, crits) if crits else child.spec
     if {c.name: c for c in spec.criteria} == {c.name: c for c in child.spec.criteria} and not covers:
         return False, (f"{child.id} restated unchanged — a fix changes what the child carries (its criteria, or "
                        f"`covers`: which of this node's criteria it carries); a child's dependency criteria are "
@@ -755,13 +1077,32 @@ def _child_id(engine, task, c: dict, leaving: frozenset, taken: set) -> str:
     return cid
 
 
+def _in_act(engine, task, ref, ids: dict, standing: set) -> str:
+    """The child of `task`'s split a re-admission names: a `standing` one, or one the same act creates (`ids`) — by its
+    name as given or as its id would read — else as `_child_ref` reads it.
+    `D1` for `root.D1` was "not an active child" and closed a root (G9, 2026-10-15); `root.D3_Parser` for
+    `root.d3_parser` refused a reshape on the case of one letter (GB_sql_database_tmx1h7240); and a reshape adding
+    `root.build_and_dispatcher` and mapping it in the same act was refused four times running, `map` reading only the
+    children already standing, the plan held at the gate for an hour (AUTO haiku coreutils, GB_coreutils_tn73sy660)."""
+    r = str(ref)
+    return r if r in standing else (ids.get(r) or ids.get(_base_id(task, {"name": r.removeprefix(f"{task.id}.")}))
+                                    or _child_ref(engine, task, r))
+
+
 def _new_child(engine, task, c: dict, cid: str, ids: dict, leaving: frozenset) -> tuple[dict | None, str]:
-    """One child `cid` for a re-admission of `task`'s split, as `decompose` takes it: its criteria with the Dep seams
-    of the siblings it `reads`, the node's criteria it `covers`. (None, why) refused. `reads` names a standing child,
+    """One child `cid` for a re-admission of `task`'s split, as `decompose` takes it: its criteria, its declared Dep
+    edges onto the siblings it `reads`, the node's criteria it `covers`. (None, why) refused. `reads` names a standing child,
     or what `ids` resolves — a child the same act creates, by its name, and one it drops, to what replaces it."""
-    covers = [x for x in (c.get("covers") or []) if x in {k.name for k in task.spec.criteria}]
-    if not (c.get("criteria") and covers):
-        return None, "a new child carries criteria and names which of this node's criteria it covers"
+    mine = [k.name for k in task.spec.criteria]
+    covers = [x for x in (c.get("covers") or []) if x in mine]
+    # …each refusal names its own correction: one sentence for both halves sent a model round 44 times on a child that
+    # carried its criteria under another key (GB_c_compiler_tnl51c552)
+    if not c.get("criteria"):
+        return None, "a new child carries criteria: none were given in this child's `criteria`"
+    if not covers:
+        stray = [x for x in (c.get("covers") or []) if x not in mine]
+        return None, (f"a new child names which of {task.id}'s criteria it covers (`covers`), from: {', '.join(mine)}"
+                      + (f" — {', '.join(map(str, stray))} is not one of them" if stray else ""))
     if engine.graph.get_task(TaskId(cid)) is not None:
         return None, (f"{cid} exists — to change it, `revise_child` it (which may not remove what it "
                       f"carries); to reshape the split, `drop_child` it and add the child that replaces it")
@@ -771,17 +1112,67 @@ def _new_child(engine, task, c: dict, cid: str, ids: dict, leaving: frozenset) -
     # …ONE THE SAME ACT ADDS INCLUDED: a reshape adding a producer and its reader had no id to name the producer by,
     # and the reader was refused for reading a child that was not there yet
     standing = _active(engine, task) - leaving
-    # …named as the issuer names them: `D1` for `root.D1` was "not an active child" and closed a root (G9, 2026-10-15)
-    reads = [str(r) if str(r) in standing else ids.get(str(r)) or _child_ref(engine, task, r) for r in c.get("reads") or []]
+    reads = [_in_act(engine, task, r, ids, standing) for r in c.get("reads") or []]
     if bad := [r for r in reads if r not in standing and r not in set(ids.values())]:
         return None, f"`reads` names {', '.join(bad)} — not an active child of {task.id}, nor one this act adds"
-    seams = [{"name": f"dep__{r.rsplit('.', 1)[-1]}", "description": f"reads {r}'s result", "depends_on": r}
-             for r in reads]
-    return {"task_id": cid, "covers": covers, "spec": {
+    crits, why = _carry(task, c["criteria"], _split_of(engine, task))
+    if why:
+        return None, why
+    return {"task_id": cid, "covers": covers,
+            "deps": list(c.get("deps") or ()) + [{"from": r, "glue": f"reads {r}'s result"} for r in reads],
+            "spec": {
         "name": c.get("name", ""), "description": c.get("description", ""),
-        "criteria": [_with_corpora(x, _corpora(engine, task)) for x in c["criteria"]] + seams,
+        "criteria": [with_named_files(_with_corpora(x, _corpora(engine, task)), _files_of(engine, task))
+                     for x in crits],
         **({"accepted_risks": c["accepted_risks"]} if c.get("accepted_risks") else {})},
         **{k: c[k] for k in ("deadline", "max_iterations") if c.get(k)}}, ""
+
+
+def _split_of(engine, task) -> list:
+    """The children of the node's split — whose probes an answer may `carry` by id, as the node's own."""
+    return list(engine.graph.get_children(task.id))
+
+
+def _observation(p) -> tuple:
+    """What running a pinned probe observes, as a check reads its output — one key for every copy of one probe."""
+    cmd, _, inputs = same_probe(p)
+    return cmd, as_read(p.expect), inputs, bool(p.exact)   # who decides the output is part of the probe carried
+
+
+def _carry(task, criteria: list, split=()) -> tuple[list, str]:
+    """The answer's criteria with each probe that names one of `task`'s own pinned probes by id (`carry`) replaced by
+    that probe EXACTLY — command, expect, its inputs with their content — copied by the system. The plan gate asks a
+    child to carry the parent's very probe (its inputs judged by content), and the issuer, shown inputs by name and
+    count only, could not write it: a same-named file another child already pinned made the content ambiguous
+    (own-plan row 3: 5–8 of 18 root criteria open on it). ([], why) when an id names no probe of `task`.
+    …or of a child of its split (`split`): the issuer wrote those too, and a reshape moving `root.head`'s probes onto
+    the child replacing it by their ids was refused as "not a probe of root" (GB_coreutils_tnqh4a016)."""
+    pinned = {probe_id(c.name, p): p for k in (task, *split) for c in k.spec.criteria for p in (c.check or ())}
+    own = {k: p.to_dict() for k, p in pinned.items()}
+
+    def found(ref: str) -> dict | None:
+        """The probe `ref` names: by its id, or — the id's identity being its command's hash — by that hash alone where
+        every probe carrying it is one observation. A haiku issuer wrote the hash bare (`#6e78ee3b`) or under a sibling
+        criterion's name the same command is pinned under (its prose and line breaks apart), and was refused 7 times in
+        62 min, the plan held at admission (GB_coreutils_tnq9d1176)."""
+        if ref in own:
+            return own[ref]
+        h = re.search(r"([0-9a-f]{8})\s*$", ref)
+        hits = [k for k in pinned if h and k.endswith("#" + h.group(1))]
+        return own[hits[0]] if hits and len({_observation(pinned[k]) for k in hits}) == 1 else None
+
+    out = []
+    for c in criteria or ():
+        if not isinstance(c, dict):
+            out.append(c)
+            continue
+        carried = [str(p["carry"]) for p in c.get("check") or () if isinstance(p, dict) and p.get("carry")]
+        if bad := [r for r in carried if found(r) is None]:
+            return [], (f"`carry` names {', '.join(bad)} — not one pinned probe of {task.id} or of its split; they are: "
+                        + ", ".join(sorted(own)))
+        out.append({**c, "check": [dict(found(str(p["carry"]))) if isinstance(p, dict) and p.get("carry") else p
+                                   for p in c.get("check") or ()]})
+    return out, ""
 
 
 def _corpora(engine, task) -> dict:
@@ -791,11 +1182,22 @@ def _corpora(engine, task) -> dict:
     pins = [(c.name, " ".join(p.command.split()), p.to_dict()["inputs"])
             for k in [task, *engine.graph.get_children(task.id)] for c in k.spec.criteria for p in (c.check or ())
             if p.inputs]
-    by_cmd: dict = {}
-    for _, cmd, files in pins:
+    by_cmd, by_file = {}, {}
+    for name, cmd, files in pins:
         by_cmd.setdefault(cmd, []).append(files)
-    return {**{(None, cmd): fs[0] for cmd, fs in by_cmd.items() if all(f == fs[0] for f in fs)},
+        for path, body in files.items():
+            by_file.setdefault((None, None, path), set()).add(body)
+            by_file.setdefault((name, None, path), set()).add(body)
+    # …and {(None, None, file): body} where the split pins that file with one content: a new probe naming a sibling's
+    # file under `{inputs}` without repeating its pin was 48 of 50 refused probes in one row (GB_c_compiler_tnl51c552)
+    return {**{k: next(iter(b)) for k, b in by_file.items() if len(b) == 1},
+            **{(None, cmd): fs[0] for cmd, fs in by_cmd.items() if all(f == fs[0] for f in fs)},
             **{(name, cmd): files for name, cmd, files in pins}}
+
+
+def _files_of(engine, task) -> dict:
+    """{(criterion, file): body} every probe of this node and of a child of its split pins with content."""
+    return pinned_files(c for k in [task, *engine.graph.get_children(task.id)] for c in k.spec.criteria)
 
 
 def _with_corpora(criterion, corpora: dict):
@@ -810,6 +1212,13 @@ def _with_corpora(criterion, corpora: dict):
         """The probe with the corpus its split pinned under this criterion and command, where it reads one and has none."""
         cmd = " ".join(str(p.get("command", "")).split()) if isinstance(p, dict) else ""
         files = corpora.get((criterion.get("name"), cmd), corpora.get((None, cmd)))
+        if not files and INPUTS_TOKEN in cmd:
+            # every file the command names under `{inputs}`, each pinned in the split with one content — under this
+            # criterion first, else under any; and only where `{inputs}` is never read as a directory (a glob, `ls`), or
+            # the probe would decide over a subset the system picked (critic)
+            refs = re.findall(re.escape(INPUTS_TOKEN) + r"/([\w.-]+(?:/[\w.-]+)*)(?![\w*?$/])", cmd)
+            got = {n: corpora.get((criterion.get("name"), None, n), corpora.get((None, None, n))) for n in refs}
+            files = got if refs and len(refs) == cmd.count(INPUTS_TOKEN) and None not in got.values() else None
         return {**p, "inputs": files} if INPUTS_TOKEN in cmd and not p.get("inputs") and files else p
     return {**criterion, "check": [carried(p) for p in criterion["check"]]}
 
@@ -855,6 +1264,26 @@ def _reshape(engine, task, actor, answer, why, verbs):
     return _readmit(engine, task, answer)
 
 
+def _redecompose(engine, task, actor, answer, why, verbs):
+    """ESCALATED refutes the forecast the node was issued with (§12.15 Φ3), and its issuer — the decomposer of the split
+    it is a part of — may answer by re-making that split (§4.5: re-decomposition at the attributed level): one
+    re-admission dropping it with the children that replace it, the battery over the split as it will stand. His own
+    act on his own split; nobody is ordered to split another's node."""
+    parent = engine.graph.get_task(task.parent_id) if task.parent_id else None
+    if parent is None:
+        return False, f"{task.id} is a root: no split stands above it — `reassign` or `cancel`"
+    # ITS CONSUMERS NEED A PRODUCER NAMED: left on the dropped node they starve; which new child makes what they read
+    # is the decomposer's judgement, so it is asked for, never guessed from the order of the children
+    readers = [str(k.id) for k in engine.graph.get_active_children(parent.id) if k.id != task.id
+               and k.state not in (State.DONE, State.ABANDONED, State.CANCELLING)
+               and str(task.id) in map(str, producers_of(k.spec, engine.graph.declared_edges(k.id)))]
+    named = {str(_child_ref(engine, parent, r)) for c in answer.get("children") or () for r in c.get("replaces") or ()}
+    if readers and str(task.id) not in named:
+        return False, (f"{', '.join(readers)} read {task.id}'s work: name in `replaces` the new child that makes "
+                       f"what they read, so they are handed to it in the same act")
+    return _reshape(engine, parent, actor, {**answer, "drop": [str(task.id), *(answer.get("drop") or ())]}, why, verbs)
+
+
 def _readmit(engine, task, answer) -> tuple[bool, str]:
     """The one re-admission behind `reshape`, `add_child` and `drop_child`. A child it drops and replaces — the new
     child named as it was, or naming it in `replaces` — hands its consumers to the replacement (`_repointed`)."""
@@ -877,10 +1306,11 @@ def _readmit(engine, task, answer) -> tuple[bool, str]:
     if bad := [i for i in asked if i not in set(risks_naming_own_criteria(task))]:
         return False, f"`items` names {', '.join(bad)} — only register entries naming this node's criteria go"
     kept = [n for n in register.items if n.item not in set(asked)]
-    mine, live = {c.name for c in task.spec.criteria}, _active(engine, task)
-    remap = {_child_ref(engine, task, k): [c for c in v or () if c in mine] for k, v in (answer.get("map") or {}).items()}
-    if bad := [k for k in remap if k not in live or k in drop]:
-        return False, f"`map` names {', '.join(bad)} — not a child standing in {task.id}'s split"
+    mine, live = {c.name for c in task.spec.criteria}, _active(engine, task) - leaving
+    remap = {_in_act(engine, task, k, ids, live): [c for c in v or () if c in mine]
+             for k, v in (answer.get("map") or {}).items()}
+    if bad := [k for k in remap if k not in live | set(cids)]:
+        return False, f"`map` names {', '.join(bad)} — not a child standing in {task.id}'s split, nor one this act adds"
     if not (kids or drop or asked or any(remap.values())):
         return False, ("a reshape adds `children`, `drop`s children, takes register `items` out or `map`s standing "
                        "children to this node's criteria — it named none")
@@ -912,102 +1342,54 @@ def _readmit(engine, task, answer) -> tuple[bool, str]:
 
 def _repointed(engine, task, replaced: dict, leaving: frozenset) -> list[dict]:
     """Each unsettled child standing in the split that consumes one `replaced` takes out, named again in the same act
-    with its seams onto the replacement — its issuer's revision of his own child. Left on the dropped producer it waited
-    on a cancelled node and starved, a repair nobody needed. Seams onto one producer collapse to one; its deadline and
-    rework bound ride as they stand (`deadlines_the_act_sets` keeps a re-issued child's that still fits)."""
+    with its seams onto the replacement — its declared edges and the criteria whose checks read it. Left on the dropped
+    producer it waited on a cancelled node and starved, a repair nobody needed. Seams onto one producer collapse to one;
+    its deadline and rework bound ride as they stand (`deadlines_the_act_sets` keeps a re-issued child's that still
+    fits)."""
     out = []
     for k in engine.graph.get_active_children(task.id):
         if (str(k.id) in leaving or k.state in (State.DONE, State.ABANDONED, State.CANCELLING)
-                or not any(str(c.depends_on) in replaced for c in k.spec.criteria if c.depends_on)):
+                or not set(producers_of(k.spec, engine.graph.declared_edges(k.id))) & set(replaced)):
             continue
-        crits = _onto_once(str(k.id), _tools.task_out(k)["criteria"], replaced)
-        out.append({"task_id": str(k.id), "assignee": str(k.assignee), "spec": {"criteria": [c for _, c in crits]}})
+        out.append({"task_id": str(k.id), "assignee": str(k.assignee), "deps": _edges_onto(engine, k, replaced),
+                    "spec": {"criteria": _onto_once(_tools.task_out(k, engine, plan=False)["criteria"], replaced)}})
     return out
 
 
-def _onto_once(owner: str, crits: list, onto: dict, skip=frozenset(), seen: set | None = None) -> list[tuple]:
-    """(owner, criterion) for `crits` as `task_out` gives them, each seam moved by `onto` (producer → its stand-in),
-    a seam onto `skip` dropped, and one producer read once (across calls sharing `seen`)."""
-    seen, out = set() if seen is None else seen, []
+def _edges_onto(engine, k, onto: dict) -> list[dict]:
+    """The declared edges into `k` as `decompose` takes a child's `deps`: each moved by `onto` (producer → its
+    stand-in), one producer read once."""
+    out: dict = {}
+    for e in engine.graph.declared_edges(k.id):
+        p = onto.get(str(e.from_id), str(e.from_id))
+        out.setdefault(p, {"from": p, "glue": e.glue})
+    return list(out.values())
+
+
+def _onto_once(crits: list, onto: dict) -> list[dict]:
+    """`crits` as `task_out` gives them, each one reading a producer moved by `onto` (producer → its stand-in), and one
+    producer read once."""
+    seen, out = set(), []
     for c in crits:
         dep = onto.get(str(c["depends_on"]), str(c["depends_on"])) if c["depends_on"] else None
-        if dep in skip or (dep and dep in seen):
+        if dep and dep in seen:
             continue
-        if dep:
-            seen.add(dep)
-        out.append((owner, {**c, "depends_on": dep}))
+        seen.add(dep)
+        out.append({**c, "depends_on": dep})
     return out
 
 
-def _merged(engine, task, members: list[str]) -> dict:
-    """The one child that carries a refuted cycle's `members` (§15.5: two units that each need the other are one): their
-    criteria BY REFERENCE, as `task_out` gives them — check with its inputs, composition, seams — their seams onto one
-    another dropped and onto any one producer kept once, a name two members share told apart by its member's; the
-    node's criteria they were mapped to; `replaces` them, so their consumers are handed to it in the same act and their
-    work is its start (`carried_work`). Its terms are the members' widest, the work being theirs together: the latest of
-    their live deadlines, the largest rework bound, every risk their packets set aside. `onto` says where each member's
-    criterion went, for its standing findings (`carry_findings`): a seam onto another member, dropped, to every
-    criterion of the member's own it carries — the integration it asked for is now that work's — or, where it has
-    none, to those of the members that read it, else to every criterion of the merged child; a seam onto a producer
-    another member's seam already reads, to that seam."""
-    kids = [engine.graph.get_task(TaskId(m)) for m in members]
-    short = {m: m.rsplit(".", 1)[-1] for m in members}
-    seen: set = set()
-    crits = [x for k in kids for x in _onto_once(str(k.id), _tools.task_out(k)["criteria"], {}, set(members), seen)]
-    names = [c["name"] for _, c in crits]
-    renames: dict = {}
-    for m, c in crits:
-        if names.count(c["name"]) > 1:
-            renames.setdefault(m, {})[c["name"]] = f"{c['name']} ({short[m]})"
-    final = {(m, c["name"]): renames.get(m, {}).get(c["name"], c["name"]) for m, c in crits}
-    reads = {c["depends_on"]: final[(m, c["name"])] for m, c in crits if c["depends_on"]}
-    whole = {m: _tools.task_out(k)["criteria"] for m, k in zip(members, kids)}
-    own = {m: [final[(x, c["name"])] for x, c in crits if x == m and not c["depends_on"]] for m in members}
-    # a member all of whose criteria read other members: its work feeds the members that read it, and failing those,
-    # the merged child as a whole — never a name the merged child lacks
-    fed = {m: own[m] or [n for x in members if any(str(c["depends_on"]) == m for c in whole[x]) for n in own[x]]
-           or list(final.values()) for m in members}
-    onto: dict = {}
-    for m in members:
-        for c in whole[m]:
-            dep = str(c["depends_on"]) if c["depends_on"] else None
-            onto.setdefault(m, {})[c["name"]] = ([final[(m, c["name"])]] if (m, c["name"]) in final
-                                                 else fed[m] if dep in members else [reads[dep]])
-    due = max((k.deadline for k in kids if k.deadline and k.deadline > datetime.now()), default=None)
-    return {"deadline": due, "max_iterations": max(k.max_iterations for k in kids),
-            "accepted_risks": list({n.item: n.to_dict() for k in kids for n in k.spec.accepted_risks}.values()),
-            "name": "_".join(short[m] for m in members),
-            "description": "\n\n".join(f"{short[str(k.id)]}: {k.spec.description}" for k in kids),
-            "criteria": [{**c, "name": renames.get(m, {}).get(c["name"], c["name"])} for m, c in crits],
-            "covers": list(dict.fromkeys(m.criterion_name for m in task.criterion_mappings
-                                         if str(m.child_id) in members)),
-            "replaces": list(members), "onto": onto}
-
-
-def merge_the_refuted_cycle(engine, task, actor: str) -> Optional[dict]:
-    """The canon's one restoring move for a dependency order contact refuted (§15.5: a re-decomposition), made by the
-    system where the split is a system executor's: the children on each refuted cycle merged into one, in ONE
-    re-admission. None where it is not this move's — no refuted order, a holder's split, a cycle through a done child
-    or one no merge of children closes (a block naming its own ancestor) — and the question goes on to its mover.
-
-    Asked of a model, it was not made: GB_c_compiler_tmp5cb096's root, its pp and libc each needing the other, took six
-    repairs from its machine issuer, every one refused, and was cancelled with 8 of its 10 parts passed. Nothing in the
-    move is a judgement — which children, their criteria, what they covered and who consumes them are the graph's."""
+def _cycle_in_hand(engine, task) -> Optional[dict]:
+    """A refuted order (§15.5) is re-decomposed by its split's decomposer, and the system makes no cut of its own: its
+    merge of the cycle into one child folded a whole compiler into one node no executor built (GL_cc_light1). Only
+    the wait is the system's. A MEMBER'S DELIVERY AWAITING ITS VERDICT IS WORK IN HAND (§12.16 (ii)): dropped now, it
+    would be voided unread; the question waits for the verdict — uncounted, backed off — and is asked after it."""
     if held_by_a_holder(engine, str(task.assignee)) or not engine.dep_order_refuted(task.id):
         return None
-    groups = engine.dep_order_cycle_children(task.id)
-    if not groups or any(engine.graph.get_state(TaskId(m)) == State.DONE for g in groups for m in g):
-        return None
-    # A MEMBER'S DELIVERY AWAITING ITS VERDICT IS WORK IN HAND (§12.16 (ii)): dropped now, it would be voided unread;
-    # the move waits for the verdict — uncounted, backed off — and the question is asked again after it
-    if busy := sorted(m for g in groups for m in g if engine.graph.get_state(TaskId(m)) == State.VALIDATING):
-        return {"status": "waiting", "why": f"{', '.join(busy)} delivered and await a verdict; the merge follows it"}
-    ok, why = _readmit(engine, task, {"drop": [m for g in groups for m in g],
-                                      "children": [_merged(engine, task, g) for g in groups]})
-    engine.emit_info("issuer", f"{task.id}: contact refuted its split's order — "
-                     + "; ".join(" + ".join(g) for g in groups) + " each wait on the other; merged into one child by "
-                     f"the system, {actor} (§15.5)" + ("" if ok else f" — REFUSED: {why}; the question goes to its mover"))
-    return {"status": "applied", "move": "merge"} if ok else None
+    if busy := sorted(m for g in engine.dep_order_cycle_children(task.id) for m in g
+                      if engine.graph.get_state(TaskId(m)) == State.VALIDATING):
+        return {"status": "waiting", "why": f"{', '.join(busy)} delivered and await a verdict; the re-cut follows it"}
+    return None
 
 
 def _promote(engine, task, actor, answer, why, verbs):
@@ -1024,18 +1406,37 @@ def _promote(engine, task, actor, answer, why, verbs):
     before = {str(k.id) for k in engine.graph.get_active_children(parent.id)}
     # DUE BEFORE THE NODE IT UNBLOCKS (§2.7): the Dep is written after the producer exists, so the one writer of ordered
     # deadlines is told of its consumer now — born with the parent's default, the producer came due after it (critic r2, F3)
-    blocked = task.deadline if task.deadline and task.deadline > datetime.now() else None
+    blocked = task.deadline if task.deadline and task.deadline > project_now(engine.graph) else None
     made_by = Schedule(engine.graph, parent, {"(promoted)": (None, (), None),
                                               str(task.id): (blocked, ("(promoted)",), None)}).defaults()["(promoted)"]
-    if made_by is None and parent.deadline and parent.deadline <= datetime.now():
-        made_by = datetime.now() + timedelta(hours=24)   # past the parent's deadline the issuer types one (§12.16)
-    ok, bad = _add_child(engine, parent, actor, {"child": {**(answer.get("child") or {}), "covers": covers, "reads": [],
-                                                           **({"deadline": made_by.isoformat()} if made_by else {})}},
+    if made_by is None and parent.deadline and parent.deadline <= project_now(engine.graph):
+        made_by = project_now(engine.graph) + timedelta(hours=24)   # past the parent's deadline the issuer types one (§12.16)
+    # …its producer read under either name the move gives it: the schema's "promote: {name, description, criteria}" sat
+    # in `child`'s description, the model wrote it under `promote`, and 44 refusals said the child carried no criteria
+    # while it carried two (GB_c_compiler_tnl51c552, 2026-10-28)
+    made_of = {**(answer["promote"] if isinstance(answer.get("promote"), dict) else {}),
+               **{k: v for k, v in (answer.get("child") or {}).items() if v}}
+    if not [c for c in covers if c in {k.name for k in parent.spec.criteria}]:
+        # …and a producer of nothing the split states is no promotion: whatever `covers` the move sends is not read, so
+        # "name the criteria it covers" could not be lifted (critic, §12.16 (ii))
+        return False, (f"{task.id} carries none of {parent.id}'s criteria (no mapping names it), so a producer beside "
+                       f"it would carry nothing of the split: resolve_block, reassign or cancel")
+    ok, bad = _add_child(engine, parent, actor, {"child": {**made_of, "covers": covers, "reads": [],
+                                                           **({"deadline": made_by} if made_by else {})}},   # a datetime on the project's clock, not a typed date
                          why, verbs)
     if not ok:
-        return False, bad
+        # …and where the producer already stands in the split — two parts that need each other — `promote` is not the
+        # move, and a refusal naming only the missing criteria sent the issuer back to it twice (GB_c_compiler_tnqqhf184)
+        return False, bad + ("" if made_of.get("criteria") else
+                             f"; if what {task.id} waits for is a sibling already in {parent.id}'s split, nothing new is "
+                             f"promoted: two parts that need each other are reshaped by {parent.id}'s issuer (merged, or "
+                             f"split along an interface each can build against) — answer the BLOCK with resolve_block, "
+                             f"or report it")
     made = next(str(k.id) for k in engine.graph.get_active_children(parent.id) if str(k.id) not in before)
     engine.add_dependency(TaskId(made), task.id, glue=f"{task.id} was blocked on what {made} produces: {why}")
+    # …and its BLOCK answered by a re-ASSIGN under the contract it has (§11.3): the edge is no part of the contract
+    if engine.graph.get_state(task.id) == State.BLOCKED:      # …unless the edge's deadline already re-issued it
+        engine.revise(task.id, engine.graph.get_task(task.id).spec, AgentId(engine.graph.issuer_of(task.id)))
     return True, ""
 
 
@@ -1048,9 +1449,19 @@ def _add_criterion(engine, task, actor, answer, why, verbs):
                        f"its criteria do not write (FM-1.f, §9.4) is reported to him: `challenge`")
     if not answer.get("criteria"):
         return False, "name the criterion to add (`criteria`), with its pinned check"
-    new = [c for c in answer["criteria"] if c.get("name") not in {k.name for k in task.spec.criteria}]
+    carried, bad = _carry(task, answer["criteria"], _split_of(engine, task))
+    if bad:
+        return False, bad
+    new = [c for c in carried if c.get("name") not in {k.name for k in task.spec.criteria}]
     if not new:
         return False, "every criterion named already stands; adding means a NEW name"
+    # …AND A NEW NAME OVER CHECKS ALREADY PINNED DECIDES NOTHING NEW: the obligation stayed undecided, the root grew from
+    # 5 to 40 criteria, ten of them one obligation over the same probes, each a fresh coverage hole (GB_coreutils_tnq9d1176)
+    standing = {_observation(p) for k in task.spec.criteria for p in (k.check or ())}
+    if (checks := [p for c in new for p in _checks_of(c)]) and all(_observation(p) in standing for p in checks):
+        return False, (f"every check of {', '.join(c.get('name', '') for c in new)} is already pinned on {task.id} — "
+                       f"the same checks decide nothing new; what the open finding says is still admitted is what a "
+                       f"NEW check must probe")
     spec = dataclasses.replace(task.spec, criteria=task.spec.criteria + tuple(
         Criteria(c.get("name", ""), c.get("description", ""), check=_checks_of(c)) for c in new))
     # an obligation of the goal no criterion decided is the contract's own defect, unless the issuer says the goal grew
@@ -1090,14 +1501,26 @@ def _drop_risk(engine, task, actor, answer, why, verbs):
     return True, ""
 
 
+def _names_a_check(engine, task, why) -> bool:
+    """Does `why` name, by its id, a pinned check of this node or of a child of its split?"""
+    nodes = [task, *engine.graph.get_active_children(task.id)]
+    return any(probe_id(c.name, p) in str(why or "") for n in nodes
+               for c in n.spec.criteria for p in (c.check or ()))
+
+
 def _dispute(engine, task, actor, answer, why, verbs):
     if is_auto_root(engine.graph, task) and loose_finding_key(str(answer.get("criterion") or "")
                                                                 ).replace(" ", "").startswith("undecided:"):
         return False, ("under AUTO an obligation of the user's goal that no criterion decides is closed by "
                        "ADDING the criterion (`add_criterion`) — the user's goal is not argued away")
     key = str(answer.get("criterion") or "")
+    # …and below the root it stands on a check: a reason naming none was read as a discharge, an unprobed requirement
+    # closing on a model's word (critic over the residue's move)
+    if loose_finding_key(key).replace(" ", "").startswith("undecided:") and not _names_a_check(engine, task, why):
+        return False, ("an obligation no criterion decides is disputed by naming the pinned check that decides it, by "
+                       "its id (shown after `decided by`); with none, `add_criterion` with one")
     # the engine resolves the key — one rule for every caller: exact, else one unambiguous near-match; a finding
-    # already disputed is refused there and counts toward MAX_UNPRODUCTIVE like any answer that moved nothing
+    # already disputed is refused there and backs off like any answer that moved nothing
     try:
         engine.dispute_review_finding(task.id, key, why, AgentId(actor))
     except ValueError as e:
@@ -1124,23 +1547,47 @@ def _refine(engine, task, actor, answer, why, verbs):
     if any(k.state != State.OFFERED for k in engine.graph.get_active_children(task.id)):
         return False, "a refine may drop children, and some of this split's are already at work"
     out = verbs.refine(engine, str(task.id))
+    # …and a round the account's limit refused authored nothing: read as "no split can be built", one probe of a limit
+    # window lapsed contact's refutation and handed a node that had failed four rounds its single session back (critic)
+    if (_stopped := what_stopped(out.get("stats"))):
+        raise Unavailable(f"{_stopped}: the refine round was refused", limit=True)
     return not out.get("error"), str(out.get("error") or "")
 
 
-def _cancelled_producers(engine, child) -> list:
-    return [e for e in engine.get_dependencies() if str(e.to_id) == str(child.id)
-            and (p := engine.graph.get_task(TaskId(e.from_id))) is not None
-            and p.state in (State.ABANDONED, State.CANCELLING)]
+def ask_of(engine, task, question: str) -> str:
+    """The question as THIS node poses it: a park with a cause asks with it (`execution_park_said`)."""
+    if question == "parked" and task is not None and (said := engine.parking.execution_park_said(task)):
+        return f"{said}. Decide what happens to the node."
+    if question == "parked" and task is not None and (note := engine.parking.execution_park_note(task)):
+        return f"{QUESTIONS[question]['ask']} Its last: {note}."
+    return QUESTIONS[question]["ask"]
 
 
 def moves_for(engine, task, question: str) -> tuple:
     """The moves this question admits on THIS node: `drop_dependency` only where a child waits on a cancelled
     producer — offered on a dependency-order refutation it could never land, and an AUTO issuer spent four answers on
-    it while the one move that could (a re-decomposition, §15.5) went unasked (GB_c_compiler_tmp5cb096)."""
+    it while the one move that could (a re-decomposition, §15.5) went unasked (GB_c_compiler_tmp5cb096).
+
+    No `cancel` at an AUTO root: CANCEL is the refusal of the task (§11.2), and the goal is the user's — the system
+    moving for them continues it by a re-ASSIGN, and silence closes it by its bound (§12.5). A machine issuer
+    cancelled one "all 22 criteria pass" over the standing FAIL that escalated it (GB_sql_database_tncfrm404). On any
+    other node of a plan the user handed in `cancel` is offered and STOPS the run (`_cancel`): the system never cuts
+    that plan, and an issuer that finds a part of it cannot be carried says so to the user, who re-plans."""
     moves = QUESTIONS[question]["moves"]
+    if question == "parked" and task is not None and engine.parking.execution_park_reason(task):
+        # …a session in its place, by any move, is ended again (`execution_park_said`); none where only the user lifts it
+        moves = () if users_criteria(engine.graph, task) else ("cancel",)
     if "drop_dependency" in moves and task is not None and not any(
             _cancelled_producers(engine, k) for k in engine.graph.get_active_children(task.id)):
         moves = tuple(m for m in moves if m != "drop_dependency")
+    if "cancel" in moves and (is_auto_root(engine.graph, task) or _offer_lapsed(engine, task)):
+        moves = tuple(m for m in moves if m != "cancel")
+    if "redecompose" in moves and not task.parent_id:
+        moves = tuple(m for m in moves if m != "redecompose")
+    # …nor `promote` into, nor a Dep dropped from, nor a re-made split of, a plan the user handed in: each a split the
+    # user did not make
+    if users_plan(engine.graph):
+        moves = tuple(m for m in moves if m not in ("promote", "drop_dependency", "redecompose"))
     return moves
 
 
@@ -1152,8 +1599,8 @@ def _drop_dependency(engine, task, actor, answer, why, verbs):
         return False, f"`{answer.get('child_id')}` is not a child of {task.id}"
     if not (gone := _cancelled_producers(engine, child)):
         return False, f"{child.id} consumes no cancelled producer"
-    for e in gone:
-        _tools.remove_dependency(engine, str(e.from_id), str(child.id))
+    for producer in gone:
+        _tools.remove_dependency(engine, producer, str(child.id))
     return True, ""
 
 
@@ -1166,15 +1613,25 @@ def _resplit(engine, task, actor, answer, why, verbs):
         return False, f"re-issuing {task.id} is its issuer's move ({issuer}), not the system's"
     live = {str(k.id) for k in engine.graph.get_active_children(task.id)}
     if not any(str(m.child_id) not in live for m in task.criterion_mappings):
-        return False, ("no mapping points at a child that is gone — a re-issue would prune nothing; to reshape "
-                       "the split, `drop_child` the child that is wrongly cut first")
+        # …and the move for a split that as a whole does not carry the goal is named too: three answers in a row asked
+        # `resplit` to rebuild the split and were sent only to `drop_child` (GB_c_compiler_tnqqhf184)
+        return False, ("`resplit` only re-issues the node to prune mappings to children that are gone, and none is — it "
+                       "would change nothing. To rebuild the split as a whole, `refine` (the decomposer re-cuts it over "
+                       "the gate's findings, while no child is at work); to reshape one part, `drop_child` the child "
+                       "that is wrongly cut and add the one that replaces it")
     engine.revise(task.id, task.spec, AgentId(issuer), reason=RevisionReason.OTHER)
     return True, ""
 
 
-MOVES = {"cancel": _cancel, "drop_dependency": _drop_dependency, "drop_child": _drop_child, "resplit": _resplit, "resolve_block": _resolve_block, "reassign": _reassign, "promote": _promote,
+def _decline(engine, task, actor, answer, why, verbs):
+    """The issuer's reason not to write what a validator saw outside the criteria into the split: no signal — the
+    answer itself, logged and kept with the observations it retires (`issuer_turn`)."""
+    return (True, "") if why else (False, "a decline says why the goal does not need what was observed")
+
+
+MOVES = {"cancel": _cancel, "decline": _decline, "drop_dependency": _drop_dependency, "drop_child": _drop_child, "resplit": _resplit, "resolve_block": _resolve_block, "reassign": _reassign, "promote": _promote,
          "add_criterion": _add_criterion, "drop_risk": _drop_risk,
-         "revise_child": _revise_child, "add_child": _add_child, "reshape": _reshape, "dispute": _dispute,
+         "revise_child": _revise_child, "add_child": _add_child, "reshape": _reshape, "redecompose": _redecompose, "dispute": _dispute,
          "refine": _refine, "challenge": _challenge}
 
 
@@ -1196,44 +1653,93 @@ def apply_move(engine, task_id: TaskId, question: str, actor: str, answer: dict,
 def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=None):
     """The issuer's answer, and the ledger of the tools its run used — None where nothing could be run (the agent
     transport, the only one with `run_agent`, keeps the ledger of every run)."""
-    llm = _llm or verbs.llm(MODEL_DEFAULT)
+    # where the project's work runs — a contact run in the node's place, and a zero-tool answer too: it is told the
+    # platform it runs on, and the work's is the one it answers about (a plan authored on the host named Windows tools
+    # for a Linux project, smoke-exec-1025141852)
+    ex = _execution(engine, verbs)
+    llm = _llm or (verbs.llm(engine.system_model(), execution=ex) if ex else verbs.llm(engine.system_model()))
     llm.stage_hint = f"{task_id} issuer({actor}) {question}"
     # …WITH THE NODE'S PINNED INPUTS LAID DOWN, as a validator's are: a probe reading `{inputs}` run as written
     # printed "No such file" and then its `ok`, and a rejection "it prints ok" passed the shell rule having checked
     # nothing (critic over session a597fc08). The answer names the directory as `{inputs}` again.
-    with (tempfile.TemporaryDirectory(prefix="gfso-issuer-inputs-", ignore_cleanup_errors=True) if where
-          else contextlib.nullcontext()) as tmp:
-        laid = materialize_inputs(engine.graph.get_task(task_id).spec.criteria, tmp) if tmp else {}
-        packet = issuer_context(engine, task_id, question, refusal, laid) + schema_instruction(schema)
-        with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):
-            if where:
-                text = llm.run_agent(PROMPT.read_text(encoding="utf-8"), CONTACT.format(where=where, checkout=checkout_note(where)) + packet,
-                                     allowed_tools=CONTACT_TOOLS, cwd=where, timeout=CONTACT_TIMEOUT_S)
-            else:
-                # the ZERO-TOOL port: an issuer reads the packet and answers; `run_agent` without a working
-                # directory refused every real call, so no machine issuer ever answered (hidden by fakes that
-                # accepted the missing argument)
-                text = llm.complete(packet, context=PROMPT.read_text(encoding="utf-8"))
-    llm.tag_last(Stage.ISSUER)
-    engine.record_llm_usage(Stage.ISSUER, llm, task_id)
+    # …ALL THE VALIDATION LAYS, its parts' too (`validation_procedure`): laid its own alone, an issuer ruling on findings
+    # over a settled part's pins found no file and ruled on the text (c_compiler pp-rest, 2026-11-06)
+    at_place, text, laid = ex or LocalExecution(), "", {}
+    try:
+        with (_contact_place(where, at_place, engine.project_name) if where else contextlib.nullcontext()) as tmp,                 _round(engine, tmp):
+            laid = materialize_inputs(engine.validation_procedure(task_id), tmp, at_place.files) if tmp else {}
+            packet = issuer_context(engine, task_id, question, refusal, laid, tmp, at_place) + schema_instruction(schema)
+            with (verbs.busy("issuer_turn", engine, task_id) if verbs else contextlib.nullcontext()):
+                if where:
+                    # …IN A COPY OF THE PLACE, as a validator's run is: the issuer rules on that delivery and must not be
+                    # able to change it (§10.3); its answer reads as run in the place — and where places stand apart,
+                    # never in the executor's place, its container and its CLI state (`ExecutionPort.apart`)
+                    # …ruled on the delivery as DELIVER recorded it, held to it as a validator's copy is — a dispute on
+                    # the one the FAIL judged, any other question too: a copy of the live place carried what the
+                    # executor holds now, not what it handed in (critic over the judged tree)
+                    held = engine.delivered(task_id)
+                    # …built as its judge built it; a build that failed is no reason to withhold the ruling on the FAIL
+                    # it made: the copy comes unbuilt, with the build's output (a dispute refused for it waited forever)
+                    built: list = []
+                    with (snapshot(where, Path(tmp) / "place", at_place, delivered=held, built=built, unbuilt_ok=True)
+                          if _NODES in str(where) or at_place.apart
+                          else contextlib.nullcontext()) as copy:
+                        if not copy and at_place.apart:
+                            raise Unavailable(f"no copy of {where}: an issuer does not rule in its executor's place")
+                        at = copy or where
+                        text = llm.run_agent(_prompt(),
+                                             CONTACT.format(where=at, checkout=checkout_note(at))
+                                             + (swap(packet, where, copy) if copy else packet)
+                                             + (f"\n\nBefore you, the system built this copy as its judge did: "
+                                                f"{built[0]}\n" if built else ""),
+                                             allowed_tools=CONTACT_TOOLS, cwd=at, timeout=CONTACT_TIMEOUT_S)
+                        text = swap(text, copy, where) if copy else text
+                else:
+                    # the ZERO-TOOL port: an issuer reads the packet and answers; `run_agent` without a working
+                    # directory refused every real call, so no machine issuer ever answered (hidden by fakes that
+                    # accepted the missing argument)
+                    text = llm.complete(packet, context=_prompt())
+    except PlaceUnavailable as e:    # …the place down laying the inputs or copying: booked as a call that could not start
+        llm.calls.append({"duration_ms": 0, "ended": "unavailable", "place": e.place, "error": str(e), "at": time.time()})
+    except NotTheDelivery as e:
+        # …a delivery no copy can be made of, by its own doing (an object missing or rewritten, a nested repository): a
+        # cause to rule on, not to wait out — asked again it failed again, forever (critic over 909e417)
+        text = llm.complete(packet + f"\n\nNO COPY of this delivery could be made for you, and the delivery itself is "
+                                     f"the cause: {e}. Rule on that: there is no tree to run anything in.",
+                            context=_prompt())
+    except Uncopied as e:            # …no copy for a cause not the delivery's: no ruling yet, asked again
+        raise Unavailable(f"no copy of {where} to rule on: {e}") from e
+    finally:                         # …booked whatever raises after the model ran (leaving the copy, the swap)
+        llm.tag_last(Stage.ISSUER)
+        engine.record_llm_usage(Stage.ISSUER, llm, task_id)
+    if failed := unanswered(llm.calls[-1:]):
+        raise failed
     if not str(text or "").strip():
         raise Unavailable("the model call returned nothing")
     if where and the_call_was_cut(llm, str(text)):   # an agent run of minutes is where calls are severed (critic 8)
         raise Unavailable("the contact run was cut before it answered")
-    return (_unlaid(parse_structured(text, schema), [d.as_posix() for d in laid.values()]),
-            dict(llm.last_tool_calls) if where else None)
+    file_tech_reports(engine, answer := parse_structured(text, schema), "issuer", actor, task_id)
+    own = {probe_id(c.name, p) for c in engine.graph.get_task(task_id).spec.criteria for p in c.check or ()}
+    answer = _unlaid(answer, {d.as_posix(): INPUTS_TOKEN if i in own else inputs_token(i) for i, d in laid.items()})
+    return answer, dict(llm.last_tool_calls) if where else None
 
 
-def _unlaid(x, dirs: list):
-    """The answer with every directory the inputs were laid down in named `{inputs}` again — the contract pins the
-    files, not one turn's temporary place."""
+def _unlaid(x, dirs: dict):
+    """The answer with every directory the inputs were laid down in named by its token again (`dirs`: {directory:
+    token}) — `{inputs}` for the node's own probe, `{inputs:<id>}` for a part's — the contract pins the files, not one
+    turn's temporary place."""
     if isinstance(x, str):
-        for d in dirs:
-            x = x.replace(d, INPUTS_TOKEN)
+        for d in sorted(dirs, key=len, reverse=True):
+            x = x.replace(d, dirs[d])
         return x
     if isinstance(x, list):
         return [_unlaid(v, dirs) for v in x]
     return {k: _unlaid(v, dirs) for k, v in x.items()} if isinstance(x, dict) else x
+
+
+#: A plan's check no ruling may lift, as a criterion's last, false on correct work: the one move that changes it.
+_LAST_CHECK = (". Where it IS demanded, as a check of the plan a ruling may not lift, and you ran it false on correct work, "
+               "ACCEPT with that criterion replaced by one whose check holds")
 
 
 def _ran_a_shell(ran: dict) -> bool:
@@ -1241,10 +1747,28 @@ def _ran_a_shell(ran: dict) -> bool:
 
 
 #: Said wherever a dispute at an AUTO root asks to rule a finding out of the user's goal (`Engine.users_dispute`).
-_USERS_DISPUTE = ("{0}'s executor asks to rule {1} outside the user's goal — the user's question, as the root's issuer "
-                  "(§10.1): the system makes no move on it. The user answers ACCEPT_CHALLENGE with `retire_findings` "
-                  "naming what he rules out, or REJECT_CHALLENGE with why the goal asks for it; silence is bounded by "
-                  "the clock (CHALLENGED → ESCALATED).")
+_USERS_DISPUTE = ("{0}'s dispute asks to rule {1} outside the user's goal, and under AUTO only the user makes that ruling "
+                  "(§10.1): answer it without `retire_findings` — REJECT_CHALLENGE, the finding staying demanded, with "
+                  "what the executor must do to meet it, or ACCEPT_CHALLENGE with criteria you add. Your ruling was not "
+                  "made; the user's door to it stays open.")
+
+
+def _ruling(engine, task_id, answer) -> tuple[list, str]:
+    """(the standing findings the answer's ruling retires, why it is refused — '' where it is not), read as the gate
+    reads it (`findings.ruled`). It lands what the dispute named; the rest stays demanded and the executor may dispute
+    it by name — refused whole, the same four ids were ruled on three times and the part closed by count (root.tr,
+    2026-10-12). What it names that stands nowhere is refused by name, never dropped: the issuer names it right."""
+    standing = [s for ps in engine.regression_probes(task_id).values() for p in ps if (s := p.get("id"))]
+    retire, unknown = findings.ruled((answer or {}).get("retire_findings") or (), standing)
+    said = findings.named(engine.challenge_reason(task_id) or "", standing)
+    # …and what it names past the dispute is SAID to stay, never left for the issuer to believe retired: a ruling that
+    # landed in part read as whole, and the node failed four times on what it thought it lifted (GF_cc_full1)
+    if kept := [i for i in retire if i not in said]:
+        engine.emit_info("issuer", f"{task_id}: the ruling's {', '.join(kept)} stay demanded — the dispute did not name "
+                                   f"them; the executor may dispute them by name")
+    return [i for i in retire if i in said], (
+        f"your ruling names {', '.join(unknown)}, which no finding standing on {task_id} is — the standing ones are "
+        f"{', '.join(standing) or 'none'}: name each by its id as shown, or by its bare hash" if unknown else "")
 
 
 def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb=lambda s: None,
@@ -1257,16 +1781,9 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
     task = engine.graph.get_task(task_id)
     if task is None:
         return {"task_id": str(task_id), "status": "gone"}
-    if asked := engine.users_dispute(task_id):
-        return {"task_id": str(task_id), "status": "users", "why": _USERS_DISPUTE.format(task_id, ", ".join(asked))}
     answer, ran = _ask(engine, task_id, "dispute", issuer_id, ISSUER_SCHEMA, refusal, verbs, _llm, where)
     decision = str((answer or {}).get("decision", "")).strip().lower()
-    retire = _standing_ids(engine, task_id, [str(i) for i in (answer or {}).get("retire_findings") or ()])
-    # the ruling lands what the dispute named; the rest stays demanded and the executor may dispute it by name. Refused
-    # whole, the same four ids were ruled on three times and the part closed by count (root.tr, 2026-10-12)
-    said = findings.named(engine.challenge_reason(task_id) or "", [s for ps in engine.regression_probes(task_id).values()
-                                                                    for p in ps if (s := p.get("id"))])
-    retire = [i for i in retire if i in said]
+    retire, unknown = _ruling(engine, task_id, answer)
     if answer is None or decision not in ("accept", "reject"):
         # an acceptance names the contract it installs; falling through to a rejection would send the
         # executor back carrying a justification written to mean the issuer AGREED with him
@@ -1275,8 +1792,7 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
     # …AND A RULING THAT RETIRES A FINDING IS HELD TO THE SAME CONTACT: it takes back an observation of the work, and
     # an answer that ran nothing is a guess either way (critic over 28bd5e7)
     if (decision == "reject" or retire) and ran is not None and not _ran_a_shell(ran):
-        # not counted toward closing the node (`_COUNTED`): the dispute is not adjudicated yet, and three of these
-        # cancelled a node whose challenge no one had run — `head`'s end, sooner; MAX_ANSWERS still bounds it
+        # the dispute is not adjudicated yet: the question stands, asked again after its backoff
         return {"task_id": str(task_id), "status": "uncontacted",
                 "why": f"the {'rejection' if decision == 'reject' else 'ruling on the findings'} ran nothing: run the "
                        f"disputed checks in the workspace and decide on what they show, quoting each command and its "
@@ -1286,9 +1802,31 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
                              justification=str(answer.get("justification", "")) or "the contract stands")
         engine.emit_info("issuer", f"{task_id}: dispute {'REJECTED' if ok else 'reject REFUSED'} by {issuer_id}")
         return {"task_id": str(task_id), "status": "rejected" if ok else "refused", "why": why}
+    # …AND A PLAN HANDED IN IS CLOSED AT EVERY DEPTH: ruled below its root the finding went and the check stayed, a loop;
+    # the run stops with the signal instead (`settle`)
+    if retire and engine.users_plan():
+        return {"task_id": str(task_id), "status": "users", "why": _USERS_DISPUTE.format(task_id, ", ".join(retire))}
+    if retire and (asked := engine.users_dispute(task_id)):
+        # …THE RULING, NOT THE DISPUTE, IS THE USER'S: the system still rejects it or adds to the contract — a rejection
+        # is read first, a stray ruling beside it ignored. Barred from every move, the root sat CHALLENGED on a dispute
+        # that only said the findings could not be met, until the run's ceiling (GB_sql_database_tn03ao788, 2026-10-16)
+        # …A CHECK OF THE PLAN THE SYSTEM WROTE IS NOT THE GOAL: refused its ruling, the 17 criteria resting on one part's
+        # stub pin failed round after round, with no exit but the ceiling (GB_coreutils_tnyzqh948, 2026-11-04). What the
+        # ruling may not reach stays demanded, and the executor may dispute it again.
+        own = engine.plans_own_findings(task_id)
+        if not (retire := [i for i in retire if i in own]):
+            theirs = [i for i in asked if i not in own]
+            return {"task_id": str(task_id), "status": "users", "why": _USERS_DISPUTE.format(task_id, ", ".join(theirs))}
+    # …AND WHAT IT NAMES THAT STANDS NOWHERE IS REFUSED BY NAME, never dropped: the issuer names it right (§12.16 (ii))
+    if unknown:
+        return {"task_id": str(task_id), "status": "refused", "why": unknown}
     try:
-        spec = (spec_with(task, answer["criteria"], additions_only=is_auto_root(engine.graph, task),
-                          repin=questioned(engine, task)) if answer.get("criteria") else task.spec)
+        # …below an AUTO root, a node of the user's plan takes additions only — no re-pin: its expected outputs are the
+        # user's, and one re-pinned to what the build printed contradicted the root's own (GB_sql_database_tne9fg736)
+        spec = (spec_with(task, answer["criteria"], additions_only=users_criteria(engine.graph, task),
+                          repin=questioned(engine, task) if is_auto_root(engine.graph, task) else frozenset(),
+                          split=_split_of(engine, task))
+                if answer.get("criteria") else task.spec)
     except Exception as e:                              # noqa: BLE001 — a malformed contract is refused
         return {"task_id": str(task_id), "status": "refused", "why": f"the corrected contract is malformed: {e}"}
     # an acceptance that changes no criterion as it will stand and retires no standing finding answers nothing:
@@ -1305,12 +1843,16 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
         _cb(f"{task_id}: the adjudication would DROP {', '.join(unasked)}, which the dispute never "
             f"questioned — refused")
         return {"task_id": str(task_id), "status": "would_narrow", "dropped": unasked}
-    if bad := narrowing_at_the_root(engine, task, spec):
+    if bad := (narrowing_at_the_root(engine, task, spec)
+               or underived_at_the_root(engine, task, spec, answer, where, _execution(engine, verbs))):
         return {"task_id": str(task_id), "status": "would_narrow", "why": bad, "dropped": dropped}
     # the ruling rides the acceptance — one act, refused whole where it may not be made (`validation.ruling_refusal`)
     ok, why = _signalled(engine, task_id, Signal.ACCEPT_CHALLENGE, issuer_id, new_spec=spec,
                          retire_findings=tuple(retire), justification=str(answer.get("justification") or "") or None)
-    engine.emit_info("issuer", f"{task_id}: dispute {'ACCEPTED' if ok else 'accept REFUSED'} by {issuer_id}")
+    # …WITH ITS REASON: 35 refusals of one node's acceptance (GB_sql_database_tn8rdk788 `value`, 180 min of re-challenges)
+    # left the log saying only "REFUSED", and why could not be read back from the row
+    engine.emit_info("issuer", f"{task_id}: dispute {'ACCEPTED' if ok else 'accept REFUSED'} by {issuer_id}"
+                               + ("" if ok else f" — {str(why)[:400]}"))
     return {"task_id": str(task_id), "status": "accepted" if ok else "refused", "why": why}
 
 
@@ -1321,12 +1863,18 @@ def issuer_turn(engine, task_id: TaskId, question: str, actor: str, verbs: "Verb
         out = answer_the_challenge(engine, task_id, actor, _llm, refusal=refusal, verbs=verbs, where=where)
         return {**out, "status": "applied" if out["status"] in ("accepted", "rejected") else out["status"]}
     ep = episode(engine.graph.get_task(task_id))
+    # what an `outside` answer answers: the observations its packet shows INLINE, read as it is built — one recorded
+    # during the turn, or past the inline cap (the issuer of a split question has no tool to read the overflow file),
+    # was not shown and stays asked: marking all answered lost the earliest, the row's own hole (critic over d6c48ea)
+    shown = engine.outside_the_criteria(task_id, own=False)[:SHOWN_FINDINGS] if question == "outside" else ()
     answer, _ = _ask(engine, task_id, question, actor, MOVE_SCHEMA, refusal, verbs, _llm, where)
     if answer is None:
         return {"status": "unparsed", "why": "the answer was not one JSON object by the schema"}
     if not _still_open(engine, task_id, question, ep):
         return {"status": "gone"}
     done, why = apply_move(engine, task_id, question, actor, answer, verbs)
+    if done and shown:
+        engine.answer_outside(shown, actor, str(answer.get("move")), str(answer.get("justification") or ""))
     engine.emit_info("issuer", f"{task_id}: {actor}, on {question} — {answer.get('move')}"
                      + (f": {str(answer.get('justification'))[:200]}" if done else f" REFUSED: {why}"))
     return {"status": "applied" if done else "refused", "move": answer.get("move"), "why": why}
@@ -1336,15 +1884,20 @@ def issuer_turn(engine, task_id: TaskId, question: str, actor: str, verbs: "Verb
 
 #: The order in which one node's questions are asked — ONE at a time per node, so an escalation's
 #: CANCEL and a plan repair never race on the same subtree.
-PRIORITY = ("dispute", "escalation", "external", "parked", "repair", "split", "plan")
+PRIORITY = ("dispute", "escalation", "external", "parked", "repair", "split", "plan", "outside")
 
-#: How many UNPRODUCTIVE settles one node gets within a generation before its machine issuer closes it
-#: (an answer applied, or a review that left a verdict, is progress and is not counted).
-MAX_UNPRODUCTIVE = 3
-
-#: Seconds a node's question waits after an unproductive settle before it is asked again, per settle
-#: already spent — a transport failure gets time to pass, and nothing spins.
+#: Seconds a node's question waits after a settle no model answered (unavailable, a failed turn) before it is asked
+#: again, per such settle already spent — a transport failure gets time to pass, and nothing spins.
 BACKOFF_S = 120
+
+#: Seconds between answers that came and moved nothing (refused, unparsed, a review that removed no finding) while they
+#: are free (FREE_ANSWERS): the model's own latency paces them, this only keeps an instant no-op from spinning. Backed off
+#: as a failed transport, a refusal that names its own correction waited 2, 4, 8, 16, 32 min — an AUTO root's dispute
+#: sat CHALLENGED 81 min, 62 of them idle (GB_sql_database_tmvpo1976); ~230 min across four rows.
+PACE_S = 15
+
+#: The statuses of a settle in which no model answered.
+UNANSWERED = ("unavailable", "error")
 
 #: The longest a node's question waits after settles that moved nothing: the wait doubles from BACKOFF_S
 #: per such settle up to this — a transport that keeps failing is retried rarely, never muted (a cap that
@@ -1352,9 +1905,94 @@ BACKOFF_S = 120
 MAX_BACKOFF_S = 2 * 3600
 
 
+#: Applied answers in a row that leave their question open, taken at the pace they come before each further one waits
+#: (`backoff`) — a rate, never a close: the count at which a plan episode used to be CLOSED (MAX_PLAN_ANSWERS).
+FREE_ANSWERS = 24
+
+
 def backoff(waits: int) -> float:
     """Seconds a node's question waits after `waits` settles that moved nothing."""
     return min(BACKOFF_S * 2 ** waits, MAX_BACKOFF_S)
+
+
+#: How long a question the system owes may stay owed, and how many answers in a row may leave it standing, before the
+#: system says it is stuck on it. Inv-8 promises that a move exists, not that it is made or moves anything (§12.13); for
+#: the system's own moves that is the implementation's promise: a dispute it failed to rule froze a row 2 h 26 m (series
+#: 2 REF 2), and disputes over findings shown without their inputs looped 5 h (series 3) — both found by a human.
+STUCK_S, STUCK_ANSWERS = 1800, FREE_ANSWERS
+
+
+def report_stuck(engine, questions, ledger: dict, owed: dict, now: float) -> list[str]:
+    """Each question the system has owed past STUCK_S, or answered STUCK_ANSWERS times in a row without moving it, said
+    ONCE per node version as a TECH REPORT — the system reporting itself as an executor does; nothing else changes (the
+    clock still owns the lapse, no verdict is invented). `owed` — (node, question) → (since, versions said, last move)
+    — is the caller's across sweeps; a question that closes leaves it. A question MOVES when its node takes a new
+    version or, where it moves by degrees (`_left_open`), when what it leaves open falls below the least seen on that
+    version; both counts — the time owed and the answers that left it standing — run from its last move."""
+    for k in set(owed) - set(questions):
+        del owed[k]
+    said = []
+    for task_id, question in questions:
+        task = engine.graph.get_task(task_id)
+        since, done, move = owed.setdefault((task_id, question), (now, frozenset(), None))
+        if task is None or engine.paused():
+            continue
+        gen = f"{task_id}#{task.iteration}#{task.reopens}#{question}"
+        waits, _, answers = ledger.get(gen, (0, 0.0, 0))
+        left = _left_open(engine, task_id, question)
+        if move is None or move[0] != gen:        # first seen, or a new version: the version is the move
+            since = since if move is None else now
+            move = (gen, left, answers if move is None else 0)
+        elif left is not None and (move[1] is None or left < move[1]):
+            since, move = (now, (gen, left, answers)) if move[1] is not None else (since, (gen, left, move[2]))
+        if answers < move[2]:                     # the ledger closed and reopened it between sweeps
+            move = (move[0], move[1], answers)
+        stood = answers - move[2]
+        owed[(task_id, question)] = (since, done, move)
+        if gen in done or (now - since < STUCK_S and stood < STUCK_ANSWERS):
+            continue
+        owed[(task_id, question)] = (since, done | {gen}, move)
+        engine.tech_report(f"the system is stuck on its own move: it owes the {question} question on {task_id} for "
+                           f"{now - since:.0f}s; {stood} answer(s) in a row left it standing, {waits} turn(s) went "
+                           f"unanswered", role="system", actor="liveness", task_id=task_id)
+        said.append(str(task_id))
+    return said
+
+
+def _left_open(engine, task_id: TaskId, question: str) -> Optional[int]:
+    """How much of a question is left open, where answering it moves by degrees: the plan gate's holes and Level-2
+    findings — a plan converging 44 → 8 findings over 27 min, each answer changing it, was said stuck at 1814 s
+    (gb-c-compiler-tnpji8716, 2026-10-30). None where a question only closes, and while the plan's review is stale (an
+    answer changed the plan and no review has run on it): no reading then, not zero."""
+    if question != "plan" or (found := engine.open_l2_findings(task_id)) is None:
+        return None
+    return len(engine.split_holes(task_id)) + len(found)
+
+
+def _watched(engine, ledger: dict, owed: Optional[dict], now: float) -> list:
+    """The questions the system owes now, each one it is stuck on said first (`report_stuck`) where the caller keeps
+    `owed`."""
+    questions = open_questions(engine)
+    if owed is not None:
+        report_stuck(engine, questions, ledger, owed, now)
+    return questions
+
+
+def _asked_key(task, question: str) -> str:
+    """The ledger's key of one question on one version of a node (`answer_open_questions`)."""
+    return f"{task.id}#{task.iteration}#{task.reopens}#{question}"
+
+
+def answer_owed_first(engine, agents, ended: set, task) -> Optional[str]:
+    """The question on this node the system's issuer has not yet had his say on, or None: his answer and his signature are
+    one party's acts, so a machine validation waits for it. Once only: a turn that ended leaving it open, however it ended
+    (`ended`, beside the ledger's rate), lets the validation start, the question asked on at its rate; and a turn that never ends waits no
+    longer than VALIDATING's own bound, which hands the delivery to him (§16.14). A `gone` or a review still running is no
+    turn ended: the next sweep asks."""
+    question = dict(open_questions(engine)).get(task.id)
+    if question is None or system_mover(engine, agents, task.id, question) is None:
+        return None
+    return None if _asked_key(task, question) in ended else question
 
 
 def open_questions(engine) -> list[tuple[TaskId, str]]:
@@ -1375,23 +2013,44 @@ def open_questions(engine) -> list[tuple[TaskId, str]]:
         if t.state in (State.OFFERED, State.EXECUTING, State.REWORKING) and system_splits(engine, t):
             qs.append("split")
         if kids and t.state not in (State.DONE, State.ABANDONED, State.CANCELLING):
-            if (engine.decomposition_refuted(t.id) or engine.dep_order_refuted(t.id)
+            refuted = engine.decomposition_refuted(t.id)
+            if (refuted and not awaits_the_plans_review(refuted) or engine.dep_order_refuted(t.id)
                     or any(_starved(engine, k) for k in kids)):
                 qs.append("repair")
-            elif engine.split_holes(t.id) or any(
-                    k.state == State.OFFERED and engine.execution_blocked_by(k.id) for k in kids):
+            elif refuted or engine.split_holes(t.id) or any(
+                    k.state in (State.OFFERED, State.CHALLENGED) and engine.execution_blocked_by(k.id) for k in kids):
                 qs.append("plan")
+            # …and what a child's validator saw that no criterion writes, asked of the split's holder — the child's
+            # issuer — once, holding nothing: shown only in a context, it was readable and never delivered: a validator
+            # wrote the very hole the held-out suite then failed, the node passed and the root closed DONE (5cad9c4).
+            # Not in a plan the user handed in: only its author writes into it
+            if not engine.users_plan() and engine.outside_the_criteria(t.id, own=False):
+                qs.append("outside")
         if qs:
             found[t.id] = min(qs, key=PRIORITY.index)
     return list(found.items())
 
 
+def awaits_the_plans_review(refusal: str) -> bool:
+    """Does a refuted split's re-delivery wait on its plan's Level-2 check — no current verdict over the revision, or its
+    findings open — rather than on a change to the split? That is the plan's question (review, fix, dispute), not a
+    repair: asked as repair, the review never ran and the machine issuer added a near-identical child ten times over,
+    none started (GB_sql_database_tmyl10584, 2026-10-16), and a finding it believed wrong had no dispute move. Read off
+    the gate's own instruction (`validation._refuted_coverage_refusal`), the one wording both branches share."""
+    return "review_decomposition(" in refusal
+
+
 def _starved(engine, child) -> bool:
     """A live child consuming a producer that was cancelled — it waits on something that will not come."""
-    return child.state in (State.OFFERED, State.BLOCKED, State.EXECUTING) and any(
-        str(e.to_id) == str(child.id)
-        and (engine.graph.get_task(TaskId(e.from_id)) or child).state in (State.ABANDONED, State.CANCELLING)
-        for e in engine.get_dependencies())
+    return bool(_cancelled_producers(engine, child))
+
+
+def _cancelled_producers(engine, child) -> list[str]:
+    """The cancelled producers a live child consumes."""
+    if child.state not in (State.OFFERED, State.BLOCKED, State.EXECUTING):
+        return []
+    return [str(e.from_id) for e in engine.get_dependencies() if str(e.to_id) == str(child.id)
+            and (engine.graph.get_task(TaskId(e.from_id)) or child).state in (State.ABANDONED, State.CANCELLING)]
 
 
 def _machine_issuer(engine, agents, task_id: TaskId) -> Optional[str]:
@@ -1405,15 +2064,17 @@ def system_mover(engine, agents, task_id: TaskId, question: str) -> Optional[str
 
     A split question is the node's executor's (a registered one). An issuer question is the machine
     issuer's (`_machine_issuer`); with NO mode set the standing agent's disputes are still answered by
-    the system — the one issuer move it made before modes existed — and nothing else of it is."""
+    the system — the one issuer move it made before modes existed — and nothing else of it is, nor that one where the
+    node's issuer is its own executor: a dispute against oneself is meaningless (§10.3), and its answer is the node's own
+    holder's — the system answering it is a party outside Del deciding the contract under the holder's name (§11.6)."""
     task = engine.graph.get_task(task_id)
-    if question == "dispute" and engine.users_dispute(task_id):
-        return None                              # the user's own question (`answer_the_challenge`)
     if engine.mode() is None:
-        # before modes, the only issuer move the system made was answering a dispute — kept exactly
+        # before modes, the only issuer move the system made was answering a dispute — kept, at a seam only: at a
+        # self-assigned root it accepted its holder's own CHALLENGE 4 s later and retired a finding signed as him (ui, 2026-10-26)
         issuer = str(engine.graph.issuer_of(task_id))
-        return issuer if question == "dispute" and (agents.get(issuer) is not None
-                                                    or issuer == _config_agent_id()) else None
+        # …the AGENT's own: a registered machine issuing to itself has no other live mover, so the system still answers it
+        return issuer if question == "dispute" and not (issuer == _config_agent_id() and str(task.assignee) == issuer) and (
+            agents.get(issuer) is not None or issuer == _config_agent_id()) else None
     if question in SPLIT_QUESTIONS:
         return str(task.assignee) if agents.get(str(task.assignee)) is not None else None
     if (issuer := _machine_issuer(engine, agents, task_id)) is not None:
@@ -1431,173 +2092,198 @@ def _still_open(engine, task_id: TaskId, question: str, ep: str) -> bool:
     return task is not None and episode(task) == ep and (task_id, question) in open_questions(engine)
 
 
-def _close(engine, agents, task_id: TaskId, question: str, why: str) -> dict:
-    """The move that ends the obligation honestly — CANCEL, by the node's machine issuer, and only under
-    a mode. Where the issuer is a person or a holder, or no mode is set (behaviour as before modes), the
-    node stays on its issuer's frontier; the system does not close it."""
-    issuer = _machine_issuer(engine, agents, task_id)
-    if issuer is None or engine.mode() is None:
-        engine.emit_info("issuer", f"{task_id}: {question} left to its issuer ({engine.graph.issuer_of(task_id)})")
-        return {"status": "left"}
-    ok, err = _signalled(engine, task_id, Signal.CANCEL, issuer, reason=why)
-    engine.emit_info("issuer", f"{task_id}: closed by its issuer ({issuer}) — {why}"
-                     + ("" if ok else f" REFUSED: {err}"))
-    return {"status": "cancelled" if ok else "refused", "why": err}
+def review_due(engine, task_id: TaskId) -> bool:
+    """No Syntactic hole and no current review: the plan's next answer is its review, not an issuer's turn."""
+    return engine.open_l2_findings(task_id) is None and not engine.split_holes(task_id)
 
 
+def _review(engine, task_id: TaskId, verbs: Verbs) -> dict:
+    """Run the plan's review; applied where it moved the gate."""
+    before = engine.stored_review_findings(task_id)
+    answered = set((engine.get_critique(task_id) or {}).get("disputes") or {})
+    out = verbs.review(engine, str(task_id)) or {}
+    # …a review already running answers this question when it lands: no transport failed, so nothing is backed off.
+    # Read as one, every plan fix (whose own review starts at once) doubled the wait — 32, 64, 120 min idle on an
+    # own-plan root between its fixes, no part started in 4.6 h (GB_sql_database_tnb3ow508, 2026-10-22)
+    if out.get("inflight"):
+        return {"status": "inflight", "kind": "review"}
+    if not out.get("stats"):
+        raise Unavailable("no review ran (the model layer did not answer)")
+    if failed := unanswered(out["stats"]):
+        raise failed
+    after = engine.open_l2_findings(task_id)
+    # progress = the gate opened, or at least one standing finding is gone (sets, not counts: two
+    # closed and two new is movement); a review with no readable verdict, or one that removed
+    # nothing, moved nothing — backed off, so a checker that never lands a verdict is asked rarely
+    # …and a review that raises again ONLY what was answered in writing is the checker's reading of a plan
+    # that changed since, not an issuer that failed to move: counted so, three re-issued children closed a
+    # converging AUTO root (critic, 2026-09-27); the dispute that answers it again closes nothing
+    moved = after is not None and (not after or before is None or not set(after) >= set(before)
+                                   or set(after) <= answered)
+    return {"status": "applied" if moved else "unproductive", "kind": "review"}
+
+
+def what_contact_refuted(engine, task_id: TaskId) -> str:
+    """What contact refuted in this node's split, each of the three ways a repair is owed: its FAIL over passing
+    children, its order, a child waiting on a producer that was cancelled."""
+    starved = [f"{k.id} waits on {', '.join(ps)}, cancelled — drop that Dep and cover what it fed another way"
+               for k in engine.graph.get_active_children(task_id) if (ps := _cancelled_producers(engine, k))]
+    return "\n".join(filter(None, (engine.decomposition_refuted(task_id), engine.dep_order_refuted(task_id),
+                                   *starved)))
+
+
+@system_decides()
 def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Verbs) -> dict:
     """Answer one question: the review first where the plan has none current, else the issuer's answer,
     and one retry with its refusal quoted — each only while the question is still the one that was asked.
-    Closing a node that keeps failing is the sweep's decision (`answer_open_questions`), not one settle's."""
+    A node no answer moves is backed off by the sweep (`answer_open_questions`) and ends by its clock."""
     ep = episode(engine.graph.get_task(task_id))
     if not _still_open(engine, task_id, question, ep):
         return {"status": "gone"}
-    if question == "plan" and engine.open_l2_findings(task_id) is None and not engine.split_holes(task_id):
-        before = engine.stored_review_findings(task_id)
-        answered = set((engine.get_critique(task_id) or {}).get("disputes") or {})
-        out = verbs.review(engine, str(task_id)) or {}
-        if out.get("inflight") or not out.get("stats"):
-            raise Unavailable("no review ran (one is in flight, or the model layer did not answer)")
-        after = engine.open_l2_findings(task_id)
-        # progress = the gate opened, or at least one standing finding is gone (sets, not counts: two
-        # closed and two new is movement); a review with no readable verdict, or one that removed
-        # nothing, moved nothing — counted, so a checker that never lands a verdict is bounded
-        # …and a review that raises again ONLY what was answered in writing is the checker's reading of a plan
-        # that changed since, not an issuer that failed to move: counted, three re-issued children closed a
-        # converging AUTO root (critic, 2026-09-27); the dispute that answers it again closes nothing
-        moved = after is not None and (not after or before is None or not set(after) >= set(before)
-                                       or set(after) <= answered)
-        return {"status": "applied" if moved else "unproductive", "kind": "review"}
+    if question == "plan" and review_due(engine, task_id):
+        return _review(engine, task_id, verbs)
+    # …A SPLIT OF THE USER'S PLAN IS NOT THE SYSTEM'S TO REMAKE: owed where contact refuted it or a leaf proved larger
+    # than a session, and only its author re-plans it — the run stops, its sessions finishing, its record whole
+    if question in SPLIT_QUESTIONS and engine.users_plan():
+        # …"refuted" only where contact refuted it: a part closed without a verdict (its bound, a person) leaves the
+        # plan unable to go on, which is not the same news (critic over f96e6f8, E)
+        said = ("is refuted" if engine.decomposition_refuted(task_id) or engine.dep_order_refuted(task_id)
+                or question == "split" else "cannot go on")
+        why = (f"the plan the user gave {said} at {task_id} ({question}: "
+               f"{what_contact_refuted(engine, task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans "
+               f"it: hand a corrected plan as a new goal (`auto_decompose` with `spec`, closed as this one; or `refine_plan` on its file, then `auto_decompose(plan=path)` on a new project, which contact may then repair),or `set_mode` "
+               f"(with `user_said`) to hold the plan yourself; `start_project` alone stops it here again")
+        engine.pause("system", why)
+        return {"status": "users", "why": why}
+    if question == "parked" and not moves_for(engine, (t := engine.graph.get_task(task_id)), question):
+        # …no move of the system's lifts it (an AUTO root past its disk bound: cancelling is the user's): the user told
+        why = f"{task_id}: {engine.parking.execution_park_said(t)}; {USERS_WAY}"
+        engine.pause("system", why)
+        return {"status": "users", "why": why}
     if question == "split":
         # ONE admissible move, and it is not a judgement: the refine round authors the split (SEARCH + the
         # form audit), the same verb a plan question may call; a model turn would only choose it
         done, why = _refine(engine, engine.graph.get_task(task_id), actor, {"move": "refine"}, "", verbs)
-        # …and a round that split nothing moved nothing: counted and backed off, never read as progress (a refine
+        # …and a round that split nothing moved nothing: backed off, never read as progress (a refine
         # that built no child "applied" twelve times in three seconds, then the node was closed)
         split = done and engine.split_owed(task_id) is None
+        if not done:   # …SAID, where it was not: a refused split left root.tr OFFERED 2 h 35 min with no line (tn73sy660)
+            engine.emit_info("issuer", f"{task_id}: the split owed here was REFUSED — {why}")
         return {"status": "applied" if split else "refused" if not done else "unproductive", "move": "refine",
                 "why": why or ("" if split else "the refine round built no split")}
-    # A REFUTED ORDER IS REPAIRED BEFORE ANY MODEL IS ASKED: its one move is computed from the graph
-    if question == "repair" and (out := merge_the_refuted_cycle(engine, engine.graph.get_task(task_id), actor)):
+    if question == "repair" and (out := _cycle_in_hand(engine, engine.graph.get_task(task_id))):
         return out
-    spent = question in ("escalation", "parked") and extensions_granted(engine, task_id) >= MAX_EXTENSIONS
+    spent = question in ("escalation", "parked") and extensions_spent(engine, engine.graph.get_task(task_id))
     # an issuer's question is about the contract against the world — what failed, what blocks — and is answered from
     # contact; the split's questions are the executor's planning over the map
     where = (verbs.place(engine, agents, task_id)
              if verbs and verbs.place and question not in SPLIT_QUESTIONS else None)
     out = issuer_turn(engine, task_id, question, actor, verbs, where=where, refusal=(
-        f"{MAX_EXTENSIONS} contracts were already written for this node and none reached a verdict. Decide: a next "
-        f"contract that changes what failed (criteria, executor, budget), or `cancel` with the reason." if spent else ""))
+        f"{MAX_EXTENSIONS} contracts were already written for this node and none reached a verdict. " + (
+            "Its place is past its disk bound, so no next contract runs there: `cancel` with the reason."
+            if question == "parked" and engine.parking.execution_park_reason(engine.graph.get_task(task_id)) else
+            f"Decide: a next contract that changes what failed ({what_can_change(engine, engine.graph.get_task(task_id))})"
+            + ("." if "cancel" not in moves_for(engine, engine.graph.get_task(task_id), question)
+               else ", or `cancel` with the reason.")) if spent else "" if question in SPLIT_QUESTIONS else refused_on_this_version(
+            engine, task_id, actor)))
     if out["status"] != "applied" and _still_open(engine, task_id, question, ep):
         out = issuer_turn(engine, task_id, question, actor, verbs, where=where,
                           refusal=str(out.get("why") or out["status"]))
+    # …A DISPUTE A CLOSED PLAN CANNOT ANSWER IS THE USER'S: asked of a model again it was thrown away again, no line said,
+    # 29 calls in 27 min (tracker, 2026-11-03); and so is one its issuer twice asked to rule out, which he may not there
+    if question == "dispute" and out["status"] in ("unparsed", "users") and engine.users_plan():
+        why = (f"the plan the user gave cannot go on at {task_id}: its executor disputes a check, and only the user "
+               f"changes a check of that plan, by handing a corrected plan as a new goal (`auto_decompose` with `spec`): "
+               f"{str(engine.challenge_reason(task_id) or '')[:300]}")
+        engine.pause("system", why)
+        return {"status": "users", "why": why}
     return out
 
 
-def review_due(engine, task_id: TaskId) -> bool:
-    """Would the plan's next settle be its review — no Syntactic hole, and no current review?"""
-    return engine.open_l2_findings(task_id) is None and not engine.split_holes(task_id)
+def refused_on_this_version(engine, task_id: TaskId, actor: str) -> str:
+    """The engine's last refusal of this issuer's move on the node's CURRENT contract, read off the log — handed to its
+    next turn, not only to the retry inside one settle: a sweep's first ask started blind, and one refusal (a probe
+    rewrite admission refuses) came back 33 times over 180 min while each turn fell back to rejecting the dispute
+    (GB_sql_database_tn8rdk788 `value`). A contract installed since (ASSIGN, ACCEPT_CHALLENGE) starts clean."""
+    for e in reversed(engine.audit_log(task_id)):
+        if not e.rejected and e.signal in (Signal.ASSIGN, Signal.ACCEPT_CHALLENGE):
+            return ""
+        if e.rejected and str(e.source or "") == str(actor) and e.error:
+            return f"An earlier {e.signal.name} of yours on this contract was refused: {e.error}"
+    return ""
 
 
-#: Answers one node may take to ONE question, applied or not, across its generations, before its machine
-#: issuer closes it: a dispute rejected and raised again, a block resolved and raised again, a plan fixed
-#: and found wanting again — each applies, and none may run without end.
-MAX_ANSWERS = 12
-
-#: Answers one plan EPISODE may take — from its question opening to the gate opening — before the node's
-#: machine issuer closes it; never on a fix no review has read (`answer_open_questions` runs the due review
-#: first). Reviews that move nothing close it sooner (MAX_UNPRODUCTIVE). Progress is not read off the
-#: gate's contents between reviews: finding and hole keys change for reasons other than convergence, and
-#: a measure built on them let a plan grow its root without bound.
-MAX_PLAN_ANSWERS = 24
-
-
-def _answers(engine, gen: str, question: str) -> int:
-    """How many answers this question has taken — for the plan, within its current episode."""
-    if question != "plan":
-        return engine.tally(f"answers:{gen}:{question}")
-    episode_no = engine.tally(f"admitted:{gen}")
-    return engine.tally(f"answers:{gen}:plan:{episode_no}")
-
-
-def _answered(engine, gen: str, question: str, out: dict, task_id: TaskId) -> None:
-    """Count one settle. A plan answer adds to its episode — save a dispute: a fix stales the review and the
-    disputes with it, so a rightly disputed finding returns at every review and would spend the budget of
-    a converging plan (bounded without it: a review's findings bound its disputes, a refused one counts
-    toward MAX_UNPRODUCTIVE). Whatever closes the plan question — a review, a dispute, a refine — ends the
-    episode, so a plan that comes back later (a child re-issued) starts with its budget whole."""
-    if out.get("status") == "waiting":       # no answer was given: the move waits on a verdict (`merge_the_refuted_cycle`)
-        return
-    if question != "plan":
-        engine.tally(f"answers:{gen}:{question}", add=1)
-        return
-    if out.get("kind") != "review" and out.get("move") != "dispute":
-        episode_no = engine.tally(f"admitted:{gen}")
-        engine.tally(f"answers:{gen}:plan:{episode_no}", add=1)
-    # …and a CHALLENGE closes the plan question only while its issuer holds it: rejected, the same findings stand, so it
-    # ends no episode — counted as an answer, or a challenge rejected and raised again would run without end where the
-    # issuer is a holder, whom no machine budget bounds (critic, 2026-10-07: 14 rounds, nothing spent)
-    if (out.get("status") == "applied" and out.get("move") != "challenge"
-            and dict(open_questions(engine)).get(task_id) != "plan"):
-        engine.tally(f"admitted:{gen}", add=1)
-
-
-_COUNTED = ("unparsed", "refused", "unproductive")   # the issuer answered, and it moved nothing — a
-# crash is the product's own defect, not an answer, and closing a node on it would read as the issuer's
-
-
-def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, ledger: dict) -> list[str]:
+def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, ledger: dict,
+                          owed: Optional[dict] = None, ended: Optional[set] = None) -> list[str]:
     """One sweep: each node's open question the SYSTEM answers is taken by ONE thread at a time (a claim
-    on the node, released when the answer is in). The ledger keeps, per node generation, the answers
-    that moved nothing and when the node may be asked again — an answer that moved nothing backs off, a
-    model call that did not complete backs off uncounted — and a project-kept count of every answer to
-    one question. MAX_UNPRODUCTIVE of the first, or MAX_ANSWERS of the second, close the node by its
-    machine issuer (only under a mode)."""
+    on the node, released when the answer is in). The ledger keeps, per node generation, how many settles
+    moved nothing, how many applied answers in a row left the same question open, and when the node may be asked
+    again. A count sets the RATE, never closes: a settle that moved nothing backs off, and so does an answer past
+    FREE_ANSWERS that left its question standing (without it a question its own answer brings straight back was asked
+    at the model's latency for a whole version). Each version ends by its clock, the node by its issuer's
+    act (§12.15 Φ2, Φ3 — "the counters are not finiteness devices"; every count-close measured on AUTO hid the
+    engine's own refusals of a correct move, GB_sql_database 2026-10-14/15)."""
     started = []
     now = time.monotonic()
-    for task_id, question in open_questions(engine):
+    for task_id, question in _watched(engine, ledger, owed, now):
         task = engine.graph.get_task(task_id)
         actor = system_mover(engine, agents, task_id, question)
-        gen = f"{task_id}#{task.iteration}#{task.reopens}" if task else ""   # revisions the machine makes
-        # itself must not reset the budgets that bound it
-        spent, waits, not_before = ledger.get(gen, (0, 0, 0.0))
-        if actor is None or task is None or now < not_before or not claim(f"q:{task_id}"):
+        # a revision the machine makes itself must not reset its own backoff — and a new question on the same version
+        # owes none of the old one's: a dispute's doubled wait kept the TIMEOUT into ESCALATED from asking the decision
+        # for 2 h (series 2 REF 2)
+        gen = _asked_key(task, question) if task else ""
+        waits, not_before, answers = ledger.get(gen, (0, 0.0, 0))
+        if (actor is None or task is None or now < not_before or being_rewritten(engine, task_id)
+                or not claim(f"q:{task_id}")):
             continue
         started.append(str(task_id))
 
-        def _run(t=task_id, q=question, a=actor, g=gen, n=spent, w=waits):
+        def _run(t=task_id, q=question, a=actor, g=gen, w=waits, n=answers):
             out = {"status": "error"}
             with cap:
                 try:
-                    answers = _answers(engine, g, q)
-                    spent = answers >= (MAX_PLAN_ANSWERS if q == "plan" else MAX_ANSWERS) and not (
-                        q == "plan" and review_due(engine, t))     # the last fix is read before closing
-                    if n >= MAX_UNPRODUCTIVE or spent:
-                        out = _close(engine, agents, t, q, (f"{n} answers to its {q} question in a row moved nothing"
-                                                            if n >= MAX_UNPRODUCTIVE else
-                                                            f"{answers} answers to its {q} question did not bring "
-                                                            f"it to a verdict"))
-                    else:
-                        out = settle(engine, agents, t, q, a, verbs)
-                        _answered(engine, g, q, out, t)
+                    # …stopped while it waited for its slot: nothing starts, the question asked again after the start
+                    out = {"status": "gone"} if engine.paused() else settle(engine, agents, t, q, a, verbs)
                 except Unavailable as e:
-                    out = {"status": "unavailable", "why": str(e)}
+                    out = {"status": "unavailable", "why": str(e), "limit": e.limit}
                 except Exception as e:                  # noqa: BLE001 — a failed turn is not a signal
                     engine.emit_info("issuer", f"{t}: the issuer turn on {q} FAILED — {type(e).__name__}: {e}")
                 finally:
-                    st = out.get("status")
-                    plan_fix = q == "plan" and out.get("kind") != "review"
-                    if st == "applied" and not plan_fix:
-                        ledger.pop(g, None)             # progress: the unproductive count starts over
-                    elif plan_fix and st == "applied":
-                        # a plan fix is progress only once a review says so, and it is not a settle that
-                        # moved nothing either: counted there, three fixes closed the AUTO root before
-                        # the review of the last one ran. Fixes are bounded as the plan episode's answers
-                        # (MAX_PLAN_ANSWERS); an unproductive review is what counts toward closing
-                        ledger[g] = (n, w, time.monotonic())
-                    elif st not in ("cancelled", "gone"):
-                        counted = n + (st in _COUNTED)
-                        ledger[g] = (counted, w + 1, time.monotonic() + backoff(w))
+                    st, now_ = out.get("status"), time.monotonic()
+                    if st not in ("gone", "inflight") and ended is not None:
+                        (ended.add if (t, q) in open_questions(engine) else ended.discard)(g)
+                    # `w` counts the settles in a row no model answered — a transport's failures; any answer ends the
+                    # run (an account's limit window left it raised for the rest of a version, every later wait doubled)
+                    review = out.get("kind") == "review"
+                    if st == "applied":
+                        # An answer that left its question open counts toward the rate; a review (the plan's reader,
+                        # not an answer to it) and a dispute do not; a question that closed starts the count over
+                        counted = not review and (q != "plan" or out.get("move") != "dispute")
+                        n = n + counted if (t, q) in open_questions(engine) else 0
+                        paced = backoff(n - FREE_ANSWERS - 1) if n > FREE_ANSWERS else 0
+                        # …but the plan's READER is owed at once, and the rate is laid AFTER it: an own-plan root's
+                        # admitting review waited 32 min behind its issuer's count (GB_c_compiler_tnl51c552,
+                        # 2026-10-28); dropped instead of moved, a review rewording its findings after every fix let
+                        # fix and review alternate at the model's pace (critic over that fix)
+                        wait = ((0 if q == "plan" and review_due(engine, t) else paced) if counted
+                                else paced if review else 0)
+                        ledger[g] = (0, now_ + wait, n)
+                    elif st in UNANSWERED:
+                        wait = (engine.stop_wait_s() or min(backoff(w), LIMIT_RETRY_S)) if out.get("limit") else backoff(w)
+                        ledger[g] = (w + 1, now_ + wait, n)
+                        # …SAID (a failed turn is, above): a parked leaf's issuer met a dead Docker daemon at every ask,
+                        # and 40 min passed with not one line in the log (GB_sql_database_tnij0m952)
+                        if st == "unavailable":
+                            engine.emit_info("issuer", f"{t}: the issuer's turn on {q} was not answered — "
+                                                       f"{out.get('why')}; asked again in {wait:.0f}s")
+                    elif st == "inflight":
+                        # a review running (started outside this sweep) is the read: the answer's rate is laid after it
+                        ledger[g] = (w, now_ + max(PACE_S, backoff(n - FREE_ANSWERS - 1) if n > FREE_ANSWERS else 0), n)
+                    elif st != "gone":
+                        # an answer came and moved nothing: one more answer at the model's pace, its wait only past
+                        # the free count — the refusal it carries is the next answer's prompt, not a reason to wait
+                        n = n + (not review) if (t, q) in open_questions(engine) else 0
+                        ledger[g] = (0, now_ + (backoff(n - FREE_ANSWERS - 1) if n > FREE_ANSWERS else PACE_S), n)
                     release(t, redispatch=st == "applied" and q == "dispute")
         threading.Thread(target=_run, daemon=True).start()
     return started

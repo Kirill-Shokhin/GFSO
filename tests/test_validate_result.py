@@ -12,12 +12,14 @@ from pathlib import Path
 import pytest
 
 import gfso.adapters.llm.headless as _headless
+from gfso.adapters.execution import LocalExecution, scratch_of
+from gfso.core.types import HostFiles
 from gfso import tools as T
 from gfso import tools_llm as TL
-from gfso.adapters.llm.headless import _tool_use_name, HeadlessClaudeLLM
+from gfso.adapters.llm.headless import _tool_use_name, ClaudeCodeProvider
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.invariants import verdict_report_defects
-from tests.support import criterion, make_engine, pinned, REGISTER
+from tests.support import criterion, hold_a_credential, make_engine, pinned, REGISTER
 
 
 def _eng():
@@ -70,18 +72,16 @@ def _delivered_node(e, tid="n1", extra_dep=False):
 def test_validate_result_happy_path_embeds_contract_and_deliver():
     e = _eng()
     _delivered_node(e, extra_dep=True)
-    # the seam is criteria-content (§2 Dep): `dep__prod` is a CRITERION of this node, so a verdict
-    # must speak to it too — a report silent on the seam is ⊥ over the seam (anti-mock has teeth)
+    # the seam is an edge, no criterion of this node (§2.7): the packet shows it upstream, and a report over the
+    # node's own criteria decides it
     llm = _ValidatorLLM(_fenced({"verdict": "PASS",
                                  "per_criterion": [
                                      {"criterion": "flush", "verdict": "pass", "evidence": "read wall.md", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
-                                     {"criterion": "holds", "verdict": "pass", "evidence": "ran check", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]},
-                                     {"criterion": "dep__prod", "verdict": "pass",
-                                      "evidence": "grep: uses the real bought nails, no stub", "behaviours": ["the criterion holds"], "probe": [{"command": "check dep__prod", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
+                                     {"criterion": "holds", "verdict": "pass", "evidence": "ran check", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                                  "seams": "checked prod output", "failed_criteria": []}))
     out = TL.validate_result(e, "n1", _llm=llm)
     assert out["verdict"] == "PASS" and out["failed_criteria"] == []
-    assert len(out["per_criterion"]) == 3 and out["state"] == "VALIDATING"
+    assert len(out["per_criterion"]) == 2 and out["state"] == "VALIDATING"
     assert out["stats"][-1]["stage"] == "validate_result"
     # the packet is SELF-CONTAINED: contract + seam + the audit-log DELIVER result, read-only tool set
     assert "flush" in llm.seen["user"] and "holds verified with 2kg frame" in llm.seen["user"]
@@ -130,12 +130,14 @@ def test_validate_result_unparsed_report_is_never_pass():
     e.stop()
 
 
-def test_pass_contradicting_its_own_evidence_is_not_a_verdict():
+def test_a_pass_over_its_own_red_entry_is_the_fail_its_entry_is():
     """THE false-PASS measured live (BCB/93, 2026-07-17): the validator ran the canonical suite
     correctly, reported `test_values: fail` WITH failing evidence, and still returned verdict PASS
     with empty failed_criteria — excusing the red criterion as "ACCEPTED_RISKS-declared, out of scope".
     A criterion is the obligation (§2 V=⋀cᵢ); ACCEPTED_RISKS (§9.2) holds risks of the decomposition and
-    never retires one. The ENGINE refuses to record it (not the prompt): no verdict ⟹ no PASS."""
+    never retires one. The ENGINE reads the red entry as what it is — V = AND of the criteria's values (§2.3) — so
+    what is recorded is a FAIL on `holds`, never the PASS (not the prompt). It was refused as no verdict, and one such
+    batch of ~17 voided a root's whole round (finder over 190f4db)."""
     e = _eng()
     _delivered_node(e)
     llm = _ValidatorLLM(_fenced({"verdict": "PASS",
@@ -146,9 +148,7 @@ def test_pass_contradicting_its_own_evidence_is_not_a_verdict():
                                                   "impossible criterion, so out of scope", "behaviours": ["the criterion holds"], "probe": [{"command": "pytest -q", "expect": "passed"}]}],
                                  "failed_criteria": []}))
     out = TL.validate_result(e, "n1", _llm=llm)
-    assert out["verdict"] is None                      # ⊥, never read as pass
-    assert "holds" in out["verdict_defects"] and "ACCEPTED_RISKS" in out["verdict_defects"]
-    assert e.get_exec_verdict(T.TaskId("n1")) is None   # nothing recorded — the gate stays shut
+    assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["holds"], out   # never read as pass
     assert T.signal(e, "n1", "PASS", "alice")["accepted"] is False
     e.stop()
 
@@ -167,9 +167,9 @@ def test_report_leaving_a_criterion_unspoken_is_not_a_verdict():
     e.stop()
 
 
-def test_failed_criteria_must_be_the_reports_own_red_set():
-    """The issuer's FAIL payload IS the report's red set (Inv-3): a FAIL naming other criteria (or
-    naming none) sends the executor to rework the wrong thing."""
+def test_failed_criteria_are_the_reports_own_red_set():
+    """The issuer's FAIL payload IS the report's red set (Inv-3): a list naming a criterion its own entry passes would send
+    the executor to rework the wrong thing, so one node's payload is read off its entries — the node fails either way."""
     e = _eng()
     _delivered_node(e)
     llm = _ValidatorLLM(_fenced({"verdict": "FAIL",
@@ -178,14 +178,15 @@ def test_failed_criteria_must_be_the_reports_own_red_set():
                                      {"criterion": "holds", "verdict": "pass", "evidence": "held", "behaviours": ["the criterion holds"], "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}],
                                  "failed_criteria": ["holds"]}))
     out = TL.validate_result(e, "n1", _llm=llm)
-    assert out["verdict"] is None and "failed_criteria" in out["verdict_defects"]
+    assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"], out
     e.stop()
 
 
-def test_a_nodes_own_report_that_names_no_verdict_is_not_a_verdict():
-    """A node's own report is wholly its claim (§7.1: V is two-valued; Inv-3): `"verdict": null` decided nothing, so
-    nothing is recorded — read as "derive it from the entries", it recorded PASS even beside a failed list (critic V2)."""
-    for listed in ([], ["holds"]):
+def test_a_nodes_own_report_is_its_entries_and_a_failed_list_its_entries_deny_decides_nothing():
+    """The system computes V from the entries (§2.3, Inv-3); the report's word is not asked. With no word and no list the
+    entries are the verdict; a failed list its own entries pass decided nothing — read as a PASS beside it, a
+    contradiction would have closed the node (critic V2)."""
+    for listed, want in (([], "PASS"), (["holds"], None)):
         e = _eng()
         _delivered_node(e)
         llm = _ValidatorLLM(_fenced({"verdict": None, "failed_criteria": listed, "per_criterion": [
@@ -193,8 +194,8 @@ def test_a_nodes_own_report_that_names_no_verdict_is_not_a_verdict():
              "probe": [{"command": f"check {n}", "expect": "it holds"}, {"command": "pytest -q", "expect": "passed"}]}
             for n in ("flush", "holds")]}))
         out = TL.validate_result(e, "n1", _llm=llm)
-        assert out["verdict"] is None and "neither PASS nor FAIL" in out["verdict_defects"]
-        assert e.get_exec_verdict(T.TaskId("n1")) is None
+        assert (out["verdict"] or None) == want, (listed, out)
+        assert (e.get_exec_verdict(T.TaskId("n1")) is None) == (want is None)
         e.stop()
 
 
@@ -231,7 +232,7 @@ def test_each_batch_is_judged_whole_and_the_words_are_conjoined(monkeypatch, sha
                                                          {"command": "pytest -q", "expect": "passed"}]}]})
 
     out = TL.validate_result(e, "n1", _llm=_Batched(""))
-    if shape == "lowercase pass":
+    if shape in ("lowercase pass", "null word"):     # no word is no claim: the engine conjoins the entries (§2.3)
         assert out["verdict"] == "FAIL" and out["failed_criteria"] == [red]
     else:
         assert out["verdict"] is None and out["verdict_defects"]
@@ -243,8 +244,9 @@ def test_a_report_over_several_nodes_that_names_no_verdict_decided_nothing():
     """The scope's reading of a report holds the record's rule (§7.1): a word that is neither PASS nor FAIL decided
     nothing for any node it covers, however green its entries (critic V3: it recorded PASS for every node)."""
     green = {"criterion": "a_ok", "verdict": "pass"}
-    for word in (None, "", "PARTIAL"):
+    for word in ("", "PARTIAL"):      # a word given that is neither; none given is no claim — the entries decide
         assert TL._report_contradicts_itself({"verdict": word, "per_criterion": [green], "failed_criteria": []})
+    assert TL._report_contradicts_itself({"verdict": None, "per_criterion": [green], "failed_criteria": []}) is None
     assert TL._report_contradicts_itself({"verdict": "pass", "per_criterion": [green], "failed_criteria": []}) is None
 
 
@@ -435,7 +437,7 @@ def _seen(e, tid):
     t = e.graph.get_task(T.TaskId(tid))
     return {c.name: {"note": f"checked {c.name} by hand",
                      "ran": [p.command for p in (c.check or ())]}
-            for c in t.spec.criteria if not c.depends_on}
+            for c in t.spec.criteria}
 
 
 def test_record_verdict_closes_the_solo_human_ux_cliff_without_weakening_the_gate():
@@ -568,14 +570,14 @@ def test_the_validator_runs_where_the_delivery_IS(tmp_path):
     # BESIDE the delivery, not inside it: a criterion like "every file under the target dir belongs
     # to this package" is otherwise false because of us (measured on the human door 2026-08-22).
     assert not (project / ".gfso-scratch").exists()
-    scratch = list((project.parent / f".gfso-scratch-{project.name}").iterdir())
+    scratch = list(scratch_of(project, e.project_name).iterdir())
     assert len(scratch) == 1, "a fresh scratch per validation is still made"
     assert str(scratch[0]) in llm.seen["user"], "…and the validator is told where it is"
     assert str(project) in llm.seen["user"]
     e.stop()
 
 
-def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeypatch):
+def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeypatch, tmp_path):
     """Every internal call (decompose, the Level-2 review, the validator) is a `claude -p`, and a
     `claude -p` inherits the operator's whole console configuration. Two parts of it must not come
     along, for two different reasons.
@@ -601,7 +603,7 @@ def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeyp
     class _P:
         def __init__(self, args, **kw):
             seen["args"] = args
-            self.stdin, self.stdout, self.returncode = _W(), iter(()), 0
+            self.stdin, self.stdout, self.returncode, self.pid = _W(), iter(()), 0, 2 ** 30   # no such group, for the exit's reap
 
         def wait(self, timeout=None):
             return 0
@@ -626,8 +628,9 @@ def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeyp
     # reports a missing pin where the real defect is a missing binary. That is how this test read on
     # a machine with `claude` installed (green) and on a CI runner without it (red), for one and the
     # same correct code. Pinning `which` makes the argv real on both.
-    monkeypatch.setattr(_headless.shutil, "which", lambda cmd: cmd)
-    llm = HeadlessClaudeLLM(model="haiku", claude_cmd="claude")
+    monkeypatch.setattr("shutil.which", lambda cmd: cmd)
+    hold_a_credential(monkeypatch, tmp_path)
+    llm = ClaudeCodeProvider(model="haiku", claude_cmd="claude")
     try:
         llm.complete("system", "user")
     except Exception:
@@ -646,9 +649,9 @@ def test_internal_model_calls_inherit_nothing_from_the_operators_console(monkeyp
     assert "--no-session-persistence" in args, \
         "every internal call would save its transcript into the operator's session history, " \
         "burying their own sessions and stalling `claude --resume` for minutes"
-    assert "--safe-mode" in args, \
-        "an internal call would load the operator's CLAUDE.md: an executor or a validator of this " \
-        "product would run under the personal instructions its user wrote for themselves"
+    assert args[args.index("--setting-sources") + 1] == "", \
+        "an internal call would load the operator's CLAUDE.md, or the cwd's `.claude/settings.json` a delivered " \
+        "tree carries: an executor or a validator would run under instructions or a helper nobody of the system wrote"
 
 
 def test_the_record_names_the_model_that_validated():
@@ -800,12 +803,8 @@ def test_a_retry_that_speaks_a_kept_criterion_again_is_read_by_what_it_saw(monke
     llm = _Twice("")
     assert TL.validate_result(e, "n1", _llm=llm)["verdict"] is None
     out = TL.validate_result(e, "n1", _llm=llm)
-    if word == "FAIL":
-        assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"]
-    else:
-        assert out["verdict"] is None
-        assert e.get_exec_verdict(T.TaskId("n1")) is None
-        assert T.signal(e, "n1", "PASS", "alice")["accepted"] is False
+    assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["flush"], out   # the fresh `fail` read, either word
+    assert T.signal(e, "n1", "PASS", "alice")["accepted"] is False
     e.stop()
 
 
@@ -965,7 +964,7 @@ def test_the_workdir_defaults_to_where_the_nodes_Del_is_registered(tmp_path, mon
          "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python sum.py", "expect": "42", "behaviour": "nail head is flush"}]},
         {"criterion": "holds", "verdict": "pass", "evidence": "ran it", "behaviours": ["picture hangs on it"],
          "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "python sum.py", "expect": "42", "behaviour": "picture hangs on it"}]}]}))
-    monkeypatch.setattr(TL, "llm_factory", lambda model: llm)
+    monkeypatch.setattr(TL, "llm_factory", lambda model, **_: llm)
 
     out = TL.validate_result(e, "n1")                       # no workdir: the roster has it
     assert "error" not in out, out.get("error")
@@ -999,14 +998,15 @@ def test_an_unreadable_delivery_accuses_nobody(monkeypatch, tmp_path):
     comparison exists to prevent, inverted (found while naming the swallowed failures, 2026-09-02).
     """
     (tmp_path / "already_here.py").write_text("x = 1", encoding="utf-8")
-    _real = Path.iterdir
-    monkeypatch.setattr(Path, "iterdir",
-                        lambda self: (_ for _ in ()).throw(OSError("gone"))
-                        if str(self) == str(tmp_path) else _real(self))
-    scratch, before = TL._validation_place("n1", str(tmp_path))
+    class _Unreadable(HostFiles):
+        def listdir(self, path):
+            if str(path) == str(tmp_path):
+                raise OSError("gone")
+            return super().listdir(path)
+    (ex := LocalExecution()).files = _Unreadable()
+    scratch, before = TL._validation_place("n1", str(tmp_path), ex)
     assert before is None, "an unreadable pre-image is UNKNOWN, not empty"
 
-    monkeypatch.undo()
     out: dict = {}
     TL._strays_left_behind(None, "n1", str(tmp_path), None, out, lambda *_: None)
     assert "strays" not in out and not out, "with no pre-image, the honest answer about strays is silence"

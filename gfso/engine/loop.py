@@ -5,6 +5,7 @@ import json
 import logging
 import queue
 import threading
+import time
 from dataclasses import replace
 from datetime import datetime
 from typing import Optional
@@ -18,16 +19,19 @@ from gfso.core.types import (
 from gfso.core.protocol.fsm import transition, not_admissible_here
 from gfso.core.protocol.invariants import content_words, is_pure_assent
 from gfso.core.protocol.procedure import admission_defects, criterionless
+from gfso.core.protocol.validation import required_role, Role
 from gfso.core.graph import Graph
-from gfso.core.graph.model import dep_scope, non_leaf_ids, standing_split
+from gfso.core.graph.model import (NO_TICK_S, clock_off_s, dep_scope, keep_off, non_leaf_ids, project_now,
+                                   standing_split)
 from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation
 from gfso.core.handlers import run_all_checks, recommend
 from gfso.config import state_bound
 
+from .findings import regression, ruled
 from .audit import AuditLog, AuditEntry, VERSION_INSTALLING, consented_on_current_version
 from .verdicts import store_verdict
 from .events import EventBus
-from .validation import validate_signal, ValidationError
+from .validation import pause_record, validate_signal, ValidationError
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +43,8 @@ def _payload_fields(sd: SignalData) -> dict:
         result=sd.result, failed_criteria=sd.failed_criteria, action=sd.action,
         in_flight=sd.in_flight, spec=_spec_json(sd),
         revision_reason=sd.revision_reason.name if sd.revision_reason is not None else None,
-        retire_findings=tuple(sd.retire_findings),
+        retire_findings=tuple(sd.retire_findings), artifact=sd.artifact, commit=sd.commit,
+        build=sd.build, by_system=sd.by_system and required_role(sd.signal) == Role.ISSUER,
     )
 
 
@@ -104,6 +109,17 @@ def event_loop(
             log.error(f"the step for {signal_data.task_id} raised and was dropped; the engine is "
                       f"still serving", exc_info=True)
         signal_queue.task_done()
+
+
+def _ruling_as_it_stood(sd: SignalData, graph, audit: AuditLog) -> SignalData:
+    """A ruling recorded as the full ids it retired when it was made (`findings.ruled` over the findings standing then,
+    the gate's own reading): stored as written, a bare hash was read again at every later read and retired a finding
+    filed afterwards under a criterion nobody disputed (critic over 6eec80c, a person's ruling)."""
+    if not (sd.retire_findings and sd.signal == Signal.ACCEPT_CHALLENGE):
+        return sd
+    standing = [i for ps in regression(graph._storage, audit.get_entries(sd.task_id), graph.get_task(sd.task_id)).values()
+                for p in ps if (i := p.get("id"))]
+    return replace(sd, retire_findings=tuple(ruled(sd.retire_findings, standing)[0]))
 
 
 def _refused(signal_data: SignalData, state: State, why: str, audit: AuditLog,
@@ -322,6 +338,7 @@ def process_signal(
 
     # Success
     log.info(f"{task_id}: {state.name} + {signal_data.signal.name} -> {new_state.name}")
+    signal_data = _ruling_as_it_stood(signal_data, graph, audit)
     audit.record(AuditEntry(
         timestamp=datetime.now(), task_id=task_id,
         signal=signal_data.signal, old_state=state,
@@ -406,10 +423,8 @@ def refresh_checks(graph: Graph, node_id: Optional[TaskId], stale_review: bool =
     deps, deadlines = dep_scope(graph, node_id)
     graph.store_check_results(
         node_id, run_all_checks(node, kids, deps, non_leaf_ids(graph, kids), deadlines))
-    stored = graph.get_task(node_id)
-    if stale_review and stored.verified:   # the decomposition changed: a stored Level-2 verdict is no longer current
-        stored.verified = False
-        graph.save_task(stored)
+    if stale_review and graph.get_task(node_id).verified:   # the decomposition changed: a stored Level-2 verdict is no longer current
+        graph.update_task(node_id, verified=False)
 
 
 def _execute_effects(
@@ -461,15 +476,14 @@ def _execute_effects(
                                        str(m.child_id) == str(t.id) for m in _parent.criterion_mappings))
                 if affected:
                     # The subtree cascade (canon §12.6/§15.1: CANCEL cascades — the protocol sends CANCEL to
-                    # every descendant; each runs its own handshake). An issuer action: each child's issuer
-                    # is the cancelling parent's assignee — carried as source so the cascade is a VALID
-                    # issuer-CANCEL (else it is rejected under validate_signals).
-                    parent = graph.get_task(mg.task_id)
-                    src = parent.assignee if parent else None
+                    # every descendant; each runs its own handshake). An issuer action, signed by EACH descendant's
+                    # issuer (§10.1, Del of its own parent): the cascade walks through a settled child to its live
+                    # ones, whose issuer is that child's Del — signed as the cancelled node's, a grandchild under a
+                    # DONE child was refused and kept working for a goal that no longer exists.
                     for child_id in affected:
                         signal_queue.put(SignalData(
-                            signal=Signal.CANCEL, task_id=child_id, source=src,
-                            reason="cascade from parent cancel",
+                            signal=Signal.CANCEL, task_id=child_id, source=graph.issuer_of(child_id),
+                            reason="cascade from parent cancel", by_system=True,
                         ))
 
             case RunChecks(task_id=tid):
@@ -514,7 +528,7 @@ def state_bound_passed(task, now: float) -> bool:
     return left is not None and left < 0
 
 
-def entered_on_a_spent_bound(task) -> bool:
+def entered_on_a_spent_bound(task, graph: Graph) -> bool:
     """Was the bound that governs this state ALREADY passed when the state was entered (§12.2)?
 
     A per-state bound cannot be: it starts at entry. What can be is the packet DEADLINE, which runs
@@ -527,7 +541,7 @@ def entered_on_a_spent_bound(task) -> bool:
     node escalated — a refusal no admissible move of the refused party could lift, which §12.16's
     conformance clause forbids. Found by an outside reviewer with a reproduction."""
     return (task.deadline is not None and task.state not in _OWN_BOUND_ONLY
-            and task.deadline < datetime.now())
+            and task.deadline < project_now(graph))
 
 
 def _the_clock_speaks_first(signal_data: SignalData, graph: Graph, state: State, signal_queue,
@@ -550,7 +564,7 @@ def _the_clock_speaks_first(signal_data: SignalData, graph: Graph, state: State,
         log.debug(f"a timeout for a visit already left is dropped: {task.id} {signal_data.visit}")
         return True
     if (not validate or signal_data.signal in (Signal.TIMEOUT, Signal.CANCEL)
-            or state in TERMINAL_STATES or not entered_on_a_spent_bound(task)):
+            or state in TERMINAL_STATES or not entered_on_a_spent_bound(task, graph)):
         return False
     signal_queue.put(SignalData(signal=Signal.TIMEOUT, task_id=task.id, visit=visit))
     _refused(signal_data, state,
@@ -568,8 +582,13 @@ def timeout_monitor(
     stop_event: threading.Event | None = None,
     state_timeout: float | None = None,
     clock: ClockPort | None = None,
+    lift=None,
 ) -> None:
     """Background thread: checks deadlines AND per-state age, emits timeout signals.
+
+    `lift(wall)`, asked at every tick under a stop: starts a stop the system made by itself once what made it is gone —
+    the account's limit lifted, the execution place answering (`Engine.lift_the_system_stop`) — from the stop's record,
+    so a restart re-arms it.
 
     Inv-5 (§12.12): EVERY non-terminal state is finite. Two clocks feed the same TIMEOUT trigger:
     (a) the task's own deadline (exact, when set); (b) the per-STATE clock — a state older than
@@ -589,10 +608,15 @@ def timeout_monitor(
     """
     clock = clock or SystemClock()   # Inv-5 reads the ClockPort, never the wall clock directly
     last_fired: dict[TaskId, tuple[State, object]] = {}   # task → (state, entered_at) of the fired visit
+    # …ON THE PROJECT'S CLOCKS (`project_now`): every wall second between two ticks is the project's or off, once — off
+    # under a stop, off in a gap too long to be a tick (a host asleep); the gap before this engine was left off at its
+    # start (`Engine.start`)
+    wall = time.time()
     while True:
         if stop_event and stop_event.is_set():
             break
         clock.wait(check_interval)
+        last, wall = wall, time.time()
         now = clock.now()
         try:
             _active = graph.active_tasks()
@@ -604,6 +628,17 @@ def timeout_monitor(
             # 2026-09-02). A monitor whose graph has closed has nothing left to monitor: it leaves.
             log.debug(f"the timeout monitor is stopping: its graph is closed ({e})")
             break
+        # …AND WHILE THE USER HAS STOPPED THE PROJECT, NO TIMEOUT: a stop writes nothing into the graph, and every tick
+        # under it is left off the project's clocks (above), so no bound ran out during it
+        # …the beat kept at every tick, with what the tick leaves off (`keep_off`): pending between ticks is read by
+        # `clock_off_s` by this same rule, so the clock is the same whether a reader comes before or after a tick
+        stopped = pause_record(graph)
+        keep_off(graph, wall - last if stopped or wall - last > NO_TICK_S else 0.0, beat=wall)
+        if stopped:
+            if lift is not None:
+                lift(wall)
+            continue
+        now -= clock_off_s(graph)
         for task in _active:
             overdue = task.deadline and now > task.deadline.timestamp()
             # …EXCEPT in the issuer's waiting state, where the deadline is already spent by

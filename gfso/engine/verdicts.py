@@ -22,9 +22,9 @@ from gfso.core.protocol.procedure import coverage as procedure_coverage
 #: The records kept BESIDE a node's verdict, each under its own key in the critique store — one table of their names and
 #: one reader and writer, where seven hand-built keys were each read and written in their own spelling, three readers
 #: guarding a corrupt record and three not (ortho audit, D-F11).
-OBSERVATIONS, REFUTED_VERSIONS, CLOSING, OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS = (
+OBSERVATIONS, REFUTED_VERSIONS, CLOSING, OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, OUTSIDE_ANSWERED = (
     "observations", "refuted-versions", "closing-verdict", "overruled-verdict", "rejected-report",
-    "regression-probes", "failed-through-parts")
+    "regression-probes", "failed-through-parts", "outside-answered")
 
 
 def ledger_read(storage, task_id, kind: str, default=None):
@@ -47,7 +47,7 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
                   tools_used: Optional[dict] = None,
                   model: Optional[str] = None, workdir: Optional[str] = None,
                   by_hand: bool = False, validated: Optional[dict] = None,
-                  parts_not_shown_holding: Optional[dict] = None, inputs_dirs: tuple = ()) -> None:
+                  parts_not_shown_holding: Optional[dict] = None, inputs_dirs: tuple = (), outside=()) -> None:
     """Write the record for THIS delivery — `storage` is the port, handed in by the caller that owns it. `generation` = (iteration, reopens, revisions) as it stood
     when the verdict was earned — a rework, a reopen or a revision under it makes the record stale,
     which is what every reader checks before trusting it. `log_at` = the length of the signal log when it was
@@ -61,8 +61,11 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
     # ledger row with no place stood for a signature after a part below it was delivered again
     ts = datetime.now().isoformat(sep=" ", timespec="microseconds")
     _ledger = observations(storage, task_id)
+    # …with what each criterion read: the current record is overwritten by the next round, so a past FAIL's passing
+    # criteria could not be told from unchecked ones (the ui stream's verdict history, 2026-10-27)
     _ledger.append({"verdict": str(verdict), "failed_criteria": list(failed_criteria or ()),
-                    "validator": str(validator_id), "by_hand": bool(by_hand), "ts": ts, "log_at": int(log_at),
+                    "per_criterion": list(per_criterion or ()), **_outside(outside), "validator": str(validator_id),
+                    "validator_model": model, "by_hand": bool(by_hand), "ts": ts, "log_at": int(log_at),
                     **stamp(generation)})
     ledger_write(storage, task_id, OBSERVATIONS, _ledger)
     storage.store_exec_verdict(task_id, json.dumps({
@@ -83,6 +86,9 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
         "by_hand": bool(by_hand),
         **stamp(generation),
         "per_criterion": list(per_criterion or ()),
+        # …and what the run observed that no criterion states: for the issuer, decided by nothing (Inv-2)
+        **_outside(outside),
+
         # The criteria AS THEY STOOD when contact refuted them. Without this snapshot a later
         # revision is unreadable: "the criterion was covered" and "the criterion was lowered to what
         # the children already deliver" have the same shape at the re-delivery, and the second is a
@@ -121,6 +127,42 @@ def observations(storage, task_id: TaskId) -> list:
     return list(rec) if isinstance(rec, list) else []
 
 
+#: How an issuer is to read what validators saw beyond the criteria (§8.3: FM-1.f is read at contact, by whoever meets it)
+OUTSIDE_NOTE = ("observations outside the written criteria, newest first and none yet answered: judge each against the "
+                "goal statement; a requirement the goal names that no criterion writes is FM-1.f, which the split's own "
+                "moves close (a child's criteria revised, a child added, the split reshaped). None of them is a "
+                "verdict: no criterion failed on it.")
+
+
+def _outside(outside) -> dict:
+    """The record's `outside` key, written only where the report observed something: a report without one is stored
+    as it always was."""
+    return {"outside": list(outside)} if outside else {}
+
+
+def outside_observations(storage, task_id: TaskId) -> list:
+    """[{what, evidence, log_at}] — the observations outside the criteria the recorded verdicts on this node kept and its
+    issuer has not answered (`answer_outside`), once each by `what`, newest first: the next round's record replaces the
+    current one, and a run that saw it once may not again. Oldest first and never retired, the newest fell past the
+    packet's cap and an answered one kept asking for its criterion (critic over 5cad9c4)."""
+    answered = {str(a.get("what")) for a in ledger_read(storage, task_id, OUTSIDE_ANSWERED, []) if isinstance(a, dict)}
+    seen: dict = {}
+    for r in reversed(observations(storage, task_id)):
+        for o in r.get("outside") or () if isinstance(r, dict) else ():
+            if isinstance(o, dict) and (k := " ".join(str(o.get("what") or "").split())) and k not in answered:
+                seen.setdefault(k, {"what": k, "evidence": str(o.get("evidence") or ""), "log_at": int(r.get("log_at") or 0)})
+    return list(seen.values())
+
+
+def answer_outside(storage, task_id: TaskId, whats, by: str, move: str, why: str) -> None:
+    """Keep that the node's issuer answered these observations — by `move`, or by declining it with `why` — appended,
+    never rewritten: the record of what was seen stays whole, and only the read retires it."""
+    rec = ledger_read(storage, task_id, OUTSIDE_ANSWERED, [])
+    ts = datetime.now().isoformat(sep=" ", timespec="microseconds")
+    ledger_write(storage, task_id, OUTSIDE_ANSWERED, (rec if isinstance(rec, list) else []) + [
+        {"what": w, "by": str(by), "move": str(move), "why": str(why), "ts": ts} for w in whats])
+
+
 def criterion_version(description, probes) -> list:
     """What a criterion promised, as one comparable value: its text, every probe's whole triple
     (loosening an `expect` under an unchanged command is the cheapest way to loosen a check) AND the
@@ -141,7 +183,10 @@ def criterion_version(description, probes) -> list:
         pairs = sorted(raw.items()) if isinstance(raw, dict) else raw
         return [[str(a), str(b)] for a, b in (tuple(x) for x in pairs)]
 
-    return [description or "", [[p.get("behaviour"), p.get("command"), p.get("expect"), _inputs(p)]
+    # …and `exact` where set, never otherwise: dropping it un-checks the output the system itself decides, a loosening
+    # like any other, and a version stored before the field existed still equals itself
+    return [description or "", [[p.get("behaviour"), p.get("command"), p.get("expect"), _inputs(p),
+                                 *(["exact"] if p.get("exact") is True else [])]
                                 for p in (probes or ())]]
 
 

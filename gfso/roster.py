@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from gfso.config import MODEL_DEFAULT, agents_path
+from gfso.config import MODEL_DEFAULT, agents_path, executions, project_made
 from gfso.places import cheap_to_ask, disk_place, same_place, text_place
 
 
@@ -87,7 +87,7 @@ class AgentRegistry:
     def __init__(self, path: str | None = None):
         self._path = Path(path) if path else agents_path()   # one derivation, `gfso.config` (S4)
         self._agents: dict[str, dict] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()   # re-entered: `register` holds it while `_load` takes it
         self._mtime: float | None = None
         self._load()
 
@@ -106,32 +106,46 @@ class AgentRegistry:
         belonged to a different experiment. Nothing said so; the graph looked healthy and the verdicts
         validated the wrong tree. One `stat` per access is the price of the promise being true.
         """
+        with self._lock:              # one reload at a time, and never between another thread's write and its answer
+            return self._load_locked()
+
+    def _load_locked(self) -> bool:
         try:
             mtime = self._path.stat().st_mtime
         except OSError:
             return True                # no roster yet is the normal first-run state
         if self._mtime == mtime:
             return True
-        try:
-            self._agents = json.loads(self._path.read_text(encoding="utf-8"))
-            self._mtime = mtime
-            return True
-        except FileNotFoundError:
-            return True               # no roster yet is the normal first-run state
-        except Exception as ex:
-            # An unreadable roster is not an empty roster. Silent, it disabled delegation whole:
-            # every node assigned to an executor simply waited, with no line anywhere — the exact
-            # shape that reads as "the agent is not working".
-            # stderr, not stdout: `gfso mcp` speaks JSON-RPC on stdout, and a diagnostic printed
-            # there corrupts the very door it is diagnosing.
-            print(f"gfso: agent registry {self._path} is unreadable ({ex}) — delegation is OFF "
-                  f"until it is fixed or removed", file=sys.stderr, flush=True)
-            return False
+        # a FEW tries: the replace window is milliseconds, and the lock is held — a roster another program keeps locked
+        # cost every read half a second at 25 (critic over a233215)
+        for _ in range(5):
+            try:
+                self._agents = json.loads(self._path.read_text(encoding="utf-8"))
+                self._mtime = mtime
+                return True
+            except FileNotFoundError:
+                return True           # no roster yet is the normal first-run state
+            except PermissionError:
+                time.sleep(0.02)      # Windows: the file is being replaced this instant (`_put`) — transient
+            except Exception as ex:
+                return self._unreadable(ex)
+        return self._unreadable(PermissionError("the roster stayed locked through every retry"))
+
+    def _unreadable(self, ex) -> bool:
+        # An unreadable roster is not an empty roster. Silent, it disabled delegation whole:
+        # every node assigned to an executor simply waited, with no line anywhere — the exact
+        # shape that reads as "the agent is not working".
+        # stderr, not stdout: `gfso mcp` speaks JSON-RPC on stdout, and a diagnostic printed
+        # there corrupts the very door it is diagnosing.
+        print(f"gfso: agent registry {self._path} is unreadable ({ex}) — delegation is OFF "
+              f"until it is fixed or removed", file=sys.stderr, flush=True)
+        return False
 
     def register(self, agent_id: str, kind: str, model: str = MODEL_DEFAULT,
                  workdir: str | None = None, validator: str | None = None,
                  oracle_map: str | None = None, max_turns: int | None = None,
-                 client: str | None = None, project: str | None = None) -> dict:
+                 client: str | None = None, project: str | None = None, execution: str | None = None,
+                 context_budget: int | None = None) -> dict:
         """Put a role on the server-wide roster: its kind, model tier, workdir and bindings.
 
         Registration is what makes a role addressable by Del — the dispatcher picks a node up
@@ -192,6 +206,8 @@ class AgentRegistry:
                   "create the directory first, or name the one the work is really in. A path in "
                   "POSIX form on Windows ('/c/Users/...') is resolved against the current drive "
                   "root, not the C: drive - pass the native path.")
+        if execution:
+            self._refuse_execution(agent_id, execution, workdir, project)
         if workdir:
             # STORED ABSOLUTE. A relative `workdir` is checked here against the SERVER's cwd and
             # would later be resolved against whatever cwd the spawn happens to have — the same
@@ -209,6 +225,11 @@ class AgentRegistry:
             workdir = os.path.abspath(workdir)
         with self._lock:
             self._reread()            # …whatever anyone else wrote since we last looked (see _write)
+            # …a role's name is the installation's: taken here, another project lost its execution with no word, and the session it was starting
+            # ran on the host (critic, ran). A project deleted holds no role
+            held = (self._agents.get(agent_id) or {}).get("project")
+            if held and project and held != project and project_made(held):
+                raise ValueError(f"the role {agent_id!r} belongs to project {held!r}: name this project's roles otherwise, as `{project}-exec`")
             self._agents[agent_id] = {"kind": kind, "model": model, "workdir": workdir,
                                       "validator": validator}
             if project:
@@ -223,6 +244,11 @@ class AgentRegistry:
                 # whatever the transport defaults to: two runs of "the same agent" under different
                 # caps are different agents, and a comparison across them measures the cap.
                 self._agents[agent_id]["max_turns"] = int(max_turns)
+            if context_budget:
+                # …and its context budget, the same way: the tokens past which a session hands over to a fresh one
+                self._agents[agent_id]["context_budget"] = int(context_budget)
+            if execution:
+                self._agents[agent_id]["execution"] = execution
             if client:
                 # WHO this role belongs to — the key of the caller's own lease. A registration is a
                 # promise that somebody is there to execute; when that somebody goes, the promise
@@ -234,7 +260,24 @@ class AgentRegistry:
                 # it or on doors that carry no lease.
                 self._agents[agent_id]["client"] = str(client)
             self._write()
-        return {"registered": agent_id, **self._agents[agent_id]}
+            # …ANSWERED UNDER THE LOCK: read after it, another thread's reload had replaced the dict with a file read before
+            # this write, and the role just registered raised KeyError — a 422 to the second of two runs staffing at once
+            # (series 3 REF 2, 2026-10-30; 75 of 180 concurrent registrations in a probe)
+            return {"registered": agent_id, **self._agents[agent_id]}
+
+    def _refuse_execution(self, agent_id: str, execution: str, workdir: str | None, project: str | None) -> None:
+        """WHERE a role's sessions run is the project's, declared once: an undeclared name runs nowhere, two executions
+        in one project would put one node's place in two machines. A base that checks out CRLF is no refusal: what a
+        container works on is its import, checked out LF by git under no config of the user's (`Volume.import_base`)."""
+        if execution not in executions():
+            raise ValueError(f"registering {agent_id!r}: execution {execution!r} is not declared "
+                             f"({', '.join(executions()) or 'none is'}); declare it in the server's executions.json")
+        self._load()
+        other = {c.get("execution") for i, c in self._agents.items()
+                 if i != agent_id and project and c.get("project") == project} - {None, execution}
+        if other:
+            raise ValueError(f"registering {agent_id!r}: project {project!r} already runs in {sorted(other)[0]!r} - "
+                             f"one project runs in one execution")
 
     def unregister(self, agent_id: str, workdir: str | None = None) -> dict:
         """Take a role OUT of the roster — the operation that did not exist.
@@ -270,6 +313,18 @@ class AgentRegistry:
             del self._agents[agent_id]
             self._write(deleted=(agent_id,))
         return {"unregistered": agent_id}
+
+    def forget_project(self, project: str) -> list:
+        """A project deleted takes its roles with it: kept, a project made again under the name inherited the old one's
+        workdir, execution and validator (critic, read)."""
+        with self._lock:
+            self._reread()
+            gone = tuple(a for a, c in self._agents.items() if c.get("project") == project)
+            for a in gone:
+                del self._agents[a]
+            if gone:
+                self._write(deleted=gone)
+        return list(gone)
 
     def _reread(self) -> bool:
         """Force a re-read of the file, ignoring the mtime cache. Called under the lock, before a

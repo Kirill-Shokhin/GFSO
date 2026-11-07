@@ -4,10 +4,11 @@
 > it left open. This is the file to hold the project's claims against — it is the source of "what
 > has actually been shown" as opposed to "what is still hypothesis".
 >
-> **Sections 0 and 5–8 are absent by design.** They were process — this document's own purpose, a
-> roadmap, a survey of an earlier private repository, next steps, and instructions to whoever picked
-> the work up — and the log's own policy (below) admits none of it. They were moved out rather than
-> renumbered, so every citation of §9, §11 or §13 elsewhere still lands where it always did.
+> **Sections 0, 1, 2, 5–8 and 10 are absent by design.** They were process or not evidence — this document's own
+> purpose, a restatement of what GFSO is (`docs/CORE.md` holds it), the theory's history, a roadmap, a survey of an
+> earlier private repository, next steps, instructions to whoever picked the work up, a pointer to the canon — and
+> the log's own policy (below) admits none of it. They were moved out rather than
+> renumbered, so every citation of §3, §4, §9, §11 or §13 elsewhere still lands where it always did.
 >
 > **Section numbers are as of each entry's date.** Entries written before the v4.0 canon cite the
 > numbering then in force (the v3.9 draft, which the v4.0 canon re-authored); renumbering them would falsify
@@ -19,107 +20,11 @@
 > **First read `docs/CORE.md`** if you need the GFSO definition. This file
 > assumes you already know what GFSO is and need experimental context.
 
-> **⚠ Section numbering in §1 and §9 is the theory document's v3 numbering.** Those two sections
-> were written against canon v3 and are kept as taken; the canon is now v4.0 and renumbered, so
+> **⚠ Section numbering in §9 is the theory document's v3 numbering.** That section
+> was written against canon v3 and is kept as taken; the canon is now v4.1 and renumbered, so
 > `§17.1`, `§17.2` and `§7.3` cited there resolve to nothing in `applied_gfso_v4_en.md`. Everything
-> from §10 onward cites v4. Do not chase a v3 reference into the current canon — it is a dead
+> from §11 onward cites v4. Do not chase a v3 reference into the current canon — it is a dead
 > pointer, not a missing section.
-
-## 1. Vision context (what GFSO is, restated)
-
-### What GFSO is NOT
-- Not a productivity tool — "what metric does it boost" is a category-mismatched question
-- Not a project-management methodology
-- Not "yet another standard" at ISO 9001 / Scrum / Kanban level
-- Not an algorithm or ML technique
-- Not "agentic framework v2"
-
-### What GFSO IS
-- A **formal language for the minimum a verifiable task-handoff transaction must carry**
-- An **infrastructural layer** for hierarchical work systems — analog to TCP/IP for
-  networks or Codd's relational algebra for databases. Tractable math; the framing
-  enables a domain.
-- A **discipline shift**: responsibility for articulating criteria moves from Executor
-  (who currently has to guess) to Issuer (who must specify before delegation).
-- Derivable from two axioms (A1 verifiability, A2 decomposability), with all primitives
-  shown minimal and several uniqueness theorems (|L|=2, AND-aggregation, 7 FM
-  exhaustiveness).
-
-### What GFSO uniquely provides over its parts
-Decomposition exists. Tests exist. Contracts exist (DBC, Meyer 1992). Audit trails
-exist. What none of them give together:
-
-1. **Compositional validation theorem** — V(parent) = AND(V(children)) derived, not
-   postulated, under explicit correctness conditions (joint sufficiency + non-redundancy).
-2. **Failure-mode taxonomy with completeness proof** — any breakdown of compositional
-   validation falls into one of 7 FM. Falsifiable.
-3. **Forced binary V as forcing function** — criteria that can't decide pass/fail are
-   bad criteria; binary V pushes spec defects out instead of hiding them in "warning".
-4. **Standardized protocol vocabulary** (12 signals, 11 states) across role boundaries.
-5. **Self-measuring metrics** computed from the audit graph itself.
-6. **Adaptive stratification by horizons** (§25.1, derived) — top layers stable, bottom
-   layers fast-changing CHALLENGE-cycles. Not a separate principle of agile/lean —
-   a consequence of deadline coherence along D + A1.
-
-### Domain the author actually targets
-The under-optimized space of **human work coordination at scale**. Algorithms and
-neural nets are heavily optimized; the protocol of "how two parties agree on what
-counts as done" remains ad hoc 2026. The optimization opportunity here is plausibly
-larger than another percentage point on a ML benchmark — but uncoordinated, uneven,
-slow to converge because there's no formal substrate. GFSO is an attempt at that
-substrate.
-
-### Critic-resistant framing
-| Critic move | Answer |
-|---|---|
-| "What metric does it boost?" | Category-mismatched. Asks GFSO to be productivity tool. Analog: "what metric does TCP/IP boost?" |
-| "Just another standard like ISO" | ISO is chosen convention. GFSO is derived from axioms + proven minimal. |
-| "1990s contracts/TDD already did this" | DBC describes atom (predicate on function). GFSO describes molecule (transaction structure in hierarchy). Different abstraction levels. |
-| "Half-solving to specify" | Category error. API spec ≠ implementation. Drawing ≠ building. |
-| "Scrum works without all this" | Scrum embeds in GFSO's structure as a relaxation (§25.2): depth(D)≤2, CHECK-7/8 unused, with ACCEPTED_RISKS=∅, the audit informal and the deadline rules relaxed. Works where those relaxations are cheap; breaks where they're not. |
-| "Abstract math divorced from reality" | Currently partly fair. Two empirical anchors (formal correctness; +34pp E0 result). Open work: E1 postmortem mapping, E2 LLM Issuer, E3 multi-agent. |
-
-### Status (2026-05-23) — historical snapshot, superseded by §9 (E1 executed/closed)
-- Theory document: formally complete (v3), latest additions §17.1 + §17.2
-- Code framework: `gfso/` (core+adapters) + `bench/` (harness) — clean separation,
-  tested via two providers (LiveCodeBench, BigCodeBench-Hard)
-- Empirical anchors: **one strong** (E0 below), several mechanical-pipeline validations
-- Gaps (as of this snapshot): E1, E2, E3 not yet executed; semantic completeness of
-  criteria (Level 2 in §5.4) remains open as §18.1. **Superseded:** E1 since executed and
-  closed (0/216) — see §9/§9.1.
-
----
-
-## 2. Theory history (for context)
-
-### Pre-v3: category-theoretic version
-There existed an earlier theory formulation based on category theory (Kleisli arrows,
-Wasserstein-style monads). Mathematically strong but **disconnected from applicability**.
-The author confirmed this themselves while building a previous agent system
-(the older `gfso-agent` repo) — abstractions didn't reduce
-to actionable engineering choices, agent system was "smeared across the formalism",
-hard to debug.
-
-### v3.9 — re-authored as the v4.0 English canon, `applied_gfso_v4_en.md`
-Reformulated **from operational concerns**: what does a task-handoff require
-formally, derived from A1 + A2. Math became tractable (basic logic, finite
-enumeration, Dirichlet). Doesn't depend on the category-theoretic GFSO Theory at
-all — uses classical references (Blackwell, Simon, Hurwicz) directly. The reason
-this iteration is what we keep building on.
-
-Lesson learned: **math depth ≠ usefulness**. A formalism is useful when its
-primitives map directly to operational decisions. v3 has that property; the
-category-theoretic version did not.
-
-### Older agent experiments (gfso-agent repo, pre-v3 era)
-Author ran HLE-based experiments with the old theory: decomposer + validator +
-workers in a swarm format, tested on the first 10 HLE problems with multiple
-configurations per task. Results were mixed; the system was hard to control
-because the theory didn't reduce to debuggable choices. Repo exists at
-the older `gfso-agent` repo — needs review and lessons distilled into
-this log.
-
----
 
 ## 3. Experiments completed
 
@@ -297,7 +202,7 @@ at larger scale than planned. Full pipeline + data are LOCAL (gitignored under
   (`annotations[]` open), entry_type/domain/methodology tags. Built for a public artifact.
 
 ### Classification (runs/e1_results/)
-Protocol: docs/e1/classification_protocol.md (v3.1). Annotator: **Opus** (consistency — do NOT
+Protocol: experiments/e1_corpus/classification_protocol.md (v3.1). Annotator: **Opus** (consistency — do NOT
 mix models across the corpus, it confounds the distribution). Two tracks.
 
 **Track A (216 incidents → 7 FM):**
@@ -348,7 +253,7 @@ Issuer=Executor (still inside); NUMMI/Zappos correctly out-of-scope (not handoff
    built-in **before/after A/B**: a BEFORE failure (waterfall, FM-classifiable) and an
    AFTER Scrum success (embedding). The DELTA = which GFSO primitive the before lacked
    that the after supplied → a causal "primitive X fixes FM Y" claim. Richer than either
-   track alone. **Action (DONE): dedicated Scrum analysis (`docs/e1/scrum_worked_examples.md`).**
+   track alone. **Action (DONE): dedicated Scrum analysis (`experiments/e1_corpus/scrum_worked_examples.md`).**
 
 6. **Diffusion/planning-horizon intuition = §17.1 + §10.3 + §18.1.** Coarse-to-fine
    decomposition across receding horizons: §17.1 is the skeleton; §10.3 cascade
@@ -480,11 +385,6 @@ criterion for the FM-1.b↔§2.1 line — a later refinement, does not block E1 
 basis coverage + a clean accounting of the non-FM cases as success / delegation / extraordinary".)*
 
 ---
-
-## 10. Theory-model — see canon §2–§3
-
-The standard→theory-model derivation (agent derived as a necessary structural link) lives **in the
-canon, §2–§3** (with the calibrated claims); provenance is in the canon Changelog + git history.
 
 ## 11. E2 EXECUTED — decomposition convergence, 2026-06-30
 
@@ -3365,5 +3265,602 @@ its probes and all twelve parts of its first build; a second build stood four pa
 through a third, its executor disputed a root probe on comment handling that contradicts that part's criterion, the
 issuer's three answers moved nothing, and the root was closed by that count. It claimed nothing.
 
-**Boundaries.** One task, one model, two automatic rows; the first row's plan cost is read from its traces. Which
-rules refused the second row's probes is not traced here.
+What closed that row was the engine's, not the plan's: the root's issuer, played by the system, accepted the dispute
+eight times with the probe corrected to six tokens, and each acceptance was dropped because a root's criteria under
+the automatic mode were append-only whole, its pinned check included; the third answer that changed nothing closed
+the root. Version 0.2.0 lets an accepted dispute re-pin the check of the criteria it questioned, the criterion's text
+kept.
+
+Five more automatic rows ran on the same task, model and command (2026-10-14/15):
+
+| row | code | valid | claim | held-out files passed | wall | how it ended |
+|---|---|---|---|---|---|---|
+| `GB_sql_database_tmwpnc356` | e8815fe | no | NOT DONE | — | 4 min | the customer called no gfso tool and wrote no code |
+| `GB_sql_database_tmwpw7028` | e8815fe | no | NOT DONE | — | 26 min | the customer named no project; the goal was planned in `default`, where nothing executes |
+| `GB_sql_database_tmws1e072` | b4465a7 | no | NOT DONE | — | 7 min | the customer called no gfso tool |
+| `GB_sql_database_tmwsep280` | b4465a7 | yes | NOT DONE | 1 of 11 | 165 min | root closed by the count of unproductive answers to its plan question |
+| `GB_sql_database_tmx1h7240` | fc0ddf5 | yes | NOT DONE | 1 of 11 | 61 min after resuming from a reboot | root closed by the same count, on its repair question |
+| `GB_sql_database_tmxu0n436` | 0d5c1d7 | no | NOT DONE | 1 of 11, the starter tree | 9 h, the run's ceiling | no count closed it; the root's packet outgrew the model's window |
+| `GB_sql_database_tmyl10584` | 53c870a | no | NOT DONE | 1 of 11, the starter tree | 9.5 h, the run's ceiling, resumed once after the container engine stopped | 28 parts passed; one part's re-split waited on its plan's review, which was never asked |
+| `GB_sql_database_tmzgc0724` | d38d72d | yes | DONE / PASS | 9 of 11 | 6.0 h | the root passed; execution $30.1 · validation $30.6 · issuer $2.7 · customer $0.29 (from its traces) |
+| `GB_sql_database_tn03ao788` | de1e091 | no | NOT DONE | 1 of 11, the starter tree | 9 h, the run's ceiling | every part passed; four parts' work never joined the root, whose deliveries got no verdict and whose last dispute waited on no one |
+| `GB_sql_database_tn748y616` | 37579f8 | no | NOT DONE | 1 of 11, the starter tree | 9 h, the run's ceiling | three parts passed; the root was in rework when the goal's deadline lapsed, and the run ended at its ceiling |
+| `GB_sql_database_tn74a0108` | 37579f8 | yes | DONE / PASS | 5 of 11 | 4.4 h | the root passed; public 0.93; execution 112 min $14.4 · validation 80 min $16.1 · issuer 32 min $1.9 · plan 32 min $4.5 · customer $0.19 |
+
+No automatic row claimed DONE. In both valid rows the answers counted as unproductive were, for the most part, the
+engine's own refusals of the system issuer's moves: a child named back without its parent's prefix, a sibling a new
+child reads named the same way, and a validator's report refused whole because its failed list named one of its three
+failing entries, which left four delivered parts without a verdict until their bound escalated them. 0.2.0 reads a
+child by the name the issuer gave it and a short failed list off its entries. The two entries a short list left out
+were criteria whose pinned probe needs `valgrind`, absent where the validation ran, marked undecidable by the
+validator; read off the entries they now enter the FAIL, a criterion no repair can turn green — open. The count
+itself is the implementation's, not the canon's: §12.15 has counters bound nothing, and closing a live goal by one is
+the fold Inv-4's reading excludes.
+
+The row on the code with no close by count ran to the harness's ceiling and is not a valid row: it timed out, and a
+validator's `mount` listing showed a path the leak check matches. No count closed anything. Its seven parts passed; the
+root failed nine deliveries on defects the validator named (a `REAL` printed without its three decimals, a failing
+`DROP TABLE` exiting 0, a part's pinned probe reading its input from the wrong directory), and its findings grew to
+1,414: a criterion split between validation runs filed the probes of the runs that passed their share as refutations
+too — one FAIL listed 1,336 probes, one of them refuting. Every finding was written into the executor's packet, which
+grew past the model's 200,000-token window; from then every executor and consent session ended `prompt_too_long`, the
+issuer was told only that the session's report did not parse, and re-issued the root 38 times. The work never landed:
+the held-out score is the starter tree's. A passing share's probes are now not filed, a packet shows twenty lines of a
+list and names a file holding all of it, and a session that ended in error says why.
+
+The next row, on that code, passed 28 parts, the whole storage, lexer and parser and most of the executor, with no
+window overflow and no close by count, and also ran to the ceiling. The executor part failed one criterion on grouping;
+its issuer revised the part's plan, and the engine then refused the re-delivery until a Level-2 review of the revision
+spoke. The node's open question was ranked a repair, the review runs only on a plan question, and the issuer, asked a
+repair, added the same missing grouping child again and again — ten of them, none started, each held by the same
+missing review. A refuted split that waits on its plan's review is now the plan's question: its review runs, and a
+finding it leaves is answered by a fix or a dispute.
+
+The row after it is the first automatic row on this task to reach its root's verdict: the root passed, the work landed,
+and the held-out suite passes nine of its eleven files, against one or two for every bare row. It is not a clean
+showing of the pinned procedure. The plan's author ran where the server stands, and every one of the plan's 72 pinned
+probes begins by changing into the server's state directory; the validators that passed the root ran the same checks
+in the node's own directory instead, and one earlier validator, following such a probe, deleted the project's own
+database there. It is also not a cheap one: six hours and about $63 against ten minutes and $1.50 for a bare row. For
+three of the six hours one executor session carried the whole plan through sixteen rounds failing the same criteria;
+once the plan was split, the parts finished in less than that. A probe that changes into an absolute directory is now not
+admitted, a model call naming no place runs in an empty one, and a scope whose node fails the same criteria in three
+rounds running is no longer carried by one session.
+
+The next row, on that code, passed every part within four and a half hours and spent the rest on its root. Four
+parts' branches conflicted with the root's tree — two of them in the file a sibling also edited — and were left
+unmerged and named in the root's packet; the root's executor, in three sessions, never merged one and rewrote the
+files itself, without the joins a part had passed. Its first delivery failed; the next two lapsed with no verdict,
+because the validators labelled each criterion by its name with its description appended and thirty reports were
+refused whole as naming criteria the node does not have — $120 of validation that decided nothing. Its executor then
+disputed the contract, saying the standing findings could not be met without joins; the dispute named those findings
+by id, the engine read it as asking the user to rule them out of the goal, and the system made no move on it until the
+ceiling. A whole's delivery is now held while its tree lacks a part that did not merge; a label that is a criterion's
+exact name followed by a separator is read as that criterion; and the system answers such a dispute, leaving to the
+user only the ruling that takes a finding out of the goal.
+
+The next row, on that code, where no count closes a node, is the second on this task whose root passed: the tree its
+verdict signed passes five of the eleven held-out files and 0.93 of the public suite, against one or two for every bare
+row, in 4.4 hours, of which the plan took 47 minutes. One session carried the whole plan through three failing
+deliveries before it was split; the added parts passed within two hours. Five of the six held-out files it fails are
+behaviours a criterion names and its probe cannot see — table aliases in a join resolve to nothing, a `GROUP BY` on a
+`CASE` collapses to one group, `ORDER BY` an expression, an alias or two terms does not sort, `MAX(x) - MIN(x)` per
+group is `NULL` — each probe using bare table names, one column, one term or no grouping. The sixth is the tie order of
+groups under one `DESC` term, which the specification fixes and no criterion writes. The pass is weaker than its count:
+the validator that passed the root ran an aliased join, saw it print nothing, and did not report it; and the root's last
+refutation was withdrawn when its executor disputed a check expecting `50000.0 * 1.1 > 55000`, which holds in floating
+point and in the grader, and the system, answering the dispute for the user, re-pinned the check to the engine's output.
+
+**Boundaries.** One task, one model, five valid automatic rows; the fifth runs on the code the fourth motivated. Which rules refused
+the second row's probes is not traced here. A customer on this model left three of the eleven automatic rows without
+GFSO work; they are void, not results.
+
+### 13.45 The older, smaller model on `coreutils`, on a plan shown to hold the oracle: alone it claims "done" with a quarter to a third of the held-out suite failing; under the automatic mode its "done" is the oracle's (2026-10-21)
+
+**What was run.** `claude-haiku-4-5-20251001` on `coreutils`'s explicit contract, in the sealed container: arm A twice;
+the automatic mode with every role the system plays on the same model, on a GIVEN plan — the one whose pinned checks the
+ideal implementation (GNU under the names the contract demands) passes 51 of 51 and each of 39 mutants fails, and on
+which the automatic mode with `claude-haiku-5-5` passed its root at 1.0 (§13.41–§13.43). Two of its probes end by
+`cd /` to clean up, which the engine now refuses as a probe changing into an absolute directory; they return to the
+directory they started in instead, the checks unchanged.
+
+**What it shows.**
+
+| row | arm | claim | held-out tests passed | public | wall | cost |
+|---|---|---|---|---|---|---|
+| `B_coreutils_tn8ssm744` | A | DONE | 91 of 119 | 0.92 | 8.2 min | $1.51 |
+| `B_coreutils_tn8st6188` | A | DONE | 78 of 119 | 0.88 | 10.4 min | $1.67 |
+| `GB_coreutils_tn8tso424` | automatic | DONE / PASS | 119 of 119 | 1.0 | 121.4 min | execution 93 min $18.31 · validation 52 min $4.98 · issuer $0 · plan given · customer $0.53 |
+| `GB_coreutils_tn8tts928` | automatic | DONE / PASS | 119 of 119 | 0.98 | 141.8 min | execution 106 min $18.63 · validation 43 min $5.96 · issuer 4 min $0.33 · plan given · customer $0.56 |
+| `GB_coreutils_tn8tt8640` | automatic | DONE / PASS | 119 of 119 | 1.0 | 218.8 min | execution 154 min $24.85 · validation 69 min $8.30 · issuer 8 min $0.73 · plan given · customer $0.50 |
+
+The same model, on the same contract, declares the work done in both bare rows with 28 and 41 held-out tests failing;
+under the automatic mode all three roots passed and the held-out suite passes whole. The trees the roots' verdicts
+signed score 119 of 119 as well. Every probe the plan pins was run at each node's passing verdict, and re-run on the delivered
+tree with each expectation decided, all 34 criteria pass. The customer's session had no tool that writes; it read and
+asked for status.
+
+What held the model to the contract is on the log. The first row's parts failed eight times before they passed —
+`sort` seven times, six of them on the same two criteria on keys and separators, `wc` once — and seven of the model's
+own validation reports were refused as deciding nothing, each naming what it never observed: six the part's
+dependency on the build, one a criterion of `wc`. The second row's parts failed eight times (`sort` six, `head` and `tail` once each) and eight reports
+were refused; the third's fifteen times (`sort` twelve, the root twice, `tail` once) with ten refused — the slowest
+row is the one whose `sort` took longest to meet its key criteria. Each failure came back to the same model with the criteria that failed, and it went on.
+
+What the automatic rows' "done" means here is the plan's, and the plan's record is its own evidence: on this plan every
+row whose root passed — two with `claude-sonnet-5-5` (one single-agent, one automatic), five automatic with
+`claude-haiku-5-5`, and these three — reads 1.0 on the held-out suite, ten of ten. Its pinned checks fail both bare trees — 23 and 27 of its 34 criteria, three and five of
+the root's seven — so neither could have closed under it, and each of the 39 mutants fails it. The plan leaves some
+behaviours of the contract unprobed (`scope_coreutils_v6_coverage.md`: `-` as an operand of `wc`, `sort` and `uniq`,
+attached option arguments, options after operands, a `-k` field with no end), so the ten are a record, not a proof.
+
+It is not cheap and it is not fast: $24 to $34 and two to three and a half hours a row against about $1.60 and ten
+minutes. Most of it is execution, and most of that is the rounds a hard part takes: each is a fresh session reading the
+work again (in the first row 1834 turns at about 57 thousand tokens of context, nearly all of it read from cache, half of
+it on `sort`). The newer model of
+the same line reads 1.0 on this task alone in twelve minutes (§13.41); what is compared here is one fixed model's reach
+with and without the system, not the cheapest way to the result.
+
+**Boundaries.** One task, one model, one plan, three automatic rows, all three roots passed. The plan was given, not written by the system on this model; the rows in which the system wrote its own
+plan for this task on this model reached no root verdict, on code since changed, and are not tabulated here. Two of
+its 34 criteria's commands were re-expressed as stated above.
+
+### 13.46 The pre-registered table: three models, three tasks, the bare agent against the automatic mode on one explicit contract — on a plan given and verified against the oracle the smaller models close under the automatic mode at 98.7–100 % held-out where alone they claim "done" falsely or stop short; with the system's own plan the weakest model has no verdict yet (2026-10-21 → 10-23)
+
+**What was asked** (`experiments/e3_specbench/PREREGISTERED_table_v1.md`, written before its first row, with three
+amendments each written before its rows). One question per cell: on a task's explicit, non-contradictory contract, with
+no tests handed to anyone, does the bare agent (arm A: the default Claude Code harness, one session, its own checks, its
+own report) claim "done" when the held-out suite says otherwise — and does the automatic mode (every role the system plays
+on the SAME model, nobody holding the project; on a plan given and verified against the oracle, or on the system's own
+plan) close its root only where the contract is met? Tasks `coreutils`, `sql_database`, `c_compiler`; models
+`claude-haiku-4-5-20251001`, `claude-haiku-5-5`, `claude-sonnet-5-5`. A "false done" is arm A's claim of DONE against
+the held-out suite; an automatic DONE is the promise kept (every pinned check of every passing verdict ran), and its
+held-out score is the second number — how complete the plan's criteria were.
+
+**The condition that decides how to read it.** In every row of the automatic mode's "plan given" arm the system was handed a plan whose
+pinned checks had been verified beforehand against the oracle (pre-registration, precondition 2); for `c_compiler` (v3)
+some probes were derived from named held-out tests the earlier trees failed (`scope_c_compiler_v3.NOTE.md`), and the
+`sql_database` plan was written by Sonnet 5.5 and repaired by hand against an ideal. Arm A had nothing of the kind, and the
+plan's cost is charged to neither arm. So that arm shows what the system does with checks that hold — the model held to
+them — not what it does when it writes its own; the own-plan arm is that question.
+
+**What it shows.** Claims and held-out scores per row; time is active wall (the host's sleep and the account's limit
+windows taken out, disclosed per row in [`e3_rows.csv`](e3_rows.csv)); cost is the CLI's estimate.
+
+**Corrected against the rows (2026-11-04).** A row-by-row check changed what stood here: `sql_database` · Haiku 4.5's first
+plan ran 495 active minutes, not 1019, the machine's sleep taken out; two runs declared smokes before their launch had been
+counted (`GB_sql_database_tn9t2x448`, `GB_coreutils_tnat0u688`), so the pre-registered roots are 18, not 20; the final
+`sql_database` rows of §13.47 and the `c_compiler` · Haiku 4.5 row on plan v4 ran without the contract's addendum and are
+not on one contract with the bare arm; `c_compiler` · Haiku 5.5's 98.7 % over all 299 tests reads 98.6 % on the 293 left when
+the six its probes were derived from are out; a continued line booked at its running total is out of §13.47's second row,
+$62.5, and of its first, $73.08; Amendment 2's 54.5 % below is a session's own reading of the root's tree, not on the rows'
+records, whose scores read the starter.
+
+| task | model | A: claims (held-out) | automatic, plan given: claims (held-out) | A time · cost | automatic time · cost |
+|---|---|---|---|---|---|
+| coreutils | haiku 4.5 | DONE ×5 (0.59–0.76) — **5/5 false** | DONE ×5 (1.000 ×5, signed 1.000 ×5) | 8–13 min · $1.3–2.3 | 120–253 min · $21–40 |
+| coreutils | haiku 5.5 | DONE ×4 (1.000 ×4) | DONE ×7 (1.000 ×7); 2 NOT DONE | 8–15 min · $0.3–1.0 | 14–55 min · $0.4–0.9 |
+| coreutils | sonnet 5.5 | DONE ×6 (1.000 ×6) | DONE ×2 (1.000 ×2) | 4–12 min · $0.7–2.3 | 7–10 min · $4.2–4.5 |
+| sql_database | haiku 4.5 | DONE ×5 (0.09–0.18), NOT DONE ×1 — **5/6 false** | NOT DONE ×1 (an earlier build); on the final plan v16: DONE ×2 (1.000, 0.818) — §13.47 | 10–12 min · $1.3–2.2 | 495 min · $83 |
+| sql_database | haiku 5.5 | DONE ×4 (1.000, 1.000, 0.909, 1.000) — **1/4 false** | DONE ×2 (1.000 ×2) | 16–21 min · $0.3–1.3 | 56–57 min · $1.0–1.2 |
+| sql_database | sonnet 5.5 | DONE ×4 (1.000 ×4) | DONE ×2 (1.000 ×2) | 6–8 min · $1.0–1.3 | 13–17 min · $4.3–5.6 |
+| c_compiler | haiku 4.5 | NOT DONE ×3 (0.12–0.15) | no verdict (two rows of an earlier build cut at the 9-h ceiling; the final-build row GB_c_compiler_tncfs1160 stopped unsettled on 2026-10-24, not re-run) | 7–10 min · $0.9–1.6 | — |
+| c_compiler | haiku 5.5 | NOT DONE ×4 (0.74–0.95) | **DONE ×2 (0.987, 0.997)** | 19–36 min · $1.4–4.6 | 71–92 min · $5.5–9.3 |
+| c_compiler | sonnet 5.5 | DONE ×2 (0.997 ×2) — **2/2 false** | DONE ×2 (0.997, 0.990) | 112–117 min · $48–52 | 35–43 min · $12–15 |
+
+The system's own plan (one row a cell, Amendments 1 and 3): coreutils — haiku 5.5 DONE (1.000), sonnet DONE (1.000);
+sql_database — haiku 5.5 DONE (0.909), sonnet DONE (1.000); c_compiler × sonnet — two attempts, neither built a goal (the
+plan's authoring returned JSON with its closers lost; the second, a built plan, ended on a refused call at the harness);
+c_compiler × haiku 5.5 — NOT DONE at the 4 h ceiling (2026-10-29, build 14f9bbe, the environment's time 0 s; two earlier
+rows void, one on engine defects since fixed, one on the host's file sharing failing; all three without the addendum the
+bare arm ran on, §13.51): the root's own split was never
+admitted — its Level-2 review held the whole plan, the parts its findings did not concern included, for 3 h 50 min while
+each review named one more requirement of a universal criterion and the issuer added a part for it; the run also met
+an engine defect, a shared table read while threads wrote to it (fixed since, 6d73d55); the rest in flight or stopped
+at a spend ceiling with no verdict (below).
+
+**Read across the table.** The cells above pool rows of earlier builds on the same contract (arm A) or the same plan
+(automatic); every counted row is in [`e3_rows.csv`](e3_rows.csv); the pre-registration counts only its build (`65cf516`, harness
+a420043e) and the own-plan arm's amended builds. Both counts, one yardstick (held-out below 1.0):
+
+| | pre-registered build only | pooled |
+|---|---|---|
+| arm A: DONE claims · below held-out | 19 · 8 | 30 · 13 |
+| automatic: DONE roots · below held-out | 18 · 5 (90.9–99.7 %) | 26 · 5 |
+
+- *Arm A's "done" is often not the contract's.* The oldest, smallest model claims it on `coreutils` with a quarter to
+  most of the held-out suite failing, and on `sql_database` at 9–18 %; Sonnet claims it on `c_compiler` at 99.7 %. Where
+  it was honest it stopped short (Haiku 5.5, `c_compiler`, 74–95 %). Haiku 5.5 and Sonnet alone meet `coreutils` and
+  `sql_database` almost always.
+- *Every automatic DONE ran the checks pinned to it* — the gate, by construction, signed by a validator that is not the
+  executor. Measured on held-out, five of them fall short (`c_compiler` 98.7–99.7 %: behaviours its checks do not probe;
+  the own plan on `sql_database` 90.9 %: a requirement it did not write, FM-1.f).
+- *On a plan given, the smaller models reach what they do not alone* — Haiku 4.5 on `coreutils` (59–76 % alone, 100 % ×5),
+  Haiku 5.5 on `c_compiler` (74–95 % alone, 98.7 / 99.7 %, its plan's probes partly drawn from held-out tests). On
+  `sql_database` Haiku 4.5 did not finish under the system: on the pre-registered build one row ended NOT DONE after
+  495 active minutes ($83) and two were cut at the 9-h ceiling ($68, $92); on `c_compiler` its two rows were cut there too
+  ($60, $65) — for system defects named below.
+- *What it costs.* On `coreutils` × Haiku 4.5 the automatic row costs about 16× the bare one at the medians ($25 against
+  $1.5) and takes about 16× as long, plan not counted; on `c_compiler` × Haiku 5.5 about 2×; on `c_compiler` × Sonnet the
+  automatic mode was 3× faster and 3.5× cheaper than the bare agent's two hours.
+
+**What is not shown, and why.** Two cells of the weakest model have no automatic DONE. Their rows on the pre-registered
+build ran to the 9-h ceiling for reasons measured in the rows themselves and fixed before the rows that replace them: the
+machine issuer's repair re-homed the pinned inputs empty (`sql_database`); one session held a node that failed the same
+criteria nineteen rounds on real crashes and was never split (`c_compiler`, §3.7's leaf test now enforced at contact);
+the account's limit windows were read as answers and doubled the issuer's waits to two hours; validators citing a pinned
+check by its own directory name had truthful reports refused. The replacing rows run on `9155db9` (Amendment 2). Two own-plan rows on the earlier build were stopped on their spend with no verdict (`coreutils` × haiku 4.5 by hand,
+`sql_database` × haiku 4.5 by the spend guard at its ceiling): one had re-validated its root whole every ten minutes. These cells are reported empty, not
+filled from another build.
+
+**Limits.** Three tasks and n of 1 to 9 per cell; the held-out suites are the benchmark's, so a criterion the suite does
+not probe is invisible to both arms alike; the plans given were verified against the oracle before the table (that is the
+automatic mode's plan-given arm by design — the own-plan arm is the system writing its own); time includes the account's
+shared limit only where it was measured and taken out.
+
+**Amendment 2, measured (2026-10-24).** The plan-given cells of Haiku 4.5 on `sql_database` and `c_compiler`, re-run on the
+amended build `9155db9` (two rows each), closed no root and claimed done in none. Scored on the held-out suite as each
+root's tree last stood: `sql_database` 54.5% in both rows (the agent alone: 9–18%, done claimed in 5 of 6). Read off the
+rows' own logs: every root pinned check of the given plan passes on both final trees, so the plan's checks were looser
+than the held-out suite on this model's code (they had been verified on stronger models' trees only); the first root
+verdict, 3.4 h into each row, failed 10–14 root criteria over parts that had all passed; the system then re-split the
+given plan (2 and 16 parts added), so those rows ran a plan of its own; one added part's expected output was re-pinned,
+on an accepted dispute, to what the build printed, contradicting the root's own pinned check, and the root failed on the
+pair to the 9-hour ceiling; repair parts pinned empty input files on their first issue (40 in one row; the fix named
+above covered re-written probes, not newly added parts); in the other row the machine issuer cancelled the root two
+minutes before its ceiling.
+`c_compiler`: one row stopped by hand after two days whose integrated trees never rose above the task's starter code
+(11–20%, the starter at 20.4%) — a part kept failing the same criteria over children that all passed, re-worked rather
+than re-split; the other ran to the ceiling with its root not reached. Read: under the system the weak model does not
+claim done falsely and on `sql_database` goes three to six times further than alone; the claim that it carries the
+work to the oracle holds on `coreutils` only (where the system added no part to the given plan). On `c_compiler` the
+agent alone claims no "done" (12–15%), so that cell carries no false-done comparison. The defects named are the
+system's and the plan's, not the model's; the cell is re-run under Amendment 4 of the pre-registration.
+
+### 13.47 `sql_database` on the final given plan: both smaller models close it DONE (2026-10-25 → 10-27)
+
+**What was asked** (`experiments/e3_specbench/PREREGISTERED_table_v1.md`, Amendment 4, each row designated before it
+started). The automatic mode, every role on one model, on the given plan v16 for `sql_database` (ten parts; the SELECT
+pipeline one part), graded in Linux on the oracle.
+
+**What it shows.**
+
+| model | automatic, plan given: claim | held-out | public | wall |
+|---|---|---|---|---|
+| `claude-haiku-5-5` | DONE — every pinned check of every passing verdict ran (24 at the root) | 1.000 (11/11) | 1.000 | 52 min |
+| `claude-haiku-4-5-20251001` | DONE — resumed after an engine fix (Amendment 5), one build for the resumed attempt | 1.000 (11/11, the tree the root's verdict signed) | 1.000 | 5 h 50 min (2 h 14 min + 3 h 36 min; the 6 h 36 min the engine's stop held nothing running left out) |
+| `claude-haiku-4-5-20251001`, second row | DONE — a fresh run on one build, start to end | 0.818 (9/11, the tree the root's verdict signed) | 0.933 | 7 h 36 min |
+
+On `claude-haiku-4-5-20251001` eight of the ten parts passed in 85 minutes; `select` failed four deliveries of four
+different trees on true failures (its pinned checks re-run on each tree reproduce the failed sets; 2 of 7 pass), and an
+engine rule read the four equal FAILs as the node exceeding one session of its executor, so the run was stopped at
+2 h 14 min with held-out 0.091. That rule was the implementation's, not the canon's: §3.7 places κ in the leaf test, and
+a count of rounds measures no κ — every one of those sessions had ended by itself with turns to spare. With the rule
+removed the run was resumed from where it stood: `select` failed six more deliveries and passed on the seventh (7 of 7 of
+its checks), `integrate` after it. The root then failed ten deliveries on part `eval`'s pinned check re-run on the whole:
+that check links a fixed list of files, and the integrated `eval.c` called into `select.c`. On the eleventh the root's
+executor had decoupled `eval.c` from `select.c` (a callback), the check held, and the root passed — the plan unchanged; the signed tree scores held-out 1.000
+and public 1.000. Those rounds also lost criteria to an engine refusal to credit one pinned check carried by two parts
+under two names (`integrate` copies `scaffold`'s), named here and fixed apart from this row. The bare agent on the same
+model and contract (§13.46) claims DONE in 5 of 6 runs at held-out 0.091.
+
+The second row on `claude-haiku-4-5-20251001` (Amendment 4's row (c), an independent sample) ran on one build with no
+engine stop: the ten parts passed by 02:58, `select` on its fifteenth delivery after fourteen true failures (a crash
+across statements, DESC ignored), `integrate` on its seventh after six failures on an interface its executor had widened
+against the contract; the root
+passed on its first delivery. Its signed tree fails two of the eleven held-out tests, both on one defect: an `UPDATE …
+WHERE col = expr` runs the WHERE as one more assignment, so every row is rewritten (`UPDATE t SET x = 9 WHERE x = 2` over
+1, 2, 3 leaves 2, 2, 2). The plan names the behaviour — `dml`'s and the root's criteria cover UPDATE with WHERE — and every
+pinned probe of it uses a predicate other than `=` (`<`, `<>`, `>`, `IS NULL`): FM-3 of the plan's checks, a criterion
+whose procedure cannot see the case. The first row's tree encodes the SET items apart from the WHERE and passes the same
+tests through the same blind checks. Cost on the ledger: $68.36, of it $5.86 a continued round booked twice (fixed since), so $62.5 — executors $47.3, validation $12.7, the issuer
+$2.5.
+
+**What it does not show.** The plan's checks were verified against the oracle beforehand and polished on
+`claude-haiku-5-5`'s own runs, so the first row says what the system does with checks that hold; it carries no value
+claim by itself (§13.46's condition). The first row on `claude-haiku-4-5-20251001` ran across two builds (the engine's κ-by-count
+rule removed between its attempts, disclosed under Amendment 5); n = 2 on that model, the rows reported side by side,
+never pooled. The harness flagged each haiku 4.5 row invalid on the repository's source moving during the row, while
+the server that ran it was one process on the recorded build throughout, and the second also on a false leak (its
+pattern read an executor's own place, `/gfso-nodes-ws/…`, as gfso's source; the pattern now matches whole path
+segments) — each adjudicated valid in its record.
+
+**The second row's gap was the plan's, and closing it took one probe.** Every UPDATE probe of v16 used `<`, `<>`, `>`,
+`>=`, `IS NULL` or a bare column (its DELETE probes do use `=`); a probe of `UPDATE … WHERE col = value`, derived from
+the contract's UPDATE with WHERE, fails on the second row's signed tree and passes on the first's (offline, no model).
+v17 = v16 + that one criterion (root, `dml`, `integrate`). Run on the second row's signed tree as its starting tree
+(GB_sql_database_tnjw8j716, pre-registered as Amendment 7): DONE, held-out 1.000 (11/11), public 1.000, 52 min, $11.25 —
+execution $3.24, validation $8.02; `dml` fixed the defect in one round. Six parts that changed nothing spent 15–49 turns
+each finding their work done; three others edited code on the way. **What it does not show:** it is a continuation, not
+an independent sample; the held-out score is not blind to this defect — the probe was written from the contract but
+chosen after the hidden tests had shown the failure; it does not show haiku 4.5 closing v17 from the start; and $11.25 is
+the increment, the outcome's cost being the second row's plus this. From the start v17 does not hold as a plan: its
+probe on `dml` prints the rows a SELECT returns, which `select` — ordered after `dml` — produces; on an empty tree (a
+haiku-5.5 smoke, GB_sql_database_tnk9dq308, not a row) every `dml` session BLOCKed naming `select`, and the system
+stopped the run on the order its contact refuted. The continuation passed because `select`'s work stood in its seed.
+The plan for later rows is v17.1: the criterion off `dml`, kept on `integrate` — which consumes every part — and the
+root, so a `col = value` defect in `dml`'s work is caught one level later. Checked offline, no model: the probe PASSes on
+the first row's tree (held-out 1.0) and FAILs on the second's (0.818); no part's pins need a part ordered after it. Not
+yet run.
+
+**c_compiler on haiku 4.5, plan v4 given (GB_c_compiler_tnj930660, Amendment 6): NOT DONE.** In 8 h the first part,
+`base` — eight criteria, judged by the plan's author to fit one session — never passed: 38 deliveries, 37 FAILs; the
+failing set fell from seven criteria to four by the second hour, rose back to five or six in the third, and stood at
+three in the last ninety minutes; five sampled
+deliveries through hour five read 0.07 → 0.22 on the oracle while the other ten parts waited; the tree the row scored
+reads 0.204. Cost $67.26 — execution $57.21, validation $7.24, issuer $2.66. With twelve minutes left on the engine's
+deadline the waiting parts' offers lapsed and the issuer cancelled one of the given plan — a move the plan-given rule
+does not allow, open — and the system stopped the run as refuted. The record is flagged invalid only for the source
+moving during the row (two commits under gfso/web, the server one process on the recorded build), not yet adjudicated.
+At its grade: one row did not pass `base` in 8 h. The plan is v3's plus `integrate` (v3's one haiku 5.5 row,
+GB_c_compiler_tn9fq5668, DONE, is itself flagged and not adjudicated); nothing in the engine lets an executor split a node in performance (§3.7, §11.5).
+
+### 13.48 What a session costs: the context handover does not pay on `sql_database`, the place observation does; one sound delivery refused six times, and why (2026-10-27)
+
+Pre-registered (`experiments/e3_specbench/PREREGISTERED_context_budget.md`, its corrections written before the rows they
+govern, one after the first budget row and disclosed): `sql_database`, the given plan its haiku-5.5 reference closed,
+every role `claude-haiku-5-5`, AUTO, one server build for the series. Every row: root DONE, signed tree held-out 1.000.
+
+| cell | executors $ | executor turns | handovers |
+|---|---|---|---|
+| no budget (×2) | 0.423 · 0.457 | 107 · 106 | 0 |
+| budget 25k / 38k / 50k / 76k | 0.395 / 0.480 / 0.350 / 0.398 | 258 / 255 / 189 / 159 | 16 / 13 / 3 / 0 |
+| no observation of the place | 0.571 | 121 | 0 |
+
+- **The handover is not shown to pay here.** Only the 50k cell is cheaper than the two unbudgeted rows by more than their
+  spread (8 %), n = 1, and the 76k cell — no handover at all — is 10 % cheaper, so run-to-run variance alone reaches that.
+  Cache reads are flat across cells (3.8–4.3 M tokens): sessions on this task peak at 40–50k, the handover has little to
+  cut, and each one adds a fresh session's re-reading (executor turns ×1.5–2.4); of the reopened sessions most only
+  verified and answered. What a budget buys is a question for a task whose sessions grow long.
+- **The place observation pays:** without it the executors spend 13 % more turns and 30 % more money at an equal result.
+- **The system's own plan on haiku 5.5** (the arm the value claim rests on; one row on this build, without the addendum the
+  bare arm ran on, §13.51): DONE, every pinned
+  check run, held-out 0.818 (ordering and a mixed-stress suite not probed); $1.58 in columns (executors 0.45, validation
+  0.26, issuer 0.38, planning 0.50); 119 min against the bare agent's 16–21. Contact showed the plan wrong five times,
+  each carried by a BLOCK naming a missing producer or a defect in a pinned check; the issuer answered by promoting
+  producers and once by re-splitting two parts that needed each other. No CHALLENGE was used.
+- **One sound root refused six times.** On a first unbudgeted row the root delivered once and good (oracle 1.000) and was
+  validated seven times, ~$3.9 of the row's $5.2: a part carrying copies of the root's checks had them owed again under
+  other ids, placed under the root's first criterion where the validator read them as out of scope, and a copy shown
+  holding by its own id was read as not run. A pinned probe is now one observation whatever ids it carries (owed once,
+  credited for every copy, voided for every copy when reported failing); replayed on the 19 archived refused reports,
+  13 lift and none newly refused. Separately, a pinned expectation of two lines was printed raw in every packet, read as
+  its first line alone, and a correct check was disputed; packets now write it on one line.
+
+### 13.49 The context budget on a cell whose sessions grow long (`c_compiler`) is not yet measured: its reference did not close, held by an engine defect since fixed (2026-10-29)
+
+Pre-registered (`experiments/e3_specbench/PREREGISTERED_context_budget_2.md`): `c_compiler`, the given plan v4, every
+role `claude-haiku-5-5`, AUTO, two unbudgeted references then budgets of 128k / 64k / 32k tokens; a reference that is
+not root DONE within 14 400 s stops the series. On this cell a budget has something to cut: in the first reference 11
+of 28 executor sessions passed 128k (peak 337k), executors 0.91 of the row's cost, 102.7 M cache-read tokens against
+~4 M on `sql_database` (§13.48).
+
+| row | verdict | wall | held-out |
+|---|---|---|---|
+| reference 1 | root DONE (promise kept) | 8 786 s | 0.973 |
+| reference 2 | NOT DONE at the ceiling | 14 400 s | 0.204 (base tree) |
+
+- **The series stopped by its own rule; no budget cell ran.** Reference 2 kept reference 1's pace for 55 min (5 of 11
+  parts DONE), then nothing ran for 2 h 26 min: the issuer could not rule on a part's dispute — the part's rework had
+  changed its place's tracked files before it challenged, the dispute's copy is held to the delivered commit, and the
+  ruling was asked again with a doubling wait. An implementation defect, not the models' variance; since fixed (a
+  dispute after such a rework is ruled by contact in the place as it stands, retiring no finding there).
+- What remains to show: whether a budget pays where sessions grow long — the series is re-run on the fixed build.
+- **The re-run (2026-10-30) did not measure it either.** Its first attempt was voided by its pre-registered load rule:
+  one judge's container took 9 GiB of the machine, containers then having no memory bound (since bounded per
+  container). Its second attempt's two references were stopped short of their root: both looped on a validator's
+  standing finding whose command entered the node's own place, read as a gone past round and shown without its pinned
+  inputs (since fixed). No budget cell ran. The budget reading still waits (one cell was read later: §13.51); and a fresh pair of references was not
+  needed for it — the plan-given references already on record serve, their build named.
+
+### 13.50 The system's own plan for `c_compiler`, measured before any row: no planner yet meets every bar; the cheap model's pipeline holds the axes execution cannot repair (2026-10-31 → 11-01)
+
+Pre-registered with a hash before each reading (`experiments/e3_specbench/PREREGISTERED_decomposer_quality.md`, its
+amendments A–E; results in `RESULT_decomposer_quality.md`). Three instruments: E2 (structure against reference
+decompositions, a blind grader, three rollouts per task); a Level-2 reader of coverage over the authored plan (undecided
+obligations, two readings); and a model-free oracle bench — every pinned check run on 4 good trees (held-out 298/299),
+6 weak trees and 7 single-edit near-miss mutants of a good tree. Its readings: SOUND (no public check fails a good tree),
+CATCH (near-misses a public check fails while its base passes), UNDECIDED (criteria no check decides on good trees).
+
+| planner | E2 | coverage reader (undecided) | CATCH | UNDECIDED | SOUND: public FAILs on good trees |
+|---|---|---|---|---|---|
+| main's pipeline, haiku 5.5 | 0.69 | 51 | 1/7 | 0.05 | 0 |
+| revised pipeline, haiku 5.5 | 0.67 | 18.5 | 5/7 | 0–0.06 | 5 · 26 · 13 |
+| main's pipeline, sonnet 5.5 | 0.82 | 7.25 | 0–3/7 | 0.35–0.54 | 25 · 48 |
+| sonnet on the revised pipeline | ≈ sonnet | 6.25 | 4.5/7 | 0.30–0.36 | 64 · 34 |
+| sonnet, an exact check demanded per criterion | — | 1–4 (one plan) | 1.5/7 | 0.07 | 22 · 44 |
+| sonnet, + checks run on the gcc reference and fed back (1 round · ≤ 3 rounds) | — | 12.5 · 15.5 | 2 · 1.5 | 0.15 · 0.16 | 41 · 8 → 27 · 8 |
+| revised pipeline, haiku 5.5, + the same reference rounds | — | — | 5 · 4 · 4 | 0.02 · 0.05 · 0 | 5 · 20 · 13 |
+
+- **The author model carries the content; the form of a plan's checks is the pipeline's and partly the model's too.**
+  Through the same pipeline the stronger model writes expectations in prose a validator decides by reading; demanded exactness, it
+  met the demand in form — checks through tools the statement does not define, prose in an `exact` field — not in truth.
+- **Grounding checks on a reference does not converge** — on either model's plans. Each round repaired what the reference had read and wrote new
+  checks it had not; and a check gcc passes can still fail a tree that scores 298/299: the reference is wider than the
+  contract the held-out suite measures. Exact form and contact through one reference are not a check's truth (§3.5, §8.4).
+- **No planner meets every bar.** Every planner but main's fails SOUND, and main's fails CATCH; the revised pipeline
+  trails the stronger model on E2 structure. The revised pipeline on the cheap model is the only one holding CATCH and UNDECIDED —
+  the defects execution cannot surface (an insensitive check passes silently, a prose check is decided by impression);
+  a check that fails correct work is loud (FAIL, a CHALLENGE) and has a channel to its repair in execution — derived
+  from the protocol's channels (§11.2–11.3), not yet measured on this cell. Its gap is coverage, which the run's second
+  number (held-out) reports.
+- What remains to show: whether the cheap model, on its own revised plan, carries `c_compiler` to its root verdict —
+  no admission row on the live gate has run yet, and none on the target cell.
+- Splitting the authoring by stage (a stronger model writes the parts, criteria and couplings, the cheap one every check),
+  c_compiler, two plans: more near-miss mutants caught than either model alone (6 of 7 each), checks nearly all decidable,
+  coverage better than the stronger model's, at a third to a half of its price; structure on E2 0.795 against its 0.830, the margin
+  registered in advance missed by 0.005. Its checks fail the good trees more often than the cheap planner's, on behaviour
+  the contract does not list (25 and 34 tree-criterion pairs against 4, 14 and 7): refuted as the planner the row needs.
+  Grounding exact expectations on the reference removes the ones written wrong and costs no catch; applied to a check of
+  internal layout it pins the reference's own text, so it belongs to checks of the public interface only.
+- **Bounding what the checks may demand (2026-11-02).** One more sentence in the prompt every writer of a check reads moved
+  nothing: 28 and 31 checks on constructs the contract never names, against 24 and 38. A second model tracing each public check
+  to the contract's text, a criterion left with none dropped, brings the pairs to 4 and 14, the cheap planner's level, with catch and
+  coverage in its range, and refuted by its registered margin (median 9 against 7): it drops a whole check for one clause beyond the
+  contract, so required rejections left with it. No planner is separated from the cheap one on this bench by that route.
+- **Out of sample, `sql_database` (7 near-misses, 4 good trees chosen blind to the plans; two plans an arm).** The stage split reads 1.75
+  obligations open against 5.5 and fails the good trees no more often than the cheap planner (13 pairs against 14): that it is less true,
+  read on `c_compiler`, does not carry over. On catch the arms are not separated: 3.5 of 7 against 4, once a flag is read that plans left
+  off. Rollouts of one build differ more than arms: 48 of one plan's 51 checks held the whole expected output and lacked only the flag
+  that lets a machine decide them, so criteria no check decides read 0 and 0.625 for one planner. Taking expectations from a reference
+  instead costs something: a forwarder's own form entered two checks. One near-miss no plan of five catches, identifiers with an
+  underscore, a defect costing 5 of the 11 suites, though the contract's own examples write such names. No proof of the decomposer's
+  quality stands, and no row of the system's own plan on `c_compiler` was run on any of this.
+
+### 13.51 Three readings to hold beside the above: own-plan rows on another contract, one budget cell on `c_compiler`, and a stage that walks the goal's text (2026-10-27 → 11-02)
+
+**Own-plan rows of 2026-10-27…10-31 ran without the addendum.** The bare arm and the own-plan rows of §13.46's grid (build
+fb85648: coreutils 1.000 ×2, `sql_database` 0.909) ran on the task's statement with the binding addendum of
+`experiments/e3_specbench/explicit_contracts/` (`spec_addendum.applied` true in each record). These rows did not: their
+launcher did not pass it, so they measured another contract. Every role haiku 5.5, AUTO, the system's own plan:
+
+| row | task | build | root | held-out | $ (ledger) |
+|---|---|---|---|---|---|
+| `GB_sql_database_tnkid4876` | `sql_database` | da9d102 | DONE (promise kept) | 0.818 | 1.58 |
+| `GB_coreutils_tnqh4a016` | `coreutils` | 076abfb, continued on 39fc840 | DONE (promise kept) | 0.891 | 1.05 |
+| `GB_coreutils_tnql66996` | `coreutils` | 39fc840, continued on 2f8ddcc | DONE (promise kept) | 0.874 | 1.67 |
+
+- **They do not read against the bare arm, nor as a fall from 1.000.** On `coreutils` the addendum withdraws "the specified
+  options only" and adds options; every held-out test these two rows miss, against a 1.000 row's passed list (13 and 15 of
+  119), is one of those (`cat -v -T -A`, `wc -L`, `sort -f -s`, `uniq -u -f -s`). The gap is what the statement they were
+  given did not ask for, so it is no measure of the plan's coverage. On `sql_database` the row misses two of 11 suites
+  (`07_order_complex`, `10_mixed_stress`) and the addendum states tie orders and result forms; which of its clauses decides
+  them was not traced, so 0.818 is not read as the addendum's cost either.
+- The two `coreutils` rows each span two builds: each stopped on an engine defect in the Level-2 gate, and was resumed after
+  its fix on the same project. Their records' wall time counts the continuation alone (969 s, 1 302 s).
+- `c_compiler`'s rows of those days (`tnl51c552`, `tnlgsd008`, `tnmsd1088`, `tnpji8716`), all NOT DONE at the starter tree's
+  0.204, lack the addendum too. Of the own-plan rows on record since, the two with it, `GB_coreutils_tnrrb0968` and `GB_coreutils_tnwsm7492`, were stopped
+  at their plan's review with no held-out read.
+
+**The context budget at a 128k line, one row per arm** (`c_compiler`, the given plan v4, every role haiku 5.5, AUTO; §13.49's
+reference on record, the cell registered in `PREREGISTERED_context_budget_2.md` before it ran). Executor figures, recounted
+from each row's session traces:
+
+| row | line | build | root | held-out | executor $ | requests | output tokens | sessions | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| `GB_c_compiler_ctx2ref_10291111` | none | 6d73d55 | DONE (promise kept) | 0.973 | 8.02 | 948 | 1.88 M | 28 | 8 786 s |
+| `GB_c_compiler_ctx3b1285_10301332` | 128k | a9c5b45 | DONE (promise kept) | 0.980 | 10.40 | 1 929 | 4.21 M | 71 | 14 268 s |
+
+- **At an equal result the line did not pay: about twice the work, 1.3× the money.** The registered rule (root DONE, held-out
+  ≥ 0.973, executor cost below $7.38) is not met. The share of requests above the 100k price step falls from 49 % to 23 %, and
+  the requests themselves double.
+- **The line model is refuted as stated.** A model cutting the reference's sessions at the line predicted 0.80 of its cost;
+  1.3 was measured. Per session the cost held; what it lacked is that the work itself grows with each change of session.
+- Limits: n = 1 per arm, one line, one task, one model; the builds differ and the cell ran beside another row, so wall time
+  is no comparison; the ledger holds $8.71 of the cell's $10.40 (8 sessions unbooked, an engine defect since fixed). The
+  cell's automatic validity flag is false on a path pattern matching a `sed` address over a program's variable `sb`, no path;
+  the registered rule does not read that flag. This says nothing of what a handover should carry, nor of another line.
+
+**A stage that walks the goal's text, read on near-misses blind to it** (`RESULT_decomposer_quality.md`, Amendments Q, R, S;
+read offline on benches of §13.50's form, no plan re-authored). A cheap model writes checks from the goal's text alone, a program
+handing it each code fence of the goal and asking again for names left out, and a second call writes harder cases over the
+first's items. Its first form, one call and a sentence asking for the goal's own text, was refuted by two bars. The fenced
+form held every bar on the seven near-misses of §13.50, but its second prompt's list was written knowing them, so 12 new
+single-edit near-misses per task were made by an agent told nothing of plans or lists, 6 each that the held-out suite sees:
+
+| of 6 seen near-misses, clean catch | `sql_database` | `c_compiler` |
+|---|---|---|
+| plans, revised pipeline (each plan) | 4 · 1 | 3 · 3 · 3 |
+| plans, stage split (each plan) | 5 · 5 | 3 · 4 |
+| the stage's checks alone (second call sonnet 5.5, each of two) | 6 · 6 | 3 · 3 |
+| joined to a plan, median, against that plan's | 6 against 2.5 and 5 | 3 against 3, 3.5 against 3.5 |
+
+- **Refuted as registered:** the joined checks had to rise by one on each task, and on `c_compiler` the rise is 0. Its rise
+  there on the seven earlier near-misses was what the prompt's author knew.
+- Read, not a bar: on a goal that states its outputs the stage catches more than any plan, 6 of 6 for about ten cents, and
+  one near-miss every plan misses (identifiers with an underscore) it catches; on the 6 the suite does not see it reads 3 · 2
+  against the stage split's 4 · 2. On a goal that names a standard's features and
+  leaves their meaning to the standard, the text gives no more than plans do; two seen near-misses there nothing catches.
+  Its false FAILs were read near zero against the contract by one reader, no second.
+- **The proof of the planner is not obtained.** The stage is shown on one task of two, is not in the product, and no row ran
+  on it.
+
+### 13.52 The user's path on a clean install, and what the planner's speed changes cost: real clients reach a root's `PASS` on small tasks and one of four parts; the changes won no minutes on E2 and left more open by a common reader (2026-11-04)
+
+**Real clients, clean installs of one day's builds, the last `6e4a906`, fixes landing between the runs: of the runs below only the interactive one and the four parts are on that build.** Fresh Claude Code clients (Sonnet 5.5), a clean configuration, a task told in words, every
+role of the system on Haiku 5.5, the network `open`, through the server's real door on its own port. Runs before the
+configuration was truly clean are not counted: an isolated configuration directory alone still loads the global
+instructions file.
+
+| what | runs | root | wall | system $ | client $ |
+|---|---|---|---|---|---|
+| a small command-line task | 9 | `PASS` ×9 | 10.5–23 min; one 54 min on a stall in ending a call under a slow Docker, since fixed | 0.05–0.16 | about 0.3 |
+| a task of four parts | 1 (an earlier one stopped at 60 min, no verdict) | `PASS` | 39.8 min | 0.39 | 0.44 |
+
+- Each landed on a branch with `main` untouched. There is no held-out suite here: the results on control data were right where
+  they were run, n = 1 on the four parts, so this shows the path runs, not how well.
+- One of the nine ran in an interactive session: 15 minutes, no permission prompt under the client's auto mode, one menu for
+  trusting the folder; long calls went to the background and woke the client, none was cut.
+- Told only the name `gfso`, one client searched the web and gave up.
+- What a client tells the person lies in its thinking blocks, shown on the interactive screen as a summary. A `-p` run shows
+  none of it, so a count over text blocks reads silence that was not there.
+- Larger tasks on this path are not shown here.
+- **On `ffe8b34`, fresh clients again (Sonnet 5.5, Claude Code 2.1.318; `auto`, Haiku 5.5, `open`, side by side on one server, with other work on the machine):** a small task, `-p`: `PASS`, 24:16, plan 7:06, one round of rework, system $0.118, client $0.242. A task of three parts, `-p`: `PASS`, 27:52, plan 17:51 with two refinements, system $0.243, client $0.611. A small task, interactive: `PASS`, 23:53, plan 16:38 with two refinements, system $0.157, client about $0.62 (derived from its tokens); one menu for trusting the folder. Flows dropped 0; `main` untouched; results right on control data of ours, no held-out suite; no container of a project stood once its goal was over, read within 72 s to 4 min. Every client had gfso's tools, its folder and its `git`, `python`, `gfso`, `ls`, `mkdir` commands allowed ahead, and a client state kept from an earlier run: "one menu" counts on that. Not shown: the page opened from the link; the image built by a clean setup (it stood already). A first try of the parts task ended at 40 s, no plan: `-p` refused the client's `git` commands for a new repository with nobody to approve; its rerun had them allowed in advance, a person's approval given ahead. In the small `-p` run a validator's own finding, that a BOM be kept, contradicted the criterion that it be removed: FAIL, the executor's CHALLENGE, the issuer's rejection (the criterion stands), the next validation not reproducing it, `PASS`, both findings said to the person: one round of cost. A single reading.
+- **Nothing allowed ahead (interactive, a config holding only what `gfso setup` writes, no global git identity, the client's default auto mode, one at a time):** on `4bbb8fe` a small task, `PASS`, 12:23 from request to the person told, system $0.074, client $0.443; on `e59fd58` a small task, 27:19, $0.121, $0.303, and a task of five parts, 45:07, $0.416, $1.339; on a build with the plan's text in its answer, a task of two parts and its root, 27:13, $0.219, $0.597, and a small task, 14:25, $0.108, $0.473. All `PASS`, results right on control data of ours. Each opened with the client's three first-run menus (the trust menu's cursor stands on "No, exit"). Prompts gfso caused: one on `4bbb8fe`, the read of the plan file outside the folder; on `e59fd58` none on the small task, five on the five parts, whose plan had grown past the answer's limit; none on the last two, the plan answered in full, none of them above 34,000 characters, so a larger one in the answer is unshown. The client made a git identity up for its first commit, saying so in a line; nothing in the system stumbled on it. Flows dropped 0, the door refused nothing, `main` untouched, containers gone within two minutes of landing. The first full link came 32 s to 9:41 after the request, once only at the end (27 min, before the wording that now tells the client a person does not see the tool's answer). Before each rework session every pinned check runs again, serially, about 4 s each: 3 minutes twice on one run. Not shown: the token step by hand, a client outside auto mode, a person looking at the page.
+- Between that build and those runs, on the code after §13.52's clients, the same bridge with a script as the customer (`auto`, Haiku 5.5, `open`): a small task, on a branch of the same night outside this history (`8bef929`), root `PASS` in 736 s; a task planned in three parts, a fourth added by the issuer as it ran, build `6ac62e4`, root `PASS` in 2058 s, $0.27, plan 13 min, `main` untouched, 91 of its tests passing on the accepted branch, no FAIL, one BLOCK on an order a part needed. After each, its containers ended within two minutes of the last node settling; on the row below, of an earlier build, 18 stood until the project was stopped.
+
+**The system's own plan on a larger task, the same contract as the bare arm** (`GB_coreutils_tnzimp748`, build `7a8480c`, AUTO, every
+role but the harness's customer on Haiku 5.5, addendum served; a debugging row, one, no bare arm beside it and not counted in
+§13.46's table, where bare Haiku 5.5 already reads 100 % on this task, so it is no comparison of value):
+
+| root | held-out, accepted tree | held-out, signed branch | wall | plan | execution | validation | issuer | total |
+|---|---|---|---|---|---|---|---|---|
+| DONE (promise kept) | 1.000 | 1.000 | 77 min (plan 27) | $0.61 | $0.30 | $1.23 | $0.12 | $2.27 |
+
+- 13 nodes, all DONE. Contact repaired what it met: 2 FAILs reworked, 1 BLOCK resolved, and 1 CHALLENGE on two of the plan's pinned
+  checks that could not pass on correct work, which the issuer reproduced and changed.
+- No check was ruled out and no validator's finding ended unreproduced (`checks_no_longer_run`, `findings_not_reproduced` empty), so
+  this row does not exercise those two exits. It says the dead ends that stopped the rows before it did not arise here, not that they
+  cannot.
+
+**The planner's speed changes against their base, E2 and a small task** (pre-registered with a hash before reading; the blind
+judge of §13.50's form; 20 plans per arm on E2's ten tasks, 3 per arm on the small task):
+
+| reading, E2 (new − base) | mean base → new | difference, 95 % |
+|---|---|---|
+| structure, pooled | 0.712 → 0.689 | −0.024 [−0.081, +0.037], bar −0.05 not met |
+| structure, D + Dep | 0.801 → 0.769 | −0.032 [−0.091, +0.023], bar −0.05 not met |
+| open obligations, a common reader | 1.93 → 3.30 | +1.38 [+0.33, +2.40], exploratory |
+| open obligations, the arm's own gate | 3.20 → 2.30 | −0.90 [−3.20, +0.90] |
+| checks | 80 → 57 | −23 [−46.6, −0.95] |
+| minutes, whole plan | 15.6 → 14.6 | −0.98 [−3.72, +1.86] |
+
+- **On E2 no speed is shown, and the common reader finds more left open.** Structure stays inside rollout noise (median 0.066) and
+  its bar is not met in either form, which reads as not shown either way.
+- **A gate's own question is no reading of coverage.** The arm's own gate fell while the common reader rose.
+- On the small task speed is real where the plan is a leaf: 7.2 → 4.9 authoring minutes, near-misses caught cleanly, median of
+  three plans, 9 → 8 of 10, ranging 3–9 and 6–9.
+- **Which change costs what is not distinguished.** The old re-check's question against the new, n = 4 per arm on two tasks: a
+  difference of −1.00 at a standard error of 2.47; about 50 plans per arm would be needed, and none was spent.
+
+### 13.53 A bare agent on the small tasks, one task with an oracle through a real client, and a lighter plan (2026-11-05/06)
+
+**Bare Sonnet 5.5 on the five small requests of §13.52**, the words asking for gfso removed, one control script per task written from the request before either result was read (mutants of two results scored 10/14 and 6/13, so the controls bite): both arms 78 of 78. Bare: 10–30 s, $0.04–0.07 a task; through gfso: 12–27 min, $0.31–0.78 (system and client). Four of five bare clients said they had not run what they wrote. n = 1 a task. On tasks of this size the path runs and adds a verdict signed by another party, nothing the controls could see.
+
+**`coreutils` through a real client**, Haiku 5.5 for every role of the system, the addendum in the request, network `off` (`GD_coreutils_door1`): DONE (promise kept), second number 1.000 on the signed branch, 67.5 min (plan 28.7), system $1.82, client $0.93; the harness's own-plan row (`GB_coreutils_tnzimp748`) read 1.000 in 77 min, $2.27. The two doors share the authoring code and differ after it: the harness's review is a gate with rounds acted on by the system's issuer; the client's is one pass written into the file, acted on by its note (here Sonnet's note took the root's criteria from 12 to 19). Bare Haiku 5.5 reads 100 % on this task, so "no difference seen" is not "no difference".
+
+**A lighter plan** (pre-registered; search and first fold kept; goal reading, pins by part, the checker, the sufficiency fold, re-reading and review removed; a script customer through the client's verbs; network `off`; one row a cell):
+
+| task | plan | verdict | second number | wall | system $ | checks |
+|---|---|---|---|---|---|---|
+| coreutils | light | DONE (promise kept) | 1.000 | 31.7 min | 0.53 | 32 |
+| sql_database | light | DONE (promise kept) | 1.000 | 53.1 min | 0.73 | 14 |
+| sql_database | full | DONE (promise kept) | 1.000 | 107 min | 2.29 | 80 |
+| c_compiler | light | NOT DONE at 14,400 s | 0.204, the starter tree | 4 h | 3.41 | 12 |
+| c_compiler | full | NOT DONE at 14,400 s (debugging row: no reading of the arm) | none: no part reached the root | 4 h active | 4.53 | — |
+
+Both easier tasks sit at the ceiling, where a loss of coverage cannot show; most of the saving came after the go, from checks the full plan made that correct work could not meet. On `c_compiler`, where bare Haiku 5.5 reads 0.74–0.946 and a given plan 0.986–0.997, the light plan's end-to-end checks made parts wait on each other, the system merged them into one node holding the whole compiler, and no program compiled in four hours. The row was a debugging one: an engine defect held it 40 minutes and the build changed during it.
+
+The full plan on `c_compiler` (2026-11-06/07, same setup, `GF_cc_full1`) was a debugging row too: it stopped three times on the engine's own defects, each fixed before it resumed from its graph, across four builds. They were an issuer that could not run the checks a dispute stood on (their inputs not laid for its turn); a ruling on one finding that landed under one of the four criteria it stood on; and an exact check read without its comparator, first by the validator, failing what the system's run had matched six times, then by the executor, disputing it eight times. No part was merged; the splitting changed before it (a node past its forecast re-decomposed by its parent's decomposer, no merge of parts into one node) never came into play: no re-decomposition, no refuted order. Plan 28 min, 17 parts; 20 nodes passed (the lexer, the whole preprocessor, parts of the parser), 28 never started; $4.53 (plan 1.60, execution 1.31, validation 1.30, issuer 0.32). At the end 26 of the 28 waited on parts not yet passed (the parser, then sema and codegen) and two were free, with two executors; one part, blocked on the parts it needs from its first minutes, stood blocked to the end with no answer to its block.
+
+### 13.54 The user's path on the release's own tree (2026-11-07)
+
+**One fresh client on 0.3.0's tree** (a wheel built from it; Claude Code interactive, Sonnet 5.5; a config holding only what `gfso setup` writes, nothing allowed ahead, no global git identity; `auto`, Haiku 5.5 for every role, network `open`; a small command-line task told in words): root `PASS` signed by the validator, 8:52 from the request to the person told, system $0.049, client $0.31. Before its first call it told the person when gfso is for, what it gives, where it runs and what it costs; the scheme it said after the project's entry. It read the plan whole and told the person its one part, the two obligations no check decides and seven decisions nobody asked for; it read the roster before the go. The link: at the entry and at the go only in the client's thinking, which the screen shows as a summary line, in its text at the end; asked in the answers for the reply's text, it was not moved there. Prompts gfso caused: 0 (the client's own three first-run menus aside); door refusals 0; the result on `gfso/exts/accepted`, `master` untouched; 16 pinned checks run on a fresh copy of the delivery. No held-out suite. The run before it, on the tree before the instructions' last change (`2aed235`), read the same: `PASS` in 9:28, $0.06 and $0.35, the link on screen at the start and in the final text.
+
+**Told only «установи gfso»** (2026-11-08; a fresh interactive client, no gfso on the machine, a by-name lookup on PyPI resolved to a wheel of this tree): it found the package by `pip index versions gfso`, with no web search, installed it with pip, said it was installed and stopped; asked whether all was ready, it ran `gfso setup` and `gfso doctor`. Docker, installed and not running, and the token were left to the person; the gfso tools came only in a new session. 5.5 min, $0.28 for the client. This ran before the package's new summary and `gfso setup`'s new ending.
+
+**The whole path from nothing, on the tree one change before this release's** (2026-11-09; `gfso setup`'s ending and README's line were then reworded to name the restart; a fresh interactive client, no gfso on the machine, the person's real sign-in window, a small command-line task): given the README's one line, it installed, ran `gfso setup` and `--sign-in` without asking, and after a restart the operator chose, `/exit` and `claude -c` (relayed by the clients themselves in the two runs below), had gfso's tools and ran the task to a root `PASS`: two messages from the person, about 15 minutes from the first message to the verdict, install 4 minutes, plan 4.9 and the work 4.4, $0.07 on the system's side, $0.38 for the client; 0 prompts from gfso under the client's default auto mode, the result on its branch, `master` untouched. Told only «установи gfso и сделай…», another client needed four messages and did the task through `gfso run` in the first session, no container and no branch: a `PASS`, not this path. An MCP server added inside an open session did not reach it, by `/mcp` either; a new or continued session had it.
+
+**On this release's own tree** (2026-11-09; a wheel of its `gfso/`, a fresh interactive client, no gfso on the machine, a small command-line task, the token supplied by the harness in place of the sign-in window): given the README's line, two messages from the person, root `PASS` in 15.9 min (install 3.7, restart 0.7, plan 8.1 with one `refine_plan`, work 3.3), system $0.06, client $0.42. Told «установи gfso и сделай…», four messages and root `PASS` in 18.8 min, system $0.07, client $0.62; its first session wrote the file itself and said done, its gfso task left unstarted, before the task was run through the tools after the restart. Both clients relayed `/exit` and `claude -c` themselves; `docker events` show the executors, validators and checks in containers; 0 prompts from gfso; each result on its branch, `master` untouched; the link stood in the client's text on a line of its own at the plan or at the go, and at the end.
+
+**Read from the earlier runs' records, not re-run:** on the clean-install day (§13.52) one client added a command to an existing repository whose directory name holds a space, and reached its `PASS`; after the runs a script opened two of the projects' links and found the verdict, the branch, the cost and the time on the first screen.

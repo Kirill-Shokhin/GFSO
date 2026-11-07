@@ -13,12 +13,13 @@ from datetime import datetime
 from typing import Optional
 
 from gfso.core.graph import Graph
-from gfso.core.graph.model import admission_key, dep_scope, drops_key, non_leaf_ids, register_log_key
-from gfso.core.graph.mutations import InvariantViolation, Schedule, producers_of, with_its_seams
+from gfso.core.graph.model import (admission_key, dep_scope, drops_key, non_leaf_ids, on_the_wall, parent_waits, project_now,
+                                   register_log_key)
+from gfso.core.graph.mutations import InvariantViolation, Schedule, declare, one_per_pair, producers_of
 from gfso.core.protocol.procedure import admission_defects
 from gfso.core.handlers.structural import run_structural
 from gfso.core.types import (TERMINAL_STATES, AgentId, CriterionMapping, Register, Signal, SignalData, State,
-                             Task, TaskId)
+                             Task, TaskId, seams_apart)
 
 from .loop import refresh_checks
 from .validation import AdmissionRefused, hole_kind, issuing_condition, no_live_deadline
@@ -32,18 +33,42 @@ class Split:
     standing — critic r8)."""
     node: Task          # its contract, its mappings onto the children below, its register
     children: tuple     # the active children, each with the contract this act gives it
-    edges: tuple        # the Dep pairs of the node's scope, a re-issued child's declared ones from its new criteria
+    edges: tuple        # the Dep pairs of the node's scope, a named child's declared ones as this act declares them
     deadlines: dict     # the standing deadlines CHECK-3 reads
     issue: tuple        # the ids this act ASSIGNs, producers before their consumers
     drops: tuple        # the children it leaves out
+    declared: dict      # child → the declared edges into it this act writes (§15.1), whole, where it writes them
+
+
+def declared_by(children: list[tuple], deps: Optional[dict] = None) -> dict:
+    """{named child: the declared edges into it this act writes, whole} — those `deps` gives it (child → edges), with
+    those its spec's `depends_on` entries declare (`seams_apart`); a child whose spec the caller wrote in the wire's
+    form gets its edges from it, as when they were its criteria. A child neither names keeps the edges it has."""
+    out = {}
+    for cid, spec, *_ in children:
+        kept, carried = seams_apart(spec, cid)
+        if (given := (deps or {}).get(str(cid))) is not None or kept is not spec:
+            out[str(cid)] = one_per_pair(tuple(given or ()) + carried)
+    return out
+
+
+def reads_of(graph: Graph, declared: dict, cid, spec) -> tuple:
+    """The producers a child named by the act reads as the split will stand (`producers_of`)."""
+    return producers_of(spec, declared[str(cid)] if str(cid) in declared else graph.declared_edges(cid))
+
+
+def _bare(children: list[tuple]) -> list[tuple]:
+    """The children with their specs read as contracts — no entry that only declares an edge (`seams_apart`)."""
+    return [(cid, seams_apart(spec, cid)[0], *rest) for cid, spec, *rest in children]
 
 
 def will_stand(graph: Graph, parent, children: list[tuple], covers: dict, register: Optional[Register] = None,
-               replace: bool = False, drops: tuple = (), contract=None) -> Split:
+               replace: bool = False, drops: tuple = (), contract=None, deps: Optional[dict] = None) -> Split:
     """The split this admission leaves: its active children without the `drops`, the named `children`
-    (`(id, spec, assignee, …)`) re-issued or created, the node under its new `contract` where one is given, mapped by
-    `covers` (child → criteria) — onto the standing pairs, or replacing them — only onto its criteria and its active
-    children, and carrying `register` where one is given."""
+    (`(id, spec, assignee, …)`) re-issued or created with the edges `declared_by` gives them, the node under its new
+    `contract` where one is given, mapped by `covers` (child → criteria) — onto the standing pairs, or replacing them —
+    only onto its criteria and its active children, and carrying `register` where one is given."""
+    declared, children = declared_by(children, deps), _bare(children)
     out = {str(d) for d in drops}
     mine = {str(k.id): k for k in graph.get_active_children(parent.id) if str(k.id) not in out}
     for cid, spec, assignee, *_ in children:
@@ -64,9 +89,9 @@ def will_stand(graph: Graph, parent, children: list[tuple], covers: dict, regist
     scoped, deadlines = dep_scope(graph, parent.id)
     edges = ({(str(e.from_id), str(e.to_id)) for e in scoped
               if str(e.to_id) not in out and (e.discovered or str(e.to_id) not in named)}
-             | {(p, cid) for cid in named for p in producers_of(mine[cid].spec)})
+             | {(p, cid) for cid in named for p in reads_of(graph, declared, cid, mine[cid].spec)})
     return Split(node, tuple(mine.values()), tuple(sorted(edges)), deadlines,
-                 _producers_first([str(c[0]) for c in children], edges), tuple(drops))
+                 _producers_first([str(c[0]) for c in children], edges), tuple(drops), declared)
 
 
 def _producers_first(ids: list, edges) -> tuple:
@@ -84,7 +109,7 @@ def _producers_first(ids: list, edges) -> tuple:
 
 def refuse_unless_syntactic(graph: Graph, parent, children: list[tuple], covers: dict,
                             register: Optional[Register] = None, replace: bool = False, drops: tuple = (),
-                            contract=None, check: bool = True) -> Split:
+                            contract=None, check: bool = True, deps: Optional[dict] = None) -> Split:
     """§11.5: "a split is admitted to execution only if it passes [the Syntactic level], save what no act of its
     decomposer lifts, which is reported rather than gated". The battery runs over the split as it WILL stand
     (`will_stand`) before anything of the act is written, and the act then writes THAT split (`Split`). It sat on each
@@ -92,7 +117,7 @@ def refuse_unless_syntactic(graph: Graph, parent, children: list[tuple], covers:
     corner 9). What breaks a split admitted clean — a revision of the contract, a child cancelled — is a flag on the
     decomposer's plan (§12.10), never a hold on work already issued. `check=False`: the object without the battery
     (an engine whose signal validation is off gates no plan)."""
-    split = will_stand(graph, parent, children, covers, register, replace, drops, contract)
+    split = will_stand(graph, parent, children, covers, register, replace, drops, contract, deps)
     kids = list(split.children)
     holes = () if not check else tuple(
         f"{c.check_name}: {c.details}"
@@ -207,13 +232,13 @@ def refuse_a_contract_that_pins_nothing(graph: Graph, task_id, spec) -> None:
         raise ValueError(f"{task_id} cannot be assigned: " + "; ".join(defects))
 
 
-def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple]) -> dict:
+def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple], declared: Optional[dict] = None) -> dict:
     """§11.5: the admission gates the deadlines IT sets — a child's not inside a live parent's (item (6)), and a Dep
     crossing CHECK-3 reads where some choice of them orders every edge; the decomposer lifts both by his own choice.
     Where no choice orders them all — an end fixed, or the parent's deadline in the way — nothing is refused: the
     crossings stand as CHECK-3's flag for the issuers whose deadlines bound the choice. Returns the defaults
     `Schedule` chose for the children typing none (§2.5) — the deadlines this admission sets beside the typed ones."""
-    now = datetime.now()
+    now = project_now(graph)
     # THE ACT: every child this admission gives a version — a re-issued one too, standing on its own deadline, typed
     # as it was or, where supplied, re-chosen if it no longer fits (critic r2 over F3: left out, a re-issued child's
     # new Dep was invisible to the writer)
@@ -221,7 +246,8 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple]) -> dict:
     for cid, spec, _a, *rest in children:
         cid, t, given = str(cid), graph.get_task(cid), (rest[0] if rest else None)
         stands = t.deadline if t is not None and t.deadline is not None and t.deadline > now and not given else None
-        act[cid] = (given or (stands if stands and not t.deadline_supplied else None), producers_of(spec),
+        act[cid] = (given or (stands if stands and not t.deadline_supplied else None),
+                    reads_of(graph, declared or {}, cid, spec),
                     stands if stands and t.deadline_supplied else None)
         if given:
             typed[cid] = given
@@ -232,10 +258,22 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple]) -> dict:
     if parent.deadline is not None and parent.deadline > now:
         for cid, dl in typed.items():
             if dl >= parent.deadline:
-                raise ValueError(f"{cid}'s deadline {dl:%Y-%m-%d %H:%M} is not inside its parent {parent.id}'s "
-                                 f"({parent.deadline:%Y-%m-%d %H:%M}) — a child that may finish when its parent is "
+                raise ValueError(f"{cid}'s deadline {on_the_wall(graph, dl):%Y-%m-%d %H:%M} is not inside its parent "
+                                 f"{parent.id}'s ({on_the_wall(graph, parent.deadline):%Y-%m-%d %H:%M}) — a child that may finish when its parent is "
                                  f"due cannot compose into it (§11.5, item (6)); give one before it")
-    defaults = Schedule(graph, parent, act).defaults()
+    sched = Schedule(graph, parent, act)
+    defaults = sched.defaults()
+    # A STANDING DEADLINE STAYS unless the order this act leaves crosses it — a producer due at or after it, a consumer
+    # at or before it, or the parent's bound (item (6)): a deadline is a packet field, so moving it is a version, made
+    # only where forced. Re-chosen whenever the writer would pick another value, a cut edge re-issued the consumer at
+    # work and moved its deadline EARLIER (critic over a39bb52, q2)
+    at = lambda y: defaults.get(y) or act[y][0] or act[y][2] if y in act else sched.standing(y)
+    due = parent.deadline if parent.deadline is not None and parent.deadline > now else None
+    for c, (_d, _r, keep) in act.items():
+        if keep is not None and c in defaults and (due is None or keep < due) \
+                and all(not (pd := at(p)) or pd < keep for p in sched.reads[c]) \
+                and all(not (cd := at(k)) or keep < cd for k in sched.read_by[c]):
+            defaults[c] = keep
     # A CHILD ITS ASSIGN WILL CARRY NO DEADLINE FOR asks the packet gate's own question here, new or re-issued: a
     # re-issued one whose deadline has lapsed under a parent leaving no default was refused mid-act (critic r10)
     for c in (c for c, (d, _r, _k) in act.items() if d is None and not defaults.get(c)):
@@ -255,46 +293,73 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple]) -> dict:
     crossed = [(p, c) for c in sets for p in act[c][1] if (pd := dl(p)) and pd >= sets[c]]
     if crossed and free.orderable():
         p, c = crossed[0]
-        raise ValueError(f"{c} depends on {p}, whose deadline {dl(p):%Y-%m-%d %H:%M} is not before {c}'s "
-                         f"{sets[c]:%Y-%m-%d %H:%M} — a consumer cannot be due before its producer (CHECK-3, §11.5); "
+        raise ValueError(f"{c} depends on {p}, whose deadline {on_the_wall(graph, dl(p)):%Y-%m-%d %H:%M} is not "
+                         f"before {c}'s {on_the_wall(graph, sets[c]):%Y-%m-%d %H:%M} — a consumer cannot be due before its producer (CHECK-3, §11.5); "
                          f"order the deadlines this split sets")
     return {c: d for c, d in defaults.items() if d and d != act[c][2]}   # a re-issued child that still fits rides as is
+
+
+def _refuse_ids_alike(graph: Graph, children: list) -> None:
+    """Two ids a file system's case merges are one node's temp and session on a Windows server: a sibling read another's file with no edge
+    between them, and the second's session crashed (critic, ran). Refused before anything stands: the plan is the one to rename."""
+    seen = {str(t.id).casefold(): str(t.id) for t in graph.all_tasks()}
+    for child in children:
+        name = str(child[0])
+        if seen.setdefault(name.casefold(), name) != name:
+            raise ValueError(f"{name} and {seen[name.casefold()]} differ only by case: a node's id must differ from another's by more")
 
 
 def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], covers: Optional[dict] = None, *,
           replace: bool = False, register: Optional[Register] = None, drops: tuple = (), contract=None,
           max_iterations: Optional[int] = None, send, revise=None, reopen_refusal=None,
-          check: bool = True) -> Split:
+          check: bool = True, deps: Optional[dict] = None) -> Split:
     """A split's admission (§11.5) — ONE act for every door: the engine's `decompose_task`, a child created into a
     split, and a host embedding the core with no `Engine`. Whole or nothing: everything the act names is classified
     and every refusal read BEFORE the first write, over the split as it will stand (`Split`); then the writes apply
-    that split — the node's contract (`revise`, the issuer's act, its Dep seams carried), the children's ASSIGNs
-    (`send`, the protocol's own signals) producers first, the node's coverage, the drops, the register. Assembled
-    once per door, the act was refused after it had written five rounds in a row (critics r5–r10).
+    that split — the node's contract (`revise`, the issuer's act), its declared E_Dep edges (§15.1), the children's
+    ASSIGNs (`send`, the protocol's own signals) producers first, the node's coverage, the drops, the register.
+    Assembled once per door, the act was refused after it had written five rounds in a row (critics r5–r10).
 
-    `children`: (id, spec, assignee[, deadline]) — created, or re-issued under its id. `covers`: child → criteria;
-    `replace` = those are the node's WHOLE coverage, else they add to the standing pairs. `log_at()`: the log's
-    length now, where the act's records stand in it."""
+    `children`: (id, spec, assignee[, deadline]) — created, or re-issued under its id. `deps`: child → the declared
+    edges into it, whole (`declared_by`). `covers`: child → criteria; `replace` = those are the node's WHOLE coverage,
+    else they add to the standing pairs. `log_at()`: the log's length now, where the act's records stand in it."""
     parent = graph.get_task(TaskId(str(parent_id)))
     if parent is None:
         raise ValueError(f"parent {parent_id} not found")
     covers = {str(k): tuple(v) for k, v in (covers or {}).items()}
-    contract = with_its_seams(parent.spec, contract)          # the contract the revision will write, seams carried
+    declared, children = declared_by(children, deps), _bare(children)
+    _refuse_ids_alike(graph, children)
+    contract, carried = seams_apart(contract, parent.id)
     if contract is not None and contract != parent.spec and revise is None:
         raise ValueError(f"{parent.id}'s contract changes with its split, and only its issuer revises it (§10.1)")
     before = (set(parent.criterion_mappings), parent.register, parent.spec)
-    defaults = _refuse_before_writing(graph, parent, children, reopen_refusal, drops, register)
-    split = refuse_unless_syntactic(graph, parent, children, covers, register, replace, drops, contract, check)
+    defaults = _refuse_before_writing(graph, parent, children, reopen_refusal, drops, register, declared,
+                                      contract or parent.spec, carried)
+    split = refuse_unless_syntactic(graph, parent, children, covers, register, replace, drops, contract, check,
+                                    declared)
     if contract is not None and contract != parent.spec:
         revise(contract)                                    # the act's first write: refused, nothing stands
+    log_was, edges_were = storage.get_critique(admission_key(parent.id)), storage.get_dep_edges()
     record_admission(storage, log_at(), parent.id, split)
-    issued = {str(c[0]): c for c in children if not named_unchanged(graph, parent, c)}
-    _issue(graph, send, parent, issued, split.issue, covers, defaults, max_iterations)
+    moved = declare(graph, [e for es in split.declared.values() for e in es] + list(carried), replacing=split.declared)
+    # …a standing child named as it stands is re-issued only where the deadline the engine supplied it must move
+    issued = {str(c[0]): c for c in children if not named_unchanged(graph, parent, c)
+              or (str(c[0]) in defaults and graph.get_task(TaskId(str(c[0]))).deadline_supplied)}
+    landed: list = []
+    try:
+        _issue(graph, send, parent, issued, split.issue, covers, defaults, max_iterations, landed)
+    except InvariantViolation:
+        # …the parent settled between the read above and the ASSIGN's own step: under it nothing is owed (§12.7), and
+        # an act none of whose children stands leaves no record of them. One that stands keeps its admission, and the
+        # half-split is said as any other refusal met here
+        if landed or (why := issuing_condition(graph.get_task(parent.id), parent.id)) is None:
+            raise
+        _take_back(storage, parent.id, log_was, edges_were)
+        raise ValueError(why) from None
     node = graph.get_task(parent.id)
     if set(node.criterion_mappings) != set(split.node.criterion_mappings):
         # a pair onto a child this act does not issue — standing unchanged, or settled — is the split's too (§2.4)
-        node.criterion_mappings = tuple(split.node.criterion_mappings)
-        graph.save_task(node)
+        graph.update_task(parent.id, criterion_mappings=tuple(split.node.criterion_mappings))
     record_drops(storage, log_at(), parent.id, drops)
     for d in (d for d in drops if graph.get_state(TaskId(str(d))) != State.CANCELLING):
         send(SignalData(signal=Signal.CANCEL, task_id=TaskId(str(d)), source=parent.assignee,
@@ -304,55 +369,86 @@ def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], cover
     node = graph.get_task(parent.id)
     # …a re-admission that changes nothing — no child issued or dropped, the node's contract, coverage and register as
     # they were — leaves the plan the review read, and its verdict, standing (critic r15)
-    refresh_checks(graph, parent.id, stale_review=bool(issued or drops)
+    refresh_checks(graph, parent.id, stale_review=bool(issued or drops or moved)
                    or before != (set(node.criterion_mappings), node.register, node.spec))
     return split
 
 
+def _take_back(storage, parent_id, log_was, edges_were: list) -> None:
+    """The admission's record and its declared edges as they stood before an act none of whose children was issued."""
+    storage.store_critique(admission_key(parent_id), log_was or "[]")
+    now = storage.get_dep_edges()
+    for e in (e for e in now if e not in edges_were):
+        storage.remove_dep_edge(e)
+    for e in (e for e in edges_were if e not in now):
+        storage.add_dep_edge(e)
+
+
 def _refuse_before_writing(graph: Graph, parent, children: list[tuple], reopen_refusal, drops: tuple,
-                           register) -> dict:
+                           register, declared: dict, contract=None, carried: tuple = ()) -> dict:
     """Every refusal the act holds, read before it writes anything; returns the deadlines it sets (§2.5). A standing
     child named unchanged is not issued, so what is read of a child being given out — its pinned procedure, its
-    deadline still ahead — is not read of it (critic r15: a passed child named with its spent deadline refused the act)."""
+    deadline still ahead — is not read of it (critic r15: a passed child named with its spent deadline refused the act);
+    the edges the act declares into it are read all the same."""
     refuse_what_the_act_cannot_take(graph, parent, children, reopen_refusal or _settled, drops, register)
-    children = [c for c in children if not named_unchanged(graph, parent, c)]
-    for cid, spec, *_ in children:
+    changed = [c for c in children if not named_unchanged(graph, parent, c)]
+    for cid, spec, *_ in changed:
         refuse_a_d_cycle(graph, cid, parent.id)
         if why := issuing_condition(parent, cid):
             raise ValueError(why)
         refuse_a_contract_that_pins_nothing(graph, cid, spec)
-    refuse_a_dep_cycle(graph, children, drops)
-    return deadlines_the_act_sets(graph, parent, children)
+    moved = [c for c in children if c not in changed and str(c[0]) in declared]
+    # …the node's own contract among them, where it is re-authored with the split: its edges are this act's too
+    node = [(parent.id, contract)] if carried else []
+    refuse_a_dep_cycle(graph, changed + moved + node, drops,
+                       {**declared, **({str(parent.id): tuple(graph.declared_edges(parent.id)) + carried} if carried else {})},
+                       parent.id)
+    # …and a standing child whose edges alone move is in the act whose deadlines it orders (§2.7): re-issued where the
+    # deadline the engine supplied it no longer fits, as any version whose packet field moves (`admit`)
+    live = [c for c in moved if graph.get_state(TaskId(str(c[0]))) not in TERMINAL_STATES]
+    return deadlines_the_act_sets(graph, parent, changed + live, declared)
 
 
-def refuse_a_dep_cycle(graph: Graph, children: list[tuple], drops: tuple = ()) -> None:
+def refuse_a_dep_cycle(graph: Graph, children: list[tuple], drops: tuple = (), declared: Optional[dict] = None,
+                       parent_id=None) -> None:
     """CHECK-2's Dep clause over the WHOLE graph as the act will leave it (§9.5: "CHECK-2 holds of the whole graph"):
-    every adopted edge, a named child's declared ones taken from its new criteria, a dropped child's gone. Read inside
+    every adopted edge, a named child's declared ones as the act declares them, a dropped child's gone. Read inside
     the parent's subtree alone, a re-issued child closing a cycle through another branch passed the battery and was
     refused at its ASSIGN mid-act (critic r11); read before the battery as a plain error, a ring among the authored
     children ended the authoring instead of reaching its repair loop."""
-    named = {str(c[0]): producers_of(c[1]) for c in children}
+    named = {str(c[0]): reads_of(graph, declared or {}, c[0], c[1]) for c in children}
     out = {str(d) for d in drops}
     below: dict = {}
     for a, b in ({(str(e.from_id), str(e.to_id)) for e in graph.dep_edges(adopted=True)
                   if str(e.to_id) not in out and (e.discovered or str(e.to_id) not in named)}
-                 | {(p, cid) for cid, ps in named.items() for p in ps}):
+                 | {(p, cid) for cid, ps in named.items() for p in ps}
+                 # …and a parent's wait on its parts: a Dep closing a ring through it is a wait no order ends
+                 | {(str(e.from_id), str(e.to_id)) for e in parent_waits(graph) if str(e.from_id) not in out}
+                 | ({(cid, str(parent_id)) for cid in named if cid != str(parent_id)} if parent_id is not None else set())):
         below.setdefault(a, set()).add(b)
 
-    def returns(x) -> bool:
-        """Does following the edges out of x come back to x?"""
-        seen, todo = set(), list(below.get(x, ()))
+    def ring(x) -> str:
+        """The shortest ring following the edges out of x back to x ("x → … → x"), or ""."""
+        prev, todo = {}, sorted(below.get(x, ()))
+        prev.update({y: x for y in todo})
         while todo:
-            y = todo.pop()
+            y = todo.pop(0)
             if y == x:
-                return True
-            if y not in seen:
-                seen.add(y)
-                todo += below.get(y, ())
-        return False
-    if cyc := sorted(x for x in named if returns(x)):
-        raise AdmissionRefused(f"{', '.join(cyc)} would close a Dep cycle (CHECK-2, §9.5): a consumer waits for its "
-                               f"producer, so one edge on the ring is backwards", tuple(f"CHECK-2: {x} would close a Dep cycle — one edge on the ring is backwards" for x in cyc))
+                path = [x]
+                while (y := prev[y]) != x:
+                    path.append(y)
+                return " → ".join([x] + path[:0:-1] + [x]) if len(path) > 1 else f"{x} → {x}"
+            for z in sorted(below.get(y, ())):
+                if z not in prev:
+                    prev[z] = y
+                    todo.append(z)
+        return ""
+    if cyc := {x: r for x in sorted(named) if (r := ring(x))}:
+        raise AdmissionRefused("; ".join(f"{x} would close a Dep cycle ({r})" for x, r in cyc.items())
+                               + " (CHECK-2, §9.5): a consumer waits for its producer and a parent for its parts, so "
+                                 "one edge on the ring is backwards",
+                               tuple(f"CHECK-2: {x} would close a Dep cycle ({r}) — one edge on the ring is backwards"
+                                     for x, r in cyc.items()))
 
 
 def _settled(task_id) -> str:
@@ -360,10 +456,10 @@ def _settled(task_id) -> str:
 
 
 def _issue(graph: Graph, send, parent, by_id: dict, order: tuple, covers: dict, defaults: dict,
-           max_iterations) -> None:
+           max_iterations, landed: list) -> None:
     """The admitted split's ASSIGNs, producers first (`Split.issue`), of the children `by_id` holds — a standing child
-    named unchanged is not among them. Every refusal the gate holds was read before the act; one met here anyway is a
-    defect of that reading, said aloud rather than left as a silent half-split."""
+    named unchanged is not among them; each taken joins `landed`. Every refusal the gate holds was read before the act; one
+    met here anyway is a defect of that reading, said aloud rather than left as a silent half-split."""
     for cid in (c for c in order if c in by_id):
         child_id, spec, assignee, *rest = by_id[cid]
         deadline = rest[0] if rest else None
@@ -379,6 +475,7 @@ def _issue(graph: Graph, send, parent, by_id: dict, order: tuple, covers: dict, 
         if entry is not None and entry.rejected:
             raise InvariantViolation(f"the admission of {parent.id}'s split passed its gate and its ASSIGN of {cid} "
                                      f"was refused — a refusal the admission did not read: {entry.error}")
+        landed.append(cid)
 
 
 def record_admission(storage, log_at: int, parent_id: TaskId, split: Split) -> None:
@@ -387,6 +484,7 @@ def record_admission(storage, log_at: int, parent_id: TaskId, split: Split) -> N
     log_ = json.loads(storage.get_critique(key) or "[]")
     log_.append({"log_at": log_at, "children": [str(k.id) for k in split.children], "issued": list(split.issue),
                  "drops": [str(d) for d in split.drops],
+                 "deps": {k: [[str(e.from_id), e.glue] for e in es] for k, es in split.declared.items()},
                  "mappings": [[m.criterion_name, str(m.child_id)] for m in split.node.criterion_mappings]})
     storage.store_critique(key, json.dumps(log_))
 
@@ -423,8 +521,7 @@ def admit_register(graph: Graph, storage, log_at: int, task_id: TaskId, register
                          f"leaf's risks is no register, and its issuer's is the packet's pre-fill")
     if validate:
         refuse_unless_syntactic(graph, t, [], {}, register)
-    t.register = Register(tuple(register.items), tuple(register.components))
-    graph.save_task(t)
+    t = graph.update_task(t.id, register=Register(tuple(register.items), tuple(register.components)))
     key = register_log_key(task_id)
     log_ = json.loads(storage.get_critique(key) or "[]")
     log_.append({"at": datetime.now().isoformat(timespec="seconds"), "by": str(agent), "log_at": log_at,

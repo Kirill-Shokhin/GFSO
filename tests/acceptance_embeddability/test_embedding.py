@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from gfso.core.graph.model import dep_order_refutations
-from gfso.core.types import (TaskId, AgentId, Probe, Signal, SignalData, Spec, Criteria,
+from gfso.core.types import (TaskId, AgentId, DepEdge, Probe, Signal, SignalData, Spec, Criteria,
                              AcceptedRiskItem, Predictability, Register)
 
 
@@ -41,12 +41,9 @@ def _build(host):
                         SignalData(signal=Signal.ASSIGN, task_id=TaskId("cons"), source=W,
                          parent_id=TaskId("root"), covers=("g",),
                          spec=Spec("consume", (Criteria("c", "uses the artifact",
-                                                        check=_pinned("c")),
-                                               # a seam criterion is exempt from pinning a check:
-                                               # what decides it is the producer's own verdict
-                                               Criteria("dep__prod", "reads prod's output",
-                                                        depends_on=TaskId("prod")))), assignee=W)],
-               _REGISTER, str(W))
+                                                        check=_pinned("c")),)), assignee=W)],
+               # the seam is the split's declared edge (§15.1), no criterion: the producer's own verdict decides it
+               _REGISTER, str(W), deps={"cons": (DepEdge(TaskId("prod"), TaskId("cons"), glue="reads prod's output"),)})
 
 
 def _drive_done(host, tid):

@@ -31,7 +31,8 @@ from urllib.parse import quote
 from gfso.runtime import build_engine_from_env
 from gfso import tools as _T     # the verb surface
 from gfso.serverctl import UI_LINK_VERBS, ui_link
-from gfso.config import agent_id, narrate, select_project
+from gfso.adapters.netrecord import said_apart
+from gfso.config import DEFAULT_PROJECT, agent_id, narrate, project_by_env, select_project
 from gfso import serverctl
 from gfso import tools_llm as T  # the COMPLETE registry (structural + LLM verbs)
 
@@ -242,9 +243,8 @@ _HELP_EXAMPLES = {
 
 THIS REPLACES THE CONTRACT. The set you pass becomes the whole set — every criterion you do
 not name is dropped. Read what is there first (`gfso run get_task <id>`) and include what you
-mean to keep. One exception, and it is deliberate: the `dep__<producer>` criteria that carry
-the node's dependency edges are carried over unless you name one yourself, so hand-writing the
-list cannot silently sever what this node WAITS FOR — cutting an edge stays explicit
+mean to keep. The node's dependency edges are no criteria and are not touched, so hand-writing
+the list cannot silently sever what this node WAITS FOR — cutting an edge stays explicit
 (`remove_dependency`).""",
 }
 
@@ -376,6 +376,9 @@ def status(argv: list[str]) -> int:
           + (f" under {root}" if root else " total"))
     if isinstance(nxt, dict):
         print(_frontier_line(nxt))
+    # …what the system's own records say of this project: a person at the CLI was told COMPLETE and no word of it (critic)
+    for line in said_apart(project or project_by_env() or DEFAULT_PROJECT):
+        print(f"the records say: {line}")
     return 0
 
 
@@ -389,14 +392,15 @@ def _frontier_line(nxt: dict) -> str:
     if nxt.get("refuted_passes"):
         return f"frontier: NOT COMPLETE — {nxt['directive']}"
     if nxt.get("complete"):
-        return "frontier: COMPLETE — the root is DONE/PASS"
+        return "frontier: COMPLETE — the root is DONE/PASS" + "".join(
+            f"\n  left unanswered: {q}" for q in nxt.get("questions_left_standing") or ())
     steps = list(nxt.get("steps") or ())
     mine = [s for s in steps if s.get("mine")]
     if mine:
         head = f", first: {mine[0].get('action')} {mine[0].get('task_id')}"
     elif steps:
         head = ", but " + "; ".join(
-            f"{s.get('action')} {s.get('task_id')} is {s.get('assignee') or 'unassigned'}'s"
+            f"{s.get('action')} {s.get('task_id')} is {s.get('performed_by') or s.get('assignee') or 'unassigned'}'s"
             for s in steps[:3]) + ("…" if len(steps) > 3 else "")
     else:
         head = f" — {nxt['directive']}" if nxt.get("directive") else ""

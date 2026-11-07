@@ -21,9 +21,9 @@ from tests.support import REGISTER, REGISTER_SPLIT, criterion, instrument_passes
 
 
 def _kid(tid, covers, dep=None, ok="ok"):
-    crits = [criterion(f"{tid}_{ok}", tid)] + ([{"name": f"dep__{dep}", "description": "reads it", "depends_on": dep}]
-                                               if dep else [])
-    return {"task_id": tid, "assignee": "me", "covers": covers, "spec": {"description": tid, "criteria": crits}}
+    """A child as the act names it, its declared edges whole (`deps`)."""
+    return {"task_id": tid, "assignee": "me", "covers": covers, "deps": [{"from": dep, "glue": "reads it"}] if dep else [],
+            "spec": {"description": tid, "criteria": [criterion(f"{tid}_{ok}", tid)]}}
 
 
 def _plan(crits, maps, deps=()):
@@ -246,21 +246,24 @@ def test_an_act_that_leaves_no_split_takes_no_register_and_cancels_nothing(door)
     e.stop()
 
 
-def test_the_contract_checked_is_the_one_written_with_its_seams():
+def test_the_contract_written_with_its_split_carries_no_seam_and_the_edge_stands():
     e = make_engine(); e.start()
     T.create_task(e, "root", {"description": "goal", "criteria": [criterion("r1", "one"), criterion("r2", "two")]}, "me")
     e.wait_idle()
     T.decompose(e, "root", [_who("P", ["r1"], "me"), _who("Q", ["r2"], "me")], accepted_risks=REGISTER); e.wait_idle()
     e.add_dependency(TaskId("Q"), TaskId("P"), glue="P reads Q's output"); e.wait_idle()
     before = _graph(e)
-    # P re-authored by its issuer to [x] with a split covering x alone: the revision would carry dep__Q, uncovered
+    # P re-authored by its issuer to [x] with a split covering x alone: while the seam rode in P's criteria the revision
+    # carried `dep__Q`, uncovered, and the act was refused whole; the edge is no criterion now, so the act stands
     plan = {"name": "p", "root_criteria": [criterion("x", "the part")],
             "subtasks": [{"id": "a", "name": "a", "description": "part a", "criteria": [criterion("a_ok", "a")]}],
             "mappings": [{"criterion": "x", "child_id": "a"}], "deps": [], "accepted_risks": REGISTER, "scope": []}
     _, _, problems = build_graph_live(plan, "split P", e, root_id="P", assignee="me")
     e.wait_idle()
-    assert any("dep__Q" in p for p in problems)
-    assert _graph(e) == before
+    assert not problems, problems
+    assert [c.name for c in e.graph.get_task(TaskId("P")).spec.criteria] == ["x"]
+    assert [(str(x.from_id), str(x.to_id)) for x in e.graph.dep_edges()] == [("Q", "P")]
+    assert _graph(e) != before
     e.stop()
 
 
@@ -332,8 +335,8 @@ def test_a_re_issued_child_closing_a_cycle_through_another_branch_is_refused_who
     with pytest.raises(ValueError, match="Dep cycle"):
         T.decompose(e, "A", [_who("A2", ["A_ok"], "me"),
                              {"task_id": "A1", "assignee": "me", "covers": ["A_ok"],
-                              "spec": {"description": "A1", "criteria": [criterion("A1_ok", "A1"), {
-                                  "name": "dep__B", "description": "A1 reads B", "depends_on": "B"}]}}])
+                              "deps": [{"from": "B", "glue": "A1 reads B"}],
+                              "spec": {"description": "A1", "criteria": [criterion("A1_ok", "A1")]}}])
     e.wait_idle()
     assert _graph(e) == before
     e.stop()

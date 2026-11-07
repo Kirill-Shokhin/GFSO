@@ -23,7 +23,7 @@ def _type_revision(task: Task, effect: MutateGraph, criteria_changed: bool, del_
         task.reassign_reason_typed = True
         if r == RevisionReason.CAPABILITY_MISMATCH:
             task.reassign_capability_mismatch = True
-from .model import Graph, logged_declarations
+from .model import Graph, logged_declarations, project_deadline_s, project_now
 from gfso.core.types import settled_positive
 from gfso.config import default_deadline_s
 
@@ -39,7 +39,15 @@ class InvariantViolation(Exception):
 
 
 def apply(graph: Graph, effect: MutateGraph) -> list[TaskId]:
-    """Apply a mutation to the graph. Returns affected child task_ids for cascade."""
+    """Apply a mutation to the graph. Returns affected child task_ids for cascade.
+
+    ONE STEP UNDER THE STORE'S LOCK, as a caller's `update_task` is: the pump reads the node and writes it whole, and a
+    field a caller wrote in between (`verified`, `register`, a mapping) was put back by the pump's stale copy."""
+    with graph.one_write:
+        return _apply(graph, effect)
+
+
+def _apply(graph: Graph, effect: MutateGraph) -> list[TaskId]:
     task = graph.get_task(effect.task_id)
 
     match effect.mutation:
@@ -114,7 +122,7 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
 
     task_was = task.state
     if task.state != new_state:
-        task.state_entered_at = datetime.now()   # Inv-5: every state carries its own clock
+        task.state_entered_at = project_now(graph)   # Inv-5: every state carries its own clock, on the project's
     task.state = new_state
 
     if effect.done_reason is not None:
@@ -195,6 +203,9 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
     # voiding the RECORD alone loses the race to a validator that is still running on the superseded
     # delivery and lands its PASS afterwards, stamped with unchanged (iteration, reopens).
     task.revisions = task.revisions + 1
+    # …A NEW VERSION IS A NEW VISIT (§12.2): restamped here, so a re-ASSIGN landing OFFERED → OFFERED poses a new wait and
+    # a timeout fired for the old version's visit is dropped rather than carried onto the new contract
+    task.state_entered_at = project_now(graph)
     # THE REWORKING BUDGET IS THIS VERSION'S, so a new version starts it over (Φ3, §12.15):
     # `max_iterations` is the issuer's forecast of rounds for ONE contract, and counting a previous
     # contract's refusals against a repaired one spends the new forecast before the work begins —
@@ -251,6 +262,7 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
             task.was_reassigned = True  # q_Del
         task.assignee = effect.assignee
     graph.save_task(task)
+    _declare_references(graph, task)
     # covers on a re-author: the child (re)declares which parent criteria it covers (§2), appended (dedup) —
     # so a mapping can be set/preserved through re-ASSIGN, not only at CREATE_TASK.
     if effect.covers and task.parent_id:
@@ -315,6 +327,7 @@ def _reopen(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[Tas
     if task.reopened_from_pass:
         graph._storage.store_critique(_passed_result_key(task.id), graph._storage.get_deliver_result(task.id) or "")
     graph.save_task(task)
+    _declare_references(graph, task)
     if effect.covers and task.parent_id:
         parent = graph.get_task(task.parent_id)
         if parent is not None:
@@ -346,7 +359,7 @@ def _record_dep(graph: Graph, effect: MutateGraph) -> list[TaskId]:
     # stayed settled on the old answer: the latest answer governs, which means the latest report
     # puts the question back. The edge is not duplicated; it returns to provisional.
     for e in graph._storage.get_dep_edges():
-        if e.from_id == effect.dep_from and e.to_id == effect.task_id:
+        if e.discovered and e.from_id == effect.dep_from and e.to_id == effect.task_id:
             if not e.provisional:              # confirmed, closed or refuted: this report asks again
                 _rewrite(graph, e, glue=e.glue or effect.glue, provisional=True, closed=False, refuted=False)
             return []
@@ -356,9 +369,7 @@ def _record_dep(graph: Graph, effect: MutateGraph) -> list[TaskId]:
     # running late — was stamped discovered, and q_Dep fell to zero for a plan that had declared it.
     # The metric asks, of the discoveries that were made, how many the plan had declared in advance
     # (§15.5); this edge was declared, and nothing about it was discovered.
-    _blocked = graph.get_task(effect.task_id)
-    if _blocked is not None and any(str(c.depends_on) == str(effect.dep_from)
-                                    for c in _blocked.spec.criteria if c.depends_on):
+    if any(str(e.from_id) == str(effect.dep_from) for e in graph.declared_edges(effect.task_id)):
         return []
     graph._storage.add_dep_edge(_first_record(graph, effect.dep_from, effect.task_id, effect.glue, provisional=True))
     return []
@@ -366,15 +377,55 @@ def _record_dep(graph: Graph, effect: MutateGraph) -> list[TaskId]:
 
 def _rewrite(graph: Graph, e: DepEdge, **change) -> None:
     """One record changed in place, every other field carried — a fresh DepEdge per write dropped what it did not name."""
-    graph._storage.remove_dep_edge(e.from_id, e.to_id)
+    graph._storage.remove_dep_edge(e)
     graph._storage.add_dep_edge(dataclasses.replace(e, **change))
 
 
 def _first_record(graph: Graph, src: TaskId, to: TaskId, glue: str, **kw) -> DepEdge:
-    """A pair's FIRST record, made at the BLOCK that first names it: whether a version already installed had declared
-    the pair is fixed now, the one moment the order "declared before any BLOCK named it" is visible (§15.5)."""
-    known = {(f, t) for f, t, _g in logged_declarations(graph._storage.load_audit())}
+    """A pair's FIRST record, made at the BLOCK that first names it: whether the pair was ever declared — a record,
+    standing or since removed, or a version an older engine logged — is fixed now, the one moment the order "declared
+    before any BLOCK named it" is visible (§15.5)."""
+    known = {(f, t) for f, t, _g in logged_declarations(graph._storage.load_audit())} | {
+        (str(e.from_id), str(e.to_id)) for e in graph._storage.get_dep_edges() if not e.discovered}
     return DepEdge(src, to, discovered=True, glue=glue, declared_first=(str(src), str(to)) in known, **kw)
+
+
+def one_per_pair(edges) -> tuple:
+    """Declared edges as a set of Dep pairs (§2.7: Dep ⊂ T × T): one (producer, consumer) is one edge, the glue the
+    later statement's — counted per record, a pair stated twice raised q_Dep's declared half (critic over a39bb52)."""
+    return tuple({(str(e.from_id), str(e.to_id)): e for e in edges}.values())
+
+
+def declare(graph: Graph, edges, replacing=None) -> bool:
+    """Write declared edges (§15.1): each `(producer, consumer, glue)` not standing is recorded, and where `replacing`
+    names consumers, every standing declaration into one of them that `edges` does not repeat is marked removed — kept,
+    for q_Dep counts what was declared (§15.5). Did the declarations move?"""
+    key = lambda e: (str(e.from_id), str(e.to_id), e.glue)
+    want, cut = dict.fromkeys(key(e) for e in one_per_pair(edges)), set(map(str, replacing or ()))
+    standing = [e for e in graph._storage.get_dep_edges() if not e.discovered and not e.removed]
+    gone = [e for e in standing if str(e.to_id) in cut and key(e) not in want]
+    for e in gone:
+        _rewrite(graph, e, removed=True)
+    # …a pair that stands, outside what this act re-declares whole, is one edge re-stated: its glue moves, no second
+    # record — counted twice, it raised q_Dep's declared half for a re-wording
+    pairs = {key(e)[:2]: e for e in standing if e not in gone and str(e.to_id) not in cut}
+    new = [k for k in want if k not in {key(e) for e in standing}]
+    for f, t, g in new:
+        if (e := pairs.get((f, t))) is not None:
+            _rewrite(graph, e, glue=g)
+        else:
+            graph._storage.add_dep_edge(DepEdge(TaskId(f), TaskId(t), glue=g))
+    return bool(gone or new)
+
+
+def _declare_references(graph: Graph, task: Task) -> None:
+    """A version whose criterion's check reads another node's result adds that Dep edge (§2.7, §15.1)."""
+    have = {str(e.from_id) for e in graph.declared_edges(task.id)}
+    refs: dict = {}
+    for c in task.spec.criteria:
+        if c.depends_on and str(c.depends_on) not in have:
+            refs.setdefault(str(c.depends_on), c.description)
+    declare(graph, [DepEdge(TaskId(p), task.id, glue=g) for p, g in refs.items()])
 
 
 def _close_unanswered_records(graph: Graph, task_id: TaskId) -> None:
@@ -412,7 +463,8 @@ def _adjudicate_dep(graph: Graph, effect: MutateGraph) -> list[TaskId]:
         for e in provisional:
             if str(e.from_id) not in listed:
                 _rewrite(graph, e, provisional=False, refuted=True)
-        records = {str(e.from_id): e for e in graph._storage.get_dep_edges() if str(e.to_id) == str(effect.task_id)}
+        records = {str(e.from_id): e for e in graph._storage.get_dep_edges()
+                   if e.discovered and str(e.to_id) == str(effect.task_id)}
         for src in dict.fromkeys(corrected):
             if graph.get_task(src) is None:
                 continue
@@ -434,21 +486,11 @@ def _increment_iteration(graph: Graph, task: Optional[Task]) -> list[TaskId]:
     return []
 
 
-def with_its_seams(old, new, severing: tuple = ()):
-    """`new` with every Dep seam of `old` it omits carried over: an edge is not deleted by omission (a `dep__*` criterion
-    a wholesale replacement leaves out), only by naming the producer it severs (`severing`, `remove_dependency`). One
-    owner: a revision writes this contract, and an admission that revises its node's contract checks this one (critic
-    r9: the battery read the contract without the carried seam the revision then wrote)."""
-    if new is None or old is None or not old.criteria:
-        return new
-    named, cut = {c.name for c in (new.criteria or ())}, set(severing)
-    carry = tuple(c for c in old.criteria if c.depends_on and c.name not in named and c.depends_on not in cut)
-    return dataclasses.replace(new, criteria=tuple(new.criteria or ()) + carry) if carry else new
-
-
-def producers_of(spec) -> tuple[str, ...]:
-    """The nodes whose results this contract's criteria reference — its producers along Dep (§2.7)."""
-    return tuple(str(c.depends_on) for c in (spec.criteria if spec is not None else ()) if c.depends_on is not None)
+def producers_of(spec, declared=()) -> tuple[str, ...]:
+    """The nodes a version reads along Dep (§2.7): the producers of its `declared` edges, and every one a criterion's
+    check references."""
+    return tuple(dict.fromkeys([str(e.from_id) for e in declared] + [
+        str(c.depends_on) for c in (spec.criteria if spec is not None else ()) if c.depends_on is not None]))
 
 
 #: The finest margin the writer tries before it gives up on an order: one clock tick of the log.
@@ -474,13 +516,13 @@ class Schedule:
     live deadline ahead bounds anything: a settled end orders nothing to come (§11.5), a spent one is re-issued."""
 
     def __init__(self, graph: Graph, parent: Optional[Task], act: dict, want: Optional[datetime] = None):
-        self.now = datetime.now()
+        self.now = project_now(graph)
         self.graph = graph
         self.act = {str(k): (typed, tuple(str(p) for p in reads), keep) for k, (typed, reads, keep) in act.items()}
         dated = parent is not None and parent.deadline is not None
         self.spent = dated and parent.deadline <= self.now
         self.due = parent.deadline if dated and not self.spent else None
-        span = default_deadline_s()
+        span = project_deadline_s(graph) if graph is not None else default_deadline_s()
         self.want = want or (self.now + timedelta(seconds=span) if span else None)
         edges = graph.dep_edges(adopted=True) if graph is not None else []
         self.reads = {x: set(r) | {str(e.from_id) for e in edges if str(e.to_id) == x and e.discovered}
@@ -589,12 +631,13 @@ def version_deadline(graph: Graph, deadline: Optional[datetime], task: Optional[
         return deadline, supplied          # handed in: typed, or a default `Schedule` chose for the act (§2.5)
     kept = (task.deadline, task.deadline_supplied) if task is not None else (None, False)
     tid = str(task_id if task_id is not None else task.id if task is not None else "")
-    live = task is not None and task.deadline is not None and task.deadline > datetime.now()
+    live = task is not None and task.deadline is not None and task.deadline > project_now(graph)
     if live and not task.deadline_supplied:
         return kept
     pid = parent_id if parent_id is not None else (task.parent_id if task is not None else None)
     parent = graph.get_task(pid) if (pid and graph is not None) else None
-    reads = producers_of(spec if spec is not None else task.spec if task is not None else None)
+    reads = producers_of(spec if spec is not None else task.spec if task is not None else None,
+                         graph.declared_edges(tid) if graph is not None else ())
     chosen = Schedule(graph, parent, {tid: (None, reads, task.deadline if live else None)}).defaults()[tid]
     return (chosen, True) if chosen is not None else kept
 
@@ -614,8 +657,10 @@ def _create_task(graph: Graph, effect: MutateGraph) -> list[TaskId]:
         max_iterations=effect.max_iterations,
         # the claim as authored, frozen here and nowhere else (revisions leave it alone)
         authored=effect.spec,
+        state_entered_at=project_now(graph),
     )
     graph.save_task(task)
+    _declare_references(graph, task)
     # Mapping = the child declares which parent criteria it covers (§2 non-redundancy). Recorded as a
     # logged effect of THIS child's ASSIGN, not a direct write to the parent. Appends (incremental-safe).
     if effect.covers and effect.parent_id:

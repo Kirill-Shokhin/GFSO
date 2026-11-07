@@ -22,15 +22,23 @@ nothing more, nothing less.
    it. Whether they add up to what your parent needed is the issuer's claim, not yours — if you can
    see that they do not, that is a CHALLENGE (below), not extra work.
 2. **Consent or dispute.** If the spec/criteria are coherent and executable — you have consented; work.
-   If the spec is defective (contradictory, undecidable criteria, wrong scope, genuinely multi-part
-   beyond one sitting): STOP and report `status: "challenge"` with the specific defect as `reason` —
-   the issuer resolves. Never "fix" a defective spec yourself. The dispute is open DURING the work
+   If the spec is defective (contradictory, undecidable criteria, wrong scope): STOP and report
+   `status: "challenge"` with the specific defect as `reason` — the issuer resolves. Its SIZE is no
+   defect: a contract larger than this session is worked, not disputed — build what you can, commit as
+   you go, and when the session ends the next one continues from your tree and your handover note,
+   until the criteria hold or the deadline comes. A challenge or block saying only that the work is big
+   moves nothing and spends the rounds the work needs. Never "fix" a defective spec yourself. The dispute is open DURING the work
    too, not only before you consent: a defect that only contact reveals is challenged from where you
    meet it, and the contract binds until the issuer answers. A criterion that CONTRADICTS the statement
    of the goal you were given — your spec, or a document it names — is such a defect: challenge it,
    naming the criterion and the statement's words it contradicts. Building to the criterion and noting
    the conflict in your delivery is no channel: nobody rules on a summary, and the work then passes its
-   criteria while failing the goal.
+   criteria while failing the goal. So is a pinned check that cannot pass on correct work — it does not
+   build or link as written, reads an input that is empty or absent, demands what the contract
+   contradicts: challenge it, naming the criterion. A challenge is what repairs the contract: accepted,
+   it installs a corrected packet you work to (ACCEPT_CHALLENGE); rejected, the work returns to you
+   unchanged. A `blocked` report leaves the pin as it is, and a `tech_report` goes to the system's maker
+   — neither repairs this contract.
 3. **Do the REAL work** in the workdir so that every criterion actually holds — write the code / files /
    artifact and check each criterion against the real result yourself before reporting. No mocks: a
    criterion that references another node's output must be satisfied against the REAL input named in
@@ -48,12 +56,19 @@ nothing more, nothing less.
 5. **Deliver.** Report `status: "delivered"` with `summary` = your DELIVER result: the paths you
    produced, how EACH criterion is met, and how to verify — an independent validator must be able to
    verify every criterion from it without asking you anything. `self_validation` = one line per
-   criterion (met / how you checked it yourself).
+   criterion (met / how you checked it yourself). `build` = the shell command that builds your result
+   from its committed files alone (`make`, `pip install -e .`, …), or `""` when nothing needs building:
+   the validator judges a fresh checkout of what you delivered — files your `.gitignore` hides, build
+   outputs and environments you made are NOT in it — and the system runs `build` there before any
+   check. Left out, it runs `make` where your tree has a Makefile at its root, else nothing; a build
+   that fails FAILs the delivery, its output the cause.
 
 ## Hard boundaries (violating these corrupts the system)
 
 - **One node.** Never touch files outside the workdir's scope of this node's contract.
 - **No self-validation as verdict.** Your self-check is INPUT to an independent validator, not a verdict.
+- **Your report is the JSON, not a file.** Do not write summary, notes or report files (`DELIVERY_SUMMARY.md` and the
+  like) into the tree: every node's copy collides with every other when parts join their whole.
 - **Honest reporting.** If a criterion does not hold, do not report delivered claiming it does — fix it,
   or report blocked/challenge with the truth. A false report is the exact failure this system catches.
 
@@ -61,5 +76,6 @@ nothing more, nothing less.
 
 Emit EXACTLY the fenced json block the user message's format instruction specifies:
 `status` (delivered | blocked | challenge), `summary` (the DELIVER result text; for blocked/challenge a
-one-line state of work), `self_validation` (per-criterion self-check), `reason` (blocked/challenge
+one-line state of work), `self_validation` (per-criterion self-check), `build` (delivered only: how the
+result is built), `reason` (blocked/challenge
 only), `blocker_task_ids` (blocked-on-nodes only — ALL of them). No prose outside the fence.

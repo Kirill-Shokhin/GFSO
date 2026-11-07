@@ -67,6 +67,7 @@ _GOOD: dict[str, dict] = {
     "get_review": {"task_id": "root"},
     "get_verdict": {"task_id": "kid"},
     "dispute_finding": {"task_id": "root", "criterion": "c1", "why": "it does hold"},
+    "return_finding": {"task_id": "root", "finding": "c1#none", "why": "the goal asks for it"},
     "available_actions": {"task_id": "kid", "agent": "agent"},
     "get_dependencies": {},
     "metrics": {},
@@ -101,8 +102,11 @@ _GOOD: dict[str, dict] = {
     "next_step": {},
     "next_steps": {},
     "auto_decompose": {"request": "do the thing", "root_id": "root"},
+    "plan": {"request": "do the thing"}, "refine_plan": {"plan": "no such file", "note": "add -l"},
     "review_decomposition": {"task_id": "root"},
     "validate_result": {"task_id": "kid"},
+    "stop_project": {"why": "look"}, "start_project": {},
+    "tech_report": {"text": "a check contradicts the contract", "task_id": "kid"}, "tech_reports": {},
 }
 
 # The wrong SHAPE, not merely a wrong value: the class of input that used to reach the interpreter.
@@ -115,6 +119,7 @@ _BAD: dict[str, dict] = {
     "get_review": {"task_id": "no-such-node"},
     "get_verdict": {"task_id": "no-such-node"},
     "dispute_finding": {"task_id": "no-such-node", "criterion": "nope", "why": ""},
+    "return_finding": {"task_id": "no-such-node", "finding": "nope", "why": ""},
     "available_actions": {"task_id": "no-such-node"},
     "get_dependencies": {},
     "metrics": {},
@@ -142,8 +147,11 @@ _BAD: dict[str, dict] = {
     "next_step": {"root_id": "no-such-node"},
     "next_steps": {"root_id": "no-such-node"},
     "auto_decompose": {"request": "", "root_id": "no-such-node"},
+    "plan": {"request": ["not", "a", "goal"]}, "refine_plan": {"plan": {"not": "text"}, "note": 3},
     "review_decomposition": {"task_id": "no-such-node"},
     "validate_result": {"task_id": "no-such-node"},
+    "stop_project": {"why": ["not", "a", "reason"]}, "start_project": {"by": ["not", "an", "id"]},
+    "tech_report": {"text": ["not", "text"], "task_id": {"no": "id"}}, "tech_reports": {},
 }
 
 

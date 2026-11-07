@@ -57,8 +57,9 @@ Q_MEANS = {
            "findings drives it DOWN, and 0.0 after obeying the gate is the expected reading, not a "
            "verdict on the person obeying: it measures what the DECOMPOSER issued, and the gate's "
            "whole job is to find that the issued contract was thin.",
-    "q_D": "composition claims refuted at contact: parents that failed while every child passed (the q_D "
-           "event, §15.4). A refutation, whatever refuted it — a split that missed something, a declared "
+    "q_D": "splits that held: 1 − (parents that failed while every child passed) / (parents that got their "
+           "own verdict while every child passed) (§15.4). A failure there is a composition claim refuted at "
+           "contact: a refutation, whatever refuted it — a split that missed something, a declared "
            "risk that bit, a false verdict on either side; charging the split needs the cause, read from "
            "the log (§16.9). ⊥ until some parent reaches its own verdict with all children passed.",
     "q_V": "verdicts that held: 1 − (passes later REFUTED) / (passes recorded) (§15.4). A pass is "
@@ -69,9 +70,24 @@ Q_MEANS = {
            "FAIL though the node is no longer DONE; a fresh run on another result refutes nothing of "
            "the old pass. 1.0 therefore means nothing that passed has been contradicted as delivered — "
            "NOT that everything was independently verified, and NOT that no verdict was ever withdrawn.",
-    "q_Dep": "dependencies declared up front vs discovered at runtime through BLOCK.",
-    "q_Del": "delegation correctness: nodes reassigned for capability mismatch.",
+    "q_Dep": "dependencies foreseen: declared / (declared + discovered at runtime through BLOCK).",
+    "q_Del": "delegations that fit: 1 − (nodes reassigned for capability mismatch) / (contracts issued).",
 }
+
+#: How far each can be trusted (§15.8): two genuine observables, two proxies with known biases, one weak — served beside
+#: `means` so no door keeps its own copy (the page's drifted once already, 2026-09-02).
+Q_GRADES = {"q_D": "observed", "q_V": "observed", "q_T": "proxy", "q_Dep": "proxy", "q_Del": "weak"}
+
+#: Below this an OBSERVED metric calls a person; the canon fixes no threshold, this one is the implementation's.
+ALARM_BELOW = 0.5
+
+
+def alarm(m: dict) -> dict:
+    """Which metrics call a person — the observed two only, proxies bounding nothing alone (§15.8): q_V low; q_D low
+    unless a high false-FAIL share says the validator, not the split, did it (read together, §15.4, §16.9)."""
+    low = {k: m.get(k) is not None and m[k] < ALARM_BELOW for k in ("q_V", "q_D")}
+    ffs = m.get("false_fail_share")
+    return {"q_V": low["q_V"], "q_D": low["q_D"] and not (ffs is not None and ffs >= ALARM_BELOW)}
 
 def q_T(graph: Graph) -> Optional[float]:
     """Task quality (canon §15.4/§15.6, v3.8): 1 − (contested contracts) / (issued contracts).
@@ -255,6 +271,13 @@ def pass_was_refuted(graph: Graph, t) -> bool:
         return True
     rec = graph.exec_verdict_record(t.id)
     return bool(rec) and rec.get("verdict") == Verdict.FAIL and rec.get("reopens", 0) == t.reopens
+
+
+def pass_stands_refuted(graph: Graph, t) -> bool:
+    """Does this node stand refuted NOW — what a surface asks, where `pass_was_refuted` is q_V's history: a reopened pass its
+    fresh run failed was found wrong for good, and its rework's PASS on this generation is a green that is green."""
+    rec = graph.exec_verdict_record(t.id)
+    return not (rec and rec.get("verdict") == Verdict.PASS and rec.get("reopens", 0) == t.reopens) and pass_was_refuted(graph, t)
 
 
 def q_V(graph: Graph) -> Optional[float]:

@@ -24,14 +24,14 @@
 # Not in scope, each for the same reason as the sibling guards: `docs/architecture.md` (mirrors the
 # CODE, declares its lag in a banner), `docs/EVIDENCE_LOG.md`
 # (dated records — a superseded count inside a dated merge entry is provenance, not drift),
-# `docs/e1/`, `experiments/`, `gfso/`, `tests/`, `examples/`.
+# `experiments/`, `gfso/`, `tests/`, `examples/`.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CANON=../docs/applied_gfso_v4_en.md
 
-FILES=(../README.md ../docs/CORE.md ../docs/method_gfso.md ../docs/gfso_dependency_map.md
+FILES=(../README.md ../docs/THEORY.md ../docs/CORE.md ../docs/method_gfso.md ../docs/gfso_dependency_map.md
        ../docs/applied_gfso_vision.md ../docs/falsifiability.md README.md
        GFSO/Standards.lean GFSO/FailureModes.lean GFSO/Protocol.lean GFSO/Fsm.lean
        GFSO/FsmCanon.lean GFSO/Postulates.lean GFSO.lean check_axioms.lean)

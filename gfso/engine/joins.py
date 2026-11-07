@@ -12,6 +12,11 @@ from gfso.core.graph.model import Graph
 from gfso.core.types import TaskId, settled_positive
 
 
+#: The words a refused join carries when what its PASS accepted is no longer on its branch: nothing is merged, and no
+#: reader may tell anyone to merge that branch — the work is delivered again.
+NOT_ON_ITS_BRANCH = "what its PASS accepted is not on its branch"
+
+
 class Joins:
     """The joins of one engine's graph, as its host reports them (`mark_joining`)."""
 
@@ -22,7 +27,9 @@ class Joins:
         # per node (`mark_joining`): until it lands, the whole's place does not hold it
         self._joining: set[str] = set()
         self._unjoined: dict[str, str] = {}      # a passed node whose result did not land where it joins: why
-        self._landed: set[str] = set()           # nodes whose join ended with the result in place
+        # nodes whose join ended with the result in place: {id: its `reopens` then}. A fact of that generation: kept bare, a
+        # reopened root read landed at its second DONE, ahead of its join, over a base without what it reopened for
+        self._landed: dict[str, int] = {}
         self._join_owed = None                   # the host's word: does this node's result owe a join? (`set_join_owed`)
 
     def set_join_owed(self, owed) -> None:
@@ -35,7 +42,7 @@ class Joins:
         root, not landed (`unjoined`, why). A retry keeps the last refusal standing until a try lands (critic r4: a
         retry erased it, so the root read "being joined" forever). A whole is read over its parts only once theirs
         have (`landed`)."""
-        tid = str(task_id)
+        tid, t = str(task_id), self._graph.get_task(TaskId(task_id))
         with self._lock:
             if on:
                 self._joining.add(tid)
@@ -43,10 +50,10 @@ class Joins:
             self._joining.discard(tid)
             if unjoined is None:
                 self._unjoined.pop(tid, None)
-                self._landed.add(tid)
+                self._landed[tid] = t.reopens if t is not None else 0
             else:
                 self._unjoined[tid] = unjoined
-                self._landed.discard(tid)
+                self._landed.pop(tid, None)
 
     def root_landed(self, root) -> bool:
         """Does the passed root's result stand in the base? Read positively — the host said it landed — wherever a
@@ -56,7 +63,7 @@ class Joins:
         with self._lock:
             if tid in self._joining or tid in self._unjoined:
                 return False
-            if tid in self._landed:
+            if self._landed.get(tid) == root.reopens:
                 return True
         return owed is None or not owed(root)
 

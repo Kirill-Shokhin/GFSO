@@ -11,13 +11,15 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from gfso import __version__
-from gfso.tools import PARAM_CHOICES
+from gfso.tools import PARAM_CHOICES, admission_of, graph_read as _graph_read, get_task as _get_task_tool
 from gfso.core.handlers import solver_findings
 from gfso.core.handlers.recommend import suggest_criteria
 from gfso.core.handlers.structural import CHECK_TO_FM, FM_LABEL
@@ -36,14 +38,18 @@ try:
 except Exception:                                    # never let a diagnostic field break the server
     _CODE_VERSION = "unknown"
 from gfso.engine.validation import l2_gate_on as _l2_gate_on
-from gfso.tools_llm import validate_internal_on as _validate_internal_on
+from gfso.engine.verdicts import observations
+from gfso.tools_llm import validate_internal_on as _validate_internal_on, mode_staffing
 from gfso.adapters.children import end_this_process, reap as reap_children
+from gfso.adapters import resources as _resources
+from gfso.adapters.netrecord import said_apart
 from gfso import config as _config
+from gfso.adapters.llm import credentials as _credentials, registry as _providers
 from gfso.config import LOOPBACK as _LOOPBACK, DEFAULT_PROJECT
 from gfso.engine import Engine
 from gfso import tools_llm as _tools
 from gfso.tools import task_out
-from gfso.inflight import in_flight  # the COMPLETE action surface (structural + LLM) — the HTTP mutation surface is generated from it
+from gfso.inflight import in_flight, LISTENERS as INFLIGHT_LISTENERS  # the COMPLETE action surface (structural + LLM) — the HTTP mutation surface is generated from it
 
 from .models import (
     CheckResultOut,
@@ -280,6 +286,13 @@ def _mount_acts(app, _e, _req_project, _scope_name) -> None:
             criteria=[CriteriaIn(name=n, description=d) for n, d in results]
         )
 
+    @app.post("/api/admission")
+    def admission_endpoint(spec: dict = Body(...)):
+        """What admission would refuse in this contract's criteria, before anyone sends it — the engine's
+        own ladder (`admission_defects`, the one every ASSIGN runs), read; a page gating its form on a copy
+        of the first two rungs let through a hollow `echo ok` (2026-10-24). Pure: no project, no write."""
+        return {"defects": admission_of(spec)}
+
 
 def _mount_ledgers(app, _e, _req_project, _scope_name) -> None:
     """What the RUN cost and what it did: usage, metrics, the audit and pipeline logs.
@@ -319,6 +332,15 @@ def _mount_ledgers(app, _e, _req_project, _scope_name) -> None:
         over-strict validation). A null is ⊥: the population was empty, not a score of zero."""
         return _tools.TOOLS["metrics"](_e())   # the verb's answer — a response model dropped what it did not declare
 
+    @app.get("/api/modes")
+    def get_modes():
+        """Who holds the work in this project now, and for each mode what it needs registered and whether
+        it has it — `set_mode`'s own rule (`mode_staffing`), read before anyone asks for a mode, so a page
+        offering the choice says what will be refused instead of keeping its own copy of the rule."""
+        e = _e()
+        return {"current": e.mode(),
+                "modes": {m: {p: mode_staffing(e, m, p) for p in ("dispatch", "in_chat")} for m in ("solo", "semi", "auto")}}
+
     # === Audit ===
 
     @app.get("/api/audit", response_model=list[AuditEntryOut])
@@ -329,6 +351,11 @@ def _mount_ledgers(app, _e, _req_project, _scope_name) -> None:
         e: Engine = _e()
         tid = TaskId(task_id) if task_id else None
         return [audit_to_out(a) for a in e.audit_log(tid)]
+
+    @app.get("/api/records_say")
+    def get_records_say():
+        """What the system's own records say of this project's run (`netrecord.said_apart`), as an agent is told it at the end."""
+        return {"said": said_apart(_e().project_name)}
 
     # === Pipeline observation history (persisted; ticks excluded at the writer) ===
 
@@ -488,7 +515,7 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
         else:
             tasks = e.all_tasks()
         # the one shaping of a node, without the plan reads a polled list does not owe (`task_out`, D-F16)
-        return [task_out(t) for t in tasks]
+        return [task_out(t, e, plan=False) for t in tasks]
 
     @app.get("/api/tasks/{task_id}")
     def get_task(task_id: str):
@@ -503,12 +530,24 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
         rec = e.graph._storage.get_recommendation(TaskId(task_id))
         audit = e.audit_log(TaskId(task_id))
         children = e.graph.get_children(TaskId(task_id))
-        return {**task_out(t, e),
+        # the node as the tool door reads it (what blocks it, the findings a ruling names), so the panel and an agent
+        # read one node
+        return {**_get_task_tool(e, task_id),
                 "closure": e.closure_of(TaskId(task_id)),
                 "checks": [CheckResultOut.of(c).model_dump() for c in checks],
                 "recommendation": {"suggestions": list(rec.suggestions)} if rec else None,
                 "audit": [audit_to_out(a).model_dump() for a in audit],
-                "children": [task_out(c) for c in children]}
+                "children": [task_out(c, e, plan=False) for c in children]}
+
+    @app.get("/api/tasks/{task_id}/verdicts")
+    def get_verdicts(task_id: str):
+        """Every verdict ever recorded on this node, oldest first — each with its per-criterion values and the delivery it
+        answers (its generation stamp and its place in the log). The node's own record holds only the latest, so a past
+        FAIL could not say which criteria had passed under it."""
+        e: Engine = _e()
+        if e.graph.get_task(TaskId(task_id)) is None:
+            raise HTTPException(404, f"task {task_id} not found")
+        return observations(e.graph._storage, TaskId(task_id))
 
     # === Unified authoring surface: every gfso tool over HTTP (the SAME gfso.tools.TOOLS that MCP + CLI bind) ===
     # Adding an authoring verb = ONE Engine method + ONE gfso.tools entry → it appears HERE, on MCP, and on the
@@ -541,10 +580,10 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
     # === Graph ===
 
     @app.get("/api/graph")
-    def get_graph():
+    def get_graph(next: bool = True):
         """The whole project as the `get_graph` verb answers it — the page draws what every door reads (one shaping;
         a second one here drifted: `label` for the verb's `name`, no `awaiting`, no mode — ortho audit, D-F16)."""
-        return _tools.TOOLS["get_graph"](_e())
+        return _tools.TOOLS["get_graph"](_e()) if next else _graph_read(_e())   # `?next=0`: the page reads the frontier by `next_steps`; this read's own was 280 of its 300 ms
 
 def _mount_pages(app) -> None:
     """The page and its assets — the human door's own surface.
@@ -559,25 +598,96 @@ def _mount_pages(app) -> None:
     async def index():
         """The human door itself: the single page, which drives this same API and watches
         `/ws/events`."""
-        return FileResponse(WEB_DIR / "index.html")
+        return _page_file(WEB_DIR / "index.html")
 
     @app.get("/tokens.css")
     async def tokens_css():
         """The brand tokens — palette, type scale, fonts — that the UI's stylesheet is written
         against. The single source of truth for colour: `gfso.css` requires this loaded first."""
-        return FileResponse(WEB_DIR / "tokens.css", media_type="text/css")
+        return _page_file(WEB_DIR / "tokens.css", "text/css")
 
     @app.get("/gfso.css")
     async def gfso_css():
         """The UI's own styles, expressed entirely in the tokens above, so recolouring the product
         is an edit to `tokens.css` and never to this."""
-        return FileResponse(WEB_DIR / "gfso.css", media_type="text/css")
+        return _page_file(WEB_DIR / "gfso.css", "text/css")
 
     @app.get("/icon.svg")
     async def icon_svg():
         """The page's icon, served from this origin like every other asset — the door depends on no
         external host."""
-        return FileResponse(WEB_DIR / "icon.svg", media_type="image/svg+xml")
+        return _page_file(WEB_DIR / "icon.svg", "image/svg+xml")
+
+    @app.get("/js/{name}")
+    async def page_module(name: str):
+        """The page's script modules, one file per unit of the page — served like the stylesheet,
+        from disk on every request, so a change shows on reload without a restart."""
+        path = WEB_DIR / "js" / name
+        if not name.endswith(".js") or path.name != name or not path.is_file():
+            raise HTTPException(404, f"no page module {name!r}")
+        return _page_file(path, "text/javascript")
+
+
+# EVERY PAGE FILE IS REVALIDATED: sent with no Cache-Control, a browser keeps a module by its own heuristic and reloads
+# showed an old view — the author saw two colours of FAIL cross in Progress a day after they were made one
+# (2026-10-27). `no-cache` makes every reload ask the server; the files are small and read from disk anyway.
+class _NotModified:
+    """A page file the browser already holds answers 304: `FileResponse` sends an etag and never reads it back, so every
+    reload re-downloaded the page over the phone's link."""
+    def __init__(self, app): self.app = app
+    async def __call__(self, scope, receive, send):
+        held = dict(scope.get("headers") or ()).get(b"if-none-match") if scope["type"] == "http" else None
+        if not held:
+            return await self.app(scope, receive, send)
+        same = False
+        async def answer(message):
+            """The response as it goes out: 304 and no body where the browser's copy is this one."""
+            nonlocal same
+            if message["type"] == "http.response.start":
+                headers = message.get("headers", [])
+                same = message["status"] == 200 and dict(headers).get(b"etag") == held
+                if same:
+                    message = {**message, "status": 304, "headers": [h for h in headers if h[0] != b"content-length"]}
+            elif same:
+                if message.get("more_body"):
+                    return
+                message = {"type": "http.response.body", "body": b""}
+            await send(message)
+        await self.app(scope, receive, answer)
+
+
+class _Compressed:
+    """What the page reads, compressed; the agents' door (`/mcp`, a stream) passes as it was."""
+    def __init__(self, app):
+        self.app, self.gzip = app, GZipMiddleware(app, minimum_size=1000, compresslevel=5)
+    async def __call__(self, scope, receive, send):
+        whole = scope["type"] == "http" and not scope["path"].startswith("/mcp")
+        await (self.gzip if whole else self.app)(scope, receive, send)
+
+
+def _page_file(path, media_type=None):
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-cache"})
+
+
+def _told_resources(app, loop, q):
+    """What an open page is told of each new reading of what the installation holds in Docker: the body
+    `GET /api/resources` answers — so it shows it without asking (the author: «интерфейс не должен тригерить новый
+    опрос»); while the page is open, the server's reading goes on."""
+    def on_resources():
+        """The reading as it stands, put on this page's queue from the reading's own thread."""
+        reg = app.state.registry
+        loop.call_soon_threadsafe(q.put_nowait, {"type": "resources", **_resources.held(reg.names() if reg else None)})
+    return on_resources
+
+
+def _socket_engine(app, query) -> "Engine | None":
+    """The graph a socket watches: none for the list of projects; else the tab's, which rides the url (the middleware
+    covers HTTP only) and, like every read, names an EXISTING project: opening a page on a mistyped name created that
+    project (2026-10-24)."""
+    if query.get("projects"):
+        return None
+    registry = app.state.registry
+    return registry.engine(query.get("project") or None, create=False) if registry else app.state.engine
 
 
 def _mount_events(app) -> None:
@@ -594,11 +704,16 @@ def _mount_events(app) -> None:
         the same tab scope the HTTP calls carry — the middleware covers HTTP only, so it is read
         here by hand): `transition` for an accepted signal, `reject` for a refused one,
         `pipeline` for what a running verb reports. The callbacks are unregistered on disconnect,
-        so a dropped tab leaves nothing subscribed."""
-        await websocket.accept()
-        # the tab's project rides the WS url too (middleware covers HTTP only)
-        proj = websocket.query_params.get("project") or None
-        eng: Engine = app.state.registry.engine(proj) if app.state.registry else app.state.engine
+        so a dropped tab leaves nothing subscribed. Accepted only once subscribed: a page reads what is in flight
+        when its socket opens, and a start or end between that and the subscription reached it from neither.
+        `?projects=1` is the page with no project, the list of them: no graph is opened for it, and it hears what
+        is the whole server's: `inflight`, `resources`, `projects`."""
+        try:
+            eng = _socket_engine(app, websocket.query_params)
+        except (KeyError, ValueError):
+            await websocket.accept()
+            await websocket.close(code=4404)
+            return
         loop = asyncio.get_event_loop()
         app.state.loop = loop
         q: asyncio.Queue = asyncio.Queue()
@@ -628,10 +743,20 @@ def _mount_events(app) -> None:
                 "type": "pipeline", "source": source, "msg": message,
             })
 
-        eng.on_transition(on_transition)
-        eng.on_reject(on_reject)
-        eng.on_info(on_info)
+        def on_inflight(now):
+            """A process of this server started or ended: the whole list after it, every project's (the page keeps
+            its own and marks the busy ones in its project list) — it had polled `/api/runtime` every 5 s for this."""
+            loop.call_soon_threadsafe(q.put_nowait, {"type": "inflight", "in_flight": now})
+
+        on_resources = _told_resources(app, loop, q)
+        if eng is not None:
+            eng.on_transition(on_transition)
+            eng.on_reject(on_reject)
+            eng.on_info(on_info)
+        INFLIGHT_LISTENERS.append(on_inflight)
+        _resources.LISTENERS.append(on_resources)
         try:
+            await websocket.accept()
             while True:
                 event = await q.get()
                 await websocket.send_json(event)
@@ -639,12 +764,12 @@ def _mount_events(app) -> None:
             pass
         finally:
             app.state.ws_clients.discard(q)
-            if on_transition in eng._events._on_transition:
-                eng._events._on_transition.remove(on_transition)
-            if on_reject in eng._events._on_reject:
-                eng._events._on_reject.remove(on_reject)
-            if on_info in eng._events._on_info:
-                eng._events._on_info.remove(on_info)
+            for subs, cb in ((INFLIGHT_LISTENERS, on_inflight), (_resources.LISTENERS, on_resources),
+                             *(() if eng is None else ((eng._events._on_transition, on_transition),
+                                                       (eng._events._on_reject, on_reject),
+                                                       (eng._events._on_info, on_info)))):
+                if cb in subs:
+                    subs.remove(cb)
 
 def _mount_projects(app, _e) -> None:
     """Which graph a caller stands in: list, switch, delete.
@@ -662,9 +787,9 @@ def _mount_projects(app, _e) -> None:
         page = _projects_page(reg.list() if reg else
                               {"active": DEFAULT_PROJECT, "projects": [DEFAULT_PROJECT]},
                               prefix, limit)
-        # Each listed project's root, so a picker can say which are finished without opening them.
-        # Only the page's names: the whole installation is hundreds of files.
-        return {**page, "roots": reg.roots(page["projects"])} if reg else page
+        # What each listed project is — its goal, where its root stands, when it ran, what it cost —
+        # so a person finds a run without opening each one. Only the page's names.
+        return {**page, "about": reg.about(page["projects"])} if reg else page
 
     @app.post("/api/projects/use")
     def use_project(body: dict = Body(...)):
@@ -693,6 +818,34 @@ def _mount_projects(app, _e) -> None:
             return reg.delete(name)   # refuses default + the active project (switch first)
         except ValueError as ex:
             raise HTTPException(422, str(ex))
+
+def _mount_resources(app) -> None:
+    """What this installation holds in Docker: a node's work is stopped by the protocol's verbs, a project's volumes
+    removed with the project (`DELETE /api/projects/{name}`) — and an orphan's, by its id, here."""
+    @app.get("/api/resources")
+    def get_resources():
+        """SERVER-WIDE, every project of this installation: its containers per node — role, agent, busy, CPU, memory —
+        and its volumes on disk (`resources.held`); `known: false` — volumes no project the registry lists holds. Read
+        from Docker alone: no project is woken."""
+        reg = app.state.registry
+        return _resources.held(reg.names() if reg else None)
+
+    @app.delete("/api/resources/orphans/{project_id}")
+    def remove_orphan(project_id: str):
+        """Remove the volumes carrying `project_id` (a volume's `project_id` in the reading) where no project the
+        registry holds carries it — every record read now — and no container mounts them (`resources.remove_orphan`):
+        what was removed, what was refused and why. 409 where it is held, a record does not read or Docker does not
+        answer — nothing removed; 404 where no volume carries it."""
+        reg = app.state.registry
+        if reg is None:
+            raise HTTPException(400, "single-project server (no registry)")
+        try:
+            return _resources.remove_orphan(project_id, reg.ids)
+        except LookupError as ex:
+            raise HTTPException(404, str(ex))
+        except (OSError, ValueError) as ex:
+            raise HTTPException(409, f"nothing removed: {ex}")
+
 
 def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
     """What THIS process is serving: its roster, a node's verdict, and the runtime panel.
@@ -741,8 +894,20 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
         # would put that defect back and, worse, tell the reader to run a verb this door does not
         # serve. `criterion=` is accepted for a caller who wants one entry, and changes nothing
         # about the whole read being whole.
+        return _whole_verdict(e, task_id, criterion)
+
+    def _whole_verdict(e: Engine, task_id: str, criterion: str = "") -> dict:
         return _naming_the_scope(
             _tools.TOOLS["get_verdict"](e, task_id, criterion=criterion, _trim=False), _scope_name())
+
+    @app.post("/api/verdicts")
+    def get_many_verdicts(ids: list[str] = Body(...)):
+        """Each named node's verdict, as `/api/tasks/{id}/verdict` answers it, with its `history` as `/verdicts` does: the
+        page reads them at every load, two requests a node. A POST because a plan's ids outgrow a request line. A node the
+        graph does not hold is left out."""
+        e: Engine = _e()
+        return {i: {**_whole_verdict(e, i), "history": observations(e.graph._storage, TaskId(i))}
+                for i in ids if e.graph.get_task(TaskId(i)) is not None}
 
     def _hash_registry_file() -> str:
         # the stamp `up` compares it with, by the one function that makes it (D-F18: two hand copies)
@@ -769,6 +934,31 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
     # reads a slow answer as "something else is on this port" and a new session gets no tools.
     # Neither handler blocks — one reads process-scoped switches, the other stamps a dict — so they
     # belong on the event loop, where a busy threadpool cannot delay them.
+    # === THE ONE DOOR for every provider's credential (`registry.set_credential`) — HTTP and the CLI's `gfso
+    # credential`, never MCP: a secret passed through the agent stays in its transcript. Nothing answers with a value.
+    @app.get("/api/credentials")
+    def get_credentials():
+        """Every provider's credentials by name and kind, the one active, the one in force, the order — never a value."""
+        return _credentials.listing()
+
+    @app.put("/api/credentials/{provider}")
+    def put_credential(provider: str, body: dict = Body(...)):
+        """Set `provider`'s credential `name` ({kind?, value, name?}; the kind it takes first and its name by default),
+        remove it ({remove: true, name?} — without a name every one), move the pointer ({use: name}) or the order
+        ({order: [names]}) — the CLI's `gfso credential` acts; an empty value, an unknown provider or name or a kind it
+        does not take is a 422."""
+        try:
+            if body.get("use") or body.get("order"):
+                return (_credentials.use(provider, str(body["use"])) if body.get("use")
+                        else _credentials.order(provider, [str(n) for n in body["order"]]))
+            value = None if body.get("remove") else str(body.get("value") or "").strip()
+            if value == "":
+                raise HTTPException(422, "no credential: give `value`, or `remove: true`")
+            return _providers.set_credential(provider, body.get("kind") or (_providers.takes(provider) or ("api",))[0],
+                                             value, body.get("name"))
+        except ValueError as ex:
+            raise HTTPException(422, str(ex))
+
     @app.get("/api/runtime")
     async def get_runtime():
         """The switches that are PROCESS-scoped, so a client can see what this server actually does.
@@ -813,6 +1003,9 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
                 # inseparable by construction.
                 "validate_internal": _validate_internal_on(),
                 "l2_gate": _l2_gate_on(),
+                # …and whether this host runs the work the system dispatches (`config.local_agents`): a restart that lost
+                # the word stopped every project with no container execution
+                "local_agents": _config.local_agents(),
                 # …AND HOW MUCH OF ONE VERDICT RUNS AT ONCE. Acceptance is 65-70% of a run's spend on
                 # every measurement taken, and this dial is what decides how much of it happens in
                 # parallel — so a cost measured without it recorded is a cost measured against an
@@ -927,6 +1120,69 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
     _mount_runtime(app, _e, _live_leases, _scope_name)
 
 
+#: The names this door answers to: loopback, the host the one server is configured on, and `config.allowed_hosts()`.
+def _door_hosts() -> frozenset:
+    configured = urlparse(_serverctl.BASE).hostname or _LOOPBACK
+    return frozenset({_LOOPBACK, "localhost", "::1", configured.lower(), *_config.allowed_hosts()})
+
+
+def _door_origins() -> tuple:
+    """The page's own origins: the one server's port, and 8080 for a UI served from a dev static host beside it.
+    The port comes from `serverctl` (whose single knob is GFSO_SHARED_URL) — a literal 8000 here allowed the page
+    and its API to disagree about which server they are."""
+    return tuple(f"http://{h if ':' not in h else f'[{h}]'}:{p}" for h in sorted(_door_hosts())
+                 for p in dict.fromkeys((_serverctl.PORT, 8080)))
+
+
+#: What the page may load and do, a second layer under its escaping: what the agents write is shown on it, and a script of
+#: theirs running there would hold every verb of a server with no login. `style-src` keeps 'unsafe-inline': the page and its
+#: graph library set styles inline, and a style runs nothing.
+_PAGE_POLICY = [
+    (b"content-security-policy", b"default-src 'self'; script-src 'self' https://unpkg.com; "
+                                 b"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+                                 b"img-src 'self' data: blob:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'none'; "
+                                 b"form-action 'self'; frame-ancestors 'none'"),
+    (b"x-content-type-options", b"nosniff"),
+]
+
+
+class _DoorGuard:
+    """Refuses, before any route runs, a request whose Host names someone else, and anything but a read that a browser
+    sent from a page not this server's — a socket, or a POST no preflight stops (an empty body stopped the server from
+    any page). A client that sends no Origin is not a browser page and passes. The page's own origin is the Host it
+    asked, on whatever port the server was started."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        headers = dict(scope["headers"])
+        host = urlparse("//" + headers.get(b"host", b"").decode("latin-1")).hostname or ""
+        origin = headers.get(b"origin", b"").decode("latin-1")
+        # …by either scheme: a name of its own served through a TLS proxy in front (`tailscale serve`) is the same page
+        own = (not origin or origin in _door_origins()
+               or origin in (f"{s}://{headers.get(b'host', b'').decode('latin-1')}" for s in ("http", "https")))
+        read = scope["type"] == "http" and scope.get("method") in ("GET", "HEAD", "OPTIONS")
+        # …and nothing at all a browser marks as sent from another site — an image tag sends no Origin, and a read with
+        # `?project=` wakes that project's engine and its clock (`Sec-Fetch-Site`: every current browser, every request)
+        foreign = headers.get(b"sec-fetch-site", b"").decode("latin-1") in ("cross-site", "same-site")
+        if host in _door_hosts() and not foreign and (read or own):
+            async def with_policy(message):
+                """`message`, a response's start carrying the page's policy."""
+                if message["type"] == "http.response.start":
+                    message = {**message, "headers": [*message.get("headers", []), *_PAGE_POLICY]}
+                await send(message)
+            return await self.app(scope, receive, with_policy if scope["type"] == "http" else send)
+        if scope["type"] == "websocket":
+            return await send({"type": "websocket.close", "code": 4403})
+        await send({"type": "http.response.start", "status": 403,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8")]})
+        await send({"type": "http.response.body", "body": b"this door answers only to its own host names and page; "
+                                                          b"add a name in GFSO_ALLOWED_HOSTS (SECURITY.md)"})
+
+
 def _lifespan(mcp):
     """The app's lifespan: hold the MCP session manager open for as long as the sub-app is mounted
     (the streamable transport needs it running), and end the server's children when it stops.
@@ -1001,15 +1257,14 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     # exposes the whole tool registry, including a `signal` whose source the caller chooses and a
     # `validate_result` that spawns a model with shell access in a directory the caller names. With
     # `*`, any page the user happened to have open in a browser could drive that chain.
-    app.add_middleware(
-        CORSMiddleware,
-        # The one server's own port comes from `serverctl` (whose single knob is GFSO_SHARED_URL) —
-        # a literal 8000 here allowed the page and its API to disagree about which server they are.
-        # 8080 stays for a UI served from a dev static host beside it.
-        allow_origins=[f"http://{h}:{p}" for h in (_LOOPBACK, "localhost")
-                       for p in dict.fromkeys((_serverctl.PORT, 8080))],
-        allow_methods=["*"], allow_headers=["*"],
-    )
+    app.add_middleware(_NotModified)
+    app.add_middleware(_Compressed)
+    app.add_middleware(CORSMiddleware, allow_origins=list(_door_origins()), allow_methods=["*"], allow_headers=["*"])
+    # CORS only governs what a foreign page may READ back; it lets the request through. A page on a name
+    # its DNS re-points at 127.0.0.1 is same-origin to the browser and passes CORS untouched, and a
+    # socket is outside CORS altogether — so the door itself refuses a Host it does not own, and a browser
+    # Origin it does not own on anything but a read (the /mcp door has had this from its SDK).
+    app.add_middleware(_DoorGuard)
 
     # === Static UI ===
     _mount_pages(app)
@@ -1031,6 +1286,7 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     _mount_lifecycle(app, _e, engine, _scope_name)
 
     _mount_projects(app, _e)
+    _mount_resources(app)
 
     _mount_events(app)
 

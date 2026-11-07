@@ -13,13 +13,14 @@ from .enums import (
 from .primitives import (
     TaskId, AgentId, DEFAULT_MAX_ITERATIONS,
     Criteria, Probe, Spec, Task, AcceptedRiskItem, Register, register_of, set_aside_of,
-    CriterionMapping, DepEdge,
+    CriterionMapping, DepEdge, seams_apart,
     GuardContext, CheckResult, Recommendation,
     GraphContext, SignalData, DispatchPayload, Refusal, SignalOutcome, Wait,
-    passed, settled_positive,
+    passed, settled_positive, system_decides,
 )
 from .effects import (
     MutateGraph, RunChecks, Recommend, Dispatch, EmitSignal, Effect,
 )
-from .ports import (StoragePort, LLMProviderPort, AgentPort, VerifierPort,
+from .ports import (StoragePort, LLMProviderPort, ExecutionPort, IN_THE_WORKS_PATH, PlaceUnavailable, THIS_HOST, WORK_PATH, AgentPort, VerifierPort,
+                    BATCH, LAID, FilesPort, HOST, HostFiles, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, base_named, files_at, hold_places, laid_beside, nodes_dir, place_name, unprojected,
                     ClockPort, SystemClock, RunnerPort, ThreadRunner)

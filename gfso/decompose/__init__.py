@@ -6,8 +6,8 @@ search over the real projection → audit fold-patch → deterministic merge →
 REVISION (same ids, subtree retained, Del of existing children preserved). `refine(engine, root_id)`
 is also public: "+1 iteration" applies to whatever decomposition already exists. The graph only ever
 holds VERIFIED states (each round closes on dropped-item + `list_holes` with a bounded repair cycle).
-The transport comes from `runtime.llm_factory()` — headless `claude -p` one-shots for Anthropic
-(billing per GFSO_BILLING) or GenericLLM for a foreign provider (GFSO_PROVIDER=generic).
+The transport comes from `llm_factory(model spec)` — headless `claude -p` one-shots for Anthropic
+(on the credential `gfso credential claude` set, or the CLI's own login), or a chat API's wire for any other provider (`adapters/llm/registry.py`).
 
 Termination & validity guarantees (all bounds hard):
   ≤ depth search calls + ≤ depth fold calls (ALREADY-COVERED / empty-fold exits can only shorten)
@@ -20,6 +20,8 @@ Single-level by definition (one node → its children); recurse by calling it ag
 """
 from __future__ import annotations
 
+import json
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -29,17 +31,27 @@ from gfso.core.types import Criteria, Probe, Signal, Stage, TaskId
 from gfso.engine import Engine
 from gfso.core.graph.model import root_of
 from gfso.core.protocol.procedure import admission_defects, criterionless
-from gfso.adapters.llm.stats import calls_of
+from gfso.adapters.llm.stats import calls_of, fan
 from gfso.llm import llm_factory
 
+from .seams import seam_problems
+from gfso.inflight import staged
 from .loop import (decompose_spec, _audit_fix, _audit_fold, _fold_merge, _search,
-                   _progress, _stat_line, _hint, tag_stage, _COVERED, AUDIT_SCHEMA, shape)
+                   _progress, _stat_line, _stage, tag_stage, _COVERED, AUDIT_SCHEMA, shape, AGREE_PROMPT, AGREE_SCHEMA,
+                   AUDIT_PROMPT, executor_line)
 from .build import build_graph_live, held_contract
 from .extract import extract_spec
 from gfso.config import ROOT_ID, MODEL_DEFAULT, sufficiency_at_authoring
-from gfso.critic.runner import _undecided_obligations
+from gfso.critic.runner import _undecided_obligations, critique_node, record_goal_reading
 
 REPAIR_ROUNDS = 2
+#: repairs of the goal's undecided obligations at authoring, each re-checked against the one stored reading
+SUFFICIENCY_ROUNDS = 2
+
+
+def checker_at_authoring() -> bool:
+    """Does the last authoring repair also fold the checker's unentailed root criteria (one gate reading, unstored)?"""
+    return __import__("os").environ.get("GFSO_CHECKER_AT_AUTHORING", "1") not in ("0", "false", "no")
 
 
 class NoPlan(ValueError):
@@ -66,14 +78,15 @@ class DecomposeResult:
     undecided_obligations: tuple = ()
 
 
-def _default_llm(model: str):
-    """The system-wide provider/billing switch (runtime.llm_factory) — never a hardcoded adapter here."""
-    return llm_factory(model)
+def _default_llm(model: str, execution=None):
+    """The system-wide provider/billing switch (runtime.llm_factory) — never a hardcoded adapter here — started where
+    the project's work runs (`execution`), so the plan is authored on the platform it is built on."""
+    return llm_factory(model, execution=execution)
 
 
-def default_llm(model: str):
+def default_llm(model: str, execution=None):
     """The plan's transport, for a caller that must hold the client to account for what it spent."""
-    return _default_llm(model)
+    return _default_llm(model, execution=execution)
 
 
 def _dep_contradictions(engine: Engine, strip: str = "") -> list[str]:
@@ -117,59 +130,302 @@ def _refused_probes(spec: dict, contract_fixed: bool = False) -> list[str]:
                 Probe.of(p) for p in c.get("check") or ())) for c in crits])]
 
 
+_CRITERIA_FIELDS = ("root_criteria", "subtasks")
+
+
+def _criterion_key(c) -> tuple:
+    """A criterion as text: what it says and what its checks run — dicts of a spec and `Criteria` of the graph alike."""
+    get = (lambda o, k: o.get(k)) if isinstance(c, dict) else getattr
+    return (get(c, "description") or "", tuple((get(p, "behaviour") or "", get(p, "command") or "", get(p, "expect") or "",
+                                                *((True,) if get(p, "exact") is True else ()))
+                                               for p in get(c, "check") or ()))
+
+
+class _Agreement:
+    """Whether the criteria the system writes in this authoring say what their own checks deny.
+
+    Measured (GB_coreutils_tn9t9u320, own plan, 2026-10-22): a root criterion named stdin `-` in headers while its probe
+    diffed against GNU (`standard input`); the root failed five times on it, and at contact no party may reword a
+    goal's text (two critic rounds found loosening doors in every such rule) — so it is asked where the system is still
+    the author, before the build. Judged: a criterion of the spec that differs from what stands in the graph — the text
+    written now; never a contract held as issued, a settled child (§12.14) or a plan the caller brought (`on` false).
+    Read against `task`, the contract as it stood before this authoring began, so no criterion under judgement is
+    ever the TASK it is judged by. Findings are kept per criterion: a re-judged criterion replaces its own, a failed
+    call (⊥) changes none. One the TASK itself demands both ways is its author's (§9.7): reported, never repaired."""
+
+    def __init__(self, llm, engine: Engine, root_id: str, task: str, on: bool, contract_fixed: bool):
+        self.llm, self.engine, self.root_id, self.task, self.on, self.held = llm, engine, root_id, task, on, contract_fixed
+        self.found: dict[tuple, tuple[str, str]] = {}
+        self.undecided: set[tuple] = set()
+        self.unplaced = 0
+
+    def _judged(self, spec: dict) -> list[tuple[str, dict]]:
+        """(node, criterion) of `spec` with a check, whose text differs from the graph's — held root and settled out."""
+        g = self.engine.graph
+        def standing(sid):
+            """The node as it stands in the graph, and its criteria as text by name."""
+            t = g.get_task(TaskId(self.root_id if sid == ROOT_ID else f"{self.root_id}.{sid}"))
+            return t, {c.name: _criterion_key(c) for c in (t.spec.criteria if t else ())}
+        out = []
+        for sid, crits in ([] if self.held else [(ROOT_ID, spec.get("root_criteria") or [])]) + [
+                (str(k.get("id")), k.get("criteria") or []) for k in spec.get("subtasks") or []]:
+            t, was = standing(sid)
+            if t is None or t.state.name not in ("DONE", "ABANDONED"):
+                out += [(sid, c) for c in crits if c.get("check") and was.get(c.get("name")) != _criterion_key(c)]
+        return out
+
+    def judge(self, spec: dict) -> None:
+        """Judge the criteria of `spec` written now; their findings replace their old ones (⊥ replaces nothing)."""
+        self.forget_gone(spec)
+        if not self.on or not (judged := self._judged(spec)):
+            return
+        shown = [{"node": n, "criterion": c.get("name"), "description": c.get("description"),
+                  "checks": [{**{k: p.get(k) for k in ("behaviour", "command", "expect")},
+                              **({"exact": True} if p.get("exact") is True else {})} for p in c.get("check") or ()]}
+                 for n, c in judged]
+        out = self.llm.complete_structured(AGREE_PROMPT, f"# TASK\n{self.task}\n\n# CRITERIA AND THEIR CHECKS\n```json\n"
+                                           f"{__import__('json').dumps(shown, ensure_ascii=False)}\n```", AGREE_SCHEMA)
+        tag_stage(self.llm, Stage.AUTHORING_AGREE)
+        shown_keys = {(n, str(c.get("name"))) for n, c in judged}
+        if not isinstance(out, dict) or not isinstance(out.get("contradictions"), list):
+            self.undecided |= shown_keys - set(self.found)      # ⊥ — said as such, never read as agreement
+            return
+        self.undecided -= shown_keys
+        for k in shown_keys:
+            self.found.pop(k, None)
+        self.unplaced = 0
+        for x in (x for x in out["contradictions"] if isinstance(x, dict)):
+            node = str(x.get("node")).removeprefix(f"{self.root_id}.")
+            key = (ROOT_ID if node == self.root_id else node, str(x.get("criterion")))
+            if key not in shown_keys:
+                self.unplaced += 1
+                continue
+            self.found[key] = (f"{key[0]} / criterion {key[1]}: its description says {x.get('description_says')}, but "
+                               f"its own check requires {x.get('check_requires')} — no work can meet both (the TASK: "
+                               f"{x.get('task_says')})", x.get("task_takes"))
+
+    _SIDE = {"description": "Change the check so it decides what the description says — the TASK takes its side.",
+             "check": "Change the description to state what the check decides — the TASK takes the check's side."}
+
+    def repair(self) -> list[str]:
+        """The standing findings the repairer is handed, each with the side to keep — every one but those the TASK
+        itself demands both ways."""
+        return [f"{line}. " + self._SIDE.get(takes, "The TASK leaves the point open: the description states what the "
+                                                    "check decides.")
+                for line, takes in self.found.values() if takes != "both"]
+
+    def forget_gone(self, spec: dict) -> None:
+        """Drop findings about criteria the spec no longer carries (renamed or removed)."""
+        here = {(ROOT_ID, str(c.get("name"))) for c in spec.get("root_criteria") or []} | {
+            (str(k.get("id")), str(c.get("name"))) for k in spec.get("subtasks") or [] for c in k.get("criteria") or []}
+        self.found = {k: v for k, v in self.found.items() if k in here}
+        self.undecided &= here
+
+    def residue(self) -> list[str]:
+        """Every standing finding, every criterion the check could not decide, and answers it gave about criteria it
+        was not shown — the build's residue."""
+        return [line + (" — the TASK demands both: its author's to repair (§9.7), reported, not reworded."
+                        if takes == "both" else " — the repair left it.") for line, takes in self.found.values()] + [
+            f"{n} / criterion {c}: whether its description agrees with its checks is undecided — the check's call "
+            f"gave no answer (⊥)" for n, c in sorted(self.undecided)] + (
+            [f"the agreement check named {self.unplaced} criterion(s) it was not shown — that part of its answer is "
+             f"unread"] if self.unplaced else [])
+
+
+def _fields(fixed: dict) -> list:
+    """The fields a repair patch re-emits — a field re-emitted as null is not re-emitted: taken as the field,
+    `"subtasks": null` replaced the split with nothing and the rebuild crashed on it (c_compiler, haiku, 2026-10-31)."""
+    return [k for k in fixed if k in AUDIT_SCHEMA["properties"] and fixed[k] is not None]
+
+
+#: the list fields a patch reads by their key — a part by its id, a root criterion by its name
+_KEYED = {"subtasks": "id", "root_criteria": "name"}
+
+
+def _names(text: str, name: str) -> bool:
+    """Does `text` name `name` as a whole word (`b` is not named by «CHECK-1b»)?"""
+    return re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w-])", text) is not None
+
+
+def _patched(spec: dict, fixed: dict, named: str = "") -> dict:
+    """PATCH semantics: a re-emitted field replaces the old one, omitted fields kept. A part or root criterion the patch
+    leaves out is dropped only where the findings it answers (`named`) name it — taken wholesale, a repair over a few
+    refused probes re-emitted 3 of a plan's 38 criteria and the rest were gone without a word (V3_cc2, haiku,
+    2026-11-01); one a finding names (an orphan part, a duplicate) leaves as the repair meant."""
+    out = {**spec}
+    for k in _fields(fixed):
+        out[k] = fixed[k]
+        key = _KEYED.get(k)
+        if key and isinstance(fixed[k], list) and isinstance(spec.get(k), list):
+            kept = {x.get(key) for x in fixed[k] if isinstance(x, dict)}
+            out[k] = fixed[k] + [x for x in spec[k] if isinstance(x, dict) and x.get(key) not in kept
+                                 and not (x.get(key) and _names(named, str(x.get(key))))]
+    return out
+
+
+def _admitted(criterion: dict) -> bool:
+    """Whether the admission would take this criterion of a spec as it is written."""
+    return not admission_defects([Criteria(str(criterion.get("name", "")), check=tuple(
+        Probe.of(p) for p in criterion.get("check") or ()))])
+
+
+def _taken_back(history: list, spec: dict, progress, contract_fixed: bool = False) -> dict:
+    """`spec` as it may go to the build when no repair round follows: a criterion the admission refuses goes back to its
+    latest admitted text in `history`, the versions before it, oldest first; one that never had any leaves, said here, and an admitted criterion
+    the last patch left out of that node comes back, nothing tying the two; a part left with no criterion leaves with its
+    seams. A refused probe ended a paid authoring at its build after the rounds were spent (E2 T03, 2026-11-02). Only at
+    the end of the rounds: taken back earlier, the next round is never told what it could still finish (critic)."""
+    out, undone = dict(spec), []
+
+    def versions(of) -> list:
+        """A node's criteria through `history`, the latest first."""
+        return [c for h in reversed(history) for c in of(h) or ()]
+
+    def held(where: str, of) -> list:
+        """One node's criteria as they may go to the build."""
+        kept, left = [], False
+        for c in of(spec) or ():
+            name = c.get("name")
+            if _admitted(c):
+                kept.append(c)
+            elif old := next((v for v in versions(of) if v.get("name") == name and _admitted(v)), None):
+                undone.append(f"{where} / {name} goes back to its admitted text")
+                kept.append(old)
+            else:
+                undone.append(f"{where} / {name} leaves: no version of it was admitted")
+                left = True
+        here = {c.get("name") for c in kept}
+        return kept + [c for c in of(history[-1]) or () if left and c.get("name") not in here and _admitted(c)]
+
+    def part_of(pid):
+        """Reads part `pid`'s criteria off a version of the spec."""
+        return lambda h: next((k.get("criteria") for k in h.get("subtasks") or () if k.get("id") == pid), None)
+    if not contract_fixed:
+        out["root_criteria"] = held(ROOT_ID, lambda h: h.get("root_criteria"))
+    kids = [{**k, "criteria": held(str(k.get("id")), part_of(k.get("id")))} for k in spec.get("subtasks") or ()]
+    out["subtasks"] = [k for k in kids if k["criteria"]]
+    if undone:
+        parts, roots = {k.get("id") for k in out["subtasks"]}, {c.get("name") for c in out.get("root_criteria") or ()}
+        out["mappings"] = [m for m in spec.get("mappings") or () if m.get("child_id") in parts and m.get("criterion") in roots]
+        out["deps"] = [d for d in spec.get("deps") or () if d.get("from") in parts and d.get("to") in parts]
+        _progress("repair: the rounds are spent, what the admission refuses is taken back: " + " | ".join(undone), progress)
+    return out if undone else spec
+
+
+def _repaired_before_build(spec: dict, request: str, llm, executor: str, progress, contract_fixed: bool,
+                           agree: _Agreement, closed: bool = False) -> dict:
+    """What the admission would refuse, a seam its files contradict, and a criterion its own checks deny (`agree`),
+    repaired before anything is built (bounded by REPAIR_ROUNDS); a patch that rewrote criteria is judged again.
+    `closed`: the plan is the user's, handed in whole — refused as it stands, never rewritten by a model."""
+    agree.judge(spec)
+    history = [spec]
+    for r in range(REPAIR_ROUNDS):
+        if not (refused := _refused_probes(spec, contract_fixed) + seam_problems(spec) + agree.repair()):
+            break
+        if closed:
+            # …THE USER'S PLAN IS NOT REPAIRED BEHIND HIS BACK: the go called a model and patched a handed-in plan the
+            # admission would refuse, so the project ran a plan nobody had read (the .gfso standard's check, 2026-10-31)
+            raise ValueError("the plan handed in is refused as it stands — " + " | ".join(refused)
+                             + ". Repair it in the file (`refine_plan` with a note naming these), or hand it in open "
+                               "(`open_plan=true`) for the system to repair")
+        _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer: {len(refused)} probe(s) the admission refuses, seam(s) its "
+                  f"files contradict or criteria their checks deny, before the build: "
+                  + " | ".join(x[:140] for x in refused), progress)
+        fixed = _audit_fix(llm, request, spec, refused, executor) or {}
+        tag_stage(llm, f"{Stage.AUDIT_FIX}-pre-{r + 1}")
+        history.append(spec)
+        spec = _patched(spec, fixed, " | ".join(map(str, refused)))
+        if any(k in fixed for k in _CRITERIA_FIELDS):
+            agree.judge(spec)
+    return spec if closed else _taken_back(history, spec, progress, contract_fixed)
+
+
+def repaired_before_build(spec: dict, request: str, llm, executor: str, progress, engine: Engine, root_id: str) -> dict:
+    """`spec` with what the admission would refuse repaired by `llm` before anything is built — the refine of a plan
+    file the go refused, whose refusals are the round's first findings (`planning.refine`)."""
+    return _repaired_before_build(spec, request, llm, executor, progress, False,
+                                  _Agreement(llm, engine, root_id, request, False, False))
+
+
+def _admitted_as_it_stands(spec: dict, request: str, root_id: str, assignee: str, max_iterations, child_assignee) -> None:
+    """A closed plan's split as the admission reads it, before anything stands in the project — refused naming why. A
+    plan whose split the admission refused was built as its root alone and handed to one executor as a leaf: the
+    customer's plan rewritten by removal (critic over the closed go). Built where nothing is kept, as `plan` builds."""
+    trial = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
+    trial.start()
+    try:
+        _, tid, dropped = build_graph_live(spec, request, trial, root_id=root_id, assignee=assignee,
+                                           max_iterations=max_iterations, child_assignee=child_assignee)
+        if wrong := _problems(trial, tid, dropped):
+            raise ValueError("the plan handed in is refused as it stands — " + " | ".join(map(str, wrong))
+                             + ". Repair it in the file (`refine_plan` with a note naming these), or hand it in "
+                               "open (`open_plan=true`) for the system to repair")
+    finally:
+        trial.stop()
+
+
 def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assignee: str,
                     llm, progress=None, max_iterations: int | None = None,
                     child_assignee: str | None = None, executor: str = "",
-                    contract_fixed: bool = False) -> tuple[TaskId, dict, list[str]]:
+                    contract_fixed: bool = False,
+                    agree: "_Agreement | None" = None, closed: bool = False) -> tuple[TaskId, dict, list[str]]:
     """Build wholesale, then repair-loop: problems → one corrective audit call → wholesale re-build
     (revision semantics). Bounded by REPAIR_ROUNDS; returns the final (root_id, spec, residual problems).
     The dispatcher is QUIESCED for the WHOLE verified cycle (build + repairs): the graph's contract is
     "only verified states" — an intermediate build with known problems must not be dispatched
     (observed live: executors spawned on a 2-problem intermediate graph a repair was about to revise).
-    `contract_fixed`: the node's contract stands as issued (`held_contract`) — every patch is read against it."""
+    `contract_fixed`: the node's contract stands as issued (`held_contract`) — every patch is read against it.
+    `agree`: the authoring's `_Agreement` — whether the criteria the system writes say what their own checks deny; it
+    lives across the authoring's rounds. None: nothing is judged (a plan the caller brought)."""
     hold = (lambda d: held_contract(d, engine.graph.get_task(TaskId(root_id)))) if contract_fixed else (lambda d: d)
-    spec = hold(spec)
-    for r in range(REPAIR_ROUNDS):
-        if not (refused := _refused_probes(spec, contract_fixed)):
-            break
-        _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer: {len(refused)} probe(s) the admission refuses, before the "
-                  f"build…", progress)
-        fixed = _audit_fix(llm, request, spec, refused, executor) or {}
-        spec = {**spec, **{k: fixed[k] for k in fixed if k in AUDIT_SCHEMA["properties"]}}
-    spec = hold(spec)
+    agree = agree or _Agreement(llm, engine, root_id, request, False, contract_fixed)
+    spec = hold(_repaired_before_build(hold(spec), request, llm, executor, progress, contract_fixed, agree, closed))
     _no_plan(spec, engine, root_id, llm, contract_fixed)
+    if closed:
+        _admitted_as_it_stands(spec, request, root_id, assignee, max_iterations, child_assignee)
     engine._dispatch_quiesce = getattr(engine, "_dispatch_quiesce", 0) + 1
     try:
         _progress("builder: wholesale build through the FSM…", progress)
+        staged("builder")
         eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee,
-                                                 max_iterations=max_iterations,
+                                                 max_iterations=max_iterations, closed=closed,
                                                  child_assignee=child_assignee, contract_fixed=contract_fixed)
         problems = _problems(engine, rid, dropped)
         _progress(f"builder: {len(engine.graph.get_active_children(rid))} nodes · {len(dropped)} dropped · "
                   f"{len(problems)} problem(s)", progress)
-        for r in range(REPAIR_ROUNDS):
+        for r in range(0 if closed else REPAIR_ROUNDS):      # …a closed plan's residue is said, not patched
             if not problems:
                 break
             _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer: {len(problems)} problem(s) → corrective auditor (patch)…",
                       progress)
-            _hint(llm, f"{r + 1}/{REPAIR_ROUNDS} repairer")
+            _stage(llm, f"{r + 1}/{REPAIR_ROUNDS} repairer")
             fixed = _audit_fix(llm, request, spec, problems, executor)
             tag_stage(llm, f"{Stage.AUDIT_FIX}-{r + 1}")
             if not fixed:
                 break  # repair call failed — return the honest residue
-            # PATCH semantics: a re-emitted top-level field replaces the old one wholesale; omitted fields kept.
-            patched = [k for k in fixed if k in AUDIT_SCHEMA["properties"]]
-            spec = hold({**spec, **{k: fixed[k] for k in patched}})
+            # …the build reads this patch at once and refuses it there: no round of its own would ever be told
+            spec = hold(_taken_back([spec], _patched(spec, fixed, " | ".join(map(str, problems))), progress, contract_fixed))
+            patched = [k for k in fixed if k in _fields(fixed)]
             _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
+            if any(k in fixed for k in _CRITERIA_FIELDS):
+                agree.judge(spec)       # before the rebuild: what the patch rewrote still differs from the graph
             eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee,
                                                  max_iterations=max_iterations,
                                                  child_assignee=child_assignee, contract_fixed=contract_fixed)
             problems = _problems(engine, rid, dropped)
+        problems = problems + agree.residue()
         # "No problems" over an EMPTY build is vacuous, not clean — the checks had nothing to fail
         # on. Said as "verified clean", it read as a good decomposition to anyone watching the
         # progress line, in exactly the case that matters most: the provider was unreachable or
         # unauthenticated, so nothing was ever proposed.
         built = len(engine.graph.get_active_children(rid))
+        failed = sum(1 for c in calls_of(llm) if isinstance(c, dict) and c.get("parse_failed"))
+        if not built and not problems and ((failed and not spec.get("subtasks")) or contract_fixed):
+            # …AND THE RESULT SAYS IT, not only the progress line: an authoring whose structured answers failed to parse
+            # returned `holes: []` over an unsplit node (haiku-5-5 on sql_database, 2026-10-22), read as clean. A root
+            # authored as a leaf is no such case (§3.7); a split asked of a node held as issued is.
+            problems = [f"the authoring proposed no subtasks — nothing was built"
+                        + (f" ({failed} model answer(s) did not parse against the plan's schema)" if failed else "")]
         # …AND "CLEAN" NAMES WHAT WAS CHECKED. The word answers the STRUCTURAL checks and nothing
         # else, and it was read as a verdict on the plan: an ordinary user's first call came back
         # `holes: []` and `builder: verified clean` in the same payload as "NOTE: 7 obligation(s) of
@@ -207,9 +463,9 @@ def _no_plan(spec: dict, engine: Engine, root_id: str, llm, contract_fixed: bool
         before the rule (a seams-only DONE child) would otherwise refuse every refine of its parent for good."""
         t = engine.graph.get_task(TaskId(f"{root_id}.{sid}"))
         return t is not None and t.state.name in ("DONE", "ABANDONED")
-    empty = ([root_id] if new_root and criterionless(_criteria_of(spec.get("root_criteria"))) else []) + [
+    empty = ([root_id] if new_root and criterionless(spec.get("root_criteria")) else []) + [
         str(k.get("id")) for k in spec.get("subtasks") or []
-        if criterionless(_criteria_of(k.get("criteria"))) and not settled(k.get("id"))]
+        if criterionless(k.get("criteria")) and not settled(k.get("id"))]
     if not empty:
         return
     calls = [c for c in calls_of(llm) if isinstance(c, dict)]
@@ -224,10 +480,6 @@ def _no_plan(spec: dict, engine: Engine, root_id: str, llm, contract_fixed: bool
                  + ("The project is unchanged: call auto_decompose again with the same request." if new_root else
                     f"What stands on '{root_id}' is unchanged: call auto_decompose again."), list(calls))
 
-
-def _criteria_of(items) -> list:
-    """A spec's criteria as the admission reads them (a seam by its `depends_on`)."""
-    return [Criteria(str(c.get("name", "")), depends_on=c.get("depends_on")) for c in items or []]
 
 
 def _dens_patch(patch: dict, root_id: str) -> dict:
@@ -261,9 +513,17 @@ _HELD = ("\n\n# THE NODE'S CRITERIA ARE FIXED — they are its issuer's contract
          "the issuer, not written into the plan.")
 
 
+def refine_with(engine: Engine, request: str, root_id: str, assignee: str, llm, findings: str, progress=None,
+                executor: str = "") -> tuple[bool, dict, list[str]]:
+    """One refine round over the built graph with `findings` in hand — a customer's note, a review's list — folded
+    instead of searched for (`_refine_round`)."""
+    return _refine_round(engine, request, root_id, assignee, llm, progress=progress, executor=executor, findings=findings)
+
+
 def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm,
                   progress=None, label: str = "1/1", executor: str = "",
-                  contract_fixed: bool = False, findings: str = "") -> tuple[bool, dict, list[str]]:
+                  contract_fixed: bool = False, findings: str = "",
+                  agree: "_Agreement | None" = None) -> tuple[bool, dict, list[str]]:
     """ONE refinement application over the BUILT GRAPH as the state: BOTH roles read the graph's real
     projection (+ any current structural holes) — the one canonical textual read, no separate
     renderer; the auditor folds the findings in as a patch (ids normalized from the projection's
@@ -297,7 +557,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
                          if cur_holes else "") \
         + (("\n\n# OPEN LEVEL-2 FINDINGS on this plan (the causal check — the Pragmatic level, §9.1)\n"
             "Each is a criterion the children's criteria do not entail, a conflict between "
-            "them, or an obligation of THIS node's goal that none of its own criteria decides. "
+            "them, or an obligation of THIS node's goal that no pinned check its validation runs decides. "
             "They are the plan's known defects: fold them in, or leave them for the issuer to "
             "dispute in writing — but do not return an unchanged plan while they stand." "\n"
             + "\n".join(f"- {f}" for f in l2_open)) if l2_open else "") \
@@ -323,7 +583,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
         holes = findings
     else:
         _progress(f"{label} searcher (over the graph projection)…", progress)
-        _hint(llm, f"{label} searcher")
+        _stage(llm, f"{label} searcher")
         holes = _search(llm, request, state_view)
         tag_stage(llm, Stage.SEARCH_REFINE)
         _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
@@ -332,7 +592,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
         return False, extract_spec(engine, root_id), []
     spec = extract_spec(engine, root_id)
     _progress(f"{label} auditor (fold into the graph state)…", progress)
-    _hint(llm, f"{label} auditor")
+    _stage(llm, f"{label} auditor")
     patch = _dens_patch(_audit_fold(llm, request, state_view, holes, executor=executor) or {}, root_id)
     tag_stage(llm, Stage.AUDIT_FOLD_REFINE)
     new_spec, ops = _fold_merge(spec, patch)
@@ -346,7 +606,9 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
               f"|V| {v0}→{v} · ops: {'; '.join(ops)}", progress)
     try:
         rid, new_spec, problems = _build_verified(new_spec, request, engine, root_id, assignee, llm,
-                                                  progress=progress, executor=executor, contract_fixed=contract_fixed)
+                                                  progress=progress, executor=executor, contract_fixed=contract_fixed,
+                                                  agree=agree or _Agreement(llm, engine, root_id, request, True,
+                                                                            contract_fixed))
     except NoPlan as no:          # a round over a standing plan that authored no contract leaves that plan, said
         _progress(f"{label} {no}", progress)
         return False, spec, [str(no)]
@@ -388,7 +650,83 @@ def decompose(request: str, depth: int = 1, model: str = MODEL_DEFAULT,
                           llm=llm, fast=fast)
 
 
-def _close_the_goals_obligations(engine, request, rid, assignee, llm, spec, holes, progress, executor=""):
+_PART_SCHEMA = {"type": "object", "required": ["add_criteria"], "properties": {"add_criteria": {
+    "type": "array", "items": AUDIT_SCHEMA["properties"]["subtasks"]["items"]["properties"]["criteria"]["items"]}}}
+
+
+def _shaped(c) -> bool:
+    """A criterion as the schema writes one: a mapping whose checks are a list of mappings."""
+    return isinstance(c, dict) and isinstance(c.get("check") or [], list) and all(
+        isinstance(q, dict) for q in c.get("check") or ())
+
+
+def _pin_by_part(engine, request, rid, assignee, llm, gaps, progress, executor, agree):
+    """The open obligations closed part by part, at once: each part's own call sees its contract, its siblings and every
+    open obligation, and adds criteria with pinned checks for the obligations ITS part builds. One fold over ~250
+    obligations closed ~10% a round on haiku (256→230→223→227, c_compiler); part by part, 169→56→28, and the plan read
+    24 undecided under the gate's reader where sonnet's own plan read 75 (2026-10-31)."""
+    spec = extract_spec(engine, rid)
+    parts = spec.get("subtasks") or []
+    sibs = "\n".join(f"- {p['id']}: {p.get('name', '')} — writes {', '.join(p.get('writes') or ()) or '?'}"
+                     for p in parts)
+    listed = "\n".join(f"- {g.get('obligation', '')}\n  breaks it: {g.get('admits', '')}" for g in gaps)
+
+    def one(p):
+        """(part id, the criteria its own call adds for the obligations it builds) — none where the call failed."""
+        user = (f"# TASK\n{request}\n\n# THE PARTS OF THE PLAN\n{sibs}\n\n# YOUR PART: {p['id']}\n"
+                f"{json.dumps(p, ensure_ascii=False)}\n\n# OBLIGATIONS OF THE GOAL NO PINNED CHECK DECIDES YET\n{listed}\n\n"
+                f"Take EVERY obligation above whose behaviour YOUR part builds (the files it writes) and add criteria to "
+                f"YOUR part whose pinned checks refuse the breaking result. Prefer integrated programs compared against "
+                f"the reference that decide several obligations in one check over one-case probes; test data goes in "
+                f"`inputs`. Leave obligations another part builds to that part. Repeat no criterion your part has. "
+                f"Emit only `add_criteria` for your part (an empty list if none is yours).") + executor_line(executor)
+        try:
+            got = (llm.complete_structured(AUDIT_PROMPT, user, _PART_SCHEMA) or {}).get("add_criteria") or []
+            # …only criteria shaped as criteria: a part's answer of the wrong shape ended the whole paid authoring
+            # (critic: `"add_criteria": "two"`, a bare name, a check given as a string)
+            return p["id"], [c for c in got if _shaped(c)] if isinstance(got, list) else []
+        except Exception as why:        # …said, not swallowed: a part that added nothing and a part whose call died differ
+            _progress(f"{rid}: pin-by-part · {p['id']}: the call failed ({str(why)[:200]}) — its obligations go to the "
+                      f"next repair", progress)
+            return p["id"], []
+    _progress(f"{rid}: {len(gaps)} open obligation(s) handed to {len(parts)} part(s) at once", progress)
+    added = dict(fan(llm, parts, one, "pin-by-part"))
+    upd = []
+    for p in parts:
+        have = {c.get("name") for c in p.get("criteria") or ()}         # …grown as it is read: a name added twice once
+        # …only what the admission would take: one criterion pinning `{inputs}` with no file in them ended the whole
+        # authoring at its build after two repairs (Q_cc1, 2026-10-31) — the part's other additions are kept
+        new = [c for c in added.get(p["id"], ()) if c.get("name") and c["name"] not in have and not have.add(c["name"])
+               and _admitted(c)]
+        if new:
+            upd.append({**p, "criteria": list(p.get("criteria") or ()) + new})
+    if not upd:
+        return False, spec, []
+    new_spec, ops = _fold_merge(spec, {"update_subtasks": upd})
+    _progress(f"{rid}: pin-by-part · {sum(len(u['criteria']) for u in upd) - sum(len(p.get('criteria') or ()) for p in parts if p['id'] in {u['id'] for u in upd})} "
+              f"criteria added over {len(upd)} part(s)", progress)
+    try:
+        _, new_spec, problems = _build_verified(new_spec, request, engine, rid, assignee, llm, progress=progress,
+                                                executor=executor, agree=agree)
+    except NoPlan as no:
+        return False, spec, [str(no)]
+    return True, new_spec, problems
+
+
+def _one_part_is_the_whole(spec: dict) -> dict:
+    """A split into one part splits nothing (§3.7, the leaf test): its criteria are the node's own. Kept, a small utility
+    ran as a whole over a part of it, each validated apart, its leaf's shorter path missed (wordtop, 31 min, 2026-11-03)."""
+    parts = spec.get("subtasks") or []
+    if len(parts) != 1:
+        return spec
+    own = list(spec.get("root_criteria") or [])
+    names = {c.get("name") for c in own}
+    return {**spec, "root_criteria": own + [c for c in parts[0].get("criteria") or [] if c.get("name") not in names],
+            "subtasks": [], "mappings": [], "deps": [], "accepted_risks": []}
+
+
+def _close_the_goals_obligations(engine, request, rid, assignee, llm, spec, holes, progress, executor="",
+                                 agree: "_Agreement | None" = None):
     """Ask the sufficiency question about the ROOT, fold what it names once, and MEASURE the residue.
 
     Returns (spec, holes, residue) — the obligations still undecided after the repair round, or `()`.
@@ -403,31 +741,67 @@ def _close_the_goals_obligations(engine, request, rid, assignee, llm, spec, hole
     task = engine.graph.get_task(rid)
     if task is None:
         return spec, holes, ()
-    gaps = _undecided_obligations(engine, task, llm, stage=Stage.AUTHORING_OBLIGATIONS)
-    if not gaps:
+    # THE GOAL IS READ ONCE, WITH THE GATE'S OWN INSTRUMENT, AND THE READING IS THE GATE'S: stored as the node's record,
+    # every later reading — the repair's and the gate's first review — re-checks this list rather than mining the
+    # unchanged goal again. Re-mined after each repair, every reading named a fresh corner of the same goal, and the
+    # gate a third set on top (haiku coreutils / c_compiler, scratchpad/authbench, 2026-10-31).
+    mined = _undecided_obligations(engine, task, llm, stage=Stage.AUTHORING_OBLIGATIONS)
+    if mined is None:
         return spec, holes, ()
-    _progress(f"{rid}: the goal has {len(gaps)} obligation(s) no criterion decides — one repair "
-              f"round over them", progress)
-    listed = "\n".join(f"- {g.get('obligation', '')}" for g in gaps)
-    changed, spec2, holes2 = _refine_round(
-        engine, request, str(rid), assignee, llm, progress=progress, label="sufficiency", executor=executor,
-        findings=f"# OBLIGATIONS OF THIS GOAL THAT NO CRITERION OF THE ROOT DECIDES\n"
-                 f"Each line is something the goal text requires and the plan does not yet make checkable. "
-                 f"Add or sharpen the ROOT's criteria so each becomes decidable — most belong in the criterion "
-                 f"of the component they name — and give the children the criteria that entail them. Do not "
-                 f"restate an obligation as a criterion — write the observable that settles it.\n{listed}")
-    if not changed:
-        return spec, holes, tuple(g.get("obligation", "") for g in gaps)
-    # …AND ASK AGAIN, because the repair is a model's answer and not a fact until it is checked.
-    _after = _undecided_obligations(engine, engine.graph.get_task(rid), llm)
-    if _after is None:   # ⊥: the goal could not be re-read, so nothing is measured closed — all stand
-        _progress(f"{rid}: the goal could not be re-read after the repair — its {len(gaps)} obligation(s) "
-                  f"stand as named", progress)
-        return spec2, holes2, tuple(g.get("obligation", "") for g in gaps)
-    residue = tuple(g.get("obligation", "") for g in _after)
-    _progress(f"{rid}: {len(gaps) - len(residue)} of {len(gaps)} closed"
-              + (f"; still open: {'; '.join(residue)}" if residue else ""), progress)
-    return spec2, holes2, residue
+    record_goal_reading(engine, task, mined)
+    # A LEAF HAS NO SPLIT TO SECURE: at an atomic root a requirement no criterion writes is no failure of its validation,
+    # read only at contact (§8.3). It is said to the customer and not repaired here: the rounds were ~40% of a small
+    # task's plan, before its one executor and its validator had touched it (§9.9, wordtop, 2026-11-03).
+    if not engine.graph.get_active_children(rid):
+        return spec, holes, tuple(g.get("obligation", "") for g in mined)
+    gaps, unentailed = mined, []
+    for r in range(SUFFICIENCY_ROUNDS):
+        if not gaps and not unentailed:
+            break
+        _progress(f"{rid}: {len(gaps)} obligation(s) of the goal no criterion decides, {len(unentailed)} root "
+                  f"criteria its children do not entail — repair {r + 1}/{SUFFICIENCY_ROUNDS}", progress)
+        listed = "\n".join(f"- {g.get('obligation', '')}\n  a result passing every criterion yet breaking it: "
+                           f"{g.get('admits', '')}" for g in gaps) + "".join(
+            f"\n- root criterion {v.get('criterion')} is not entailed by the children mapped to it: {v.get('why')}"
+            for v in unentailed)
+        # …part by part first, each part taking what it builds; what that leaves — obligations no single part builds,
+        # root criteria the children do not entail — is the split's seams, and goes to the round that may add a root
+        # criterion for the integration and pin it on each child it maps to. Routed to the parts alone, Q_cc2's
+        # cross-part residue reached no repair at all (critic over the pin-by-part authoring, 2026-10-31).
+        changed, spec, holes = (_pin_by_part(engine, request, str(rid), assignee, llm, gaps, progress, executor, agree)
+                                if gaps and r == 0 and not unentailed else _refine_round(
+            engine, request, str(rid), assignee, llm, progress=progress, label=f"sufficiency {r + 1}",
+            executor=executor, agree=agree,
+            findings=f"# WHAT THE PLAN ADMITS THAT BREAKS THE GOAL\n"
+                     f"Each line is a result the plan admits that breaks the goal. Close each with a PINNED CHECK "
+                     f"that refuses that result, ON THE CHILD THAT BUILDS THE BEHAVIOUR — a criterion of the root "
+                     f"holds only when the children mapped to it carry pins that entail it, so a check added only "
+                     f"to the root leaves it undecided by its split. Add a root criterion only for a property no "
+                     f"single child can show (a seam, an integration), and then give each child it maps to the pins "
+                     f"of its own part. Change nothing else. Do not restate an obligation as prose — a criterion "
+                     f"decides only what its pins probe.\n{listed}"))
+        if not changed and r > 0:      # …a first part-by-part round that added nothing still hands its gaps on
+            break
+        if r == SUFFICIENCY_ROUNDS - 2 and checker_at_authoring():
+            # …AND THE OTHER HALF OF THE GATE'S QUESTION, before the last repair: whether the children entail the
+            # root's criteria. Not stored — the gate's own reading of the plan stays its own.
+            c = critique_node(engine, rid, llm)
+            if c.semantic_covered is not None:
+                unentailed = [v for v in c.criteria_verdicts or () if v.get("verdict") != "sufficient"]
+                gaps = list(c.undecided_obligations or ())
+                _progress(f"{rid}: the checker reads {len(unentailed)} root criteria unentailed, "
+                          f"{len(gaps)} obligation(s) open", progress)
+                continue
+        unentailed = []
+        after = _undecided_obligations(engine, engine.graph.get_task(rid), llm, stage=Stage.AUTHORING_OBLIGATIONS)
+        if after is None:   # ⊥: nothing re-checked, so nothing is measured closed
+            break
+        _progress(f"{rid}: {len(gaps) - len(after)} of {len(gaps)} closed", progress)
+        gaps = after
+    residue = tuple(g.get("obligation", "") for g in gaps)
+    if residue:
+        _progress(f"{rid}: still open: {'; '.join(residue)}", progress)
+    return spec, holes, residue
 
 
 
@@ -487,18 +861,19 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
                    depth: int = 1, model: str = MODEL_DEFAULT, llm=None, progress=None,
                    fast: bool = False, max_iterations: int | None = None,
                    child_assignee: str | None = None, spec: dict | None = None,
-                   executor: str = "", author: str | None = None) -> DecomposeResult:
+                   executor: str = "", author: str | None = None, closed: bool = False) -> DecomposeResult:
     """Agent-facing: run the init search↔fold on `request`, build the result INTO a LIVE engine THROUGH
     the FSM (signals) under `root_id`, verify + repair until `list_holes` is clean (or return the
     residue honestly) — then apply `depth−1` refine operations over the BUILT graph (each verified;
     the graph only ever holds verified states). Every node is authored by a logged ASSIGN; Dep seams
-    are declared as `depends_on` criteria at creation. The entry the MCP/API surface calls. `fast` =
+    are declared edges of the admission that creates them. The entry the MCP/API surface calls. `fast` =
     the measured pace-suffixes (init round only; ~1.5× faster on simple tasks, content quality
     unvalidated). `progress(msg)` mirrors pipeline stages to a transport channel (stderr always written).
     `spec` — a plan already authored (`extract_spec` of another graph) is built as it stands, with no
     search and no authoring call: two executions of ONE plan are then comparable, the plan's own
     price left out of both. `author` — the party authoring the split: a node's contract is re-authored only by its
-    issuer, so where the author is not the issuer the split maps onto the contract as issued (`held_contract`)."""
+    issuer, so where the author is not the issuer the split maps onto the contract as issued (`held_contract`).
+    `closed` — `spec` is the user's plan handed in whole: built as it stands or refused, never repaired by a model."""
     t0 = time.time()
     llm = llm or _default_llm(model)
     depth = max(1, depth)
@@ -510,6 +885,8 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
     _refuse_what_cannot_be_built(engine, root_id, existing, request, spec)
     held = existing is not None and author is not None and str(author) != str(engine.graph.issuer_of(existing.id))
     given = spec
+    contract = _the_request(existing, request, held)    # the contract before this authoring: what its criteria are judged by
+    agree = _Agreement(llm, engine, root_id, contract, given is None, held)
     if existing is not None and engine.graph.get_active_children(TaskId(root_id)):
         _progress(f"{root_id} is already decomposed → {depth} refine round(s) over the existing graph",
                   progress)
@@ -524,20 +901,23 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
         spec, holes, rid = extract_spec(engine, root_id), [], TaskId(root_id)
         for i in range(depth):
             changed, spec, holes = _refine_round(engine, req, root_id, assignee, llm, progress=progress,
-                                                 label=f"{i + 1}/{depth}", executor=executor, contract_fixed=held)
+                                                 label=f"{i + 1}/{depth}", executor=executor, contract_fixed=held,
+                                                 agree=agree)
             if not changed:
                 break
     else:
         # the combined text is what the DECOMPOSER reads; the goal text a build keeps is the caller's (critic round 13)
-        spec = given if given is not None else decompose_spec(
-            _the_request(existing, request, held), llm=llm, progress=progress, fast=fast, label=f"1/{depth}",
-            executor=executor)
+        spec = given if given is not None else _one_part_is_the_whole(decompose_spec(
+            contract, llm=llm, progress=progress, fast=fast, label=f"1/{depth}",
+            executor=executor))
         rid, spec, holes = _build_verified(spec, request, engine, root_id, assignee, llm,
                                            progress=progress, max_iterations=max_iterations,
-                                           child_assignee=child_assignee, executor=executor, contract_fixed=held)
+                                           child_assignee=child_assignee, executor=executor, contract_fixed=held,
+                                           agree=agree, closed=closed and given is not None)
         for i in range(1, depth if given is None else 1):
             changed, spec, holes = _refine_round(engine, request, root_id, assignee, llm, progress=progress,
-                                                 label=f"{i + 1}/{depth}", executor=executor, contract_fixed=held)
+                                                 label=f"{i + 1}/{depth}", executor=executor, contract_fixed=held,
+                                                 agree=agree)
             if not changed:
                 break
     # THE QUESTION THE GATE WILL ASK, ASKED BY WHOEVER WRITES THE ANSWER. The sufficiency check —
@@ -551,7 +931,7 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
     _residue: tuple = ()
     if sufficiency_at_authoring() and given is None and not held:
         spec, holes, _residue = _close_the_goals_obligations(engine, request, rid, assignee, llm,
-                                                             spec, holes, progress, executor)
+                                                             spec, holes, progress, executor, agree)
         if _residue:
             # …AND THE CALLER LEARNS IT HERE, not one paid review round later. The gate will name
             # these again; what it must not do is name them for the first time.
@@ -559,6 +939,10 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
                 f"NOTE: {len(_residue)} obligation(s) of this goal are still decided by no criterion "
                 f"after the repair round — the Level-2 review will name them again: "
                 + "; ".join(_residue))
+    # …AND WHAT THE AGREEMENT FOUND OUTLIVES THE ROUND THAT FOUND IT: each later round returns its own holes, and a
+    # criterion its checks deny — or one the TASK demands both ways (§9.7) — would otherwise end the authoring unsaid
+    agree.forget_gone(spec)
+    holes = list(holes) + [r for r in agree.residue() if r not in holes]
     calls = list(calls_of(llm))
     total_out = sum((c.get("output_tokens") or 0) for c in calls if isinstance(c, dict))
     _progress(f"total: {time.time() - t0:.0f}s wall · {total_out / 1000:.1f}k tokens · "

@@ -29,15 +29,24 @@ import pytest
 
 import gfso.tools as T
 from gfso import issuer as I
+from gfso.adapters.execution import LocalExecution, scratch_of
 from gfso.core.protocol.procedure import unrerunnable
 from gfso.packets import _executor_packet, _validator_packet
 from gfso.core.types import AgentId, TaskId
 from tests.support import REGISTER, UNMODELLED_FAULT, DENIAL_ENTRY, criterion, make_engine
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM, _IssuerLLM
 
+from gfso.engine import findings as F
+from gfso.engine.findings import record_round
+
+#: every round stands: these findings name none the system removed
+_STANDS = lambda r: True
+
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY", "justification": "no precedent",
           "invalidation_condition": "one occurs", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]
 _OWN = "./cc p_wide.c; echo exit=$?"
+#: another probe, another hash: a finding the dispute of `_OWN`'s does not name
+_OTHER = "./cc q_wide.c; echo exit=$?"
 
 
 @pytest.fixture(autouse=True)
@@ -66,10 +75,13 @@ def _delivered(e, result="built it"):
 
 
 def _refute(e, command, crits=("conf",), workdir=None):
-    """A FAIL on `crits` by the validator's own probe `command`; the other criteria pass on their pinned checks."""
-    e.record_exec_verdict("kid", "FAIL", list(crits), "validator", workdir=workdir, per_criterion=[
+    """A FAIL on `crits` by the validator's own probe `command` — or by its own command per criterion, `command` a
+    {criterion: command} — the other criteria passing on their pinned checks."""
+    each = command if isinstance(command, dict) else dict.fromkeys(crits, command)
+    crits = list(each)
+    e.record_exec_verdict("kid", "FAIL", crits, "validator", workdir=workdir, per_criterion=[
         {"criterion": c, "verdict": "fail", "evidence": "it rejected the program",
-         "probe": [{"behaviour": "wide characters", "command": command, "expect": "exit=0"}]} for c in crits]
+         "probe": [{"behaviour": "wide characters", "command": each[c], "expect": "exit=0"}]} for c in crits]
         + [e_ for e_ in _pinned(e) if e_["criterion"] not in crits])
     T.signal(e, "kid", "FAIL", "me", failed_criteria=list(crits))
     e.wait_idle()
@@ -164,20 +176,20 @@ def test_a_ruling_on_a_finding_its_challenge_spelled_with_underscores_stands():
     e.stop()
 
 
-def test_a_hash_two_criteria_share_is_disputed_under_both_and_the_issuer_rules_by_full_id():
-    """One probe refuted two criteria (four nodes of the past rows): disputed by its bare hash it is disputed under
-    both, so a ruling on either stands (root.tr, 2026-10-12); but the ruling is the act, and an issuer retiring by the
-    bare hash is told the full ids to choose from — not that the probe is not demanded (critic over the 10-12 fix)."""
-    e = _seam()
-    _refute(e, _OWN, crits=("conf", "other"))
-    bare = _id(e).rsplit("#", 1)[-1]
-    T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"Finding [{bare}] is root.libc's scope")
-    llm = _ContactLLM({"decision": "accept", "justification": "libc's", "retire_findings": [bare]}, ran={"Bash": 1})
-    out = I.answer_the_challenge(e, TaskId("kid"), "me", _llm=llm)
-    assert out["status"] == "unparsed" and _id(e, "conf") in out["why"] and _id(e, "other") in out["why"], out
-    out = T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[_id(e, "other")], justification="libc's")
-    assert out["accepted"] and set(e.regression_probes(TaskId("kid"))) == {"conf"}, out
-    e.stop()
+def test_a_hash_two_criteria_share_is_disputed_under_both_and_the_issuer_rules_by_full_id_or_by_hash():
+    """One probe refuted two criteria (four nodes of the past rows): disputed by its hash it is disputed under both, so
+    a ruling on either stands (root.tr, 2026-10-12). The ruling is the act: a full id retires the finding under its
+    criterion, the bare hash under every criterion it stands on (c_compiler pp-rest, 2026-11-06)."""
+    for ruling, left in (("bare", set()), ("other", {"conf"})):
+        e = _seam()
+        _refute(e, _OWN, crits=("conf", "other"))
+        bare = _id(e).rsplit("#", 1)[-1]
+        T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"Finding [{bare}] is root.libc's scope")
+        named = bare if ruling == "bare" else _id(e, ruling)
+        llm = _ContactLLM({"decision": "accept", "justification": "libc's", "retire_findings": [named]}, ran={"Bash": 1})
+        out = I.answer_the_challenge(e, TaskId("kid"), "me", _llm=llm)
+        assert out["status"] == "accepted" and set(e.regression_probes(TaskId("kid"))) == left, (ruling, out)
+        e.stop()
 
 
 def test_retiring_one_criterions_finding_settles_nothing_of_the_other_the_same_probe_refuted():
@@ -244,9 +256,31 @@ def test_a_finding_names_the_text_it_refuted_as_validated():
 
 
 def test_a_path_under_pinned_inputs_or_an_escape_is_never_gone():
-    assert unrerunnable({"as_run": "./cc {inputs:conf#1}/tests/a.c"}, ["conf#1"]) == ""
-    assert unrerunnable({"as_run": r"printf '#if 1 \nowhere\x.h\n' | ./cc -E -"}, None) == ""
-    assert unrerunnable({"as_run": "./cc /nowhere/at/all/a.c"}, None)
+    assert unrerunnable({"as_run": "./cc {inputs:conf#1}/tests/a.c"}, ["conf#1"], standing=_STANDS) == ""
+    assert unrerunnable({"as_run": r"printf '#if 1 \nowhere\x.h\n' | ./cc -E -"}, None, standing=_STANDS) == ""
+    assert unrerunnable({"as_run": "./cc /nowhere/at/all/a.c"}, None, standing=_STANDS)
+
+
+def test_the_environments_system_tree_is_never_gone():
+    """`printf … | $T/c -f /dev/stdin`, `>/dev/null`: asked of a Windows engine, /dev was "gone", and a finding whose
+    round file was kept and laid went out raw — its round path missing in every later round, the line unrunnable, the
+    criterion failing (gb-c-compiler-tnpe08584 root.parser.core, 1bcfeb97, 2026-10-30)."""
+    for cmd in ("printf 'x' | ./c -f /dev/stdin; echo exit=$?", "./cc a.c >/dev/null 2>&1", "/usr/bin/env cc a.c",
+                "cc -I/usr/include a.c"):
+        assert unrerunnable({"as_run": cmd}, None, standing=_STANDS) == "", cmd
+    assert unrerunnable({"as_run": "./cc /tmp/gone/a.c /dev/null"}, None, standing=_STANDS), \
+        "a file of a container's /tmp is not the environment's"
+    assert unrerunnable({"as_run": "./cc /devices/a.c"}, None, standing=_STANDS), "only the tree itself"
+
+
+def test_a_finding_that_enters_the_delivery_itself_is_rerun():
+    """`cd <place> && ./cc …`: the place itself, not only what lies under it, is the delivery a judge's copy stands for —
+    with places in volumes it is on no host, and read as gone, 30 of 67 findings on c_compiler's root.types were shown
+    and not demanded, the node looping FAIL → CHALLENGE on criteria no run could decide (series 3, 2026-10-30)."""
+    place = "/nowhere/ws/.gfso-nodes-ws/p/root.types"
+    assert unrerunnable({"as_run": f"cd {place} && ./c_compiler t.c"}, None, place, standing=_STANDS) == ""
+    assert unrerunnable({"as_run": f"cd {place}x && ./c_compiler t.c"}, None, place, standing=_STANDS), \
+        "a sibling that only begins with its name is not it"
 
 
 def test_the_issuer_sees_what_the_engine_demands(tmp_path):
@@ -260,19 +294,48 @@ def test_the_issuer_sees_what_the_engine_demands(tmp_path):
     e.stop()
 
 
-def test_a_finding_is_demanded_while_the_file_it_names_stands_and_shown_once_it_is_gone(tmp_path):
-    prog = tmp_path / ".gfso-scratch-ws" / "kid_1791646628" / "dt" / "hh3.c"
+@pytest.mark.parametrize("kept", ["kept", "absent", "past the cap"])
+def test_a_finding_is_demanded_while_its_file_is_kept_and_shown_once_it_cannot_be_laid(tmp_path, monkeypatch, kept):
+    """The file a finding names in its round is kept in the system's record as the finding is filed, and a re-run lays
+    it from there (`findings.lay_files`): the round going leaves it demanded. One the record could not keep — not there
+    when the finding was filed, or past `KEEP_CAP` — is kept as lost and shown, not demanded, at once: laid as nothing,
+    it was re-run over an empty directory (`No such file`, rc 2), a refutation no delivery lifts (critic over 909e417)."""
+    prog = (scratch := scratch_of(tmp_path / "ws", "p")) / "kid_1791646628" / "dt" / "hh3.c"
     prog.parent.mkdir(parents=True)
-    prog.write_text("int main(void){return 0;}")
+    if kept != "absent":
+        prog.write_text("int main(void){return 0;}")
+    if kept == "past the cap":
+        monkeypatch.setattr(F, "KEEP_CAP", 4)
     e = _seam()
     _refute(e, f"./cc {prog.as_posix()}; echo exit=$?")
+    prog.write_text("int main(void){return 0;}")
     _delivered(e, "fixed it")
-    with pytest.raises(ValueError, match="REFUTED"):
-        _pass(e)                                        # a validator's program in its scratch, still standing: it runs
-    shutil.rmtree(tmp_path / ".gfso-scratch-ws")
-    packet = _validator_packet(e, e.graph.get_task(TaskId("kid")), "fixed it", None, scratch=str(tmp_path / "r2"))
-    assert "no longer exist here" in packet and "shown, not demanded" in packet
-    assert _pass(e)["verdict"] == "PASS", "a finding no round can re-run held the node undecidable"
+    if kept == "kept":
+        with pytest.raises(ValueError, match="REFUTED"):
+            _pass(e)                                    # a validator's program in its scratch, kept: it runs
+        shutil.rmtree(scratch)
+        record_round(e.graph, str(prog), False)         # …gone as the system removes a round: by its rotation
+        with pytest.raises(ValueError, match="REFUTED"):
+            _pass(e)                                    # …its file in the record: still demanded
+    else:
+        packet = _validator_packet(e, e.graph.get_task(TaskId("kid")), "fixed it", None, scratch=str(tmp_path / "r2"))
+        assert "no longer exist here" in packet and "shown, not demanded" in packet
+        assert _pass(e)["verdict"] == "PASS", "a finding the record could not keep held the node"
+    e.stop()
+
+
+def test_a_reruns_command_writing_only_its_own_output_finds_its_directory(tmp_path):
+    """A validator's command that writes only into its round (`cc ok.c -o <round>/batch1/prog`) kept nothing there: laid
+    from the record, the re-run found no `batch1/` (ld: No such file) and, on a host, no laid directory to copy (cp:
+    cannot stat) — every later delivery refuted (critic over the judged tree, run). Every directory it names is made."""
+    out =scratch_of(tmp_path / "ws", "p") / "kid_1791646628" / "batch1" / "prog"
+    e = _seam()
+    at = tmp_path / "r2" / "batch1"
+    at.mkdir(parents=True)
+    cmd = e.lay_probe_files(f"echo built > {out.as_posix()} && cat {out.as_posix()}", at, LocalExecution())
+    ex = LocalExecution()
+    got = ex.run([ex.shell() or "bash", "-c", cmd], cwd=str(at), timeout=60)   # …the system's own shell on this host
+    assert got.returncode == 0 and got.stdout.strip() == "built", (got.returncode, got.stderr)
     e.stop()
 
 
@@ -294,6 +357,10 @@ def test_the_issuer_judging_a_challenge_sees_the_findings_standing_under_it():
     e.wait_idle()
     said = I.issuer_context(e, TaskId("kid"), "dispute")
     assert "standing on this node" in said and _OWN in said, said
+    assert ".laid" not in said, "no round, nothing laid: nothing to say where it lies"
+    said = I.issuer_context(e, TaskId("kid"), "dispute", lists="/w/.gfso-scratch-kid/issuer_1")
+    assert "`/w/.gfso-scratch-kid/issuer_1.laid`" in said and "beside your round" in said, \
+        "an issuer looked for the laid files inside its round and ruled the finding unrunnable"
     e.stop()
 
 
@@ -307,13 +374,45 @@ def test_the_executor_is_told_a_finding_outside_its_criterion_is_a_challenge_not
 
 def test_a_ruling_retires_only_what_the_challenge_disputed():
     e = _seam()
-    _refute(e, _OWN, crits=("conf", "other"))
+    _refute(e, {"conf": _OWN, "other": _OTHER})
     T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"{_id(e, 'other')} asks for wide characters, root.libc's scope")
     out = T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[_id(e, "conf")], justification="both go")
     assert not out["accepted"] and "does not name" in out["error"], out
     out = T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[_id(e, "other")], justification="libc's")
     assert out["accepted"], out                        # the challenge named the finding by its id: it may go
     assert set(e.regression_probes(TaskId("kid"))) == {"conf"}
+    e.stop()
+
+
+def test_a_ruling_by_bare_hash_retires_what_stood_then_not_what_is_filed_later():
+    """Stored as written, a bare hash was read again at every read and retired the same probe's finding filed later
+    under a criterion nobody disputed (critic over 6eec80c, a person's ruling through the door)."""
+    e = _seam()
+    _refute(e, _OWN)
+    bare = _id(e).rsplit("#", 1)[-1]
+    T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"{_id(e)} is root.libc's scope")
+    out = T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[bare], justification="libc's")
+    assert out["accepted"] and out["retired_findings"] == [f"conf#{bare}"], out   # what it retired, as recorded
+    _delivered(e, "again")
+    _refute(e, _OWN, crits=("other",))
+    assert set(e.regression_probes(TaskId("kid"))) == {"other"}, e.regression_probes(TaskId("kid"))
+    e.stop()
+
+
+def test_a_machine_ruling_past_the_dispute_says_what_stays_demanded(monkeypatch):
+    """Landed in part, the ruling read as whole to its issuer, and the node failed four times on what it believed it had
+    lifted (GF_cc_full1). What the dispute did not name stays demanded, and the log says so."""
+    e = _seam()
+    _refute(e, {"conf": _OWN, "other": _OTHER})
+    said, emit = [], e.emit_info
+    monkeypatch.setattr(e, "emit_info", lambda src, msg: (said.append(msg), emit(src, msg))[1])
+    T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"{_id(e, 'other')} asks for wide characters, root.libc's scope")
+    llm = _IssuerLLM({"decision": "accept", "justification": "both libc's",
+                      "retire_findings": [_id(e, "other"), _id(e, "conf")]})
+    assert I.answer_the_challenge(e, TaskId("kid"), "me", _llm=llm)["status"] == "accepted"
+    e.wait_idle()
+    assert set(e.regression_probes(TaskId("kid"))) == {"conf"}
+    assert any("stay demanded" in m and "conf" in m for m in said), said
     e.stop()
 
 

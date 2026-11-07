@@ -8,14 +8,42 @@ are separate projects inside it, not separate directories. The theory is in
 [`applied_gfso_v4_en.md`](applied_gfso_v4_en.md); the protocol as an agent session receives it is
 [`ORCHESTRATOR.md`](../gfso/mcp/ORCHESTRATOR.md).
 
+## Your first task, and the ones after it
+
+You need the [install](../README.md#install) done: Docker running, and the token from `gfso credential claude --sign-in` kept. Only what is committed at your `HEAD` enters a run, so commit what the task needs first.
+
+1. **Say the task and "use gfso".** The system writes a plan as a file; your agent reads it whole and tells you what it splits into and what the plan leaves undecided. It then gives the go without waiting, so if you want to read the plan first, say that with the task. A note goes back to the planner; the agent does not edit the plan.
+2. **The go.** Your agent starts the run and gives you a link to the live page. From here it runs unattended, in Docker, on the local server and not in your chat: close the chat and it goes on, and the page still shows it. To hear the end from your agent again, open Claude Code and ask for the project's status by its name, which the page shows.
+3. **The verdict.** "Done" is the `PASS` of the plan's top node, the root, and your agent reports it with the link. Nothing else is called done.
+4. **Take the result.** It waits on the branch `gfso/<project>/accepted`; your branches and working tree are as they were. Read it with `git diff HEAD...gfso/<project>/accepted`, then merge it or leave it. Merge it rather than checking it out: a landing on a branch you have checked out is refused.
+5. **The next task is a new project.** In the default mode, `auto`, where the system holds every part of the plan, one project holds one goal, so your agent opens a project of a new name. Merge the last result first if the next task builds on it.
+
+When a run does not reach `PASS`:
+
+| what you see | what it means | what to do |
+|---|---|---|
+| your agent reports `stuck` and a directive | no node can move and the root has no `PASS`; the directive names the node and the moves open | your agent relays them; pick one, or start the goal as a new project |
+| your agent reports the project stopped | you, or the system with its reason, stopped it | read the reason; `start_project` resumes from where it stood |
+| you want it to stop | | the page's **Stop**, or tell your agent (`stop_project`). Sessions already running finish; `start_project` goes on |
+
+The branch lands only on `PASS`. Without one, the work so far stays in the project's Docker volume: `gfso export-places <project> <dir>` writes it out.
+
+The run spends your subscription's usage, as Claude Code does; the dollars here are what Claude Code reports for it. A first small task costs about $0.1 for the system and $0.3–0.6 for your own session, and every measured larger one is in [`RESULTS.md`](RESULTS.md). Nothing caps the spend: a run goes on until its verdict, a stop, or its clocks close it (a decision nobody makes lapses after a day by default). `usage` says what it has spent so far, and `gfso doctor` says what is wrong with the installation.
+
+The rest of this page is the loop by hand.
+
+## Two ways to get a graph
+
 There are two ways to get a graph, and they are not equal in what they cost you.
 
-* **`auto_decompose(request)`** — one call authors a whole verified subtree from a sentence. Good
-  when the goal is generic enough that a model's weights already carry its structure.
+* **`plan(request)`, then `auto_decompose(plan=path)`** — the path your agent takes when you tell it a task: the system
+  writes a plan as a file, your agent reads it whole, sends a note (`refine_plan`) or gives the go, and contact repairs the
+  plan from there. `auto_decompose(request)` does both in one call, with no reading between; under `auto` the MCP door refuses it where it
+  would make a new root, so that the go is a plan someone read.
 * **The manual mode** — you study the context and build the graph yourself, then run the checks over
-  it. This is the mode below, and it is the primary one for work on a codebase you know and a model
-  does not: a decomposition is an estimate `Ŝ` of a real structure `S` (§3.1), and the estimate can
-  only come from contact with the domain. Nothing in the apparatus can supply that for you.
+  it. This is the mode below, for work on a codebase you know and a model does not: a decomposition is an estimate `Ŝ` of
+  a real structure `S` (§3.1), and the estimate can only come from contact with the domain. Nothing in the apparatus can
+  supply that for you.
 
 The two mix. Hand-build the parts that need your context, let `auto_decompose` refine over what you
 built, and keep your ids, owners and accepted risks — a refine round folds new findings in as a
@@ -51,7 +79,7 @@ decomposed node is a hole the engine will show you, not a clean bill.
 ## 2. Build the graph
 
 From an agent session these are MCP tools; from a shell the same verbs are `gfso run <tool> …`; in
-the UI they are the Decompose and Edit Node panels. Same engine, same audit log, whichever door.
+the UI they are the Decompose and Edit forms. Same engine, same audit log, whichever door.
 
 ```
 create_task("api", {"name": "…", "description": "…", "criteria": [
@@ -78,6 +106,11 @@ Every parent criterion must be **mapped** to the child that delivers it. That ma
 the whole composition rests on: the parent passes exactly when its children do (§7.3), so an
 unmapped criterion is a parent obligation nobody has agreed to carry.
 
+A plan can also exist before any project does, as a file of its own: `plan` authors and reviews a `.gfso` file with no project,
+`refine_plan` answers your note on it (each answer holds the file's path and, unless it is very long, its text), and
+`auto_decompose(plan=<file>)` is the go, which builds the project from the file as it stands. The file is TOML you can read whole and edit by hand; its fields, and what `parse` checks in a file you edited, are in
+[`PLAN_FORMAT.md`](PLAN_FORMAT.md).
+
 Assign a node to someone else only when the work is really theirs. Ownership is load-bearing: a node
 owned by another party moves only on *their* signals, and a node owned by a person the engine does
 not know simply waits for that person — which is the honest state of the graph, not a stall.
@@ -85,7 +118,8 @@ not know simply waits for that person — which is the honest state of the graph
 ## 3. Check the plan before writing any code
 
 Two levels: the engine admits a split only whole and clean at Level 0, and a child does not start executing
-until its parent's decomposition has a current Level-2 verdict.
+until its parent's decomposition has a current Level-2 verdict. A project built from a plan file has that review in the
+file: its go sets the gate off.
 
 **Level 0 — structure.** `list_holes()` answers `{holes, count}` — every unmet structural check
 across the graph at once: an uncovered criterion, an orphan child, a cycle, incoherent deadlines, a missing risk
@@ -113,7 +147,7 @@ dispute_finding("api", "<criterion>", "<why the entailment does hold>")
 The checker is an a-priori approximation, not an oracle; contact keeps the last word. What the engine
 enforces is that you *ran* it and dispositioned what it said — never that it was right.
 
-**If you have no checker.** The review needs a model — the Claude CLI on your `PATH`, signed in. With
+**If you have no checker.** The review needs a model on a credential its provider holds (`gfso credential`). With
 none, `review_decomposition` answers with no verdict, and no verdict is never read as clean: the gate
 stays shut and nothing executes. That is deliberate and it is not the only supported way to run. The
 canon's other branch (§9.9, EXPLORE) buys the plan's verification with *contact* instead of with a
@@ -123,6 +157,8 @@ checker, and it is a deployment setting rather than a skipped step:
 // data/serve.json — the switches the one server is raised with; then `gfso up` reconciles it
 { "GFSO_L2_GATE": "0" }
 ```
+
+For one project, `set_mode(..., l2_gate=False)`.
 
 Under it the Syntactic level (Level 0) still gates every admission, so a split is still refused for an
 uncovered criterion, an orphan, a cycle or a missing register — what you give up is the causal
@@ -161,26 +197,109 @@ parallel, gates each start on its producers, wraps every report into the protoco
 delivery:
 
 ```
-register_agent("exec-1", "llm-executor", workdir="<project dir>", max_turns=50)
-register_agent("val-1",  "llm-validator", workdir="<a scratch dir>")
-reassign("parser", "exec-1")      # …and then just watch the graph
+register_agent("<project>-exec", "llm-executor", model="claude-haiku-5-5", workdir="<project dir>", max_turns=50)
+register_agent("<project>-val",  "llm-validator", model="claude-haiku-5-5", workdir="<a scratch dir>")
+reassign("parser", "<project>-exec")      # …and then just watch the graph
 ```
 
+Those executors work with nobody watching their commands, so they run in a container. `gfso setup`
+builds the agents' image and declares it as the execution `default` (Docker is part of the installation;
+`gfso doctor` names what is missing), and `set_mode` places a project's executors that name no execution
+into it; `execution=<name>` on `register_agent` picks another one you declared (below). The project's base
+must be a git repository with a commit. On your machine instead, they start only with
+`"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` (then `gfso up`); without it or a container the first
+round stops the project with that cause, nothing of the node run. A validator
+judging work you do in your own chat, and the system's answer to a dispute that work raises, run on your machine either
+way; so does the reader of a plan's documents for a project with no execution declared.
+
 The roster is the server's, shared by every session on it, so take your roles off when you are done:
-`unregister_agent("exec-1", workdir="<project dir>")` removes the role only while it still points at
+`unregister_agent("<project>-exec", workdir="<project dir>")` removes the role only while it still points at
 that directory (without `workdir` it removes it unconditionally, and refuses a role another project
 registered — a guard against accidents, not an owner check; a role registered with no project can be
 removed by anyone). The answer lists your live nodes the role was carrying or had issued.
 
 Where the project dir is the top of a git repository with a commit, each node an executor runs gets a
-place of its own: a worktree beside it (`../.gfso-nodes-<dir>/<project>/<node>`, branch
-`gfso/<project>/<node>`), made from where its parent works when its first session starts and reused on
-rework. Its delivery is committed there, its validation reads it there — never a sibling's half-edited
-file — and when it PASSes its branch is merged into its parent's place (the parent's worktree once it
+place of its own: a repository of its own, a clone sharing the project dir's objects, beside it (`../.gfso-nodes-<dir>/<project>/<node>`, a space or other shell-unsafe
+character of `<dir>` escaped there as `~xx`; branch `gfso/<project>/<node>`), made when its first session starts from where its parent stood when the node
+entered the split, with its producers by their Dep edges, and reused on rework: a
+sibling's work it needs is an edge in the plan, or a BLOCK that makes one. Its delivery is committed there, its validation reads it there — never a sibling's half-edited
+file — and when it PASSes its branch is merged into its parent's place (the parent's own once it
 has one, else the project dir). A merge that conflicts is aborted and left to the whole: the parent's
 session is told which branches did not join, and integrating them is its work. When the root PASSes,
-the worktrees whose branches joined are removed; the others stay and are named. A project dir that is
+the places whose branches joined are removed; the others stay and are named. A project dir that is
 not a repository is shared by every executor as it stands, and the log says so once.
+
+**What a validation reads.** A delivery's validation — each of its batches, the system's own run of the exact
+checks, an issuer's contact — runs in a copy that is a checkout of the commit DELIVER recorded and nothing else:
+files the executor's `.gitignore` hides, binaries and environments it built, anything changed in its place after
+DELIVER are not in it. Under a container execution the validation's container mounts three directories — its own round
+or batch (holding the copy), a temp of its own, and read-only what the system laid for it from its record — and
+not the project dir, the node's temp or place, another batch, or an earlier round, so a delivered link or build
+step reaches nothing the executor can still change; the container ends when the run does, with whatever the run
+left running. Where each input comes from: the copy's objects are streamed from the executor's container into a
+git the system makes and hashed again against their ids (no size limit but the disk); Git LFS files are checked
+out as their content, from objects streamed from the place's and the base's LFS stores and kept only where their
+sha256 is the pointer's; a standing finding's probe files are recorded by the system as the finding is filed and
+laid from that record for its re-run, which starts from a fresh copy of them in the validation's batch; pinned inputs
+come from the contract. What the result needs built is built there by the system, in the validation's container,
+before any check: DELIVER's `build` when the executor gave one (`""` = nothing to build), else `make` where the
+delivered tree has a Makefile at its root, else nothing; the executor's DELIVER instructions ask it to declare one.
+A build that fails, or still runs after 10 minutes, is the delivery's FAIL with its output as the cause, and no
+check runs; the executor's next packet says which build ran and, where it failed, its output, and an issuer ruling
+on a dispute of that FAIL gets the copy unbuilt with that output; nothing of a failed build stands as a finding — the
+next delivery's own build re-checks it. Whatever the build leaves running ends before any check, and a delivered file
+it changed is put back as delivered (said in the packet line). A checkout the delivery itself makes impossible (an
+object missing or rewritten, a commit not carrying the recorded tree) is the delivery's FAIL too, its cause in the
+executor's next packet, and its issuer rules on that cause; one that fails for another cause (Docker, a timeout, the
+disk) gives no verdict and is asked again — never the live place in its stead. A standing finding whose file the
+record could not keep is shown, not demanded. A delivery with no recorded
+commit (a project dir with no git, a DELIVER an agent sends through the door) is copied as it stands, and nothing
+is built.
+
+Under a container execution (`register_agent(..., execution=<name>)`) none of that is on your disk, and
+nothing of your disk is mounted into a container an agent or a check runs in (a project made before the volumes is
+copied in once, read-only): the project's own directory — node places, validation
+rounds, temps, the sessions' CLI state — and the project dir's working copy live in the project's Docker
+volumes, named by the installation, the execution, the project and the base. When the project
+first starts, your repository's HEAD is imported into the volume — committed work only, by your own git as a
+bundle, checked out there with LF line endings and none of your config or hooks. Files your repository tracks
+by Git LFS come in as their content: the LFS objects HEAD names that your repository holds are carried with the
+bundle, and the system itself writes each file from its object once its size and sha256 match the pointer (no
+git-lfs runs, yours or the image's); inside, every staging writes such a file back as its pointer, so a delivery
+and the accepted branch hold pointers, as your repository expects — the system's own git and an agent's plain `git`
+alike, the filter written into each repository's config there. An LFS object made inside (a file an agent changed)
+travels with the commits that point to it: into the project's base when the change is delivered, so a parent that
+joins it checks out its content, and into your repository's LFS store (`lfs.storage`, else `.git/lfs/objects`) when
+the result lands, written by the system once its sha256 matches — your git-lfs then checks the accepted branch out
+with no remote asked. An object that could not be carried (over 512 MiB, or lost inside) is named by its file in the
+landing's log line, and that file reads as a pointer in your repository. The disk it takes grows with your LFS
+content: the import passes it once through your system's temp folder, and the project's volume holds the base's store
+and checkout plus one checkout per node place — roughly (2 + places) × the LFS content at HEAD. A partial clone is read with nothing fetched:
+the system never reaches your remote with your credentials, so a clone whose history lacks objects is not imported
+until you fetch them. The log names the commit and what did not come
+in — files you changed or did not commit, submodules (empty inside), LFS files whose object your repository lacks
+(pointers inside: `git lfs fetch` first), the objects a partial clone lacks — and the answer of the call that makes
+the root (`auto_decompose`, or `create_task` building it by hand), and of `start_project` before any import, says the
+same as `not_imported`. That import is the root's: no restart of the server, of Docker or of the container imports again, and
+only a new root of the project does, once the earlier root no longer works there. A project dir that is no git
+repository's top with a commit is not copied in at all: the container refuses it and names `git init` and a first commit
+(a subdirectory of a repository would carry its ignored files, `.env` among them). Your working tree and your branches are
+never written: when the root PASSes, its accepted result lands in your repository as the branch
+`gfso/<project>/accepted` (a `git fetch` of a bundle, without submodules, nothing else), to read, diff and merge
+when you choose; a later root's PASS moves that branch (its reflog keeps where it stood), and the landing is
+refused while the branch is checked out in any worktree of yours. So two projects on one project dir no longer see each other's
+accepted work until you merge their branches. `perform="in_chat"` is refused under a container execution: work your own agent does
+on this host is not in the volume, and only what stands there is validated. To read the places, write them out:
+`gfso export-places <project> <dir>` puts them under `<dir>/<project>/` — the volume found by the project's
+own record in the installation's data directory, whatever roster the shell points at —, each node's repository whole
+(it no longer borrows objects from the project dir) and inert: no repository carries the config or hooks
+an agent gave it, so reading the export runs nothing an agent wrote; the project's working copy is there as
+`.gfso-base`, and its HEAD and `gfso/*` branches as `gfso-refs.bundle`, which your repository can `git fetch`;
+what could not be exported as it stood is listed in `<dir>/.gfso-export-notes`. A project whose places stood beside the project dir
+before it moved into volumes is copied in on its first start, and the host directory is renamed
+`<dir>.copied-in-<time>`. To go back to host directories, export the places first — what the project did
+since the copy-in exists only in the volumes — then remove the two volumes and the project's `volume:`
+settings and rename the `.copied-in-` directories back. The volumes go when the project is deleted.
 
 One thing decides whether that is safe, and it is a property of your PLAN, not of the machinery: two
 nodes that will write the same file are not independent, whatever their topics. Give each node its
@@ -192,8 +311,8 @@ products belong in `.gitignore`: a delivery commits everything else it finds, in
 plan omitted appears in the graph, and `q_Dep` counts it.
 
 What all this costs is on the record: `/api/usage` totals the model calls per project, split by the
-role that made them — decomposer, plan review, validator, executor. The UI shows it in the observation
-window, beside the runs it is made of — and a graph worked by people has no calls and shows nothing
+role that made them — decomposer, plan review, validator, executor. The UI shows it in the run deck's Spend
+view, beside the runs it is made of — and a graph worked by people has no calls and shows nothing
 there, which is the point: the quality metrics describe the graph, the spend describes one way of
 working it.
 
@@ -248,7 +367,8 @@ a node the protocol has closed. That verdict is refused as a signal, correctly, 
 terminal; it is not discarded. `next_steps` then refuses to call the graph complete and names the node
 under `refuted_passes`; `gfso status` marks it `[X] … PASS CONTRADICTED by its own current verdict`
 instead of the tick an earned node gets; and `get_verdict` says the state and the record disagree.
-Recovery is `reopen` while the node is not consumed, and re-decomposition around it once it is.
+Recovery is `reopen` while the node is not consumed, and re-decomposition around it once it is. Under `auto`
+the door refuses both and nothing in the system makes them, and the directive says that.
 
 Two things follow from that, and both are deliberate. A verdict arriving after a node closed is kept
 BESIDE the one it closed on rather than replacing it (`closed_on`) — a later record is evidence about
@@ -261,6 +381,19 @@ the verdict — `"ok"`, `"looks green"` — is refused the way a `PASS` with no 
 so is a Level-2 finding discharged with `"nah"`. This is a floor on ASSERTION, not a test of evidence.
 It cannot refuse a sentence naming a command that was never run, and it does not pretend to: at a door
 where you name yourself, the explicit record IS the guarantee (§10.3), and it carries your name.
+
+**What a `PASS` no longer re-ran, it says.** The criteria are the goal's; what the system made up on the way is its own to
+refute, on the record. `get_verdict` names both ways it happens, so a `PASS` does not read as wider than it is:
+
+* `findings_not_reproduced` — a finding a validator tried on its own, filed only where its report said it refuted, stands while
+  it is reproduced. A later validator whose report ran a shell and names that very command, what it printed and why the finding
+  was wrong ends it; that the command was really run, and what it printed, is the validator's word, as its `PASS` is. No later
+  `PASS` re-runs it. You can give it back with `return_finding(task_id, finding, why)`: it is demanded of every later
+  `PASS` again, and no validator's run takes it off. A plan's criteria and its pinned checks are not such findings.
+* `checks_no_longer_run` — on a plan the system wrote, under `auto`, a part's check that holds only while a sibling's work is
+  missing can be ruled out by the system's issuer after a session that ran commands over the delivery, never the last check of a
+  criterion; a check left in place stays demanded, and its `FAIL` stands. The part stays as it
+  settled; the verdict lists each check, here or below. A plan handed in stops instead.
 
 **When a criterion fails, the rework flows down, not around.** If the failed criteria are covered by
 children, the engine refuses a re-delivery over an untouched subtree: contact refuted the split, not
@@ -313,7 +446,7 @@ The session receives the protocol as its instructions and gets the verbs above a
 is `agent`, so nodes it creates are its own and its signals are signed as itself; nodes owned by you
 or by a teammate it cannot move, and it will surface them to you instead.
 
-A session that works well on real code looks like this: it studies the part of the repository the
+Working by hand, a session that does well on real code looks like this: it studies the part of the repository the
 goal touches, builds or repairs the graph by hand, runs `list_holes` and `review_decomposition` and
 closes what they name **before** editing a single file, then works `next_steps` until the root
 closes — validating at the seams, and telling you what it is waiting on. You watch the same graph in
@@ -324,7 +457,32 @@ review and show me the gaps before you touch anything"*, *"what is the graph wai
 finding is wrong because …, dispute it"*.
 
 One graph per project. `use_project(name)` switches the project for your session only; a dependency
-across projects is deliberately unrepresentable, so related goals belong in one.
+across projects is deliberately unrepresentable, so work that must wait on other live work is parts of one goal. A task building on a finished result you merged is a new project.
+
+### Who holds which nodes: the mode
+
+Set once per project, before the plan, with `set_mode`; your agent recommends `auto` and goes on unless you ask for another:
+
+| mode | who holds the nodes | your session |
+|---|---|---|
+| `solo` | your session holds every node | performs each one; the root is the seam |
+| `semi` | your session holds the top (the root, or depths 0…k−1 with `boundary=k`), registered executors the rest | authors the plan and makes the issuer's moves over what it holds |
+| `auto` | the system holds every node, the root included | states the goal (`auto_decompose` on an empty project) and reads the status |
+
+Every mode needs a validator registered for the project; `semi` and `auto` need executors too — `set_mode`
+says what is missing. A node your session holds is performed by `perform="dispatch"` (the default: your
+session consents, a clean executor session of the project does the work in the node's own place) or
+`perform="in_chat"` (your session does it with its own tools). A set mode is a lock: once the project has
+work in it, changing it takes your own words as `user_said`.
+
+### Which model runs a role, and on whose account
+
+Each role names its model as `provider/model` — `register_agent("<project>-exec", "llm-executor", model="ollama/qwen3:32b")`;
+a bare model name is Claude's, through the Claude Code CLI. `gfso provider-check <spec>` says which roles a
+provider can hold. A provider's credentials live in one place: `gfso credential claude --kind token` (or
+`--kind api`) reads the value from stdin and never prints it; a provider holds several named ones (`--name`),
+one in use (`--use NAME`), the rest tried in order (`--order A,B`) when the one in force hits its limit — the
+project stops only when every one is spent. Every recorded model call names the credential it ran on.
 
 ---
 
@@ -337,16 +495,18 @@ Three are for using it; the rest are for running it, and you can ignore them unt
 | `gfso setup [--desktop]` | Register the agent door, bring the server up, open the UI, report. Idempotent. |
 | `gfso doctor` | What this installation is and what blocks it: version, state home, who holds the address, whether the Claude Code CLI answers, whether the assets are present. Paste it into a bug report. |
 | `gfso demo [name]` | Run a shipped example; no name lists them. |
+| `gfso credential <provider> […]` | Set, name, choose or order a model provider's credentials (value on stdin, never shown). |
+| `gfso provider-check <spec>` | Whether a model provider can run on gfso, and in which roles. |
 | `gfso run <tool> …` | The same verbs as the MCP tools, headless from a shell — through the running server, so its writes are live in the UI, and straight against the database when none is up. `project=<name>` selects the graph. This is the door where you name the actor yourself. |
 | `gfso up [--force]` | Start-or-reconcile the one server: start it if down, restart it if it serves stale code or the wrong switches, do nothing if it is already correct — and leave it alone rather than end someone else's run. `--force` restarts anyway. |
 | `gfso down` | Stop the one server. |
 | `gfso connect` | The MCP stdio door an agent client runs. You do not type this; a client does. |
 | `gfso projects [-n N] [--match S]` | The project graphs this server holds, most recently worked in first — the name is what `project=` takes, and the isolation boundary of the whole product. |
-| `gfso log [-f]` | The observation panel in the terminal: signals, verdicts and dispatches as they land. |
+| `gfso log [-f]` | The log in the terminal: signals, verdicts and dispatches as they land. |
 | `gfso mcp` | A standalone MCP server with an engine of its own, for a client that must not share. Not the normal door; `connect` is. |
 | `gfso serve` | Run the server in *this* process — the primitive `up` calls. |
 
-**The UI is always at `http://127.0.0.1:8000`.** Whichever door raised the server, it is the same
+**The UI is always at `http://127.0.0.1:8000`:** that address alone lists the projects and opens none, and a project's page is `?project=<name>`, the link its agent gives you. Whichever door raised the server, it is the same
 single process, and it is a background service: it stays until `gfso down`, so closing your agent
 session does not take the UI with it. After `pipx upgrade gfso`, the next agent session reconciles
 the running server against what is installed and restarts it if they differ — an upgrade takes

@@ -12,7 +12,9 @@ import pytest
 
 import gfso.tools as T
 from gfso import issuer as I
-from gfso.core.types import TaskId
+from gfso.core.protocol.procedure import materialize_inputs, pinned_files, with_named_files
+from gfso.core.types import Criteria, Probe, TaskId
+from gfso.core.types import HOST
 from tests.support import REGISTER, criterion, make_engine
 
 CMD = "cat {inputs}/x.txt"
@@ -96,4 +98,94 @@ def test_the_nodes_own_pinned_corpus_is_carried_by_a_child_that_takes_its_criter
     assert ok, why
     (p,) = e.graph.get_task(TaskId("root.g_check")).spec.criteria[0].check
     assert dict(p.inputs) == CORPUS
+    e.stop()
+
+
+def test_a_child_naming_the_files_without_their_content_gets_the_content_its_split_pins():
+    """The measured shape (GB_sql_database_tnajs5800, 2026-10-22): the machine issuer re-homed the root's probes into
+    an integration child with the command reworded and every file NAMED under `{inputs}/<name>` with an empty body —
+    it reads a projection that shows commands, never the corpus — and every validation read empty inputs for twelve
+    rounds. The content is the split's own, carried by file under the criterion; the path's token is normalized away.
+    CONTROL: drop `with_named_files` from `_new_child` and this goes red."""
+    e = _split()
+    ok, why = I.apply_move(e, TaskId("root"), "plan", str(e.graph.issuer_of(TaskId("kid"))), {
+        "move": "add_child", "justification": "integration", "child": {
+            "name": "kid2", "description": "the whole, integrated", "covers": ["g"], "criteria": [{
+                **criterion("reads"), "check": [{"behaviour": "reads the corpus", "command": CMD + " || echo FAIL",
+                                                 "expect": "the corpus", "inputs": {"{inputs}/x.txt": ""}}]}]}})
+    assert ok, why
+    (p,) = e.graph.get_task(TaskId("root.kid2")).spec.criteria[0].check
+    assert dict(p.inputs) == CORPUS, dict(p.inputs)
+    e.stop()
+
+
+def test_a_path_naming_the_token_is_laid_down_where_the_command_reads_it(tmp_path):
+    """`{inputs}` is substituted in the command; a stored path carrying it is the same file — laid down inside the
+    probe's directory, not under a literal `{inputs}` the command never reads (contracts stored so stay runnable)."""
+    c = Criteria("reads", check=(Probe.of({"behaviour": "b", "command": CMD, "expect": "x",
+                                           "inputs": {"{inputs}/x.txt": "the corpus\n"}}),))
+    (d,) = materialize_inputs([c], tmp_path, HOST).values()
+    assert (d / "x.txt").read_text(encoding="utf-8") == "the corpus\n"
+
+
+def test_one_criterion_two_probes_over_one_file_name_each_get_their_own():
+    """Two probes of one criterion over different `in.sql` (critic, 2026-10-22): by command first, so neither lends
+    the other its corpus; reworded, a name pinned with two contents is given neither."""
+    crit = {"name": "c", "check": [{"command": "a < {inputs}/in.sql | grep X", "inputs": {"in.sql": "ONE"}},
+                                   {"command": "a < {inputs}/in.sql | grep Y", "inputs": {"in.sql": "TWO"}}]}
+    files = pinned_files([crit])
+    again = with_named_files({"name": "c", "check": [
+        {"command": "a < {inputs}/in.sql | grep Y", "inputs": {"in.sql": ""}},
+        {"command": "a < {inputs}/in.sql | grep Y || echo F", "inputs": {"in.sql": ""}}]}, files)
+    assert [p["inputs"]["in.sql"] for p in again["check"]] == ["TWO", ""]
+
+
+def test_an_accepted_dispute_naming_the_files_keeps_their_content():
+    """The third door (`spec_with`'s `_probes`): a re-pin naming the files empty keeps what the criterion pinned."""
+    stored = Criteria("reads", check=(Probe.of({"behaviour": "b", "command": CMD, "expect": "x",
+                                                "inputs": {"x.txt": "the corpus\n"}}),))
+    (p,) = I._probes(stored, (Probe.of({"behaviour": "b", "command": CMD + " && echo ok", "expect": "ok",
+                                        "inputs": {"x.txt": ""}}),))
+    assert dict(p.inputs) == {"x.txt": "the corpus\n"}
+
+
+def test_a_file_written_in_the_answers_own_shape_keeps_its_content():
+    """The model's schema writes a probe's inputs as [{path, content}]; read as `body`, every such file came out empty
+    and the engine refused the move as "pinned input file(s) it feeds or runs are EMPTY" — 9 refusals, 19 probes, in
+    one row whose answers all carried the content (GB_c_compiler_tnl51c552, 2026-10-28)."""
+    got = with_named_files({"name": "c", "check": [{"command": "cc {inputs}/a.c", "inputs": [
+        {"path": "a.c", "content": "int main(void){return 0;}"}]}]}, {})
+    assert got["check"][0]["inputs"] == {"a.c": "int main(void){return 0;}"}
+
+
+def test_a_new_command_naming_a_file_its_split_pins_carries_that_file():
+    """48 of 50 refused probes in one row named a sibling's pinned file under `{inputs}` in a NEW command without
+    repeating its pin (GB_c_compiler_tnl51c552, 2026-10-28): the file the split pins with one content is carried."""
+    e = _split()
+    ok, why = _add(e, "grep corpus {inputs}/x.txt")
+    assert ok, why
+    (p,) = e.graph.get_task(TaskId("root.kid2")).spec.criteria[0].check
+    assert dict(p.inputs) == CORPUS
+    e.stop()
+
+
+def test_a_file_the_split_pins_with_two_contents_is_not_guessed():
+    e = _split()
+    T.revise(e, "kid", {"description": "part", "criteria": [{**criterion("reads"), "check": [
+        {"behaviour": "a", "command": CMD, "expect": "the corpus", "inputs": CORPUS},
+        {"behaviour": "b", "command": "wc -l {inputs}/x.txt", "expect": "1", "inputs": {"x.txt": "other\n"}}]}]},
+        agent=str(e.graph.issuer_of(TaskId("kid"))))
+    ok, why = _add(e, "grep corpus {inputs}/x.txt")
+    assert not ok and "pins nothing there" in why, why
+    e.stop()
+
+
+@pytest.mark.parametrize("command", ["cat {inputs}/x.txt {inputs}/*.log", "ls {inputs} && cat {inputs}/x.txt",
+                                     "for f in {inputs}/*; do cat $f; done; cat {inputs}/x.txt"])
+def test_a_command_reading_inputs_as_a_directory_is_not_handed_a_subset(command):
+    """Carried the one file it names, a glob or a listing over `{inputs}` would decide over a directory the system chose
+    (critic over the carry): the model pins its own corpus."""
+    e = _split()
+    ok, why = _add(e, command)
+    assert not ok and "pins nothing there" in why, why
     e.stop()

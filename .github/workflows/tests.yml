@@ -108,3 +108,41 @@ jobs:
             echo "::error title=pytest ${{ matrix.os }} py${{ matrix.python-version }}::${line}"
           done
           exit ${rc:-0}
+
+  # THE LIVE TESTS, in Docker on the product's own image: what SECURITY.md says of a container — what a session reaches,
+  # what a judge's copy holds, what the door passes — is shown here, not only on a developer's machine. Each live test
+  # skips where Docker or its image is missing, so on the legs above they skip; here the image is built from the file
+  # `gfso setup` builds it from, and a live test that skips names its reason in the summary.
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: pip install -e .[dev]
+      - name: The product's image
+        run: docker build -t gfso-test-agent -f gfso/adapters/agent.Dockerfile gfso/adapters
+      - name: Live tests
+        shell: bash
+        env:
+          GFSO_TEST_IMAGE: gfso-test-agent
+        run: |
+          set -o pipefail
+          files=$(grep -lE 'def test_live|_docker\(\)|_image\(\)' tests/*.py)   # …a file importing its mark has neither
+          python -m pytest $files --live -q -rs 2>&1 | tee pytest.out || rc=$?
+          set +e
+          {
+            echo "### live tests — Docker, the product's image"
+            echo '```'
+            grep -E '^(FAILED|ERROR|SKIPPED)' pytest.out | head -60
+            tail -n 5 pytest.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^(FAILED|ERROR)' pytest.out | head -40 | while IFS= read -r line; do
+            echo "::error title=live tests::${line}"
+          done
+          # …green with every live test skipped would show nothing of SECURITY.md (critic B9): none passing is red
+          grep -qE '[0-9]+ passed' pytest.out || { echo "::error title=live tests::no live test passed"; rc=1; }
+          exit ${rc:-0}

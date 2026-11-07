@@ -36,7 +36,7 @@ from urllib.parse import urlparse
 from gfso import __version__
 from gfso.config import agents_path as _roster
 from gfso.config import home as _config_home
-from gfso.config import LOOPBACK, shared_url
+from gfso.config import LOOPBACK, local_agents, shared_url
 
 def _address() -> tuple[str, int]:
     """THE address of the one server. `GFSO_SHARED_URL` is the single knob — `gfso connect`, `gfso
@@ -51,7 +51,7 @@ def _address() -> tuple[str, int]:
 BASE, PORT = _address()
 
 #: the verbs whose answer carries the page's address — the doors' one list (MCP and the CLI driver)
-UI_LINK_VERBS = frozenset({"use_project", "create_task", "project", "auto_decompose"})
+UI_LINK_VERBS = frozenset({"use_project", "create_task", "project", "auto_decompose", "start_project"})
 
 
 def ui_link(project: Optional[str] = None) -> str:
@@ -135,12 +135,13 @@ def source_fingerprint() -> str:
     watched = [p for pat in ("*.py", "*.md", "*.html", "*.css", "*.svg")
                for p in (ROOT / "gfso").rglob(pat)]
     # Ordered by the name it is hashed under: `Path` orders caselessly on Windows and bytewise on POSIX,
-    # so one tree read from both fingerprinted as two builds.
+    # so one tree read from both fingerprinted as two builds. Hashed with LF line ends for the same reason: git's
+    # autocrlf checks one commit out as CRLF here and LF in a clone, and the two fingerprinted as two builds.
     for rel, p in sorted({(p.relative_to(ROOT).as_posix(), p) for p in watched}):
         if "__pycache__" in p.parts:
             continue
         h.update(rel.encode())
-        h.update(p.read_bytes())
+        h.update(p.read_bytes().replace(b"\r\n", b"\n"))
     return h.hexdigest()[:12]
 
 
@@ -248,6 +249,10 @@ def drift(rt: dict, env: dict, fingerprint: str) -> list[str]:
         want = str(env.get(key, "")) not in ("", "0")
         if bool(rt.get(field)) != want:
             out.append(f"{field}={bool(rt.get(field))} != {want}")
+    # …the word as the server it would spawn takes it: exported here, else declared (`install_spawned_server_env`)
+    word = local_agents(str(env.get("GFSO_LOCAL_AGENTS", "")))
+    if "local_agents" in rt and bool(rt["local_agents"]) != word:
+        out.append(f"local_agents={bool(rt['local_agents'])} != {not rt['local_agents']}")
     if (rt.get("agents_path") or "") != env.get("GFSO_AGENTS_PATH", ""):
         out.append("agent registry differs")
     # …and its CONTENT, not just its path. The registry is loaded once at startup, so an edited

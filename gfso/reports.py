@@ -11,7 +11,8 @@ from gfso.core.protocol.invariants import verdict_word
 from gfso.core.graph.model import generation_of_task
 from gfso.core.types import TaskId, Signal, Verdict
 from gfso.issuer import signal_ok as _signal
-from gfso.packets import _EXECUTOR_STATES
+from gfso.packets import DELIVERED, HELD, _EXECUTOR_STATES
+from gfso.workspaces import execution_of, still_unjoined
 
 log = logging.getLogger(__name__)
 
@@ -130,8 +131,11 @@ def _settle_internal(engine, task_id: TaskId, self_check, _cb, observed: bool = 
 
 def _report_into_signals(engine, task_id, executor_id, task, report: dict, status: str,
                          llm, _cb, observed: bool = False, workspace: tuple | None = None,
-                         started_on: tuple | None = None) -> None:
+                         started_on: tuple | None = None, unjoined: list = ()) -> None:
     """The executor's report, wrapped into the protocol: challenge · block · deliver.
+
+    `unjoined`: the parts whose branch did not merge into the session's tree as it began (`_enter_workspace`); a
+    delivery of a whole whose tree still lacks one is not handed in — its result is their integration (§4.3, §8.7).
 
     `started_on`: the node's generation when the session began. A contract revised while it worked (Inv-1: a new
     version, binding only by its executor's ACCEPT) is not the one the report answers: nothing is signalled — an ACCEPT
@@ -143,8 +147,9 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
     if started_on is not None and (now := engine.graph.get_task(task_id)) is not None             and tuple(generation_of_task(now)) != tuple(started_on):
         _cb(f"{task_id}: the report answers a contract revised while the session worked - nothing signalled; the "
             f"node waits under its new version · {_stat_line(llm)}")
-        if workspace is not None:   # what it wrote is the old version's, on the record as such — never in a later delivery
-            W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} work under a superseded version", executor_id)
+        # …what it wrote is the old version's, on the record as such — never in a later delivery
+        if why := committed_place(engine, executor_id, workspace, f"gfso: {task_id} work under a superseded version")[1]:
+            _cb(f"{task_id}: its work under the superseded version is not on the record — {why}")
         return
     if status == "challenge":
         # The dispute travels as the signal wherever the state admits it — OFFERED, and, since
@@ -204,16 +209,58 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
         _self = _decided_self_check(report.get("self_validation"))
         # THE RESULT AS IT STANDS AT DELIVER (§11.3), fixed before the signal: a PASS can land the node DONE and
         # its branch joins the whole at once, and a join ahead of this commit would carry the tree without it
-        if workspace is not None:
-            W.commit_all(workspace[0], workspace[1], f"gfso: {task_id} delivery", executor_id)
+        # …A MERGE LEFT HALF-DONE IS NO RESULT: committed, it concluded with the conflict markers in the files, and the
+        # tree then contained the part's branch, so the hold below let it through (finder over 190f4db)
+        if workspace is not None and W.merging(workspace[0], workspace[1], execution=execution_of(engine)):
+            _cb(f"{task_id}: NOT delivered — a merge is left unfinished in its tree (conflicts unresolved): resolve "
+                f"each conflicted file and commit the merge · {_stat_line(llm)}")
+            engine.emit_info("delegate", f"{task_id}: {HELD}a merge left unfinished in its tree")
+            return
+        artifact, unstaged = committed_place(engine, executor_id, workspace, f"gfso: {task_id} delivery")
+        carried = W.head(workspace[1], execution=execution_of(engine)) if artifact else None
+        if why := unstaged or _not_handed_in(engine, task_id, workspace, artifact, unjoined):
+            _cb(f"{task_id}: NOT delivered — {why} · {_stat_line(llm)}")
+            engine.emit_info("delegate", f"{task_id}: {HELD}{why}")
+            return
         _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"],
-                self_validation=_self)
-        _cb(f"{task_id}: executor DELIVERED · {_stat_line(llm)}")
+                self_validation=_self, artifact=artifact, commit=carried,
+                build=build if isinstance(build := report.get("build"), str) else None)
+        _cb(f"{task_id}: {DELIVERED} · {_stat_line(llm)}")
         _settle_internal(engine, task_id, _self, _cb, observed)
 
 
+def committed_place(engine, executor_id, workspace: tuple | None, message: str) -> tuple:
+    """(tree, None) of the node's place committed whole (`W.commit_all`) — (None, None) with no place — or (None, why)
+    where its files could not be staged: nothing is then committed, nor handed in as though it were."""
+    if workspace is None:
+        return None, None
+    try:
+        return W.commit_all(workspace[0], workspace[1], message, executor_id, execution=execution_of(engine),
+                            branch=workspace[2]) or None, None
+    except (W.NotStaged, W.NotCarried) as e:
+        return None, str(e)
+
+
+def _not_handed_in(engine, task_id, workspace: tuple | None, artifact: str | None, unjoined: list) -> str | None:
+    """Why the committed tree `artifact` of the node's place is no delivery its executor may hand in — the cause it
+    reads and lifts by its own moves (§12.16 ii) — or None."""
+    # …ITS FILES IN ITS TREE: a nested repository is recorded as a commit, its files no part of the delivery, so no
+    # judge's copy could be held to it — refused here, where its executor can still lift it, not at the copy, where the
+    # node was re-asked blind until it escalated
+    if artifact and (inner := W.nested(workspace[1], artifact, execution=execution_of(engine))):
+        return W.nested_cause(inner)
+    # …AND IT CARRIES ITS PARTS' WORK. Told in its packet to merge four parts that conflicted, a root's executor
+    # rewrote their files instead, never merged, and delivered a tree without the JOINs a part had passed on; its
+    # deliveries failed until the run's ceiling (GB_sql_database_tn03ao788, 2026-10-16). Merging is its own move.
+    if left := still_unjoined(engine, workspace, task_id, unjoined):
+        return (f"its tree does not contain the work of part(s) {', '.join(left)}, whose branch did not merge here: a "
+                f"whole is handed in as the integration of its parts (`git merge` each, resolve)")
+    return None
+
+
 def _scope_report_into_signals(engine, order: list, executor_id: str, report: dict, llm, _cb,
-                               workspace: tuple | None = None, started_on: dict | None = None) -> None:
+                               workspace: tuple | None = None, started_on: dict | None = None,
+                               unjoined: list = ()) -> None:
     """The scope session's report, wrapped into each node's own signals in build order, parts first. The
     deliveries are not self-settled: they wait in VALIDATING for the scope's one validation. A whole is
     delivered only over parts that are delivered or done — never over a part that blocked, disputed, or was
@@ -257,4 +304,4 @@ def _scope_report_into_signals(engine, order: list, executor_id: str, report: di
         _report_into_signals(engine, t.id, executor_id, t, {**entry, "summary": str(entry.get("summary") or "")},
                              _decided_status(entry.get("status")) or str(entry.get("status")), llm, _cb,
                              observed=True, workspace=workspace,
-                             started_on=(started_on or {}).get(str(t.id)))
+                             started_on=(started_on or {}).get(str(t.id)), unjoined=unjoined)

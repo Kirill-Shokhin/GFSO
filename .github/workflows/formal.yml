@@ -20,7 +20,7 @@ on:
       - '!docs/USING_GFSO.md'
       - '!docs/TASK_PACKET.md'
       - '!docs/embeddability_acceptance.md'
-      - '!docs/e1/**'
+      - '!docs/PLAN_FORMAT.md'
   pull_request:
     paths:
       - 'formal/**'
@@ -32,7 +32,7 @@ on:
       - '!docs/USING_GFSO.md'
       - '!docs/TASK_PACKET.md'
       - '!docs/embeddability_acceptance.md'
-      - '!docs/e1/**'
+      - '!docs/PLAN_FORMAT.md'
   workflow_dispatch:
 
 # The theory push passes on its own: the guards here read the canon's own surface; the product's

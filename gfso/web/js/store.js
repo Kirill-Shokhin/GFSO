@@ -1,0 +1,73 @@
+// What the person is pointing at, shared by every view: the node hovered and the node selected.
+// A view publishes a gesture and redraws its own emphasis on change — views never call each other.
+// A watcher owned by an element lives as long as what is drawn there: the deck releases its view before it
+// draws the next one — a watcher left from another tab threw on markup that was gone and silenced every
+// watcher after it.
+import {TOUCH, firstTap} from './tip.js';
+const subs = new Map(), state = {hover: null, select: null, picks: 0};   // picks: selections made so far
+
+export const focus = () => state;
+export const watch = (fn, owner = null) => (subs.set(fn, owner), () => subs.delete(fn));
+// …and the pointer handlers a view set on it: the next view may bind an element inside, and the old ones fired on (critic 10)
+export const release = root => { subs.forEach((owner, fn) => owner && root.contains(owner) && subs.delete(fn));
+    root.onclick = root.onmousemove = root.onmouseleave = null; };
+export function point(key, id) {
+    if (state[key] === id) return;
+    state[key] = id;
+    if (key === 'select') state.picks++;
+    subs.forEach((_, fn) => fn(state, key));
+}
+
+// The person picks the selected node again: its row, scrolled away, is brought back — a gesture of theirs only. Fired
+// from point()'s same-id branch, every redraw's restored selection pulled the reader's scroll back (critic).
+export function rebring() {
+    if (!state.select) return;
+    state.picks++;
+    subs.forEach((_, fn) => fn(state, 'bring'));
+}
+
+// The selected node's row in a deck view is brought into the deck's sight: among fifty rows it sat below the fold.
+// Only a selection not yet brought on this drawing of the view — a redraw on a feed event must not pull the reader's
+// scroll back; the deck forgets what was brought when it opens a view, so a tab returned to brings it again.
+// `find(id)` is the row's element.
+export const forgetBrought = el => { el._brought = null; };   // the deck, on opening a view
+export function bringSelected(el, find) {
+    const bring = () => {
+        const box = el.closest('.dk-body'), row = state.select && find(state.select);
+        if (!box || !row) return;
+        el._brought = state.picks;
+        const b = row.getBoundingClientRect(), v = box.getBoundingClientRect();
+        if (b.top < v.top || b.bottom > v.bottom) box.scrollTop += b.top - v.top - (v.height - b.height) / 2;
+    };
+    if (el._brought !== state.picks) bring();
+    watch((st, key) => (key === 'select' || key === 'bring') && bring(), el);
+}
+
+// Any element carrying `data-node` inside `el` takes part: hovering it points, clicking selects, and
+// it wears `is-hover` / `is-select` while it is the one pointed at. `onMove(e)` adds the view's own tip.
+export function bindFocus(el, onMove = () => {}, onLeave = () => {}) {
+    el.classList.add('pickable');           // every [data-node] in it selects its node on a click: gfso.css gives it the pointer
+    const paint = st => {
+        el.querySelectorAll('[data-node]').forEach(g => {
+            g.classList.toggle('is-hover', g.dataset.node === st.hover);
+            g.classList.toggle('is-select', g.dataset.node === st.select);
+        });
+        el.classList.toggle('has-focus', !!(st.hover || st.select));
+    };
+    el.onmousemove = e => (point('hover', e.target.closest('[data-node]')?.dataset.node || null), onMove(e));
+    el.onmouseleave = () => (point('hover', null), onLeave());
+    el.onclick = e => {
+        const n = e.target.closest('[data-node]');
+        if (!n) return;
+        // …a finger: an Events group's head unfolds it, as its own tap — it does not also open the node (critic 11) — and by the
+        // one rule: a cut name's first tap shows its whole, the second unfolds, as a Progress part name does (critic 16)
+        if (TOUCH.matches && e.target.closest('summary')) return void (firstTap(e) && e.preventDefault());
+        if (TOUCH.matches) point('hover', n.dataset.node), onMove(e);
+        if (firstTap(e)) return;               // a finger's first tap: the tip (tip.js); its second, or a mouse: select
+        if (TOUCH.matches) onLeave();
+        point('select', n.dataset.node);
+    };
+    watch(paint, el);
+    paint(state);
+    return paint;
+}

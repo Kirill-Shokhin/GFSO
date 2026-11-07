@@ -65,7 +65,7 @@ def _validated(e, node, verdict="PASS", failed=()):
     T.record_verdict(e, node, verdict, reviewer="rev", failed_criteria=list(failed),
                      observed={c.name: {"note": f"ran the check for {c.name}",
                                         "ran": [p.command for p in (c.check or ())]}
-                               for c in e.graph.get_task(node).spec.criteria if not c.depends_on})
+                               for c in e.graph.get_task(node).spec.criteria})
     _accepted(T.signal(e, node, verdict, "agent",
                        **({"failed_criteria": list(failed)} if failed else {})), verdict, node)
 

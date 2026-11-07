@@ -11,7 +11,7 @@ name = "gfso"
 # surface and the distribution can never disagree — they had already drifted (0.3.0 here against a
 # hard-coded 0.2.0 in the API) while there was more than one place to write it.
 dynamic = ["version"]
-description = "GFSO: General Framework for Structured Operations — protocol engine"
+description = "GFSO: a task said in words becomes a plan whose checks are fixed first, run by agents in Docker and signed by someone other than the executor. With Claude Code: `pipx install gfso`, then `gfso setup` does the rest and says what is left."
 readme = "README.md"
 # The cap is exactly what the matrix tests and the classifiers claim — 3.11 through 3.13. It had
 # been one version wider than both, which for permanent metadata is a promise about a Python nobody
@@ -51,7 +51,7 @@ dependencies = [
     # backtracking resolver could satisfy with a release that ImportErrors at `gfso connect` — and a
     # published version's metadata cannot be corrected, only superseded.
     # <2: the surface is `mcp.server.fastmcp.FastMCP`, which the 2.x line removed.
-    "mcp>=1.8.0,<2",
+    "mcp>=1.19,<2",
 ]
 
 [project.urls]
@@ -86,7 +86,9 @@ include = ["gfso*"]
 # builds a wheel with no stylesheet. tests/test_packaging.py fails on the first file they stop
 # covering, and tests/test_distribution.py opens the built wheel to check they did their job.
 [tool.setuptools.package-data]
-"*" = ["*.html", "*.css", "*.svg", "*.md", "prompts/*.md", "py.typed"]
+"*" = ["*.html", "*.css", "*.svg", "*.md", "*.Dockerfile", "js/*.js", "prompts/*.md", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# …only the last run's files stay (the suite's temporary files live in this tree's `.tmp`, tests/conftest.py)
+tmp_path_retention_count = 1

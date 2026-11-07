@@ -15,7 +15,7 @@
 #  * (the frozen RU draft used to sit here, exempt because its §-refs ARE the old numbering. It is
 #    out of the repository now — the canon's Changelog carries the provenance, and git carries the
 #    file.)
-#  * the E1/E2 instruments (`docs/e1/`, `experiments/`) — frozen: renaming inside them would break
+#  * the E1/E2 instruments (`experiments/`) — frozen: renaming inside them would break
 #    run-to-run comparability, and their §-refs are the numbering in force when they were written;
 #  * `docs/notes/` — untracked;
 #  (The product tree was excluded here as a named debt — ~175 v3.9-numbered §-refs awaiting the
@@ -47,7 +47,7 @@ sed '/^## Changelog/,$d' "$CANON_FILE" > "$CANON"
 
 # Live canon mirrors. A doc joins this list when it starts citing the canon.
 # (`README.md` unprefixed = formal/README.md, the Lean layer's own entry doc.)
-MIRRORS=(../README.md ../docs/CORE.md ../docs/method_gfso.md ../docs/gfso_dependency_map.md
+MIRRORS=(../README.md ../docs/THEORY.md ../docs/CORE.md ../docs/method_gfso.md ../docs/gfso_dependency_map.md
          ../docs/applied_gfso_vision.md ../docs/falsifiability.md ../docs/architecture.md
          # the working-loop page cites the canon nine times and was watched by neither guard
          ../docs/USING_GFSO.md README.md)

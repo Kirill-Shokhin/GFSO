@@ -54,9 +54,9 @@ def test_build_graph_live_is_signal_routed():
     assert {(m.criterion_name, m.child_id) for m in root.criterion_mappings} == \
         {("rc1", TaskId("root.a")), ("rc2", TaskId("root.b"))}
 
-    # Dep = criteria-content: consumer b carries depends_on=a; the edge is DERIVED a→b (§2 direction)
+    # the seam is a declared edge a→b of the admission (§15.1), no criterion of b (§2.7)
     b = e.graph.get_task(TaskId("root.b"))
-    assert any(c.depends_on == TaskId("root.a") for c in b.spec.criteria)
+    assert not any(c.depends_on for c in b.spec.criteria)
     edges = {(ed.from_id, ed.to_id) for ed in e.graph.dep_edges()}
     assert (TaskId("root.a"), TaskId("root.b")) in edges
 

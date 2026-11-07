@@ -10,6 +10,7 @@ A node above κ is not a leaf, and its split is owed (§3.7, §11.5). All with f
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import gfso.delegate as D
@@ -128,13 +129,20 @@ def _dispatcher(e, agents, executor, validator, per_node: list):
                                                                                          sign=sign))
 
 
-def _drive(e, d, until, rounds=200) -> None:
-    for _ in range(rounds):
+def _drive(e, d, until=lambda: False, rounds=200, wait=True, pause=0.03) -> None:
+    """`rounds` of the dispatcher, or `until` holds. A session is a thread: counted rounds alone ran out while one still
+    worked on a loaded machine, and a test asserted over what had not happened yet (shown, 36 of 36 under load). So the
+    last rounds wait for it, the wait bounded, unless a test holds its session on purpose. By which threads, not how many:
+    a thread an earlier test left behind ending hid a session still at work."""
+    before, end, done = set(threading.enumerate()), time.monotonic() + 120, 0
+    while done < rounds:
         d.dispatch_once()
-        time.sleep(0.03)
+        time.sleep(pause)
         e.wait_idle()
         if until():
             return
+        working = wait and time.monotonic() < end and set(threading.enumerate()) - before
+        done = min(done + 1, rounds - 10) if working else done + 1
 
 
 def _states(e) -> dict:
@@ -174,7 +182,11 @@ def test_a_part_that_fails_is_reworked_with_its_whole_in_one_session_as_a_leaf_w
     d = _dispatcher(e, agents, executor, validator, per_node)
     _drive(e, d, lambda: e.graph.get_state(TaskId("root.a")) == State.REWORKING
            and e.graph.get_state(TaskId("root")) == State.REWORKING)
-    assert _states(e) == {"root": "REWORKING", "root.a": "REWORKING", "root.b": "OFFERED"}
+    # …root.b re-presented, never left in VALIDATING: OFFERED, or already taken back into the work by the dispatcher,
+    # which hears the transition on its own thread (a full suite under load saw EXECUTING here)
+    states = _states(e)
+    assert {k: states[k] for k in ("root", "root.a")} == {"root": "REWORKING", "root.a": "REWORKING"}
+    assert states["root.b"] in ("OFFERED", "EXECUTING"), states
     b = e.graph.get_task(TaskId("root.b"))
     assert b.revisions == 1 and not any(a.signal == Signal.FAIL for a in e.audit_log(b.id)),         "re-presented by its issuer, no FAIL and no round of its budget spent"
     fail = next(a for a in reversed(e.audit_log(TaskId("root"))) if a.signal == Signal.FAIL)
@@ -264,8 +276,8 @@ def test_a_scope_run_is_not_cut_to_the_bound_of_a_node_that_waited_longest(monke
     """One run serves every node in it; a top that had waited must not cut a run over fresh deliveries to its own
     remainder (critics, 2026-09-28: 119 s, then 299 s, every verdict ⊥)."""
     left = {"root.a": 3599, "root.b": 3599, "root": 299}
-    monkeypatch.setattr(TL, "_validation_cap", lambda t: left[str(t.id)])
-    assert TL._scope_cap([(type("T", (), {"id": k})(), "", []) for k in ("root", "root.a", "root.b")]) == 3599
+    monkeypatch.setattr(TL, "_validation_cap", lambda t, g: left[str(t.id)])
+    assert TL._scope_cap([(type("T", (), {"id": k})(), "", []) for k in ("root", "root.a", "root.b")], None) == 3599
 
 
 def test_a_split_nobody_judged_keeps_a_session_and_a_validation_per_node(tmp_path):
@@ -618,3 +630,20 @@ def test_an_undated_record_over_a_footing_stands_only_if_it_refuses(tmp_path):
     assert record_stands(e._graph, e._audit, root, {"verdict": "FAIL", **gen})
     assert not record_stands(e._graph, e._audit, root, {"verdict": "PASS", **gen})
     e.stop()
+
+
+def test_a_scope_whose_part_fails_the_same_criterion_round_after_round_stays_one_session(tmp_path):
+    """Equal FAILs say the work is not there yet, not that one session is too small for the scope (§3.7): past the
+    rounds that make a criterion a suspect the scope keeps its one session, and no part is handed one of its own."""
+    e, agents = _project(tmp_path)
+    rounds = e.CONTRACT_SUSPECT_ROUNDS + 2
+    executor = _LLM(*[_delivered("root.a", "root.b", "root")] * (rounds + 1))
+    validator = _Validator(e, *[{("root.a", "a_ok")}] * (rounds + 1))
+    per_node = []
+    d = _dispatcher(e, agents, executor, validator, per_node)
+    _drive(e, d, lambda: len(executor.calls) >= rounds and len(validator.calls) >= rounds, rounds=400)
+    assert len(executor.calls) >= rounds, "a scope stuck on one criterion stopped getting its session"
+    assert e.scope_top(TaskId("root.a")) is not None and (e.session_fit(TaskId("root")) or {}).get("fits") is not False
+    assert ("exec", "root.a") not in per_node, "a count of equal FAILs handed a part a session of its own"
+    e.stop()
+

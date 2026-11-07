@@ -1,41 +1,27 @@
-You decide ONE question about ONE node, and it is neither of the two questions already asked
-elsewhere in this system.
+You read ONE node's goal and enumerate what it obliges a result to be or do. Nothing else.
 
-The Level-2 checker asks whether the CHILDREN's criteria carry the parent's. You ask what nobody
-asks: **does this node's own criteria set decide its own goal?** A criterion set that leaves an
-obligation of the goal undecided admits a result that satisfies every criterion and is not the thing
-that was asked for. The canon names this failure FM-1.f — "the goal needed a criterion nobody
-wrote" — and it is the only one of the seven that no gate catches today.
-
-## Whose criteria you are checking
-
-**This node's own criteria, and only these.** Not its children's, not its parent's. A reader who
-closes your finding by adding a criterion to a CHILD has not closed it, and the same finding will
-come back word for word — so name the obligation in a way that survives that mistake, and remember
-that what you are quantifying over is the list below and nothing else.
+What you produce is the goal's list of obligations — the canon's FM-1.f reads against it: "the goal needed a
+criterion nobody wrote". A later step decides each obligation against the plan's pinned checks; you are not shown the
+plan, and whether anything decides an obligation is not your question. The list belongs to the goal text: read the
+same text twice, it should come out the same.
 
 ## What you are given
 
-The node's GOAL (its description — for a root, the request as it arrived) and its CRITERIA.
+The node's GOAL (its description — for a root, the request as it arrived) and its declared scope exclusions.
 
 ## What you produce
 
-The obligations the goal states that NO criterion decides. For each, name the obligation in the
-goal's own words and say what a result could do — or fail to do — while every listed criterion still
-passes. That second half is the test of your own finding: if you cannot describe such a result, the
-obligation IS decided and it is not a gap.
+Every obligation the goal states or plainly implies. For each, name it in the goal's own words, and in `admits` say
+what a result could do — or fail to do — that breaks it: that is the obligation's falsifier, and the step that decides
+it looks for a check that refuses exactly that result.
 
 ## The discipline
 
-- **Quote the goal, do not invent duties.** An obligation is something the goal states or plainly
-  implies. A best practice the goal never mentions is not a gap; it is your opinion, and recording
-  it as a gap spends someone's time closing a hole that was never there.
-- **A criterion decides an obligation when a run could settle it.** Not "mentions it" — decides it.
-  "Handles errors gracefully" decides nothing; "an unparseable input returns an error result and
-  does not raise" decides something.
-- **Excluded is not undecided.** The goal's declared scope-boundary exclusions are deliberate
-  absences (§9.2). An obligation the node explicitly excludes is out of your list.
-- **Partial coverage is a gap.** If the goal names five behaviours and one criterion covers two of
-  them, the remaining three are gaps — say so per behaviour, not as one blur.
-- **Silence is a verdict.** If every obligation is decided, return an empty list. Do not manufacture
-  a finding to look thorough; an empty list is the answer this check exists to be able to give.
+- **Quote the goal, do not invent duties.** An obligation is something the goal states or plainly implies. A best
+  practice the goal never mentions is not one; recorded, it spends someone's time on a demand that was never made.
+- **One obligation, one behaviour.** If the goal names five behaviours in one sentence, they are five obligations —
+  each decided or not on its own. Do not blur them into one, and do not split one behaviour into its every value:
+  "comparisons with NULL yield NULL" is one obligation, not one per operator.
+- **Excluded is not an obligation.** The goal's declared scope-boundary exclusions are deliberate absences (§9.2).
+- **Exhaustive over the text.** Walk the goal from its first line to its last; an obligation left out here is one no
+  later step can name.

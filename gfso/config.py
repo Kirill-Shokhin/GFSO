@@ -16,8 +16,10 @@ its point of enforcement on purpose, where the code that obeys it is the code th
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 from pathlib import Path
 
 # The installation root — the package's parent, used when the checkout itself is the home.
@@ -32,6 +34,11 @@ def home() -> Path:
     if declared:
         return Path(declared).expanduser().resolve()
     return ROOT if (ROOT / "pyproject.toml").exists() else Path.home() / ".gfso"
+
+
+def project_made(name: str) -> bool:
+    """Does the project `name` stand in this installation's state? The default one's graph is `db_path()`, never `default.db`."""
+    return db_path(None if name == DEFAULT_PROJECT else name).is_file()
 
 
 def data_dir() -> Path:
@@ -51,6 +58,31 @@ def db_path(project: str | None = None) -> Path:
 def agents_path() -> Path:
     """The roster of non-human participants — one file, shared by every session of the one server."""
     return Path(os.environ.get("GFSO_AGENTS_PATH") or (data_dir() / "agents.json"))
+
+
+def use_agents_path(path: str) -> None:
+    """This process's roster at `path` from now on — one a demo keeps apart from the installation's."""
+    os.environ["GFSO_AGENTS_PATH"] = str(path)
+
+
+def executions_path() -> Path:
+    """Where a project's sessions may run besides this host — a DECLARATION, read, never written by a door:
+    `{name: {"image", "env_file", "state"?, "network"?}}` (`state` defaults to `<data_dir>/executions/<name>/claude`;
+    `network` is the switch on the way out, `{"mode": "open"|"allowlist"|"off", "hosts": [...]}`, open when absent, off
+    when it does not read). Nothing watches this file: a turned switch is read at the project's next lookup of its
+    execution, which ends the project's running container at once — a session already out stays out until that lookup."""
+    return Path(os.environ.get("GFSO_EXECUTIONS_PATH") or (data_dir() / "executions.json"))
+
+
+def executions() -> dict:
+    """The declared executions, each with its CLI state directory filled in; none declared is `{}`."""
+    p = executions_path()
+    got = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+    return {n: {**d, "state": d.get("state") or str(data_dir() / "executions" / n / "claude")} for n, d in got.items()}
+
+
+#: the execution `gfso setup` declares on the shipped agent image, which an executor naming none takes
+DEFAULT_EXECUTION = "default"
 
 
 # ── The names two or more modules have to agree about ───────────────────────────────────────────
@@ -98,6 +130,18 @@ def _flag(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default) not in ("", "0")
 
 
+def allowed_hosts() -> list[str]:
+    """Names the one server's door answers to beyond loopback and its own host — `GFSO_ALLOWED_HOSTS`, comma-separated:
+    a deliberate act, never a default."""
+    return [h.strip().lower() for h in os.environ.get("GFSO_ALLOWED_HOSTS", "").split(",") if h.strip()]
+
+
+def admit_host(host: str) -> None:
+    """The name a server was started on (`serve --host`) joins the names its door answers to — its own page included."""
+    if host and host.lower() not in (LOOPBACK, "localhost", "::1", *allowed_hosts()):
+        os.environ["GFSO_ALLOWED_HOSTS"] = ",".join([*allowed_hosts(), host.lower()])
+
+
 def shared_url() -> str:
     """Where the ONE server lives — the single knob the whole product turns on (`GFSO_SHARED_URL`)."""
     return os.environ.get("GFSO_SHARED_URL", f"http://{LOOPBACK}:8000/mcp")
@@ -120,6 +164,21 @@ ACTIVE_PROJECT_FILE = "active_project"
 def project_by_env() -> str:
     """The project the deployment names (`GFSO_PROJECT`), or ''."""
     return os.environ.get("GFSO_PROJECT", "")
+
+
+#: Set by `gfso serve` alone: this process is THE server of its data dir, and the projects that stood when it started
+#: stay stopped until their Start (`runtime.ProjectRegistry`); a reload worker inherits it, a stdio MCP process does not.
+SERVES_ENV = "GFSO_SERVES"
+
+
+def serves() -> bool:
+    """Is this process the server of its data dir (`mark_the_server`)? Not inherited by anything it runs."""
+    return os.environ.get(SERVES_ENV) == "1"
+
+
+def mark_the_server() -> None:
+    """This process is the server of its data dir — `gfso serve`, before the app and its registry are built."""
+    os.environ[SERVES_ENV] = "1"
 
 
 def active_project() -> str:
@@ -197,6 +256,12 @@ def agent_trace_dir() -> str:
     return os.environ.get("GFSO_AGENT_TRACE_DIR", "")
 
 
+def claude_config_dir() -> Path:
+    """Where the `claude` CLI keeps its state — `CLAUDE_CONFIG_DIR`, else `~/.claude`: the conversations an executor
+    continues live under its `projects/`."""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
 def default_deadline_s() -> float:
     """How far ahead the engine writes a deadline the issuer did not type — `GFSO_DEFAULT_DEADLINE_S`.
 
@@ -229,6 +294,41 @@ def validation_batch() -> int:
         return VALIDATION_BATCH
 
 
+#: new TCP connections a second one container may open under an `open` switch, a burst ten times that; other new flows, bursting to thirty times it, take half
+#: as much again. On Docker Desktop each is a port of a process on the host, of Windows' 16,384 per protocol: for 120 s after a TCP
+#: connection closes (TIME_WAIT), about 83 s after a datagram flow's last: at these, about 1,500 ports a container at the bound: SECURITY.md
+NEW_FLOWS = 10
+#: connections one container may hold out under an `open` switch
+HELD_FLOWS = 1024
+
+
+def new_flows() -> int:
+    """The bound on a container's new flows a second under an `open` switch (`GFSO_NEW_FLOWS`), 1 to 10000, what `limit` takes."""
+    try:
+        return min(10000, max(1, int(os.environ.get("GFSO_NEW_FLOWS", NEW_FLOWS))))
+    except ValueError:
+        return NEW_FLOWS
+
+
+def network_record_off() -> bool:
+    """Has this installation said it runs off the record of where its sessions reach (`netrecord`, SECURITY.md)?"""
+    if os.environ.get("GFSO_NETWORK_RECORD") == "off":
+        return True
+    # …or in the file: `gfso mcp` never takes it into its environment, and the refusal names that file
+    try:
+        return json.loads((data_dir() / "serve.json").read_text(encoding="utf-8")).get("GFSO_NETWORK_RECORD") == "off"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def local_agents(declared: str = "") -> bool:
+    """May this host run the work the system dispatches — executors' sessions, nobody watching their commands
+    (`LocalExecution.agents_refused`)? Only on its user's word, `GFSO_LOCAL_AGENTS=allow`: unattended work runs in a
+    container (the author, 2026-10-27: autonomous runs only in a container, Local only with a person).
+    `declared`: the value a server spawned from here takes where none is exported (`install_spawned_server_env`)."""
+    return (os.environ.get("GFSO_LOCAL_AGENTS") or declared).strip().lower() == "allow"
+
+
 #: Model sessions one server runs at once (`max_sessions`).
 MAX_SESSIONS = 8
 
@@ -242,6 +342,65 @@ def max_sessions() -> int:
         return max(1, int(os.environ.get("GFSO_MAX_SESSIONS", MAX_SESSIONS)))
     except ValueError:
         return MAX_SESSIONS
+
+
+#: What one container the system makes may hold (`container_limits`): its memory, and its processes.
+CONTAINER_MEMORY, CONTAINER_PIDS = "4g", 4096
+
+
+def _size(name: str) -> int:
+    """The environment's `name` read as Docker reads a size (`8g`, `8GB`, `8GiB`, `1.5g`, `8 g`, `1t`), in bytes; 0 where
+    it is unset, unread, or under 64 MiB — `0` is Docker's "unbounded", and under 6 MiB Docker refuses every start."""
+    m = re.fullmatch(r"(\d+(?:\.\d+)?) ?([kmgtp]?)i?b?", os.environ.get(name, "").strip().lower())
+    size = int(float(m[1]) * 1024 ** " kmgtp".index(m[2] or " ")) if m else 0
+    return size if size >= 64 * 2 ** 20 else 0
+
+
+NODE_DISK, NODE_FILES = 20 * 2 ** 30, 1_000_000
+
+
+def node_disk() -> tuple[int, int]:
+    """(bytes, files) one node's work may add to Docker's disk — `GFSO_NODE_DISK` (default 20g) and `GFSO_NODE_FILES`
+    (default 1 000 000) —, counted from when the server first saw it, over every directory its containers write and
+    their own layers (`execution.watch_disk`). Docker Desktop's disk takes no quota, and one node filling it stopped every
+    project on the machine; a bound of its own, as its memory has, makes its mistake its own, whatever its neighbours do."""
+    try:
+        files = int(os.environ.get("GFSO_NODE_FILES", NODE_FILES))
+    except ValueError:
+        files = NODE_FILES
+    return _size("GFSO_NODE_DISK") or NODE_DISK, files if files > 0 else NODE_FILES
+
+
+#: The share of Docker's memory the system's containers may hold together, by default (`memory_ceiling`).
+CEILING_SHARE = 0.75
+
+
+def memory_ceiling(total: int) -> int:
+    """How much memory the system's containers may hold together, of Docker's `total` — every installation's on that
+    Docker, in one group (`execution.ceiling`): three quarters, the rest staying for Docker itself and whatever else runs
+    there. No installation's dial: the group is shared, and a limit two installations wrote differently would be lowered
+    under the other's running containers at every turn, the kernel ending them as it went."""
+    return int(total * CEILING_SHARE)
+
+
+#: what a container prints: Docker's log lies past every directory the disk bound reads, and a process of its own writes it (critic, ran)
+CONTAINER_LOG = ("--log-driver", "json-file", "--log-opt", "max-size=20m", "--log-opt", "max-file=1")
+
+
+def container_limits() -> list[str]:
+    """`docker run`'s bounds on every container the system makes for a project, a session, a judge's batch, a check or
+    its own copy — `GFSO_CONTAINER_MEMORY` (default 4g, no swap past it) and `GFSO_CONTAINER_PIDS` (default 4096).
+    Unbounded, one judge's probe held 9 GiB of the Docker VM's 19.5 and starved every project on the machine and the
+    host (series 3, c_compiler, 2026-10-30). Past its memory the kernel ends the container's largest process, the
+    runaway, by SIGKILL: its command exits 137 as its own failure, and the session it ran in goes on."""
+    size = _size("GFSO_CONTAINER_MEMORY")
+    mem = f"{size // 2 ** 20}m" if size else CONTAINER_MEMORY
+    try:
+        pids = int(os.environ.get("GFSO_CONTAINER_PIDS", CONTAINER_PIDS))
+    except ValueError:
+        pids = CONTAINER_PIDS
+    pids = pids if pids >= 64 else CONTAINER_PIDS        # …0 and -1 are Docker's "unbounded"
+    return ["--memory", mem, "--memory-swap", mem, "--pids-limit", str(pids), *CONTAINER_LOG]
 
 
 def validator_retry_model() -> str | None:
@@ -294,20 +453,36 @@ def provider() -> str:
 
 
 def generic_provider() -> dict:
-    """Where the OpenAI-compatible transport points (`GFSO_GENERIC_BASE_URL` / `_MODEL` / `_API_KEY`).
+    """Where the OpenAI-compatible transport points (`GFSO_GENERIC_BASE_URL` / `_MODEL`; its key is the provider
+    `generic`'s, `adapters/llm/credentials`).
 
     `base_url` is REQUIRED when `provider() == "generic"` — reading it here rather than at the
     adapter keeps the whole provider switch in one place, which is what "flip the system to another
     vendor and seamlessly back" means operationally."""
     return {"base_url": os.environ.get("GFSO_GENERIC_BASE_URL"),
-            "model": os.environ.get("GFSO_GENERIC_MODEL"),
-            "api_key": os.environ.get("GFSO_GENERIC_API_KEY")}
+            "model": os.environ.get("GFSO_GENERIC_MODEL")}
 
 
-def api_billing() -> bool:
-    """`GFSO_BILLING=api` keeps ANTHROPIC_API_KEY in the child env (per-token billing); the default
-    `subscription` strips it (claude.ai login)."""
-    return os.environ.get("GFSO_BILLING", "subscription") == "api"
+def provider_env(name: str, field: str) -> str | None:
+    """`GFSO_PROVIDER_<NAME>_<FIELD>` — a model provider's own setting (`BASE_URL`, `CONTEXT`, `MAX_TOKENS`, `PRICE`;
+    never its key, `adapters/llm/credentials`), or None (`adapters/llm/registry.py`)."""
+    return os.environ.get(f"GFSO_PROVIDER_{name.upper().replace('-', '_')}_{field}") or None
+
+
+def providers_in_env() -> set[str]:
+    """The provider names the environment defines by a `GFSO_PROVIDER_<NAME>_BASE_URL`."""
+    return {k[len("GFSO_PROVIDER_"):-len("_BASE_URL")].lower() for k in os.environ
+            if k.startswith("GFSO_PROVIDER_") and k.endswith("_BASE_URL")}
+
+
+#: what a model's own shell never inherits: the keys this process holds for its providers
+SECRET_ENV = re.compile(r"(API_KEY|AUTH_TOKEN|_SECRET|_PASSWORD)$")
+
+
+def env_without_secrets() -> dict:
+    """This process's environment less every key and token (`SECRET_ENV`) and the server's mark (`subprocess_env`) —
+    what an agent run's commands start with."""
+    return {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k) and k not in ("GFSO_SERVING", SERVES_ENV)}
 
 
 def storage_kind(default: str = "sqlite") -> str:
@@ -515,20 +690,25 @@ def install_spawned_server_env(declared: dict) -> None:
     os.environ["GFSO_AUTOEXIT"] = "0"              # up until it is stale or stopped, not until we go
 
 
-def subprocess_env(*, keep_key: bool, extra: dict | None = None) -> dict:
-    """The environment a MODEL subprocess inherits — a fresh dict, nothing installed here.
+def host_env() -> dict:
+    """This process's environment, a copy: what a child started on this host inherits, and the baseline a call into
+    another execution is told only its own differences from."""
+    return dict(os.environ)
 
-    The API key is stripped unless the caller asks to keep it, because with it present the runner
-    bills the paid API while the operator believes they are on the subscription. That is a money
-    fact, not a style one, and it is the reason the measurement layer patches the same thing at its
-    own boundary (P1) — one question, and until now two places answering it.
+
+def subprocess_env(*, credential: dict | None = None, extra: dict | None = None) -> dict:
+    """The environment a subprocess inherits — a fresh dict, nothing installed here: this process's, less every key and
+    token it holds, plus the one credential a MODEL call is given (`credential`, its provider's: `adapters/llm/
+    credentials`).
+
+    A key inherited from the server went to whatever the server started — a validator's probe commands, a build — and
+    an inherited ANTHROPIC_API_KEY outranked the CLI's login, billing the paid API while the operator believed they
+    were on the subscription. The credential is the provider's to set, in one place, and to give to its own client
+    alone (the author, 2026-10-28: «единственное место провайдера должно быть в классе провайдера»).
     """
-    env = (dict(os.environ) if keep_key else
-           {k: v for k, v in os.environ.items()
-            if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")})
-    # …and the server's mark: a model child is not the server, and a gfso it runs (a probe running
-    # this product's own suite) must not treat itself as one and end its own children.
-    env.pop("GFSO_SERVING", None)
+    # …and never the server's mark (`env_without_secrets`): a gfso a model child runs (a probe running this product's own
+    # suite) must not treat itself as the server and end its own children
+    env = {**env_without_secrets(), **(credential or {})}
     # …and room to answer: the CLI's default 32k output cap cut a plan of 14 parts, and the model's re-emission after
     # the cut is what was kept (AUTO haiku 4.5 sql_database, GB_sql_database_tmu9cb784)
     env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "64000")
@@ -554,3 +734,8 @@ def spawned_server_popen_env() -> dict:
     raised for somebody's session is a background service, not that session's property.
     """
     return dict(os.environ, GFSO_AUTOEXIT=os.environ.get("GFSO_AUTOEXIT", "0"))
+
+#: The longest a question — and a project the account's limit stopped with no lift time said (`Engine.stop_for_the_limit`)
+#: — waits while the account's usage limit refuses every call: the limit lifts at a time of day, so probing it costs a
+#: refused call of a second and nothing else, and a doubling past it idled a root for an hour after the window closed.
+LIMIT_RETRY_S = 600

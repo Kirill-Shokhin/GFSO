@@ -26,7 +26,7 @@
 #    (`docs/architecture.md` used to sit here, on the ground that it described code still carrying
 #    the old names. The migration landed and it is watched now.)
 #  * `docs/EVIDENCE_LOG.md` (dated records),
-#    `docs/e1/`, `experiments/` (frozen instruments - their vocabulary is the one the instrument
+#    `experiments/` (frozen instruments - their vocabulary is the one the instrument
 #    used at observation time; rewriting it would break run-to-run comparability).
 #  * NO LONGER excluded: `gfso/`, `tests/`, `examples/`, `docs/architecture.md`. The enum migration
 #    landed, so the product tree is watched like everything else — and the read-shim that once
@@ -45,7 +45,7 @@ cd "$(dirname "$0")/.."
 CANON=../docs/applied_gfso_v4_en.md
 
 shopt -s globstar nullglob
-FILES=(../README.md ../docs/CORE.md ../docs/method_gfso.md ../docs/gfso_dependency_map.md
+FILES=(../README.md ../docs/THEORY.md ../docs/CORE.md ../docs/method_gfso.md ../docs/gfso_dependency_map.md
        ../docs/applied_gfso_vision.md ../docs/falsifiability.md ../docs/USING_GFSO.md README.md
        GFSO/*.lean GFSO.lean audit_env.lean check_axioms.lean
        # closed gap: the TLA+ layer declares the state/signal SETS as strings, and the embedding

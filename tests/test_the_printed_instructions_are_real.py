@@ -49,7 +49,7 @@ def test_every_gfso_command_the_docs_print_exists(doc):
     typed = re.findall(r"`([^`\n]+)`", body) + re.findall(r"```bash\n(.*?)```", body, re.S)
     typed = [c.split("#", 1)[0] for line in typed for c in line.splitlines()]  # drop comments
     named = {m.group(1) for chunk in typed
-             for m in re.finditer(r"\bgfso ([a-z]+)", chunk)} - {"run"}
+             for m in re.finditer(r"\bgfso ([a-z][a-z-]*[a-z])", chunk)} - {"run"}   # …`provider-check` one
     real = _subcommands()
     missing = sorted(n for n in named if n not in real)
     assert not missing, f"{doc.name} tells the reader to run commands that do not exist: {missing}"
@@ -80,6 +80,7 @@ def test_the_first_thing_the_readme_tells_a_newcomer_to_run_actually_runs():
     out = r.stdout
     assert "ann" in out and "bob" in out, "the two people the README describes are not in the output"
     assert "DONE" in out, "the node the README says reaches DONE did not"
+    assert "validation failed" not in r.stderr, "the expected refusal read as a failure, in red"
 
 
 def test_a_person_can_list_their_own_projects():

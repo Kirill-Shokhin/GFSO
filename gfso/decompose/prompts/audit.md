@@ -46,6 +46,16 @@ Reduce everything to a canonical, non-redundant **BASIS**:
     the one that must land first, with what breaks if it does not). Independence is a CLAIM here —
     the executors of independent subtasks may run at the same time, and two of them in one file means
     the later write silently takes the earlier one's work.
+    **Every seam is wall time, and names what it carries.** A consumer waits for its producer's PASS, so the
+    longest chain of seams is the plan's floor on time: twelve parts chained into eight waves ran nine hours where
+    the same parts in three waves would not. Each subtask lists the files it `writes`; each seam lists what of its
+    producer's files the consumer's WORK `reads` (includes, calls, builds on). A seam whose only reason is that the
+    consumer's probes run through the producer's code is not one. Calling a function is reading its DECLARATION;
+    where the base owns the declarations (headers, types, signatures), the consumer reads the base, not the part that
+    implements them. Give each part probes that run its own code over the base — a small driver of the part's own,
+    compiled against the base's interfaces and linking the part's files, or inputs only the part's code decides — and
+    put the behaviour only the whole shows (a statement running end to end) in the parent's criteria. Then the parts
+    run side by side, and the chain is only what one part's work really builds on another's.
   - **V** — criteria: each a **decidable predicate over the produced result** (not an action description, not
     a self-report). The node's own criteria are the goal's WHOLE contract: every requirement the goal states
     is decided by a criterion of the node itself, never only by a child's — a child's criterion that can fail
@@ -103,6 +113,16 @@ Reduce everything to a canonical, non-redundant **BASIS**:
       description of whatever was built. What the set does not reach stays unchecked and is SAID so at
       closure; that residue is honest, and a procedure invented later by whoever happens to validate
       is not. A command that merely restates the criterion ("review the parser") is not a procedure.
+      Set `exact: true` on a probe whose `expect` is the complete output the command prints on correct
+      work — the system then runs it itself, as written, on the delivered tree in a fresh copy, and a
+      different output fails the criterion. Such a command builds what it runs (`make -s prog &&
+      ./prog …`), creates any state it reads (a fresh temp file, not one an earlier run may have left),
+      merges its streams (`2>&1`) where its output alternates them, and prints the same every time.
+      It runs <PROBE_S> seconds at most, the build it starts included: a command still running then
+      decides nothing and leaves its criterion undecided, so a corpus too slow for one probe is split
+      across several, each over its own part of the inputs.
+      Leave it false where it cannot, and where `expect` describes the output in words or names only
+      part of it.
       The test data a command reads — the programs, documents, request bodies — is part of the probe:
       put it in the probe's `inputs` and let the command name their directory `{inputs}`. A command
       over files the executor will write (`for f in tests/*.c`) observes an object that can grow or
@@ -115,11 +135,14 @@ Reduce everything to a canonical, non-redundant **BASIS**:
       since a probe is named by its command and two probes on one command are one probe. Inlined, it passes through two layers of quoting, and
       one lost escape makes the probe check the quoting instead of the result. Scratch files a probe makes
       are its own run's (`T=$(mktemp -d); … > $T/out`), never a fixed `/tmp/x`: nodes are validated at the
-      same time, and two probes writing `/tmp/x` at once decide by who ran alongside.
+      same time, and two probes writing `/tmp/x` at once decide by who ran alongside. A probe runs in its node's own working
+      directory, which the plan does not know: name files by relative paths and never `cd` into an absolute
+      directory — wherever this session happens to stand is not where the work will be.
     - **Decidable when its own child delivers.** A child's criterion must be checkable on that child's own
       output plus the outputs of its PRODUCERS — the subtasks that are the SOURCE of a Dep whose TARGET is
       this child, and so land before it (the `from_id` side of `add_dependency(from_id, to_id)` where
-      `to_id` is this child) — nothing else will exist yet. A criterion
+      `to_id` is this child), and of the producers of the node being split, which a child carrying its
+      criteria waits for as that node does — nothing else will exist yet. A criterion
       that needs a sibling's work ("every builtin uses …", "the interpreter handles every node kind") is
       that sibling's criterion, or the parent's integration criterion, or it needs the Dep that orders the
       two. Left on the earlier child, it fails for work that is not its own. Choose by the WORK, not by

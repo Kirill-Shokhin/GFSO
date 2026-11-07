@@ -3,6 +3,8 @@
 Two humans: `ann` issues and executes, `bob` reviews. The engine REJECTS ann's PASS on her own
 work until an independent verdict is RECORDED (verifier ≠ executor, §10.3) — the same flow the
 web UI drives with the Pass/Fail/Record-verdict buttons."""
+import logging
+
 from gfso.examples import scratch
 from gfso.engine import Engine
 from gfso.adapters.storage.sqlite import SqliteStorage
@@ -16,6 +18,8 @@ def main() -> None:
     The load-bearing moment is the engine REJECTING the issuer's PASS on her own work until an
     independent verdict is on the record.
     """
+    # the refusal is this demo's point and is printed below; the engine's warning of it, in red, read as a failure
+    logging.getLogger("gfso").addHandler(logging.NullHandler())
     db = scratch("demo.db")
     store = SqliteStorage(db)
     e = Engine(store, HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
