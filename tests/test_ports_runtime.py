@@ -184,6 +184,20 @@ def test_source_fingerprint_is_the_same_on_every_platform(tmp_path, monkeypatch)
     assert serverctl.source_fingerprint() == h.hexdigest()[:12]
 
 
+def test_source_fingerprint_reads_one_commit_alike_in_crlf_and_lf(tmp_path, monkeypatch):
+    """One commit checked out by autocrlf as CRLF in the main tree and as LF in a clone is one build (measured
+    2026-10-21: 5c3a9515872a and 1c2234782402 for 55eb5e6); a changed line is still another."""
+    pkg = tmp_path / "gfso"
+    pkg.mkdir()
+    monkeypatch.setattr(serverctl, "ROOT", tmp_path)
+    (pkg / "a.py").write_bytes(b"x = 1\r\ny = 2\r\n")
+    crlf = serverctl.source_fingerprint()
+    (pkg / "a.py").write_bytes(b"x = 1\ny = 2\n")
+    assert serverctl.source_fingerprint() == crlf
+    (pkg / "a.py").write_bytes(b"x = 1\ny = 3\n")
+    assert serverctl.source_fingerprint() != crlf
+
+
 def test_drift_names_every_way_the_live_server_can_be_wrong():
     env = {"GFSO_VALIDATE_INTERNAL": "1", "GFSO_L2_GATE": "1", "GFSO_AGENTS_PATH": "/reg.json"}
     correct = {"code_version": "abc", "validate_internal": True, "l2_gate": True,

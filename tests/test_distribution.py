@@ -32,10 +32,10 @@ ROOT = pathlib.Path(__file__).parent.parent
 # What the product reads at runtime. Named here as well as in test_packaging.py on purpose: there
 # the question is "is it declared", here "did it arrive".
 REQUIRED = (
-    "gfso/web/index.html", "gfso/web/gfso.css", "gfso/web/tokens.css", "gfso/web/icon.svg",
+    "gfso/web/index.html", "gfso/web/gfso.css", "gfso/web/tokens.css", "gfso/web/icon.svg", "gfso/web/js/main.js",
     "gfso/mcp/ORCHESTRATOR.md", "gfso/mcp/prompts/executor.md", "gfso/mcp/prompts/validator.md",
     "gfso/decompose/prompts/search.md", "gfso/decompose/prompts/audit.md",
-    "gfso/critic/prompts/atomicity.md", "gfso/critic/prompts/checker.md",
+    "gfso/critic/prompts/atomicity.md", "gfso/critic/prompts/checker.md", "gfso/adapters/agent.Dockerfile",
     "gfso/examples/human_only.py", "gfso/examples/async_precompute.py",
 )
 
@@ -65,7 +65,9 @@ def built(tmp_path_factory) -> tuple[pathlib.Path, pathlib.Path]:
     # running run's workspace), which makes the test slow and, worse, races with files being written
     # while it copies.
     shutil.copytree(ROOT, src, ignore=shutil.ignore_patterns(
-        *BUILD_CACHES, "data", "results", "runs", "*.db", "*.db-wal", "*.db-shm", ".git"))
+        *BUILD_CACHES, "data", "results", "runs", "*.db", "*.db-wal", "*.db-shm", ".git",
+        # …and the local, untracked workspaces: sessions' worktrees and scratch copies (dozens of trees) timed the copy out
+        ".claude", "scratchpad", ".tmp"))
     out = tmp_path_factory.mktemp("dist")
     proc = subprocess.run([sys.executable, "-m", "build", "--outdir", str(out), str(src)],
                           capture_output=True, text=True, timeout=900)
@@ -82,7 +84,9 @@ def built_with_internal_material_planted(tmp_path_factory) -> tuple[pathlib.Path
     much present on disk."""
     pytest.importorskip("build", reason="python -m build is the tool under test here")
     src = tmp_path_factory.mktemp("src-planted") / "tree"
-    shutil.copytree(ROOT, src, ignore=shutil.ignore_patterns(*BUILD_CACHES))
+    # …the internal material is planted below; the local workspaces (made and removed by neighbours while this copies —
+    # a worktree vanished mid-copy, 2026-11-01 — and 1.2 GB from the main checkout) add none and only race
+    shutil.copytree(ROOT, src, ignore=shutil.ignore_patterns(*BUILD_CACHES, ".claude", "scratchpad", "results", ".tmp"))
     (src / "E3_STATUS.md").write_text("internal", encoding="utf-8")
     (src / "ROADMAP_INTERNAL.md").write_text("internal", encoding="utf-8")
     for d in ("experiments/e9_probe", "runs/probe", "docs/notes"):

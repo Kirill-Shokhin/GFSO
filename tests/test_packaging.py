@@ -52,10 +52,17 @@ def test_every_runtime_asset_is_declared_package_data():
                         f"them into the wheel: {missed}")
 
 
+# The page's script modules (gfso/web/js): index.html loads main.js, which imports the rest.
+WEB_MODULES = ("main", "api", "dom", "state", "store", "tip", "vocab", "overlays", "graph", "header",
+               "projects", "panel", "acts", "author", "forms", "live",
+               "goal", "deck", "run", "draw", "fmt", "tree", "model", "timeline", "progress", "cost", "work", "events", "hints", "fold")
+
+
 def test_the_assets_the_product_cannot_run_without_are_present():
     """A named floor: renaming or losing one of these breaks a door, and the glob test above would
     stay green because it only asks whether what EXISTS is shipped."""
     required = ("web/index.html", "web/gfso.css", "web/tokens.css", "web/icon.svg",
+                *(f"web/js/{m}.js" for m in WEB_MODULES),
                 "mcp/ORCHESTRATOR.md", "mcp/prompts/executor.md", "mcp/prompts/validator.md",
                 "decompose/prompts/search.md", "decompose/prompts/audit.md",
                 "critic/prompts/atomicity.md", "critic/prompts/checker.md")

@@ -90,3 +90,20 @@ def test_a_plan_nobody_touched_still_keeps_its_decisions():
     assert _criterion_stamps(e, e.graph.get_task(TaskId("root")))["parse_contract"] == \
         before["parse_contract"], "an edit elsewhere in the plan re-litigated an untouched criterion"
     e.stop()
+
+
+def test_swapping_a_child_pin_under_the_same_name_and_text_changes_the_stamp():
+    """The checker judges the pinned checks (prompts/checker.md), so a `sufficient` resting on a child's probe must not
+    be carried forward once that probe is swapped for one about something else (critic over e379c65, measured on row 3)."""
+    e = make_engine()
+    e.start()
+    _parent_with_one_covering_child(e)
+    before = _criterion_stamps(e, e.graph.get_task(TaskId("root")))
+    same = criterion("parse_behaviour", "parse_kv raises ValueError on a missing separator and on an empty key")
+    same["check"] = [{"behaviour": "something else", "command": "python -c \"import kv; print(kv.version())\"",
+                      "expect": "prints a version"}]
+    T.edit_criteria(e, "root.kv", [same], "agent")
+    e.wait_idle()
+    assert before != _criterion_stamps(e, e.graph.get_task(TaskId("root"))), \
+        "a child's probe was swapped under the same name and text and the stamp did not move"
+    e.stop()

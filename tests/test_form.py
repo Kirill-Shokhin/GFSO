@@ -66,7 +66,13 @@ BASE = {
     # contract it implements, and narrowing it would mean narrowing the port. They are counted
     # anyway rather than exempted, because an exemption is the "indulgence forever" this file's own
     # docstring guards against — if the port grows, this number moves and someone says why.
-    "F_class_over_method_limit": 4,
+    # 5 (2026-10-25): `Graph` (21) — `setting`, the one door to a project's own settings where only the graph is in
+    # hand (the Level-2 gate, the deadline nobody typed); a module function reaching `_storage` instead is the private
+    # reach `test_coupling` refuses.
+    # 6 (2026-10-30, S6): `ExecutionPort` (24) — `commands_env`/`commands_of`/`command`/`commands_ended`/`tool_files`: where a session's commands run, and
+    # the record of them, are the execution's alone (`execution.Commands`); folded into one method they would be one
+    # call answering two questions
+    "F_class_over_method_limit": 6,
     # 9 — the MODULES that sit inside a mutually-importing group, at module granularity:
     #     {decompose, decompose.loop, delegate, runtime, tools_llm} · {api.server, mcp.server} ·
     #     {doctor, mcp.connect}.
@@ -158,6 +164,8 @@ BASE = {
     # `spawned_server_popen_env` / `subprocess_env`). What is left is the declared floor plus
     # four DIAGNOSTIC reads in `doctor`, whose job is to report what the environment says —
     # including `APPDATA`, which is the OS's variable and not this product's configuration.
+    # 6 (2026-10-30, S6): `shell.client` forwards the environment its CLI gave it to where the command runs — a
+    # program of its own inside a container, which no `gfso.config` reaches; what it reads is the CLI's, not a setting
     "C5_env_read_outside_config": 5,     # floor 1: GFSO_L2_GATE at its enforcement point
                                          # (S4, 2026-08-22: provider/billing/storage/llm/model,
                                          #  the runtime panel and the roster path have owners)

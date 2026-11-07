@@ -15,17 +15,22 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import subprocess
+import tarfile
 import time
 from pathlib import Path
 from typing import Optional
 
+import gfso.adapters.execution as E
 from gfso.adapters.agents.human import HumanAgent
+from gfso.adapters.llm import credentials
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.core.types.ports import ClockPort, RunnerPort, StoragePort
 from gfso import tools as T
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import TaskId, Probe, AcceptedRiskItem, Criteria, Predictability, Register, Spec
 from gfso.engine import Engine
+from types import SimpleNamespace
 
 #: What a decomposition declares it knowingly does not cover. Every split the engine admits carries a register
 #: with each entry's estimate and its own denial by S (STD-1, CHECK-4, §9.5), so the suite carries one rather than
@@ -39,6 +44,24 @@ REGISTER = [n.to_dict() for n in REGISTER_ITEMS]
 #: the same register as the split's own carrier, for the engine's admission (`decompose_task(register=…)`)
 REGISTER_SPLIT = Register(REGISTER_ITEMS)
 DENIAL_ENTRY = DENIAL.to_dict()
+
+
+def a_repository(base: Path) -> Path:
+    """`base` made the top of a git repository with a commit: the only base a container carries in (`_carried_in`)."""
+    base.mkdir(parents=True, exist_ok=True)
+    for a in (["init", "-q"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "start"]):
+        subprocess.run(["git", "-C", str(base), *a], check=True, capture_output=True)
+    return base
+
+
+def carry_nothing_in(monkeypatch) -> None:
+    """For a fake of the docker client, whose host git is no git: an empty bundle carried in (`_carried_in`), and no base
+    refused for what that git cannot say (`_refused_over` keeps its own record's refusal)."""
+    def carried(base, project, d):
+        tarfile.open(d / "in.tar", "w").close()
+        return "c0ffee", d / "in.tar", []
+    monkeypatch.setattr(E, "_carried_in", carried)
+    monkeypatch.setattr(E, "_refused_over", E.held_as_tree)
 
 
 def imports_of(py: Path, repo: Path) -> list:
@@ -61,6 +84,13 @@ def module_reached(repo: Path, module: str, name: Optional[str]) -> str:
     """The module an import reaches: `module.name` where that name is itself a module or package of `module`."""
     sub = repo / module.replace(".", "/") / (name or "")
     return f"{module}.{name}" if name and (sub.with_suffix(".py").exists() or sub.is_dir()) else module
+
+
+def hold_a_credential(monkeypatch, root: Path) -> None:
+    """The Claude provider's one place, under `root`, holding the credential a test's calls run on: with none in force
+    no call runs (`headless._in_force`), so a test of what a call does gives it one — never in the suite's shared home."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(root / "data"))
+    credentials.put("claude", "token", "t-held", name="held")
 
 
 def make_engine(
@@ -140,7 +170,7 @@ def reviewer_passes(engine, task_id, reviewer: str = "reviewer") -> None:
         task_id, "PASS", [], reviewer,
         observed={c.name: {"note": f"checked `{c.name}` by hand against the delivery: it holds",
                            "ran": [p.command for p in procedure_under(engine, task_id, c)]}
-                  for c in task.spec.criteria if not c.depends_on})
+                  for c in task.spec.criteria})
 
 
 def procedure_under(engine, task_id, c) -> list:
@@ -180,9 +210,9 @@ def instrument_passes(engine, task_id, validator: str = "validate_result", **kw)
 
 
 def emptied(engine, task_id, seams: bool = False) -> None:
-    """The node's contract emptied in storage of every criterion it decides (`seams` keeps its Dep seams) — the node no
-    door makes since the admission held §2.2, standing as one stored before it, for the rules downstream that must still
-    meet it — its checks recomputed."""
+    """The node's contract emptied in storage of every criterion (`seams` keeps those whose check reads a producer; its
+    Dep edges, no criteria, stand) — the node no door makes since the admission held §2.2, standing as one stored
+    before it, for the rules downstream that must still meet it — its checks recomputed."""
     t = engine.graph.get_task(TaskId(task_id))
     kept = tuple(c for c in t.spec.criteria if seams and c.depends_on)
     engine._graph.save_task(dataclasses.replace(t, spec=dataclasses.replace(t.spec, criteria=kept)))
@@ -259,3 +289,7 @@ def workdir(base, *parts) -> str:
     p = Path(base).joinpath(*parts)
     p.mkdir(parents=True, exist_ok=True)
     return str(p)
+
+
+class FakeSpec(SimpleNamespace):
+    """A spec stand-in for tests that build nodes by hand."""

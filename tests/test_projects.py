@@ -8,7 +8,10 @@ the ACTIVE project; back-compat: default project = the env-configured engine, no
 import asyncio
 import inspect
 import os
+import sqlite3
+import threading as th
 import time
+from datetime import datetime
 
 import anyio
 import pytest
@@ -19,6 +22,7 @@ from gfso.api.server import create_app, _start_reaper
 from gfso.mcp.server import create_server, _bind
 from gfso.runtime import ProjectRegistry
 from gfso.core.types import AgentId, Mode
+from gfso.delegate import _DISPATCHERS
 from gfso import tools as T
 from gfso.adapters.llm.stub import StubLLM
 from tests.support import criterion, make_engine
@@ -335,17 +339,60 @@ def test_the_project_list_says_where_each_root_stands(monkeypatch, tmp_path):
     for n in ("loaded", "closed"):
         _mk(reg.engine(n), "root")
     reg.engine("bare")
-    eng = reg._engines.pop("closed")
-    eng.stop()
-    eng._graph._storage.close()
+    _closed(reg, "closed")
     app = create_app(reg.engine(), registry=reg)
     with TestClient(app) as c:
-        root = c.get("/api/projects").json()["roots"]
-    assert root["closed"] == root["loaded"] and root["loaded"]["state"]
+        about = c.get("/api/projects").json()["about"]
+    root = {n: about[n] and about[n]["goal"] for n in about}
+    assert root["closed"]["state"] == root["loaded"]["state"] == "OFFERED"
+    assert root["loaded"]["name"] is None and root["loaded"]["started"]
     assert root["bare"] is None
+    assert "closed" not in reg._engines, "listing a project built its engine"
     assert not list(tmp_path.glob("closed.db-*")), "the peek left WAL files beside a closed project"
     for e in list(reg._engines.values()):
         e.stop()
+
+
+def _closed(reg, name):
+    eng = reg._engines.pop(name)
+    _DISPATCHERS.pop(id(eng)).stop()         # …left running, it polled the closed database, and said so, to the suite's end
+    eng.stop()
+    eng._graph._storage.close()
+
+
+def _stamp_log(path, launched, rows):
+    """Set a project file's goal launched `launched` seconds ago, and its log to `rows` of (seconds ago,
+    source) — the time of each act."""
+    at = lambda ago: datetime.fromtimestamp(time.time() - ago).isoformat()
+    with sqlite3.connect(path) as c:
+        c.execute("UPDATE tasks SET created_at = ? WHERE parent_id IS NULL", (at(launched),))
+        c.execute("DELETE FROM audit_log")
+        for ago, source in rows:
+            c.execute("INSERT INTO audit_log (ts, task_id, signal, source) VALUES (?, 'root', 'X', ?)",
+                      (at(ago), source))
+
+
+def test_a_project_is_listed_by_when_it_was_worked_in_not_when_it_was_looked_at(monkeypatch, tmp_path):
+    """The list put old runs on top (the author, 2026-10-24: «в топе списка сейчас вообще старый мусор»):
+    loading a project's engine — a read of it on the shared server — rewrites its file and lapses what
+    its deadlines owe, so by the file's stamp the projects LOOKED at today rose above the ones worked
+    in. The list goes by the last act of a party or a model call; a log of lapses alone still dates it."""
+    reg = _reg(monkeypatch, tmp_path)
+    monkeypatch.delenv("GFSO_STORAGE")
+    monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "gfso.db"))   # `default` is not another test's file
+    for n in ("worked", "looked", "clock_only"):
+        _mk(reg.engine(n), "root")
+        _closed(reg, n)
+    _stamp_log(str(tmp_path / "worked.db"), 3600, [(600, "agent")])
+    _stamp_log(str(tmp_path / "looked.db"), 30 * 86400, [(3 * 86400, "agent"), (5, None)])
+    _stamp_log(str(tmp_path / "clock_only.db"), 40 * 86400, [(5 * 86400, None)])
+    now = time.time()
+    for n, age in (("looked", 0), ("worked", 3600), ("clock_only", 60 * 86400)):
+        os.utime(tmp_path / f"{n}.db", (now - age, now - age))
+    listing = ProjectRegistry().list()
+    assert listing["projects"] == ["worked", "looked", "clock_only", "default"]
+    assert abs(now - 3 * 86400 - listing["last_active"]["looked"]) < 5
+    assert abs(now - 5 * 86400 - listing["last_active"]["clock_only"]) < 5
 
 
 def test_use_project_takes_the_word_every_other_verb_uses():
@@ -442,7 +489,7 @@ def test_a_scoped_act_names_the_scope_it_was_given(monkeypatch, tmp_path):
 
 
 def test_the_mode_is_set_before_the_plan_on_every_door(monkeypatch, tmp_path):
-    """The mode is the user's choice made BEFORE the plan (ORCHESTRATOR: ask, then `set_mode`), and once a
+    """The mode is the user's choice made BEFORE the plan (ORCHESTRATOR: `set_mode`, then `plan`), and once a
     project has work in it a change needs the user's own words. The MCP door creates a project on
     `use_project`; the HTTP and CLI doors answered `set_mode` on a new name with "no such project", so a
     caller there could set a mode only AFTER authoring — measured 2026-09-27: the E3 harness's solo arm
@@ -486,3 +533,30 @@ def test_a_session_that_names_no_project_is_told_the_projects_where_none_was_eve
         res()
     reg.use("gb-row")
     assert res() is reg.engine("gb-row"), "a project switched to is where an unnamed session lands"
+
+
+def test_a_project_opened_by_many_reads_at_once_gets_one_engine(monkeypatch, tmp_path):
+    """A page opening a project fires its first reads at once. Each built its own engine — its own dispatcher — over
+    the same file and ran the store's migrations twice: all but one answered 500 "duplicate column name", and the page
+    drew no graph until reloaded (2026-10-25)."""
+    reg = _reg(monkeypatch, tmp_path)
+    monkeypatch.delenv("GFSO_STORAGE")
+    _mk(reg.engine("old"), "root")
+    _closed(reg, "old")
+    with sqlite3.connect(str(tmp_path / "old.db")) as c:      # a file from before the newest columns
+        c.execute("ALTER TABLE llm_usage DROP COLUMN peak_context")
+    go, got, errs = th.Barrier(8), [], []
+
+    def open_it():
+        go.wait()
+        try:
+            got.append(reg.engine("old"))
+        except Exception as e:
+            errs.append(e)
+    ts = [th.Thread(target=open_it) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errs, errs[:1]
+    assert len({id(e) for e in got}) == 1, "one engine per project"
+    for e in list(reg._engines.values()):
+        e.stop()

@@ -15,14 +15,154 @@ finding on it; written after the ACCEPT_CHALLENGE returned, a dispatcher's ACCEP
 challenge accepted and nothing retired; unbounded in time, a ruling on `conf` outlived a tightened `conf`."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import os
 import re
+from pathlib import Path
 from typing import Iterable, Optional
 
-from gfso.core.protocol.procedure import pinned_run, probe_id, without_pinned_runs, without_retired
-from gfso.core.types import Signal
+from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, round_inputs, round_of, round_words,
+                                          without_past_builds, without_pinned_runs, without_retired)
+from gfso.core.types import HOST, LAID, VOLUME, Signal, TaskId, files_at, laid_beside
 from .audit import VERSION_INSTALLING
-from .verdicts import REGRESSION, criterion_version, ledger_read
+from .verdicts import REGRESSION, criterion_version, ledger_read, ledger_write
+
+
+#: on a finding in the ledger: an independent validator re-ran it and did not reproduce it (`not_reproduced`) …
+NOT_REPRODUCED = "not_reproduced"
+#: … and a person gave it back, so no validator's run takes it off again (`return_finding`)
+RETURNED = "returned"
+#: what keys a validation or contact round in the record of the rounds standing (`round_stands`), by its name
+_ROUND = "round-made:"
+#: the rounds this process asked about where the record had none, and found not standing (`round_stands`)
+_UNMADE: set = set()
+
+
+def record_round(graph, path, made: bool) -> None:
+    """The system made — or removed — the round `path` lies in: kept with the project's settings, a restart reads it;
+    a removal drops what was read of the round's files (`forget_round`). A path in no round records nothing."""
+    if (r := round_of(path)) is not None:
+        graph.store_setting(_ROUND + r[1], "1" if made else "0")
+        if not made:
+            forget_round(r[0])
+
+
+#: what keys, in the project's settings, what the system read of a file a finding's command names in its round, once
+#: that round's runs had ended (`keep_files`): {"file": its sha256} or {"tree": {path in it: sha256}} — by the path;
+#: {"lost": why} for an input it could not keep, which no re-run can then lay
+_KEPT = "probe-file:"
+#: …and each content, by its sha256, beside the verdicts
+_BLOB = "probe-blob#"
+#: the most of one named path the record keeps — a file, or a directory's files together; past it the path is not kept
+KEEP_CAP = 16 << 20
+#: under a judge's round or batch, where a re-run of a standing finding makes each round it names afresh (`lay_files`)
+REGRESSION_DIR = "regression"
+
+
+def _path_key(path) -> str:
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def keep_files(graph, storage, commands: Iterable[str]) -> None:
+    """Each file the `commands` name in a validation round (`round_words`) kept in the system's record as it stands
+    now — the first reading of a path stands, whatever is written there after. Called as findings are filed, their
+    round's runs ended and every process of them with their containers (`ExecutionPort.release`); a re-run lays these
+    from the record (`lay_files`) and reads nothing of the round. An input that cannot be read, or passes `KEEP_CAP`,
+    is kept as LOST: re-run over an empty directory it refuted every delivery (`No such file`, critic over 909e417),
+    so its finding is shown, not demanded (`round_stands`). A file the command itself writes is no input to lose."""
+    for c in commands:
+        inputs = set(round_inputs(c))
+        for w in round_words(c):
+            if graph.setting(_KEPT + _path_key(w)) is not None:
+                continue
+            try:
+                fs = files_at(w)
+                got = {"": raw} if (raw := fs.read_bytes(w, KEEP_CAP + 1)) is not None else fs.read_tree(w)
+            except OSError as e:
+                got = f"unreadable when its finding was filed ({e})"
+            if not isinstance(got, dict) or sum(map(len, got.values())) > KEEP_CAP:
+                if w in inputs:
+                    graph.store_setting(_KEPT + _path_key(w), json.dumps({"lost": got if isinstance(got, str) else
+                                        "not there when its finding was filed" if got is None else
+                                        f"larger than the {KEEP_CAP >> 20} MiB the record keeps"}))
+                continue
+            sums = {rel: _keep_blob(storage, raw) for rel, raw in got.items()}
+            graph.store_setting(_KEPT + _path_key(w), json.dumps({"file": sums[""]} if "" in sums else {"tree": sums}))
+
+
+def _keep_blob(storage, raw: bytes) -> str:
+    if storage.get_critique(TaskId(_BLOB + (d := hashlib.sha256(raw).hexdigest()))) is None:
+        storage.store_critique(TaskId(_BLOB + d), base64.b64encode(raw).decode("ascii"))
+    return d
+
+
+def _blob(storage, d: str) -> Optional[bytes]:
+    """The content kept under `d`, only where it still hashes to it."""
+    raw = base64.b64decode(storage.get_critique(TaskId(_BLOB + d)) or "")
+    return raw if hashlib.sha256(raw).hexdigest() == d else None
+
+
+def lay_files(graph, storage, command: str, at, execution) -> str:
+    """`command` as its re-run runs under `at`, a judge's own round or batch: each validation round it names
+    (`round_of`) respelled as a directory of `at`'s own (`REGRESSION_DIR`), made afresh by the command itself from
+    what the system lays for it beside `at`'s round or batch (`laid_beside`): the files of that round the record holds (`keep_files`; those
+    of a round still standing kept now, first). From the record alone, and read-only to the judge: the delivered code
+    its run executes — a `make`, a test, a process either left — cannot rewrite what the re-run starts from, and no
+    earlier round is mounted to be read (critic over the judged tree: a forged `../probe.sh`, rc 0). A command naming
+    no round is returned as it is."""
+    if not (words := round_words(command)):
+        return command
+    keep_files(graph, storage, [command])
+    laid_root, fresh, out, rounds = laid_beside(at), [], command, {}
+    for d in (*[p for p in reversed(laid_root.parents) if p.name.endswith(LAID)], laid_root):
+        execution.files.mkdir(str(d))               # …by the system, where no session writes: its root first
+    for w in words:
+        prefix = round_of(w)[0]
+        rounds.setdefault(_path_key(prefix), []).append((w, prefix))
+    for key, named in rounds.items():
+        k = hashlib.sha256(key.encode()).hexdigest()[:12]
+        src, work, laid = laid_root / k, Path(at) / REGRESSION_DIR / k, {}
+        for w, prefix in named:
+            rel = w[len(prefix):].replace("\\", "/").strip("/")
+            rec = json.loads(graph.setting(_KEPT + _path_key(w)) or "{}")
+            for sub, d in ({"": rec["file"]} if "file" in rec else rec.get("tree") or {}).items():
+                if (raw := _blob(storage, d)) is not None:
+                    laid["/".join(x for x in (rel, sub) if x)] = raw
+            out = re.sub(re.escape(prefix) + r"(?=[\\/])", lambda _: work.as_posix(), out)   # …not `<round>9`
+        execution.files.mkdir(str(src))             # …laid even when nothing was kept: the copy below reads it
+        execution.files.write_files(str(src), laid)
+        # …and the directory of every path it names, kept or not: a command writing its own output there found none
+        # (critic over the judged tree: `cc ok.c -o <round>/batch1/prog` refuted every later delivery)
+        dirs = sorted({(work / w[len(p):].replace("\\", "/").strip("/")).parent.as_posix() for w, p in named})
+        fresh.append(f'rm -rf "{work.as_posix()}" && mkdir -p "{work.as_posix()}" && '
+                     f'cp -a "{src.as_posix()}/." "{work.as_posix()}/" && '
+                     + " && ".join(f'mkdir -p "{d}"' for d in dirs))
+    execution.release(str(laid_root))           # …written: nothing of the system's runs there on
+    return " && ".join(fresh) + f" && ( {out} )"
+
+
+def round_stands(graph):
+    """`unrerunnable`'s `standing`: does the round stand — or does the system's record hold what the path named there
+    (`keep_files`), which a re-run lays from it (`lay_files`)? THE SYSTEM'S RECORD — it alone makes and removes rounds
+    (`tools_llm._validation_place`, `issuer._contact_place`) and keeps their files — read with no subprocess, whoever
+    asks: a verdict's record included. A round made before the record was kept is found once on this host, where rounds
+    are directories until the places move into volumes (a fallback that goes with that move), then recorded."""
+    def standing(r: tuple) -> bool:
+        """Does the round `r` — (its path, its name in the record[, the path named in it]) — stand, or its file kept?"""
+        if len(r) > 2 and (kept := graph.setting(_KEPT + _path_key(r[2]))) is not None:
+            return "lost" not in json.loads(kept)
+        if (got := graph.setting(_ROUND + r[1])) is not None:
+            return got == "1"
+        if r[0] in _UNMADE or graph.setting(VOLUME + "places"):         # …moved into a volume: the record alone
+            return False
+        if HOST.is_dir(r[0]):
+            graph.store_setting(_ROUND + r[1], "1")
+            return True
+        _UNMADE.add(r[0])
+        return False
+    return standing
 
 
 def ever_pinned(entries: Iterable, task) -> dict:
@@ -64,6 +204,8 @@ def rulings(storage, entries: list, task_id) -> list[dict]:
     """Every ruling on the node's log, oldest first — {criterion, id, command, by, at, why, text, lapsed}: the finding
     retired, the ACCEPT_CHALLENGE that retired it (who, when, why), the criterion's text as that act left it, and
     whether a later act rewrote that text (`lapsed`, the entry's time, else None)."""
+    if not any(e.retire_findings for e in entries):     # …read wherever a part's procedure is: most nodes have none
+        return []
     found = {p.get("id"): (c, p) for c, ps in (ledger_read(storage, task_id, REGRESSION, {}) or {}).items() for p in ps}
     in_force: dict = {}
     out: list[dict] = []
@@ -83,8 +225,10 @@ def rulings(storage, entries: list, task_id) -> list[dict]:
             out += [{"criterion": found[i][0], "id": i, "command": found[i][1].get("command"), "by": str(e.source),
                      "at": e.timestamp.isoformat(timespec="seconds"), "why": e.justification or e.reason or "",
                      "text": in_force.get(found[i][0]), "lapsed": None,
-                     "seen": found[i][1].get("seen") or found[i][1].get("as_run")}
-                    for i in dict.fromkeys(e.retire_findings) if i in found]
+                     "seen": found[i][1].get("seen") or found[i][1].get("as_run"),
+                     "as_run": found[i][1].get("as_run"), "expect": found[i][1].get("expect"),
+                     "by_system": e.by_system, "ts": e.timestamp.isoformat()}
+                    for i in ruled(e.retire_findings, found)[0]]
     return out
 
 
@@ -95,18 +239,68 @@ def standing_rulings(storage, entries: list, task_id) -> list[dict]:
 
 def regression(storage, entries: list, task) -> dict:
     """{criterion: [the validator's findings demanded of this node]} — every refutation recorded, less the runs of
-    pinned probes and the findings a ruling in force retired."""
-    return without_retired(without_pinned_runs(ledger_read(storage, task.id, REGRESSION, {}) or {},
+    pinned probes, the findings a ruling in force retired, those that run a past round's build and those an independent
+    validator did not reproduce (`not_reproduced`)."""
+    kept = without_retired(without_pinned_runs(without_past_builds(ledger_read(storage, task.id, REGRESSION, {}) or {}),
                                                ever_pinned(entries, task)),
                            standing_rulings(storage, entries, task.id))
+    return {k: left for k, ps in kept.items() if (left := [p for p in ps if not _unreproduced(p, k, task)])}
+
+
+def _criterion_now(name: str, task):
+    c = next((c for c in task.spec.criteria if " ".join(c.name.split()) == name), None)
+    return list(criterion_version(c.description, [p.to_dict() for p in c.check or ()])) if c is not None else None
+
+
+def _unreproduced(p: dict, name: str, task) -> bool:
+    """Did an independent validator not reproduce this finding, under the criterion as it reads now? A later act rewriting
+    that text ends it, as it ends a ruling."""
+    return bool(p.get(NOT_REPRODUCED)) and p[NOT_REPRODUCED].get("text") == _criterion_now(name, task)
+
+
+def not_reproduced(storage, task) -> list[dict]:
+    """The record of what no later run demands because a validator did not reproduce it (Thm 11): {criterion, id, command,
+    expect, by, at, why, printed}."""
+    return [{"criterion": k, "id": p.get("id"), "command": p.get("command"), "expect": p.get("expect"),
+             **{x: p[NOT_REPRODUCED].get(x) for x in ("by", "at", "why", "printed")}}
+            for k, ps in (ledger_read(storage, task.id, REGRESSION, {}) or {}).items() for p in ps if _unreproduced(p, k, task)]
+
+
+def record_not_reproduced(storage, task, marks: Iterable[tuple], by: str, at: str, found: dict) -> None:
+    """The ledger with each of `marks` (`procedure.findings_not_reproduced`) written on its finding — unless the same report
+    filed it again, or a person returned it — and the mark gone from each finding `found` filed: reproduced, it stands."""
+    stored = ledger_read(storage, task.id, REGRESSION, {}) or {}
+    # …by its id or a citation of it: a re-run under other words is that finding (`merge_regression`), not filed anew
+    again = {(k, str(x).split("#")[-1]) for k, ps in found.items() for p in ps for x in (p.get("id"), p.get("cited")) if x}
+    said = {(k, i): m for k, i, m in marks}
+    for k, ps in stored.items():
+        for p in ps:
+            if (k, str(p.get("id")).split("#")[-1]) in again:
+                p.pop(NOT_REPRODUCED, None)
+            elif (k, p.get("id")) in said and not p.get(RETURNED):
+                p[NOT_REPRODUCED] = {**said[(k, p.get("id"))], "by": by, "at": at, "text": _criterion_now(k, task)}
+    if said or again:
+        ledger_write(storage, task.id, REGRESSION, stored)
+
+
+def return_finding(storage, task, finding: str, by: str, why: str) -> bool:
+    """A person's word: this finding is demanded again, and no validator's run takes it off."""
+    stored = ledger_read(storage, task.id, REGRESSION, {}) or {}
+    hit = [p for ps in stored.values() for p in ps if p.get("id") == finding and p.get(NOT_REPRODUCED)]
+    for p in hit:
+        p.pop(NOT_REPRODUCED)
+        p[RETURNED] = {"by": by, "why": why}
+    if hit:
+        ledger_write(storage, task.id, REGRESSION, stored)
+    return bool(hit)
 
 
 def ruling_defect(storage, entries: list, task, ids: Iterable[str]) -> Optional[str]:
     """Why an ACCEPT_CHALLENGE may not retire `ids` on this node, or None. Each must stand on it, and the executor's
-    CHALLENGE — the one this act answers — must name it by its id: a ruling answers what was disputed."""
-    ids = list(ids)
-    standing = {p.get("id") for ps in regression(storage, entries, task).values() for p in ps}
-    if gone := [i for i in ids if i not in standing]:
+    CHALLENGE — the one this act answers — must name it by its hash (`named`): a ruling answers what was disputed."""
+    standing = [i for ps in regression(storage, entries, task).values() for p in ps if (i := p.get("id"))]
+    ids, gone = ruled(ids, standing)
+    if gone:
         return (f"no finding {', '.join(gone)} stands on {task.id} — the standing ones are "
                 f"{', '.join(sorted(standing)) or 'none'}")
     if wide := [i for i in ids if i not in named(_challenge(entries), standing)]:
@@ -125,18 +319,32 @@ def _challenge(entries: list) -> str:
     return next((e.reason or "" for e in reversed(entries) if e.signal == Signal.CHALLENGE and not e.rejected), "")
 
 
+def _hash(i: str) -> str:
+    return str(i).rsplit("#", 1)[-1]
+
+
 def named(said: str, standing: Iterable) -> list[str]:
-    """The standing finding ids `said` names: a full id as a word of its own names itself; its hash written any other
-    way — bare, or after a criterion spelled otherwise (`the_conf_criterion#…`) — names every standing finding that
-    ends in it, whatever criterion it stands under. The hash is the probe's COMMAND (`probe_id`), so one hash under two
-    criteria is one probe, and a dispute naming it unqualified disputes it wherever it stands. Read as naming neither, a
-    true dispute of one probe under two criteria was ruled on four times, each ruling refused whole, and the part
-    closed by count (AUTO haiku coreutils, root.tr, 2026-10-12)."""
+    """The standing finding ids a dispute's text `said` names. A finding's identity is its hash — the probe's COMMAND
+    (`probe_id`) — so its hash written in any form, bare or after any criterion, names it under every criterion it
+    stands on: the dispute is about the probe, and the ruling chooses where it lands (`ruled`). Read as naming
+    neither, a true dispute of one probe under two criteria was ruled on four times and the part closed by count (AUTO
+    haiku coreutils, root.tr, 2026-10-12); read as naming the one criterion written beside it, a ruling on the same
+    probe under three more was dropped without a word and the node failed on it four times (c_compiler pp-rest,
+    2026-11-06)."""
     ids = [str(s) for s in dict.fromkeys(standing) if s]
-    out = {s for s in ids if re.search(rf"(?<![\w#]){re.escape(s)}(?!\w)", said)}
-    for h in {s.rsplit("#", 1)[-1] for s in ids}:
-        mine = [s for s in ids if s.rsplit("#", 1)[-1] == h]
-        if any(not any(said[:m.start()].endswith(s[:-len(h)]) for s in mine)
-               for m in re.finditer(rf"(?<!\w){re.escape(h)}(?!\w)", said)):
-            out.update(mine)
-    return [s for s in ids if s in out]
+    return [s for s in ids if re.search(rf"(?<!\w){re.escape(_hash(s))}(?!\w)", said)]
+
+
+def ruled(items: Iterable, standing: Iterable) -> tuple[list[str], list[str]]:
+    """(the standing finding ids a ruling's `items` retire, the items that name none) — ONE reading of what a ruling
+    names, for the issuer that makes it, the gate that admits it (`ruling_defect`) and the record that keeps it
+    (`rulings`): a full id names itself, a bare hash the finding under every criterion it stands on. An item naming
+    nothing is refused by name, never dropped: the issuer lifts that by naming it right (§12.16 (ii))."""
+    ids = [str(s) for s in dict.fromkeys(standing) if s]
+    out: list[str] = []
+    none: list[str] = []
+    for i in map(str, items or ()):
+        hit = [s for s in ids if s == i or ("#" not in i and _hash(s) == i)]
+        out += [s for s in hit if s not in out]
+        none += [] if hit else [i]
+    return out, none

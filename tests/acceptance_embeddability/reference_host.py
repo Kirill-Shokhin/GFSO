@@ -170,9 +170,9 @@ class JsonlStorage(StoragePort):
         self._deps.append(edge)
         self._append("deps", _encode(edge))
 
-    def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
-        self._deps = [e for e in self._deps
-                      if not (str(e.from_id) == str(from_id) and str(e.to_id) == str(to_id))]
+    def remove_dep_edge(self, edge: DepEdge) -> None:
+        if edge in self._deps:
+            self._deps.remove(edge)
         self._f("deps").write_text(
             "".join(json.dumps(_encode(e), ensure_ascii=False) + "\n" for e in self._deps),
             encoding="utf-8")
@@ -261,7 +261,7 @@ class Host:
             if seen > 500:                       # a host must not spin forever on follow-ups
                 raise RuntimeError("signal pump did not reach quiescence")
 
-    def admit(self, parent_id: str, assigns: list, register, by: str) -> None:
+    def admit(self, parent_id: str, assigns: list, register, by: str, deps: Optional[dict] = None) -> None:
         """A split's admission (§11.5) — the decomposer's act, outside the twelve signals: `admission.admit`, the one act
         the engine performs too, its ASSIGNs and CANCELs through this host's pump."""
         def send(sd):
@@ -270,7 +270,7 @@ class Host:
         admit(self.graph, self.storage, lambda: len(self.audit), TaskId(parent_id),
               [(a.task_id, a.spec, a.assignee, a.deadline) for a in assigns],
               {str(a.task_id): tuple(a.covers) for a in assigns}, register=register, send=send,
-              max_iterations=next((a.max_iterations for a in assigns if a.max_iterations), None))
+              max_iterations=next((a.max_iterations for a in assigns if a.max_iterations), None), deps=deps)
 
     # --- observations the suite asks for
     def state(self, task_id: str) -> Optional[str]:

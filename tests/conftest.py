@@ -12,24 +12,119 @@ LLM-layer instrument, and this suite is substrate-free by design (no model runs)
 takes the canon's own EXPLORE branch (§9.9) and turns the gate off, exactly as a deployment
 without a checker would. `tests/test_l2_gate.py` turns it back ON and owns that behavior end to end.
 """
+import atexit
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import threading
+import time
+from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
+
+try:
+    import psutil
+except ImportError:        # …a dev-only tool: without it no suite is known dead, nothing is ended
+    psutil = None
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+
+#: every temporary file of the suite stays inside the project (the author's rule): the ignored `.tmp` at the MAIN tree's top,
+#: one for all its worktrees — inside a worktree a run's paths passed Windows' 260 characters and copies failed silently;
+#: the ceiling keeps a test's "no repository here" true there: from inside, git would find this one and act on it
+_ROOT = Path(__file__).resolve().parent.parent
+_COMMON = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True,
+                         cwd=_ROOT).stdout.strip() if shutil.which("git") else ""
+_TMP = (Path(_COMMON).parent if _COMMON else _ROOT) / ".tmp"
+_TMP.mkdir(exist_ok=True)
+tempfile.tempdir = str(_TMP)
+os.environ.update(TMP=str(_TMP), TEMP=str(_TMP), TMPDIR=str(_TMP), GIT_CEILING_DIRECTORIES=str(_TMP))
+
+
+class _Mute:
+    write, flush = staticmethod(len), staticmethod(lambda: None)
+
+
+def _no_thread_writes_through_the_interpreters_end():
+    """A daemon thread a test left behind, caught inside a write as the interpreter finalizes, keeps the stream's lock
+    for good, and the last flush aborts the process: "could not acquire lock for <stderr>", a green suite's job red with
+    exit 127 (CI, Windows, 2026-11-04). Registered before anything else here, so it runs last: what other callbacks say
+    is still said. The pause is for a write already under way to end."""
+    sys.stdout.flush(), sys.stderr.flush()
+    sys.stdout = sys.stderr = _Mute()
+    time.sleep(0.2)
+
+
+atexit.register(_no_thread_writes_through_the_interpreters_end)
+
+from gfso.adapters import execution as E  # noqa: E402
+from gfso.adapters.llm import chat as _chat  # noqa: E402
+
+
+#: older than this, a suite's home is a run that was cut short: a whole suite takes under an hour
+CUT_RUN_S = 6 * 3600
+#: the process a suite's home belongs to, in the home: a run cut short is known at once where the process is gone
+OWNER = "suite.pid"
+
+
+def _dead(pid_file: Path) -> bool | None:
+    """Whether the process a file names is gone; None where nothing is known (no file, or no `psutil`, a dev-only tool)."""
+    try:
+        return None if psutil is None else not psutil.pid_exists(int(pid_file.read_text()))
+    except (OSError, ValueError):
+        return None
+
+
+def _sweep(*homes: Path) -> None:
+    """Suite homes gone, with every container, volume and network labelled with them: a run cut short — the harness
+    under memory pressure, a timeout — never reached its fixtures' teardown, and every project its live tests stood up
+    stayed (2026-10-31: 97 containers, 160 volumes, 5699 homes left on one machine)."""
+    marks = {E._home(h / "data") for h in homes}
+    if marks and shutil.which("docker"):
+        for kind, ls in (("container", ["ps", "-a"]), ("volume", ["volume", "ls"]), ("network", ["network", "ls"])):
+            got = subprocess.run(["docker", *ls, "--format", '{{.ID}} {{.Label "gfso.home"}}'], capture_output=True,
+                                 text=True).stdout.splitlines()
+            if ids := [i for i, _, h in (r.partition(" ") for r in got) if h in marks]:
+                subprocess.run(["docker", kind, "rm", *(["-f"] if kind == "container" else []), *ids], capture_output=True)
+    for h in homes:
+        shutil.rmtree(h, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True, scope="session")
 def _own_state_home():
     """A home of the suite's own, for the whole session."""
     prior = os.environ.get("GFSO_HOME")
-    os.environ["GFSO_HOME"] = tempfile.mkdtemp(prefix="gfso-suite-")
+    _sweep(*[d for d in Path(tempfile.gettempdir()).glob("gfso-suite-*")
+             if _dead(d / OWNER) or (_dead(d / OWNER) is None and time.time() - d.stat().st_mtime > CUT_RUN_S)])
+    os.environ["GFSO_HOME"] = mine = tempfile.mkdtemp(prefix="gfso-suite-")
+    (Path(mine) / OWNER).write_text(str(os.getpid()), encoding="utf-8")
+    os.environ["GFSO_ALLOWED_HOSTS"] = "testserver"     # the name Starlette's TestClient sends; the door refuses others
+    E.CEILING_GROUP = "gfso/suite"                      # its live containers under the machine's ceiling, never its limit
+    os.environ["GFSO_LOCAL_AGENTS"] = "allow"           # the suite's sessions are fakes on this host, by its own word
+    os.environ["GFSO_NETWORK_RECORD"] = "off"           # …a listener for each worker's live tests; its own file asks for it
+    E._DISK_WATCH.set()                                 # …nor a watch beside each worker's: a test runs its own
+    E._WATCH.set()
     yield
+    _sweep(Path(mine))
     if prior is None:
         os.environ.pop("GFSO_HOME", None)
     else:
         os.environ["GFSO_HOME"] = prior
+
+
+@pytest.fixture(autouse=True)
+def _the_ceiling_decided_per_test():
+    """What a test's fake Docker answered decides nothing for the next: `execution.ceiling` asks again."""
+    E._CEILING.clear()
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -89,17 +184,135 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 class _NoLiveModel(subprocess.Popen):          # a subclass: callers subscript it (`Popen[bytes]`)
+    #: real containers are `--live`'s: outside it a test starting one fails, so nothing heavy enters the default suite by its name
+    containers = False
+
     def __init__(self, args, *a, **k):
         first = args[0] if isinstance(args, (list, tuple)) and args else args
+        if (not self.containers and first and os.path.basename(str(first)).lower().removesuffix(".exe") == "docker"
+                and (list(args[1:2]) == ["run"] or list(args[1:3]) == ["volume", "create"])):
+            _LIVE_SPAWNS.append(f"[thread {threading.current_thread().name}] {str(args)[:200]}")
+            raise OSError("a real container was started outside `--live`: mark the test `live`")
         if first and "claude" in os.path.basename(str(first)).lower():
             _LIVE_SPAWNS.append(f"[thread {threading.current_thread().name}] {str(args)[:200]}")
             raise OSError("a live model run was attempted inside the test suite")
         super().__init__(args, *a, **k)
 
 
+#: THE LIVE TESTS, BY WHAT THEY CHECK: each file in one group, a group run alone by `--live-group <name>[,<name>]`, the
+#: group what the change is about, under the one lock. The whole of them, `--live`, is CI's at a push
+LIVE_GROUPS = {
+    "judge": ("a_judge_judges_what_was_delivered", "a_judges_pinned_inputs_are_the_systems", "the_runs_of_a_validation_do_not_share_a_tree"),
+    "places": ("a_projects_places_stand_in_its_volume", "a_session_holds_only_its_own_place", "a_part_starts_with_no_siblings_work_but_by_an_edge"),
+    "landing": ("the_base_is_imported_and_its_result_lands_as_a_branch", "lfs_files_come_in_whole_and_leave_as_pointers",
+                "what_is_refused_before_it_is_touched"),
+    "commands": ("a_sessions_commands_run_apart_from_its_client", "a_chat_providers_commands_run_apart"),
+    "network": ("the_way_out_is_a_switch_set_outside", "where_a_session_reached_is_on_the_record"),
+    "bounds": ("a_container_holds_no_more_than_its_bounds", "what_a_program_prints_is_bounded_in_the_server"),
+    "git": ("the_systems_git_runs_in_the_place_it_reads", "the_system_reads_a_place_where_its_agent_cannot_lead_it_out",
+            "a_container_runs_a_call_with_the_hosts_paths_mapped"),
+    "resources": ("an_orphan_is_known_by_an_id_no_spelling_shares",),
+}
+
+
+def pytest_addoption(parser):
+    parser.addoption("--live", action="store_true", help="also run every live test (real containers, ~50 min): CI's job")
+    parser.addoption("--live-group", metavar="NAMES", help=f"only these groups' live tests, comma-separated: {', '.join(LIVE_GROUPS)}")
+
+
 def pytest_configure(config):
+    _NoLiveModel.containers = bool(config.getoption("--live") or config.getoption("--live-group"))
     config.addinivalue_line("markers", "no_model_path: the test drives the path where no model answers "
                                        "(a spawn attempt is expected and fails as a missing CLI does)")
+    config.addinivalue_line("markers", "live: runs real containers (every `test_live_*`, marked here by name, and any "
+                                       "other so marked) — not run unless `--live` or `--live-group` is given")
+
+
+def pytest_collection_modifyitems(config, items):
+    for it in items:
+        if it.name.startswith("test_live_"):
+            it.add_marker(pytest.mark.live)
+    names = (config.getoption("--live-group") or "")
+    if unknown := [n for n in names.split(",") if n and n not in LIVE_GROUPS]:
+        raise pytest.UsageError(f"no live group {', '.join(unknown)}: {', '.join(LIVE_GROUPS)}")
+    if names:
+        files = {f for n in names.split(",") for f in LIVE_GROUPS[n]}
+        gone = [it for it in items if not it.get_closest_marker("live") or it.path.stem.removeprefix("test_") not in files]
+    else:
+        gone = [] if config.getoption("--live") else [it for it in items if it.get_closest_marker("live")]
+    if gone:
+        config.hook.pytest_deselected(items=gone)
+        items[:] = [it for it in items if it not in set(gone)]
+
+
+#: held by the one suite running live tests on this machine, by the OS, so it goes with its process and two starts at once
+#: cannot both take it: two such runs are hours of disk under every stream's work
+LIVE_LOCK = _TMP / "gfso-live-suite.lock"
+_LOCK_BYTE = 2 ** 20        # …away from the pid the file shows: a locked byte reads as an error on Windows
+_held = []
+
+
+def _take_the_live_lock() -> None:
+    f = open(LIVE_LOCK, "a+", encoding="utf-8")
+    f.seek(_LOCK_BYTE)
+    try:
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1) if msvcrt else fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.seek(0)
+        pytest.exit(f"a live suite already runs on this machine: pid {f.read(20).strip() or '?'}", returncode=75)
+    f.seek(0), f.truncate(), f.write(str(os.getpid())), f.flush()
+    _held.append(f)
+
+
+def pytest_sessionstart(session):
+    """`--live` taken by one suite per machine; the run directories of suites that died before their teardown gone (a
+    numbered directory stays three days by its own `.lock`): known by the process each names."""
+    if hasattr(session.config, "workerinput"):
+        return
+    if session.config.getoption("--live") or session.config.getoption("--live-group"):
+        _take_the_live_lock()
+    root = session.config._tmp_path_factory.getbasetemp()
+    (root / OWNER).write_text(str(os.getpid()), encoding="utf-8")
+    for run in root.parent.glob("pytest-*"):
+        if run != root and _dead(run / OWNER):
+            shutil.rmtree(run, ignore_errors=True)
+    for left in _TMP.iterdir():       # …what tests made and left beside it, a day on: no run lasts that long
+        try:
+            old = time.time() - left.stat().st_mtime > 86400
+        except FileNotFoundError:     # a neighbour's running suite removed its own under this walk
+            continue
+        if old and left.name != root.parent.name and left != LIVE_LOCK and not left.name.startswith("gfso-suite-"):
+            shutil.rmtree(left, ignore_errors=True) if left.is_dir() else left.unlink(missing_ok=True)
+
+
+def pytest_terminal_summary(terminalreporter, config):
+    if not (config.getoption("--live") or config.getoption("--live-group")):     # …said under xdist too: its workers collect
+        terminalreporter.write_line("live tests NOT run: they need `--live-group <name>` for what a change is about, or `--live`")
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _the_suites_volumes_go_with_it():
+    """Every project volume a test named (`Volume`) goes at the session's end, with any container still using it —
+    no sweep of the product removes a volume (it holds a project's work), so none would. Set by hand, as below."""
+    made, init, labels, docker = set(), E.Volume.__init__, E.Volume._labels, E.run
+
+    def recorded(self, *a, **k):
+        init(self, *a, **k)
+        made.update((self.name, self.state))
+
+    def faked(v):
+        # …a test that fakes the docker client answers every inspect alike: its volumes are this installation's
+        got = labels(v)
+        return {"gfso.home": E._home()} if got == {} and E.run is not docker else got
+    E.Volume.__init__, E.Volume._labels = recorded, staticmethod(faked)
+    yield
+    E.Volume.__init__, E.Volume._labels = init, staticmethod(labels)
+    there = subprocess.run(["docker", "volume", "ls", "-q"], capture_output=True, text=True).stdout.split() if made else []
+    for v in made & set(there):
+        using = subprocess.run(["docker", "ps", "-aq", "--filter", f"volume={v}"], capture_output=True, text=True)
+        if ids := using.stdout.split():
+            subprocess.run(["docker", "rm", "-f", *ids], capture_output=True)
+        subprocess.run(["docker", "volume", "rm", "-f", v], capture_output=True)
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -115,6 +328,15 @@ def _no_live_model():
     # installed for the life of the PROCESS, never restored: a worker thread a test left behind may spawn
     # after the last teardown, and a restored Popen would hand it the real binary
     subprocess.Popen = _NoLiveModel
+    # …nor a model behind an API: a wire may talk only to a server the test itself stands up on this machine
+    _post = _chat.OpenAIWire._post
+
+    def _local_only(self, body, timeout):
+        if urlparse(self.address).hostname not in ("127.0.0.1", "localhost"):
+            _LIVE_SPAWNS.append(f"[thread {threading.current_thread().name}] {self.address}")
+            raise OSError("a live model API was called inside the test suite")
+        return _post(self, body, timeout)
+    _chat.OpenAIWire._post = _local_only
     yield
 
 

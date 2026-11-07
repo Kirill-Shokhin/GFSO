@@ -6,10 +6,18 @@ MISSING implementation costs — a degraded feature, or a voided guarantee — b
 """
 from __future__ import annotations
 
+import contextlib
+import os
 import queue
+import re
+import subprocess
+import sys
 import threading
 import time
+import uuid
 from abc import ABC, abstractmethod
+from contextlib import contextmanager, suppress
+from pathlib import Path
 from typing import Optional
 
 from .primitives import (
@@ -46,6 +54,24 @@ class StoragePort(ABC):
         holds only the projection of it, which is why a lost write here is recoverable and a lost
         log entry is not."""
         ...
+
+    #: what makes `update_task`'s read and write one step, in a store with concurrent writers
+    _one_write = contextlib.nullcontext()
+
+    @property
+    def one_write(self):
+        """That step's lock, for a writer that reads a node and writes it whole (the log's pump, `mutations.apply`)."""
+        return self._one_write
+
+    def update_task(self, task_id: TaskId, **fields) -> Task:
+        """Write these fields of the node as it stands now, nothing else of it: a verb off the log's pump writes its own
+        field beside a pump that moves the state."""
+        with self._one_write:
+            task = self.get_task(task_id)
+            for name, value in fields.items():
+                setattr(task, name, value)
+            self.save_task(task)
+        return task
 
     @abstractmethod
     def get_all_tasks(self) -> list[Task]:
@@ -94,14 +120,13 @@ class StoragePort(ABC):
 
     @abstractmethod
     def add_dep_edge(self, edge: DepEdge) -> None:
-        """Record a dependency (§2: a Dep is criteria content — the consumer's criterion names the
-        producer). Adding one twice is not an error; the edge set is what matters, not the calls."""
+        """Record a dependency, declared or discovered — a record of its own (§2.7: Dep is a primitive beside T)."""
         ...
 
     @abstractmethod
-    def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
-        """Drop one edge. A no-op when it is not there — removal is idempotent because the callers that
-        reconcile a plan cannot know which edges a previous round already withdrew."""
+    def remove_dep_edge(self, edge: DepEdge) -> None:
+        """Drop one record equal to `edge`: a declared and a discovered record of one pair are two records, and
+        rewriting one must not take the other. A no-op when it is not there."""
         ...
 
     @abstractmethod
@@ -186,9 +211,465 @@ class StoragePort(ABC):
         return []
 
 
+#: the place a stop names where this host refused what it was asked to start (`ExecutionPort.agents_refused`)
+THIS_HOST = "this host"
+#: where a call into a container keeps the image's own PATH while the system's directories come first for the call itself
+WORK_PATH = "GFSO_WORK_PATH"
+#: the head of a shell's text that runs a build or a check: it finds the programs of the image it was declared to run in,
+#: a virtual environment's among them — but those under the home last: the home is the agent's to write, and a pinned
+#: check whose later step runs a program by name found what the delivered code of its earlier step laid there (critic)
+IN_THE_WORKS_PATH = (f'if [ -n "${WORK_PATH}" ]; then o=$IFS IFS=: w= h=; for p in ${WORK_PATH}; do case $p in "$HOME"|"$HOME"/*) '
+                     'h=$h:$p;; *) w=$w:$p;; esac; done; IFS=$o; export PATH="${w#:}$h"; fi; ')
+
+
+class PlaceUnavailable(OSError):
+    """The execution place cannot start anything now (its container daemon does not answer): a state of the
+    environment that stops the whole project, not a call that was cut nor a report that did not parse
+    (`Engine.stop_for_the_place`). An OSError, so a door that already falls back on a place it cannot use does."""
+
+    def __init__(self, place: str, why: str):
+        super().__init__(f"the execution place {place} is unavailable: {why}")
+        self.place, self.why = place, why
+
+
+class FilesPort(ABC):
+    """THE FILES OF A PLACE, read and written where the place is — an execution's (`ExecutionPort.files`): the system
+    touches a node's place, a judge's copy, a scratch round, a temp or its own copies through these alone, since a
+    place may stand nowhere on this host."""
+
+    @abstractmethod
+    def exists(self, path: str) -> bool:
+        """Does anything stand at `path` — a link included, even one to nothing?"""
+        ...
+
+    @abstractmethod
+    def is_dir(self, path: str) -> bool:
+        """Is `path` a directory (through a link)?"""
+        ...
+
+    @abstractmethod
+    def listdir(self, path: str) -> list[str]:
+        """The names in the directory `path`; none where it is no directory."""
+        ...
+
+    @abstractmethod
+    def read_bytes(self, path: str, size: Optional[int] = None) -> Optional[bytes]:
+        """The file's bytes — its first `size` where given — or None where no file stands."""
+        ...
+
+    @abstractmethod
+    def write_bytes(self, path: str, data: bytes) -> None:
+        """`data` as the file `path`, its directories made. A failure raises `OSError`."""
+        ...
+
+    @abstractmethod
+    def mkdir(self, path: str) -> None:
+        """The directory `path`, its parents made; there already is fine."""
+        ...
+
+    @abstractmethod
+    def read_tree(self, path: str) -> Optional[dict]:
+        """{path relative to `path`, posix: bytes} of every regular file under the directory `path` — one walk, a link
+        not followed — or None where it is no directory."""
+        ...
+
+    @abstractmethod
+    def subdirs(self, path: str, depth: int) -> list[str]:
+        """The directories under `path`, `depth` levels down at most, relative and posix — one walk, a link not
+        followed; none where it is no directory."""
+        ...
+
+    @abstractmethod
+    def remove_matching(self, path: str, patterns: list) -> None:
+        """Every entry but a directory under `path` matching one of `patterns` (globs relative to it) removed — a link
+        as a link, none followed on the way; none there is fine."""
+        ...
+
+    def read_text(self, path: str) -> Optional[str]:
+        """The file as UTF-8 text, undecodable bytes replaced, or None where no file stands."""
+        return None if (b := self.read_bytes(path)) is None else b.decode("utf-8", errors="replace")
+
+    def write_files(self, base: str, files: dict) -> None:
+        """{path relative to `base`: bytes} written under `base` — one operation where a call costs one."""
+        for rel, data in files.items():
+            self.write_bytes(str(Path(base) / rel), data)
+
+    def seal_files(self, base: str, files: dict) -> None:
+        """`files` laid under `base` as the system's: what an agent's code run beside them may add to, never change, move
+        or remove — a judge's pinned inputs (`procedure.materialize_inputs`). A host's own files hold no owner apart from
+        the agent's, so here it is `write_files`."""
+        self.write_files(base, files)
+
+    def mkdtemp(self, prefix: str, dir: str) -> str:
+        """A new empty directory of its own under `dir`, named `prefix` and a random tail."""
+        self.mkdir(d := os.path.join(dir, f"{prefix}{uuid.uuid4().hex[:8]}"))
+        return d
+
+    def holds(self, path: str) -> bool:
+        """Is `path` in a place held apart from this host (`files_at`)? This host holds none apart."""
+        return False
+
+    def old_layout(self) -> tuple:
+        """The system directories beside a base this holds, as laid out before each named its project (`unprojected`)
+        — none on this host, where they still stand as they were."""
+        return ()
+
+
+class ExecutionPort(ABC):
+    """WHERE a session or a command runs — this host, or a place isolated from it — as opposed to WHO answers
+    (`LLMProviderPort`) and who pumps the signals (`RunnerPort`). A launch touches the host only through it: the
+    program it finds, the process it starts and ends, the scratch place it lends, the directory the agent CLI keeps
+    its conversations in. One server can then run every project's work isolated without a second server. A launch
+    the place cannot start raises `PlaceUnavailable`."""
+
+    #: its places' files, read and written where they are (`FilesPort`)
+    files: "FilesPort"
+    #: the Python a system script is run with here
+    python = sys.executable
+    #: does each session stand in a place of its own (`session`)? There a judge never works in its executor's place —
+    #: a delivery it could not copy is not judged (§10.3); this host holds no place apart, and a judge without a copy
+    #: works in the place, alone
+    apart = False
+
+    def to_outside(self, text: str) -> str:
+        """`text` with every path spelled as this execution sees it respelled as the host does — a container's mount
+        points; on this host, as it is."""
+        return text
+
+    def door(self, credential, upstream: str) -> Optional[tuple]:
+        """(base URL, key): where a model client started here reaches its provider's `upstream`, through a door that
+        holds `credential` itself, and the key the client presents there in its place — so no agent process holds the
+        credential; None where the client must hold it (this host)."""
+        return None
+
+    #: does a model client started here run its commands apart from itself (`commands_env`)?
+    commands_apart = False
+
+    def commands_env(self) -> dict:
+        """What a model client started here takes into its environment to run each of its commands apart from itself,
+        where none of them reaches the client — that place started; {} where they run beside it (this host)."""
+        return {}
+
+    def commands_of(self, proc) -> Optional[list]:
+        """The record of the commands the client `proc` ran apart (`commands_env`), each as the system ran it — None
+        where none is kept (this host)."""
+        return None
+
+    def command(self, command: str, *, cwd: str, timeout: float, env: Optional[dict] = None):
+        """A model's shell command, run for a provider that runs its own tools: as a client's commands run where they
+        run apart (`commands_env`), recorded the same way; here, through this place's shell."""
+        shell = self.shell()
+        return self.run([shell, "-c", command] if shell else ["cmd", "/c", command], cwd=cwd, timeout=timeout, env=env)
+
+    @property
+    def tool_files(self):
+        """The files a model's file tools reach, where its provider runs them itself."""
+        return self.files
+
+    def commands_ended(self) -> None:
+        """A run of such commands (`command`) over: what they left running ends with it, where the system can end it."""
+
+    def unavailable(self, storage: bool = False) -> Optional[str]:
+        """Why this place cannot start a call now, or None where it can — a cheap health check; with `storage`, its
+        storage asked too (a probe that costs a call: while the place stands stopped). This host always can."""
+        return None
+
+    def agents_refused(self) -> Optional[str]:
+        """Why the work the system dispatches — an executor's session, a model with tools whose commands nobody watches —
+        may not run here, or None where it may: a place isolated from the host holds it."""
+        return None
+
+    @abstractmethod
+    def which(self, program: str) -> Optional[str]:
+        """The program as this execution would start it, or None where it has none."""
+        ...
+
+    @abstractmethod
+    def popen(self, args: list[str], *, env: dict, cwd: str, **pipes):
+        """Start `args` in `cwd` with exactly `env`, with no window and in a group of its own; the process answers
+        `subprocess.Popen`'s stdin/stdout/poll/wait/kill/pid."""
+        ...
+
+    @abstractmethod
+    def end(self, proc) -> None:
+        """End the process AND what it started, however far it got, and stop holding it. Repeating it is harmless."""
+        ...
+
+    @abstractmethod
+    def temp_root(self) -> str:
+        """The directory a temporary file must stand in to be seen where this execution runs — a packet's inputs or
+        lists named to an agent are read there, not here; made and written through `files`."""
+        ...
+
+    @contextmanager
+    def scratch(self, prefix: str, *, system: bool = False, dir: Optional[str] = None):
+        """A context manager lending an empty directory of its own under `dir` — else `temp_root` —, made and removed
+        where this execution runs (`FilesPort.mkdtemp`, `remove_tree`; a removal that fails leaves it). `system`: for
+        the system's own copies and checks — where an isolated place gives its sessions a temp, one none of them reaches
+        but a session handed a directory in it. This host has one temp."""
+        d = self.files.mkdtemp(prefix, dir or self._scratch_root(system))
+        try:
+            yield d
+        finally:
+            with suppress(OSError):
+                self.remove_tree(d)
+            with suppress(OSError):
+                self.remove_tree(d + LAID)              # …and what the system laid beside it (`laid_beside`)
+
+    def _scratch_root(self, system: bool) -> str:
+        """Where `scratch` lends its directories."""
+        return self.temp_root()
+
+    def temp_of(self, place: Optional[str]) -> str:
+        """The temp a session working in `place` holds — where the system lays what it is to read (its inputs, its
+        long lists); an isolated place gives each node one of its own. This host has one temp."""
+        return self.temp_root()
+
+    @abstractmethod
+    def state_dir(self):
+        """Where the agent CLI started here keeps its state — the conversations a session continues live under it —,
+        read and written through `files` alone: an isolated place keeps it on no host file system."""
+        ...
+
+    def state_seen(self) -> str:
+        """`state_dir` as a process started here names it — the CLI reads its hooks' paths there, not the host's."""
+        return str(self.state_dir())
+
+    @abstractmethod
+    def run(self, args: list[str], *, cwd: str, timeout: float, env: Optional[dict] = None):
+        """A command to its end in `cwd`: a `CompletedProcess` with text output; past `timeout` it is ended whole and
+        `TimeoutExpired` reaches the caller."""
+        ...
+
+    @abstractmethod
+    def shell(self) -> Optional[str]:
+        """The shell the plan's probes are written for, as this execution starts it, or None where it has none."""
+        ...
+
+
+    @abstractmethod
+    def copy_tree(self, src: str, dst: str) -> None:
+        """`src` as it stands where this execution runs — every file, symlinks as links, times kept — at `dst`, which
+        does not exist yet. A failure raises `OSError`."""
+        ...
+
+    @abstractmethod
+    def remove_tree(self, path: str) -> None:
+        """`path` gone, whatever it holds — a read-only directory a test made in it included. Gone already is fine."""
+        ...
+
+    def pipe(self, args: list[str], *, cwd: str, into: "ExecutionPort", into_args: list[str], into_cwd: str,
+             timeout: float, env: Optional[dict] = None, into_env: Optional[dict] = None) -> tuple:
+        """`args` run here in `cwd`, what it prints fed as it comes to `into_args` run where `into` runs, in `into_cwd`
+        — one OS pipe between the two processes (`popen`), never read here: what it carries is bounded by the disk it
+        lands on, not by this process's memory. (the first's exit code, its errors, the second's `CompletedProcess`
+        with text out); past `timeout` both are ended and `TimeoutExpired` reaches the caller."""
+        bytes_out = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+        a = self.popen(args, env=env, cwd=cwd, stdin=subprocess.DEVNULL, **bytes_out)
+        try:
+            b = into.popen(into_args, env=into_env, cwd=into_cwd, stdin=a.stdout, **bytes_out)
+        except BaseException:
+            self.end(a)
+            raise
+        a.stdout.close()                   # …the second holds the pipe alone: the first sees it close when it ends
+        got: dict = {}
+        readers = [threading.Thread(target=lambda k, f: got.__setitem__(k, f.read()), args=kf, daemon=True)
+                   for kf in (("err", a.stderr), ("out", b.stdout), ("berr", b.stderr))]
+        for t in readers:
+            t.start()
+        try:
+            b.wait(timeout)
+            a.wait(60)
+        finally:                           # …ended either way: a call left adopted, or running inside past its time
+            self.end(a)
+            into.end(b)
+        for t in readers:
+            t.join(60)
+        text = lambda k: into.to_outside((got.get(k) or b"").decode("utf-8", errors="replace"))
+        return a.returncode, text("err"), subprocess.CompletedProcess(into_args, b.returncode, text("out"), text("berr"))
+
+    @contextlib.contextmanager
+    def system_writes(self, path: str, removing: bool = False):
+        """The system itself writing under `path` — a commit, a carry, a join, a copy, `removing` one —: none of it a
+        node's growth against its disk bound (`execution.DiskLedger`). This host keeps no bound."""
+        yield
+
+    def release(self, path: str) -> None:
+        """The session standing in `path` ended, and whatever its processes left running with it — its files stay: a
+        judge's round outlives its run as the record of what it ran, and nothing of its run may go on writing there.
+        Where it has no session of its own (this host: one place for all), nothing to end."""
+        if (s := self.session(path)) is not self:
+            s.stop()
+
+    def client(self) -> "ExecutionPort":
+        """Where a model client of this session runs, as opposed to what the system runs over its place. This host is
+        one place for both."""
+        return self
+
+    def session(self, cwd: str, agent: Optional[str] = None) -> "ExecutionPort":
+        """Where an agent's session working in `cwd` runs, as opposed to the system's own commands: an isolated place
+        may give each session a boundary of its own, shown as `agent`'s. This host is one place for both."""
+        return self
+
+    def stop(self) -> None:
+        """Release what this execution holds for its project — its goal settled, or the project deleted. The host
+        holds nothing."""
+
+
+class HostFiles(FilesPort):
+    """The files of a place that is this host (`LocalExecution`): plain host calls."""
+
+    def exists(self, path: str) -> bool:
+        return os.path.lexists(path)
+
+    def is_dir(self, path: str) -> bool:
+        return os.path.isdir(path)
+
+    def listdir(self, path: str) -> list[str]:
+        return os.listdir(path) if os.path.isdir(path) else []
+
+    def read_bytes(self, path: str, size: Optional[int] = None) -> Optional[bytes]:
+        if not os.path.isfile(path):
+            return None
+        with open(path, "rb") as f:
+            return f.read(-1 if size is None else size)
+
+    def write_bytes(self, path: str, data: bytes) -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_bytes(data)
+
+    def mkdir(self, path: str) -> None:
+        os.makedirs(path, exist_ok=True)
+
+    def read_tree(self, path: str) -> Optional[dict]:
+        if not os.path.isdir(path):
+            return None
+        return {Path(d, f).relative_to(path).as_posix(): Path(d, f).read_bytes()
+                for d, _, fs in os.walk(path) for f in fs if Path(d, f).is_file() and not Path(d, f).is_symlink()}
+
+    def subdirs(self, path: str, depth: int) -> list[str]:
+        return [Path(d, x).relative_to(path).as_posix() for d, xs, _ in os.walk(path)
+                if len(Path(d).relative_to(path).parts) < depth for x in xs if not os.path.islink(os.path.join(d, x))]
+
+    def remove_matching(self, path: str, patterns: list) -> None:
+        for p in [p for g in patterns for p in Path(path).glob(g) if p.is_symlink() or not p.is_dir()]:
+            p.unlink(missing_ok=True)
+
+
+#: a base's project directories stand beside it, under this prefix and the base's name, each holding its project's
+#: places and every system directory of the project (`ContainerExecution`)
+NODES = ".gfso-nodes-"
+#: what a shell and Docker's `--mount` do not read as a name's own: all but a word's characters and `.+@=-`
+_UNSAFE = re.compile(r"[^\w.+@=-]+")
+
+
+def place_name(base: str) -> str:
+    """A base's name as the system's directories beside it carry it. Those names are the system's, and a shell reads
+    them: a pinned check's `{inputs}` lies under them and is replaced unquoted into its command, so a base `word top`
+    split every such check's argv, and a comma ended a `--mount`'s field. Each unsafe byte as `~xx`: still readable, read
+    back by `base_named` (a node's packet names its base from its place, so a hash would lose it), and so two bases
+    never share one; a name with nothing unsafe stands as it is, so no place of one moves."""
+    return _UNSAFE.sub(lambda m: "".join(f"~{b:02x}" for b in os.fsencode(m[0])), base)
+
+
+def nodes_dir(base: str) -> str:
+    """The name of the directory beside a base (its name `base`) that holds its projects' places."""
+    return NODES + place_name(base)
+
+
+def base_named(nodes: str) -> str:
+    """The base's name a `nodes_dir` was made from; one recorded before `place_name` holds no escape and reads as it is."""
+    return os.fsdecode(re.sub(rb"~([0-9a-f]{2})", lambda m: bytes.fromhex(m[1].decode()),
+                              os.fsencode(nodes.removeprefix(NODES))))
+
+
+#: what names a validation's scratch beside the place it validates (`scratch_of`)
+SCRATCH = ".gfso-scratch-"
+#: what names one batch's directory in its validation's round (`<round>/batch<N>`): a session's writable root of its
+#: own, so a process one batch's validator left behind reaches no other batch's copy of the delivery
+BATCH = "batch"
+#: what names, beside a judge's round or batch (`<root>.laid`), the directory the system lays what that judge reads from
+#: the system's record — a standing finding's files (`engine.findings.lay_files`), a pinned probe's inputs: written by
+#: the system alone, mounted read-only to the judge, so nothing the delivered code it runs does rewrites them
+LAID = ".laid"
+
+
+def laid_beside(at) -> Path:
+    """Where the system lays what a judge working at `at` reads from its record: beside the writable root `at` lies in —
+    one entry of a project's system directory (a validation's or a contact's round, the system's own checks' directory),
+    or a round's batch (`<scratch>/<round>/batch<N>`); off a project's directories, `at` itself — as `<root>.laid`, at
+    `at`'s path under it. Never under the root: a delivered program run there renames a read-only directory away as
+    easily as it writes a file (a scope's nodes stand under their batch, the system's copy under its directory)."""
+    at = Path(at)
+    root = next((a for a in (at, *at.parents) if a.name.startswith(BATCH) and a.parent.parent.name.startswith(SCRATCH)
+                 or a.parent.name.startswith(".") and a.parent.parent.parent.name.startswith(NODES)), at)
+    return Path(str(root) + LAID) / at.relative_to(root)
+#: what keys, in a project's settings, the name of each of its volumes by its role (`places`, `state`): the system's
+#: record that its places moved into them — from there on no place nor round is looked for on this host
+#: …and beside them the base and the image they were made over (`base`, `image`): what an export reads them by
+VOLUME = "volume:"
+#: what keys, in a project's settings, its id — random, made once at the record's first opening (`runtime`) and set on
+#: every volume made for it (`execution.ID`): what no other project carries under any spelling of its name
+PROJECT_ID = "project_id"
+#: what keys a place in the record of the places made, by its path (`workspaces.made`)
+MADE = "place-made:"
+#: a system directory as it stood directly beside a base before each named its project
+
+
+def unprojected(path) -> bool:
+    """Is `path` under a system directory laid out before every one named its project — a scratch, a temp, system
+    copies directly beside a base an execution holds (`FilesPort.old_layout`), not among a project's places? No
+    container mounts one any more: nothing there stands for a check to run. By the holders' bases, never by a name:
+    a directory an agent named `.gfso-tmp-x` in its place was read so, its findings no longer demanded (critic)."""
+    p = os.path.normcase(os.path.abspath(path))
+    return any(p.startswith(os.path.normcase(str(d)) + os.sep) for f in _HOLDERS for d in f.old_layout())
+
+
+#: the files of the places held apart from this host, latest first — the system's own table of where each place is
+_HOLDERS: list = []
+
+
+def hold_places(files: FilesPort, held: bool = True) -> None:
+    """`files` hold their places (`files_at`) from now on — or, `held` False, no longer: their project is gone."""
+    with suppress(ValueError):
+        _HOLDERS.remove(files)
+    if held:
+        _HOLDERS.insert(0, files)
+
+
+def files_at(path) -> FilesPort:
+    """The files that reach `path`: those holding the place it lies in (`FilesPort.holds`), else this host's. For a
+    reader handed a path the system named — a finding's command over a validation round — and no execution in hand: the
+    place is found by the system's table, never by what stands at the path: every system directory names its project,
+    so of two projects on one base only the path's own holds it."""
+    # …save the base itself, which each project on it holds and either reads alike while it is a host directory: the
+    # move into volumes makes it a per-project record
+    return next((f for f in _HOLDERS if f.holds(str(path))), HOST)
+
+
+HOST = HostFiles()
+
+
 class LLMProviderPort(ABC):
     #: may independent calls run at once (`stats.readings`)? A provider says so only where each call stands alone.
     parallel_safe: bool = False
+    #: can it run an AGENT — tools, a place, a conversation (`run_agent`)? A provider of one-shots says no;
+    #: `validate_result` reads it to refuse before a paid call, every other agent door raises at `run_agent`.
+    runs_agents: bool = False
+    #: the work tools the LAST agent run reached for, by name — what a verdict's record and the invariants read of a run;
+    #: a provider that runs agents keeps its own, set per run (this empty default is never written)
+    last_tool_calls: dict = {}
+    #: WHERE its processes and commands run (`ExecutionPort`), or None for a provider that runs none here
+    execution: Optional["ExecutionPort"] = None
+
+    def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...], cwd: Optional[str] = None,
+                  timeout: Optional[int] = None, max_turns: Optional[int] = None,
+                  session: Optional[str] = None) -> str:
+        """One agent run with work tools in `cwd`, continuing `session` where named; its final report."""
+        raise NotImplementedError(f"{type(self).__name__} runs no agents (`runs_agents` is False)")
+
+    def forget(self, session: str) -> None:
+        """Drop a conversation: the work it served is settled. A provider keeping none has nothing to drop."""
 
     @abstractmethod
     def complete(self, prompt: str, context: str = "") -> str:

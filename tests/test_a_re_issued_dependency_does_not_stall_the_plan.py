@@ -170,6 +170,27 @@ def test_the_machine_issuer_promotes_a_producible_blocker_into_a_node():
     e.stop()
 
 
+def test_a_promoted_producer_is_read_under_the_moves_own_name_and_a_refusal_names_its_half():
+    """The schema's "promote: {name, description, criteria}" sat inside `child`'s description; the model wrote the
+    producer under `promote`, and 44 refusals said the child carried no criteria while it carried two
+    (GB_c_compiler_tnl51c552, 2026-10-28)."""
+    e = _plan()
+    for sig in ("ACCEPT", "BLOCK"):
+        T.signal(e, "root.x", sig, "w", reason="the lexer it parses with does not exist")
+    e.wait_idle()
+    lexer = {"name": "lexer", "description": "the lexer x parses with", "criteria": [criterion("l1", "it lexes")]}
+    ok, why = I._promote(e, e.graph.get_task(TaskId("root.x")), "lead", {"promote": lexer}, "x needs a lexer", None)
+    assert ok, why
+    assert e.graph.get_task(TaskId("root.lexer")) is not None
+    root = e.graph.get_task(TaskId("root"))
+    _, why = I._new_child(e, root, {"name": "z", "criteria": [], "covers": ["a"]}, "root.z", {}, frozenset())
+    assert "none were given" in why, why
+    _, why = I._new_child(e, root, {"name": "z", "criteria": [criterion("z1", "Z")], "covers": ["nope"]}, "root.z", {},
+                          frozenset())
+    assert "a, b" in why and "nope is not one of them" in why, why
+    e.stop()
+
+
 def test_a_re_issued_consumer_is_given_a_deadline_after_its_producer(monkeypatch):
     """§2.7 both ways: bounded only by consumers and the parent, a consumer re-issued for 2 h landed before a producer
     re-issued for 48 h (critic over session 475ba784)."""

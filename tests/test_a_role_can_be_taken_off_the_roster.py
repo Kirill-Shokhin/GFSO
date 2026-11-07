@@ -19,7 +19,9 @@ def test_a_role_comes_off_and_the_answer_names_the_live_work_it_leaves():
     e.wait_idle()
     out = TL.TOOLS["unregister_agent"](e, "off-exec")
     assert out.get("unregistered") and out["assigned_live"] == ["root"]
-    assert out["issued_live"] == ["root"], "a root is its own issuer and now waits for a person"
+    # a root handed to a registered executor keeps its creator as the goal's issuer (§10.1): the role leaves work it
+    # executes, none it issues — decided when the root is made, never by whether the dispatcher's round ran first
+    assert out["issued_live"] == [], out
     assert "off-exec" not in TL.TOOLS["list_agents"](e, limit=0)["agents"]
     e.stop()
 

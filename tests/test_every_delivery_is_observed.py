@@ -15,8 +15,10 @@ hand record by a party nobody appointed.
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
 import gfso.tools as T
+from gfso.api.server import create_app
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.engine.verdicts import observations
 from tests.support import criterion, instrument_passes, make_engine, parts_held, REGISTER
@@ -298,4 +300,32 @@ def test_an_instrument_run_recorded_under_the_issuer_s_name_is_still_an_instrume
     _fail(e, "kid")
     with pytest.raises(ValueError, match="Inv-2"):
         instrument_passes(e, TaskId("kid"), validator="agent")
+    e.stop()
+
+
+def test_every_verdict_is_served_with_what_each_criterion_read():
+    """A past FAIL says which criteria passed under it: the node's record holds only the latest verdict, so the history
+    is the observations, each with its per-criterion values and the delivery it answers, served per node."""
+    e = _seam_delivered_kid()
+    _fail(e, "kid")
+    T.record_verdict(e, "kid", "PASS", reviewer="agent",
+                     observed={"k": {"note": "ran check k myself: it printed OK", "ran": ["check k"]}})
+    with TestClient(create_app(e)) as c:
+        got = c.get("/api/tasks/kid/verdicts").json()
+        assert c.get("/api/tasks/nosuch/verdicts").status_code == 404
+    assert [str(o["verdict"]) for o in got] == ["FAIL", "PASS"], got
+    assert got[0]["per_criterion"][0]["verdict"] == "fail" and got[1]["per_criterion"], got
+    assert all("log_at" in o and "iteration" in o for o in got), got
+    e.stop()
+
+
+def test_the_page_reads_many_verdicts_at_once_with_each_nodes_own_answers():
+    e = _seam_delivered_kid()
+    _fail(e, "kid")
+    with TestClient(create_app(e)) as c:
+        many = c.post("/api/verdicts", json=["kid", "nosuch", "root"]).json()
+        for i in ("kid", "root"):
+            assert many[i] == {**c.get(f"/api/tasks/{i}/verdict").json(), "history": c.get(f"/api/tasks/{i}/verdicts").json()}
+        assert many["kid"]["verdict"] and many["kid"]["history"], many
+        assert "nosuch" not in many and c.post("/api/verdicts", json=[]).json() == {}
     e.stop()

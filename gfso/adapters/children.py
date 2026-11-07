@@ -37,6 +37,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 
 from gfso.config import mark_serving, serving, subprocess_env
@@ -137,19 +138,78 @@ def kill_tree(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-def run(args, *, timeout: float, **kw) -> subprocess.CompletedProcess:
+def run(args, *, timeout: float, input=None, **kw) -> subprocess.CompletedProcess:
     """`subprocess.run` for a child of this process: adopted, in a group of its own, without the
     server's mark in its environment, and ended with its whole tree however the call ends — a
-    `TimeoutExpired` still reaches the caller."""
-    kw.setdefault("env", subprocess_env(keep_key=True))
-    kw.setdefault("stdin", subprocess.DEVNULL)       # under `gfso mcp` stdin is the protocol pipe
+    `TimeoutExpired` still reaches the caller. `input` is fed to its stdin."""
+    kw.setdefault("env", subprocess_env())
+    # under `gfso mcp` stdin is the protocol pipe
+    kw.setdefault("stdin", subprocess.DEVNULL if input is None else subprocess.PIPE)
     if os.name == "nt":
         kw.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
-    proc = adopt(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw,
-                                  **spawn_kw()))
+    kw.setdefault("stdout", subprocess.PIPE)
+    kw.setdefault("stderr", subprocess.PIPE)
+    proc = adopt(subprocess.Popen(args, **kw, **spawn_kw()))
     try:
-        out, err = proc.communicate(timeout=timeout)
+        out, err = proc.communicate(input, timeout=timeout)
         return subprocess.CompletedProcess(args, proc.returncode, out, err)
+    finally:
+        kill_tree(proc)
+        release(proc)
+
+
+#: the most of one stream of a program whose output nobody bounded that the server keeps in its memory: half its head,
+#: half its tail. Held whole, a build or a check looping on print added 100 MiB a second to the server (measured),
+#: past every container's limit and the machine's ceiling, which count none of it
+PRINTED_CAP = 64 * 2 ** 20
+#: what stands in a stream in place of what was dropped
+CUT = "bytes printed here, not kept"
+
+
+def _kept(stream, cap: int, into: list) -> None:
+    """`stream` read to its end, its head and tail kept, the rest counted: [head, tail, bytes dropped]."""
+    head, tail, half, cut = bytearray(), bytearray(), cap // 2, 0
+    while chunk := stream.read(2 ** 16):
+        take = chunk[:half - len(head)]
+        head += take
+        tail += chunk[len(take):]
+        if len(tail) > 2 * half:                 # …trimmed by the half, not per chunk: a byte's move per chunk is quadratic
+            cut += len(tail) - half
+            del tail[:len(tail) - half]
+    if len(tail) > half:
+        cut += len(tail) - half
+        del tail[:len(tail) - half]
+    into[:] = [bytes(head), bytes(tail), cut]
+
+
+def _said(kept: list, encoding: str, errors: str) -> str:
+    head, tail, cut = kept
+    return (head.decode(encoding, errors) + (f"\n… [{cut} {CUT}] …\n" if cut else "")
+            + tail.decode(encoding, errors))
+
+
+def run_printing(args, *, timeout: float, encoding: str = "utf-8", errors: str = "replace",
+                 **kw) -> subprocess.CompletedProcess:
+    """`run` of a program that may print without end, as text: each stream kept to `PRINTED_CAP`, what was dropped from
+    its middle said in its place."""
+    kw.setdefault("env", subprocess_env())
+    kw.setdefault("stdin", subprocess.DEVNULL)
+    if os.name == "nt":
+        kw.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    proc = adopt(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw, **spawn_kw()))
+    kept: tuple = ([], [])
+    readers = [threading.Thread(target=_kept, args=(s, PRINTED_CAP, k), daemon=True)
+               for s, k in zip((proc.stdout, proc.stderr), kept)]
+    try:
+        end = time.monotonic() + timeout
+        for r in readers:
+            r.start()
+        for r in readers:
+            r.join(max(0.0, end - time.monotonic()))
+        if any(r.is_alive() for r in readers):
+            raise subprocess.TimeoutExpired(args, timeout)
+        proc.wait(max(0.0, end - time.monotonic()))
+        return subprocess.CompletedProcess(args, proc.returncode, *(_said(k, encoding, errors) for k in kept))
     finally:
         kill_tree(proc)
         release(proc)
@@ -179,13 +239,32 @@ def _kill_group(pgid: int) -> None:
             log.warning(f"process group {pgid} could not be ended ({e})")
 
 
+#: what else ends with this process — children it holds that `reap` cannot reach (a container's calls)
+_AT_EXIT: list = []
+
+
+def at_exit(fn) -> None:
+    """End `fn`'s children with this process too, however it exits."""
+    _AT_EXIT.append(fn)
+
+
+def _end_all(closing: bool = False) -> None:
+    global _CLOSING
+    with _LOCK:                      # …what is left to do here runs children of its own: past the reap each died at its spawn, and
+        _CLOSING = False             # on Linux no container was removed nor any last reading made (critic, ran)
+    for fn in list(_AT_EXIT):
+        with contextlib.suppress(Exception):     # one holder failing to end its own never keeps the rest alive
+            fn()
+    reap(closing)
+
+
 def end_this_process(code: int = 0) -> None:
     """Exit NOW, children first. `os._exit` skips interpreter exit (and so `atexit`), which is the
     point — nothing waits on a worker thread — and is why the reap is done here, not left to it."""
-    reap(closing=True)
+    _end_all(closing=True)
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(code)
 
 
-atexit.register(reap)
+atexit.register(_end_all)

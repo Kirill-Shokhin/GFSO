@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import ctypes
+import getpass
 import json
 import logging
 import os
@@ -14,10 +15,18 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from importlib.resources import files
 
 from gfso.adapters.children import bind_this_process, end_this_process, open_outside
+from gfso.adapters import resources
+from gfso.adapters.execution import component, end_leftovers, export_places, file_record_path, watch_ceiling, watch_disk
+from gfso.adapters.netrecord import record_path, said_apart
+from gfso.adapters.records import hold_the_home
+from gfso.adapters.storage.sqlite import settings_of
+from gfso.adapters.llm import credentials, registry
+from gfso.adapters.llm.conformance import assess, report
 from gfso import __version__, serverctl
-from gfso.config import LOOPBACK, install_mcp_env, install_serve_env
+from gfso.config import LOOPBACK, admit_host, db_path, install_mcp_env, install_serve_env, mark_the_server
 from gfso import serverctl
 from gfso.doctor import claude_cli, doctor, setup
 from gfso.examples import DEMOS, NEEDS_MODEL
@@ -183,6 +192,8 @@ def build_parser() -> argparse.ArgumentParser:
                                   "where state lives, who holds the port, whether the Claude Code "
                                   "CLI answers. Paste its output into a bug report.")
 
+    _add_provider_parser(sub)
+
     demo = sub.add_parser("demo", help="Run a shipped example (no name lists them). `human_only` "
                                        "shows the gate refusing a self-signed PASS, with no AI.")
     demo.add_argument("name", nargs="?", default=None)
@@ -190,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_status_parser(sub)
     _add_projects_parser(sub)
 
-    logp = sub.add_parser("log", help="The observation field in the terminal — same persisted lines "
+    logp = sub.add_parser("log", help="The log in the terminal — same persisted lines "
                                       "the UI panel shows (per project)")
     logp.add_argument("--project", default=None,
                       help="project name (default: the active one); `project=<name>` also accepted, "
@@ -200,6 +211,35 @@ def build_parser() -> argparse.ArgumentParser:
 
     return parser
 
+
+
+def _add_provider_parser(sub) -> None:
+    """`gfso provider-check` — the conformance battery on one provider (`adapters/llm/conformance.py`)."""
+    provp = sub.add_parser("provider-check", help="Whether a model provider can run on gfso and in which roles: a "
+                                                  "battery of small real calls (a completion, a structured answer, "
+                                                  "a tool round trip in a place of its own). `--list` names the "
+                                                  "providers a model spec may start with.")
+    provp.add_argument("spec", nargs="?", default=None, help="a model spec, e.g. ollama/qwen3:32b or deepseek/deepseek-chat")
+    provp.add_argument("--list", action="store_true")
+    credp = sub.add_parser("credential", help="Set a model provider's credential in its one place — read from stdin, never "
+                                              "an argument, never printed back. No provider: what is set, by kind.")
+    credp.add_argument("provider", nargs="?", default=None, help="claude, deepseek, openai, … (`provider-check --list`)")
+    credp.add_argument("--kind", choices=("token", "api"), default=None,
+                       help="token = a subscription's (`claude setup-token`); api = an API key. Default: what it takes")
+    credp.add_argument("--name", default=None, help="which of the provider's credentials (default: its kind) — a "
+                                                    "provider holds several, e.g. two accounts' tokens and keys")
+    credp.add_argument("--use", metavar="NAME", default=None, help="move the pointer: every new call runs on NAME, "
+                                                                   "calls in flight finish on theirs")
+    credp.add_argument("--order", metavar="A,B,…", default=None, help="the order the pointer moves in when a limit "
+                                                                      "refuses the one in force")
+    credp.add_argument("--remove", action="store_true", help="remove NAME (`--name`), else every credential of it")
+    netp = sub.add_parser("network", help="Where the record lies of what a project's sessions reached by network, under every switch.")
+    netp.add_argument("project")
+    expp = sub.add_parser("export-places", help="Write a project's places — kept in its execution's volume, on no host "
+                                                "directory — under DIR/<project>, each node's clone readable without "
+                                                "the base or the volume")
+    expp.add_argument("project")
+    expp.add_argument("dir")
 
 def _dispatch(args) -> None:
     if args.command == "serve":
@@ -252,6 +292,68 @@ def _dispatch(args) -> None:
         sys.exit(doctor())
     elif args.command == "demo":
         sys.exit(_demo(args.name))
+    elif args.command == "provider-check":
+        sys.exit(_provider_check(args))
+    elif args.command == "credential":
+        sys.exit(_credential(args))
+    elif args.command == "export-places":
+        sys.exit(_export_places(args))
+    elif args.command == "network":
+        print(record_path(args.project))
+        print(*said_apart(args.project), sep="\n")
+        print(f"what changed in its sessions' directories: {file_record_path(args.project)}")
+
+
+def _export_places(args) -> int:
+    """`gfso export-places PROJECT DIR`: the project's places out of the volume its own record names; non-zero where
+    it has none or nothing was exported."""
+    if (record := settings_of(str(db_path(args.project)))) is None:
+        print(f"{args.project}: no project of the name in {data_dir()}", file=sys.stderr)
+        return 1
+    try:
+        for n in export_places(args.project, record, args.dir):
+            print(f"{args.project}: {n}", file=sys.stderr)
+    except (OSError, LookupError, ValueError) as e:
+        print(f"{args.project}: {e}", file=sys.stderr)
+        return 1
+    print(f"{args.project}: its places are under {os.path.join(args.dir, component(args.project))}")
+    return 0
+
+
+def _provider_check(args) -> int:
+    """`gfso provider-check SPEC`: the conformance battery on one provider; non-zero when it can hold no role."""
+    if args.list or not args.spec:
+        for n in registry.names():
+            p = registry.preset(n)
+            print(f"{n:12} {p.base_url if p else ('Claude Code CLI' if n == 'claude' else 'plugin')}"
+                  + (f"  key: gfso credential {n}" if p and p.keyed else "") + (f"  ({p.note})" if p and p.note else ""))
+        return 0
+    # the report case under the executor's own system prompt, as a real executor reads it
+    found = assess(registry.provider_for(args.spec),
+                   files("gfso.mcp").joinpath("prompts", "executor.md").read_text(encoding="utf-8"))
+    print(report(args.spec, found))
+    return 0 if found["roles"] else 1
+
+
+def _credential(args) -> int:
+    """`gfso credential PROVIDER` — the door every provider's credential is set by (`registry.set_credential`)."""
+    if not args.provider:
+        print(json.dumps(credentials.listing()))
+        return 0
+    try:
+        if args.use or args.order:
+            print(json.dumps(credentials.use(args.provider, args.use) if args.use
+                             else credentials.order(args.provider, [n.strip() for n in args.order.split(",") if n.strip()])))
+            return 0
+        kind = args.kind or (registry.takes(args.provider) or ("api",))[0]
+        value = None if args.remove else (getpass.getpass(f"{args.provider} {kind}: ") if sys.stdin.isatty()
+                                          else sys.stdin.read()).strip()
+        if value == "":
+            sys.exit("gfso: no credential on stdin")
+        print(json.dumps(registry.set_credential(args.provider, kind, value, args.name)))
+    except ValueError as ex:                   # no such provider, or a kind it does not take
+        sys.exit(f"gfso: {ex}")
+    return 0
 
 
 def _demo(name: str | None) -> int:
@@ -382,8 +484,20 @@ def _mcp(args):
 
 def _serve(args):
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(message)s")
+    # …a second `serve` typed by hand ended every project's work before it failed to bind (critic, read), and wrote a gap
+    if serverctl.port_open(LOOPBACK if args.host in ("0.0.0.0", "::") else args.host, args.port):
+        sys.exit(f"gfso serve: {args.host}:{args.port} is already served, and its work goes on: `gfso down` first.")
+    # …and on another port it ended this home's containers all the same (`end_leftovers`): one server to a home
+    if not hold_the_home(data_dir()):
+        sys.exit(f"gfso serve: a server of {data_dir()} is running, and its work goes on: `gfso down` first.")
     # The server's descendants — executors, validators, their probes — die with it, however it ends.
     bind_this_process()
+    end_leftovers()              # …and the project containers of the server that stood here before
+    watch_ceiling()              # …and who pays when every installation's containers together reach the ceiling
+    watch_disk()                 # …and who pays when Docker's disk fills
+    resources.watch()            # …and what it holds in Docker read on its own schedule, so a page gets it at once
+    # …and its projects that stood stay stopped until their Start; a reload worker inherits it, a stdio MCP process not
+    mark_the_server()
 
     # Store config in env for reload mode
     # Whatever raises the server — `gfso up`, a session's connect.py, or this command typed by hand
@@ -398,6 +512,7 @@ def _serve(args):
         on_declaration_error=lambda ex: print(
             f"gfso: could not read the declared server config ({ex})"))
 
+    admit_host(args.host)            # the page this opens is served under that name
     if not args.no_browser:
         threading.Timer(1.5, lambda: open_outside(f"http://{args.host}:{args.port}")).start()
 

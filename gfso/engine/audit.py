@@ -37,6 +37,13 @@ class AuditEntry:
     revision_reason: Optional[str] = None
     # …AND THE RULING AN ACCEPT_CHALLENGE MAKES: the findings it retires, on the row of the act that retires them
     retire_findings: tuple[str, ...] = ()
+    # …AND WHAT A DELIVER HANDED OVER, by identity: re-handing the same files is no new attempt at the work
+    artifact: Optional[str] = None
+    commit: Optional[str] = None                   # …and the commit that carried it
+    build: Optional[str] = None                    # …and how it is built: what its judge runs before any check
+    # …AND WHO DECIDED, where that is not the signer: the system made this issuer move, whoever it signed as (§10.1; a
+    # verdict's signature is an issuer move, §10.2). A row written before this column says nothing, and reads False.
+    by_system: bool = False
 
 
 class AuditLog:
@@ -106,7 +113,8 @@ class AuditLog:
             "justification": e.justification, "result": e.result,
             "failed_criteria": list(e.failed_criteria), "action": e.action,
             "in_flight": e.in_flight, "spec": e.spec, "revision_reason": e.revision_reason,
-            "retire_findings": list(e.retire_findings),
+            "retire_findings": list(e.retire_findings), "artifact": e.artifact, "commit": e.commit,
+            "build": e.build, "by_system": e.by_system,
         }
 
     @staticmethod
@@ -122,7 +130,8 @@ class AuditLog:
             reason=r.get("reason"), justification=r.get("justification"), result=r.get("result"),
             failed_criteria=tuple(r.get("failed_criteria") or ()), action=r.get("action"),
             in_flight=r.get("in_flight"), spec=r.get("spec"), revision_reason=r.get("revision_reason"),
-            retire_findings=tuple(r.get("retire_findings") or ()),
+            retire_findings=tuple(r.get("retire_findings") or ()), artifact=r.get("artifact"),
+            commit=r.get("commit"), build=r.get("build"), by_system=bool(r.get("by_system")),
         )
 
 
@@ -132,16 +141,21 @@ class AuditLog:
 VERSION_INSTALLING = frozenset({Signal.ASSIGN, Signal.ACCEPT_CHALLENGE})
 
 
-def _on_current_version(entries: list[AuditEntry], signal: Signal) -> bool:
-    """Is `signal` logged (accepted) after the latest version-installing event? Oldest first."""
+def on_current_version(entries: list[AuditEntry]) -> list[AuditEntry]:
+    """The accepted entries logged after the latest version-installing event, oldest first — the version that stands."""
+    tail: list[AuditEntry] = []
     for e in reversed(entries):
         if e.rejected:
             continue
-        if e.signal == signal:
-            return True
         if e.signal in VERSION_INSTALLING:
-            return False
-    return False
+            break
+        tail.append(e)
+    return tail[::-1]
+
+
+def _on_current_version(entries: list[AuditEntry], signal: Signal) -> bool:
+    """Is `signal` logged (accepted) after the latest version-installing event? Oldest first."""
+    return any(e.signal == signal for e in on_current_version(entries))
 
 
 def consented_on_current_version(entries: list[AuditEntry]) -> bool:
@@ -155,6 +169,20 @@ def failed_on_current_version(entries: list[AuditEntry]) -> bool:
     whatever the state is called? A rejected challenge or a resolved block returns a reworking node
     to EXECUTING, and the refusal it is working against has not gone anywhere."""
     return _on_current_version(entries, Signal.FAIL)
+
+
+def rejected_on_current_version(entries: list[AuditEntry]) -> list[tuple[str, str]]:
+    """[(the challenge's reason, the issuer's justification)] for every CHALLENGE its issuer REJECTED on the packet
+    version that stands, oldest first. A rejection answers its question and leaves the contract as written (§11.3,
+    §12.4); the one who asked must be able to read the answer, or he asks again."""
+    out, asked = [], None
+    for e in on_current_version(entries):
+        if e.signal == Signal.CHALLENGE:
+            asked = e.reason
+        elif e.signal == Signal.REJECT_CHALLENGE:
+            out.append((asked or "", e.justification or ""))
+            asked = None
+    return out
 
 
 def resolved_on_current_version(entries: list[AuditEntry]) -> bool:

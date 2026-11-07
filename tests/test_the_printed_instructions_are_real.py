@@ -49,7 +49,7 @@ def test_every_gfso_command_the_docs_print_exists(doc):
     typed = re.findall(r"`([^`\n]+)`", body) + re.findall(r"```bash\n(.*?)```", body, re.S)
     typed = [c.split("#", 1)[0] for line in typed for c in line.splitlines()]  # drop comments
     named = {m.group(1) for chunk in typed
-             for m in re.finditer(r"\bgfso ([a-z]+)", chunk)} - {"run"}
+             for m in re.finditer(r"\bgfso ([a-z][a-z-]*[a-z])", chunk)} - {"run"}   # …`provider-check` one
     real = _subcommands()
     missing = sorted(n for n in named if n not in real)
     assert not missing, f"{doc.name} tells the reader to run commands that do not exist: {missing}"

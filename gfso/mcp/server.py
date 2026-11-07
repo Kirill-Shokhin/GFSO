@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
+import json
 import typing
 import weakref
 from pathlib import Path
@@ -119,6 +120,8 @@ _PINNED_ACTOR = {"signal": ("source",), "revise": ("agent",),
                  "record_verdict": ("reviewer",),
                  # the mode is the user's choice, relayed by their agent — recorded under who set it
                  "set_mode": ("agent",),
+                 # who stopped a project, and who filed a report, are recorded under the agent's own name
+                 "stop_project": ("by",), "start_project": ("by",), "tech_report": ("actor",),
                  # reopen re-earns a TERMINAL node under R′ (§12.14) — as load-bearing an act as any
                  # signal, and it was the one whose actor the caller still chose freely, so it
                  # landed in the audit log attributed to whatever name the model wrote.
@@ -133,6 +136,8 @@ _PINNED_ACTOR = {"signal": ("source",), "revise": ("agent",),
 # offered only if the model happened to remember one; here it rides back with the act itself.
 from gfso import tools as _T
 from gfso.serverctl import UI_LINK_VERBS as _UI_LINK_VERBS, ui_link as _ui_link   # ONE list, both doors
+from gfso.workspaces import LANDED
+from gfso.adapters.netrecord import said_apart
 from gfso.config import HEARTBEAT_SECONDS as _HEARTBEAT
 
 
@@ -152,21 +157,70 @@ def _brief(listing: dict, active: str, keep: int = 12) -> dict:
     return {"active": active, "projects_recent": recent, "projects_total": len(names)}
 
 
-def _with_ui_link(name: str, out, project=None, ctx=None):
+#: What a verb's listing declares for an answer that holds a plan's whole text (`tools_llm.PLAN_TEXT_MAX`, escaped as
+#: JSON): Claude Code saves a longer result than 50,000 characters to a file, unless the tool declares its own, up to
+#: 500,000 (docs: code.claude.com/docs/en/mcp, "Raise the limit for a specific tool") — and a plan past 47,000 was read
+#: from outside the person's folder, four prompts (M3, M4, 2026-11-05).
+ANSWER_ROOM = {verb: {"anthropic/maxResultSizeChars": 100_000} for verb in ("plan", "refine_plan")}
+
+
+def _link_for_them(link: str) -> str:
+    """The link said so it is written: told to write it, a client wrote it after the go, bare, or as "at the link in the
+    panel", believing the person sees what a tool answers (five clients, 2026-11-05). The author: «в обязательном порядке
+    ссылку … чтобы пользователь просто тыкнул в чате»."""
+    return f"The person does not see this tool's answer: type this link in your own text now: {link} — "
+
+
+def _with_ui_link(name: str, out, project=None, engine=None):
     """Attach the local UI address to an entry verb's result (dict results only — `project` returns
     markdown and keeps its shape). Best-effort: a link is a convenience, never a reason to fail a
-    call. The UI is tab-per-project (`?project=`), so the link points at the graph just acted on."""
-    if name not in _UI_LINK_VERBS or not isinstance(out, dict) or "ui" in out:
+    call. The UI is tab-per-project (`?project=`), so the link points at the graph just acted on.
+    The go and the end also say what the person is told: left to the instructions read at the start, a fresh client
+    told them neither (run B, 2026-11-04). What is said stands first: last in a long answer, it went unsaid."""
+    if not isinstance(out, dict):
         return out
+    _link_and_say(name, out, project, engine)
+    return {"say": out.pop("say"), **out} if "say" in out else out
+
+
+def _link_and_say(name: str, out: dict, project, engine) -> None:
+    """What the person is told, only where it is so: the end by where the result landed (a part's `complete`, a run with
+    no container, a base with no git say otherwise or nothing), the go only where it built work no one holds."""
+    # …a session that hid where it went was read only by whoever ran `gfso network` (critic): at the end it is told, a link
+    # that cannot be made or not
+    if engine is not None and (name == "stop_project" or (name == "next_steps" and out.get("complete"))) and (said := said_apart(engine.project_name)):
+        out["the_records_say"] = said
+        out["say"] = "Tell them what the system's own records say of this run: `the_records_say`."
     try:
-        _k = _session_key(ctx)
-        name_ = project or out.get("active") or (_SESSION_PROJECTS.get(_k) if _k is not None else None)
-        out["ui"] = _ui_link(name_)
-    # the docstring's contract: a link is a convenience, and the verb's result is already correct
-    # without it
+        link = _ui_link(project or out.get("active"))
+    # the docstring's contract: a link is a convenience, and the verb's result is already correct without it
     except Exception:
-        pass
-    return out
+        return
+    landed = engine.graph.setting(LANDED) if engine is not None and name == "next_steps" and out.get("complete") else None
+    if landed:
+        where = json.loads(landed)
+        out["say"] = ("Write to the person now: the root's verdict (`get_verdict(\"root\")`), " + (
+            f"the branch `{where['branch']}` with their own untouched, {link}, and the one command that shows the result "
+            "(`git worktree add`: a checkout refuses over uncommitted files); a next task starts from their HEAD: merge "
+            "first to build on this." if where.get("branch") else f"where the result lies, `{where.get('path')}`, and {link}."))
+        if "the_records_say" in out:
+            out["say"] += " Tell them too what the system's own records say of this run: `the_records_say`."
+        if said_of := [str(t.id) for t in engine.all_tasks()
+                       if engine.checks_no_longer_run(t.id) or engine.findings_not_reproduced(t.id)]:
+            more = f" and {len(said_of) - 5} more" if len(said_of) > 5 else ""
+            out["say"] += (f" And what its PASS did not re-run: `get_verdict` of {', '.join(said_of[:5])}{more}, its "
+                           "`checks_no_longer_run` and `findings_not_reproduced`.")
+    if name not in _UI_LINK_VERBS or "ui" in out:
+        return
+    out["ui"] = link
+    if name == "use_project" and not out.get("mode"):
+        out["say"] = (f"{_link_for_them(link)}it shows the work; the scheme is `auto`, every "
+                      "role on claude-haiku-5-5, the most tested and cheap, say if another suits; only what is committed "
+                      f"enters; their branch is not touched and the result comes as branch "
+                      f"`gfso/{out.get('active') or '<project>'}/accepted`.")
+    if name == "auto_decompose" and out.get("root_id") and not out.get("error") and engine is not None             and (engine.mode() or {}).get("mode") == "auto":
+        out["say"] = (f"{_link_for_them(link)}it runs unattended, they can watch there, "
+                      "you report the end. Then loop `next_steps(wait=600)`.")
 
 
 def _bind(engine_or_registry, fn):
@@ -238,7 +292,7 @@ def _bind(engine_or_registry, fn):
             return {"error": str(e)}
         call = functools.partial(fn, engine, *args, **kwargs)
         out = await (_with_progress(ctx, f"[{fn.__name__}]", call) if long else anyio.to_thread.run_sync(call))
-        return _with_ui_link(fn.__name__, out, project, ctx)
+        return _with_ui_link(fn.__name__, out, project or engine.project_name, engine)
 
     wrapper.__signature__ = sig.replace(
         parameters=params, return_annotation=hints.get("return", sig.return_annotation))
@@ -422,7 +476,8 @@ def create_server(engine_or_registry):
     # Bound from `T.TOOLS[...]`, not the module functions — the registry entries are the ones wrapped to announce
     # themselves in INFLIGHT; bound to the bare functions, `/api/runtime` reported `busy: []` through a decomposition.
     for name, fn in T.TOOLS.items():
-        server.add_tool(_bind(engine_or_registry, fn), name=name, description=(fn.__doc__ or "").strip())
+        server.add_tool(_bind(engine_or_registry, fn), name=name, description=(fn.__doc__ or "").strip(),
+                        meta=ANSWER_ROOM.get(name))
     if hasattr(engine_or_registry, "use"):    # ProjectRegistry → the project verbs
         _mount_project_verbs(server, engine_or_registry)
     return server

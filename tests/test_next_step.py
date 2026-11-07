@@ -5,10 +5,12 @@ from gfso.engine import Engine
 from gfso.adapters.llm.stub import StubLLM
 import json
 
-from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, Signal,
+from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, DepEdge, Signal,
                              SignalData, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS)
 from tests.support import REGISTER_SPLIT, criterion, make_engine, pinned, REGISTER
 from gfso import tools as T
+from gfso.core.types import Mode
+from tests.test_the_mode_decides_who_holds_what import _RISK, _engine
 
 
 def _sp(d, *c):
@@ -83,10 +85,11 @@ def test_next_step_respects_dependency_order():
     e.start()
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
-    b_spec = Spec("b", (Criteria("y", "y", check=pinned("y")), Criteria("dep__a", "needs a's output", depends_on=TaskId("a"))))
+    b_spec = Spec("b", (Criteria("y", "y", check=pinned("y")),))
     e.decompose_task(TaskId("root"),
                      [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("b"), b_spec, A)],
-                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))], register=REGISTER_SPLIT); e.wait_idle()
+                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b"))], register=REGISTER_SPLIT,
+                     deps={"b": (DepEdge(TaskId("a"), TaskId("b"), glue="needs a's output"),)}); e.wait_idle()
     for cid in ("a", "b"):  # both EXECUTING leaves now
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId(cid), source=A)); e.wait_idle()
 
@@ -131,12 +134,13 @@ def test_next_steps_parallel_frontier():
     e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rb", "b"), ("rc", "c")), A); e.wait_idle()
     e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
     # a and b are independent leaves; c consumes a's output (dep-gated until a PASSES)
-    c_spec = Spec("c", (Criteria("z", "z", check=pinned("z")), Criteria("dep__a", "needs a", depends_on=TaskId("a"))))
+    c_spec = Spec("c", (Criteria("z", "z", check=pinned("z")),))
     e.decompose_task(TaskId("root"),
                      [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("b"), _sp("b", ("y", "y")), A),
                       (TaskId("c"), c_spec, A)],
                      [CriterionMapping("ra", TaskId("a")), CriterionMapping("rb", TaskId("b")),
-                      CriterionMapping("rc", TaskId("c"))], register=REGISTER_SPLIT); e.wait_idle()
+                      CriterionMapping("rc", TaskId("c"))], register=REGISTER_SPLIT,
+                     deps={"c": (DepEdge(TaskId("a"), TaskId("c"), glue="needs a"),)}); e.wait_idle()
     for cid in ("a", "b", "c"):
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId(cid), source=A)); e.wait_idle()
 
@@ -259,9 +263,23 @@ def test_a_step_names_who_would_sign_it():
 
     step = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
     assert step["signed_by"] == "worker", "taking and doing the work is the executor's signature"
+    assert step["role"] == "executor"
 
     T.signal(e, "kid", "ACCEPT", "worker")
     T.signal(e, "kid", "DELIVER", "worker", result="did it")
     val = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")
     assert val["action"] == "validate" and val["signed_by"] == "boss", "the verdict is the issuer's"
+    assert val["role"] == "issuer"            # the role, not only the name: one party may hold both
+    e.stop()
+
+
+def test_a_split_owed_is_the_executors_step_in_every_field():
+    """A leaf owing its split is its executor's act (§11.5); the step's `role` read it as the issuer's while its
+    `performed_by` said the executor, and the page trusts `role` (critic over 70452b2)."""
+    e = _engine(Mode.SEMI)
+    T.TOOLS["create_task"](e, "root", {"description": "the goal", "accepted_risks": _RISK,
+                                       "criteria": [criterion("g", "G holds")]})
+    e.wait_idle()
+    step = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "root")
+    assert step["role"] == "executor" and step["signed_by"] == step["performed_by"] == str(step["assignee"]), step
     e.stop()

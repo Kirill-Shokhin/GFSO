@@ -29,6 +29,12 @@ HARD RULES (a violation makes the output worthless):
   a parent criterion describes ("X is accepted rather than rejected") covers nothing — it narrows the
   criterion where no check sees it (§9.2: the register holds events, never a criterion's exemption), so
   judge that criterion as if the entry were absent.
+- A criterion is what its PINNED CHECKS decide. Where the parent criterion carries pinned checks, ask whether the
+  mapped children's criteria — their pinned checks included — guarantee that the PARENT'S PINNED CHECKS pass on the
+  integrated result. Where the parent's wording generalises a behaviour its pinned checks DO probe ("every …" or
+  "any …" over finitely many probes of that behaviour), further instances of it are the criterion's own residue,
+  read when the delivered work is validated — not a gap of this split: do not name them. A behaviour the parent's
+  wording names that NO pinned check probes is not residue: judge it as before.
 - Implementation sub-detail finer than the decomposition's granularity is NOT a gap.
 - Do not grade style, completeness of enumeration, or process — only causal entailment of what is
   declared. Every parent criterion gets exactly one entry.

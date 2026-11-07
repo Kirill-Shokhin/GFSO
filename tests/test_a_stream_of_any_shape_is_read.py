@@ -9,7 +9,8 @@ import copy
 import builtins
 import json
 
-from gfso.adapters.llm.headless import HeadlessClaudeLLM
+from gfso.adapters.execution import LocalExecution
+from gfso.adapters.llm.headless import ClaudeCodeProvider
 
 _SAMPLES = [
     {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"},
@@ -50,8 +51,9 @@ class _Proc:
 
 
 def _read(events):
-    llm = HeadlessClaudeLLM.__new__(HeadlessClaudeLLM)
+    llm = ClaudeCodeProvider.__new__(ClaudeCodeProvider)
     llm.on_tick, llm.stage_hint, llm._tick_every, llm.last_tool_calls = None, "", 2.0, {}
+    llm._exec = LocalExecution()
     lines = [json.dumps(e) + "\n" for e in events]
     return llm._read_stream(_Proc(lines), 0.0, float("inf"))
 
@@ -107,8 +109,8 @@ def test_an_agent_run_loads_only_the_tools_it_may_use(tmp_path):
     """The approval list approves; `--tools` is what loads. Without it every validator call re-read the
     schemas of all built-in tools (58% of its cached input, 2026-09-27) and held Write and Edit."""
     seen = {}
-    llm = HeadlessClaudeLLM.__new__(HeadlessClaudeLLM)
-    llm._call = lambda system, user, tools_args=None, cwd=None, timeout=None: seen.update(args=tools_args) or ""
+    llm = ClaudeCodeProvider.__new__(ClaudeCodeProvider)
+    llm._call = lambda system, user, tools_args=None, cwd=None, timeout=None, session=None: seen.update(args=tools_args) or ""
     llm.run_agent("s", "u", ("Read", "Bash(git *)", "Glob", "Bash"), cwd=str(tmp_path))
     a = seen["args"]
     assert a[a.index("--tools") + 1] == "Read,Bash,Glob"

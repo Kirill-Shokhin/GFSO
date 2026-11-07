@@ -163,6 +163,9 @@ class Stage(StrEnum):
     AUDIT_FOLD_REFINE = "audit-fold-refine"
     DECOMPOSER = "decomposer"
     EXECUTOR = "executor"
+    # an executor reading a contract to consent to it or not: its session, not execution — booked apart since
+    # 2026-10-25, when "executed by x37" counted consents as work (earlier rows say `executor`)
+    CONSENT = "consent"
     # …named for what it does, like `Action.CHECK_PLAN`: the identifier may not carry a word
     # v4 retired (the naming guard catches it), while the VALUE is the byte string already
     # in every database and measurement script and must not move.
@@ -175,6 +178,8 @@ class Stage(StrEnum):
     # which made the authoring pass unmeasurable: it was justified as the most expensive open item
     # and its cost was indistinguishable in the ledger from the gate's own check.
     AUTHORING_OBLIGATIONS = "authoring-obligations"
+    # Whether a criterion the system just wrote says what its own checks deny — asked before the build.
+    AUTHORING_AGREE = "authoring-agree"
     VALIDATE_RESULT = "validate_result"
     VALIDATOR = "validator"
     # The ISSUER answering a dispute (§12.4's two exits of CHALLENGED). Its own line in the ledger

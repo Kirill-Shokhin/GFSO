@@ -17,14 +17,11 @@ from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fe
 
 
 def _refusable_report() -> str:
-    # A verdict contradicting its own evidence: PASS while a criterion is red. The engine refuses to
+    # A PASS that leaves a criterion unspoken (V = AND over ALL criteria, §2). The engine refuses to
     # record it — which is the condition under test, not the defect under test.
     return _fenced({"verdict": "PASS",
                     "per_criterion": [
                         {"criterion": "flush", "verdict": "pass", "evidence": "flush ok",
-                         "behaviours": ["the criterion holds"],
-                         "probe": [{"command": "pytest -q", "expect": "passed"}]},
-                        {"criterion": "holds", "verdict": "fail", "evidence": "fell off",
                          "behaviours": ["the criterion holds"],
                          "probe": [{"command": "pytest -q", "expect": "passed"}]}],
                     "failed_criteria": []})
@@ -42,7 +39,7 @@ def test_a_refused_report_is_written_beside_the_state(tmp_path, monkeypatch):
     # Both halves must survive: WHY it was refused, and WHAT was said — the defect line alone is a
     # summary of the evidence, not the evidence.
     assert "refused as a verdict" in body and out["verdict_defects"][:40] in body
-    assert "fell off" in body
+    assert "flush ok" in body
     e.stop()
 
 

@@ -43,6 +43,21 @@ def _drive_is_local(letter: str) -> bool:
         return True
 
 
+def names_a_device(p) -> bool:
+    """Does this text name a device of Windows' object namespace rather than a drive's file? Behind such a prefix any
+    name can be the network's redirector (`Mup`, `GLOBALROOT`, a stream of aliases): walked, a model's path opened a
+    connection from the host in 21 s, where `abspath` shows nothing remote (critic, live). No list of names ends that;
+    no place is spelled this way, so only the drive's form passes. Text alone, no filesystem call."""
+    if os.name != "nt":
+        return False
+    bs = chr(92)
+    t = as_path_text(p).replace("/", bs)
+    head, rest = t[:4], t[4:]
+    if head == bs + "??" + bs:
+        return bool(rest)
+    return head in (bs * 2 + "?" + bs, bs * 2 + "." + bs) and bool(rest) and rest[1:2] != ":"
+
+
 def cheap_to_ask(p) -> bool:
     """Can this path be asked about without blocking the caller?
 
@@ -65,16 +80,18 @@ def cheap_to_ask(p) -> bool:
     stall, not a wrong verdict, and no cheaper question exists that would see it.
 
     NETWORK, NOT "STARTS WITH TWO SLASHES". Classifying by that prefix alone was wrong in BOTH
-    directions, measured. The extended-length and device forms are LOCAL and answer in 0.0 ms, and
-    excluding them turned the whole guard off for them - the defect this exists to close, reachable
-    free of charge through a prefix; of the extended forms only the UNC one is remote (7.3 s). In
-    the other direction, the common way a share is used carries no prefix at all: a MAPPED DRIVE
-    LETTER goes through the same redirector for the same seconds, and the local mapping table says
-    so without a packet leaving the machine.
+    directions, measured. The extended-length form of a drive is LOCAL and answers in 0.0 ms, and
+    excluding it turned the whole guard off for it - the defect this exists to close, reachable
+    free of charge through a prefix; every other name behind a prefix may be remote and is not asked
+    (`names_a_device`). In the other direction, the common way a share is used carries no prefix at
+    all: a MAPPED DRIVE LETTER goes through the same redirector for the same seconds, and the local
+    mapping table says so without a packet leaving the machine.
     """
     p = as_path_text(p)
     if not p:
         return True
+    if names_a_device(p):
+        return False
     bs = chr(92)
     # THE LOCATION, NOT THE SPELLING. Read off the path as typed, this classified `work` and
     # `\work` as local without asking anything — and both resolve against the process's CURRENT
@@ -84,12 +101,10 @@ def cheap_to_ask(p) -> bool:
     drive = os.path.splitdrive(os.path.abspath(p))[0].replace("/", bs).lower()
     if drive.startswith(bs * 2):
         if drive.startswith(bs * 2 + "?" + bs) or drive.startswith(bs * 2 + "." + bs):
-            inner = drive[4:]                           # `c:` · `unc\srv\sh` · `z:` · `pipe`
-            if inner == "unc" or inner.startswith("unc" + bs):
-                return False                            # the one remote extended form
+            inner = drive[4:]                           # `c:` · `z:` · nothing: the rest is `names_a_device`
             if len(inner) >= 2 and inner[1] == ":":
                 return _drive_is_local(inner[:2])       # a drive letter behind the prefix
-            return True                                 # a device, or extended-length local
+            return True                                 # the prefix alone
         if drive == bs * 2:
             return True                                 # two separators alone name no host
         return False                                    # a plain UNC share

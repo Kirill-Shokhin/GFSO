@@ -2,8 +2,8 @@
 
 Lived: a criterion arrived carrying `depends_on: ["root.parser", "root.regex"]`, was stored
 verbatim, and surfaced later as a dependency edge whose `from` was a list — which crashed the cycle
-check with `unhashable type: 'list'` and killed a run four hours in. A seam is criteria-content
-(§2): two producers are two criteria, not one criterion naming two.
+check with `unhashable type: 'list'` and killed a run four hours in. A Dep edge has one
+producer (§2.7): two producers are two edges, not one entry naming two.
 """
 import pytest
 
@@ -15,7 +15,7 @@ def test_two_producers_in_one_criterion_are_refused_with_a_usable_message():
         _spec_from({"description": "d", "criteria": [
             {"name": "dep__both", "description": "g", "depends_on": ["root.parser", "root.regex"]}]})
     msg = str(e.value)
-    assert "root.parser" in msg and "one `depends_on` criterion for each producer" in msg
+    assert "root.parser" in msg and "ONE producer" in msg and "declare one per producer" in msg
 
 
 def test_one_producer_is_the_normal_case():

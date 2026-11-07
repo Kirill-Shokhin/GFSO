@@ -9,25 +9,26 @@ from typing import Optional
 
 from gfso.config import agent_id as _config_agent_id
 from gfso.config import validate_internal as _validate_internal
-from gfso.config import default_deadline_s
 from gfso.engine.verdicts import criterion_version, observations, refuted_versions
-from gfso.engine.findings import ruling_defect
+from gfso.engine.findings import regression, ruling_defect, standing_rulings
 
 
-from gfso.core.types import (Mode, Signal, SignalData, State, CriticVerdict, DoneReason, TaskId,
+from gfso.core.types import (Mode, Probe, Signal, SignalData, State, CriticVerdict, DoneReason, TaskId,
                              TERMINAL_STATES, Verdict, passed, settled_positive)
 from gfso.core.protocol.fsm import available_signals, not_admissible_here
 from gfso.core.protocol.validation import Role, required_role
 from gfso.core.protocol.invariants import (validate_fail_has_criteria,
                                            fail_names_this_contract)
 from gfso.core.handlers.structural import run_structural
-from gfso.core.protocol.procedure import criteria_without_procedure, part_criteria
+from gfso.core.protocol.procedure import (criteria_without_procedure, findings_a_ruling_could_lift, part_criteria, pins_ruled_out,
+                                          probe_id, runs_pin, same_probe, without_pins)
 from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
-from gfso.core.graph.mutations import version_deadline
+from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import (admission_key, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
-                                   recorded_by_an_appointed_observer)
+from gfso.core.graph.model import (PAUSE_KEY, USERS_PLAN_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+                                   recorded_by_an_appointed_observer, logged_criteria, parent_waits)
+from gfso.engine.audit import VERSION_INSTALLING
 
 
 class ValidationError(Exception):
@@ -74,10 +75,13 @@ def hole_kind(check_name: str) -> str:
             "flag" if check_name.startswith("CHECK-3") else "advisory")
 
 
-def l2_gate_on() -> bool:
+def l2_gate_on(graph: "Graph | None" = None) -> bool:
     """Is the Level-2 execution gate active? `GFSO_L2_GATE=0` opts out — the canon's EXPLORE branch
     (§9.9): the plan's causal verification is bought with contact instead of with c_check. Off is
-    also the honest setting where no checker instrument exists at all (a pure-human graph)."""
+    also the honest setting where no checker instrument exists at all (a pure-human graph). A project's own choice
+    (`set_mode(l2_gate=)`) holds for it whatever the server's switch says: rows of one server differ in it."""
+    if graph is not None and (v := graph.setting("l2_gate")) is not None:
+        return v == "1"
     return os.environ.get("GFSO_L2_GATE", "1") not in ("", "0")
 
 
@@ -141,7 +145,7 @@ def execution_admitted(graph: Graph, node) -> bool:
     """
     if node is None:
         return False
-    return not l2_gate_on() or _l2_undischarged(graph, node) == []
+    return not l2_gate_on(graph) or _l2_undischarged(graph, node) == []
 
 
 def _fail_extension_shrank(old_desc: str, new_desc: str) -> bool:
@@ -163,8 +167,16 @@ def _fail_extension_shrank(old_desc: str, new_desc: str) -> bool:
     return n_val > o_val if o_op in ("<", "<=") else n_val < o_val
 
 
+def version_of(task) -> tuple:
+    """The packet version that stands on a node: (reopens, revisions) — what a re-ASSIGN, REOPEN or accepted
+    challenge advances (Inv-1); `iteration` counts rounds inside a version, not versions."""
+    return (task.reopens, task.revisions) if task is not None else (0, 0)
+
+
 def session_fit(graph: Graph, task_id) -> Optional[dict]:
-    """The decomposer's recorded count and judgement for a node (`Engine.record_session_fit`), or None."""
+    """The decomposer's recorded count and judgement for a node (`Engine.record_session_fit`), or None. Only his: a
+    count of equal FAILs is no measure of κ (§3.7), so a `refuted` key an earlier engine stored beside it reads as
+    nothing."""
     raw = graph._storage.get_setting(f"session_fit:{task_id}")
     try:
         return json.loads(raw) if raw else None
@@ -199,16 +211,37 @@ def within_a_scope(graph: Graph, task) -> bool:
     return parent is not None and fits_one_session(graph, parent.id)
 
 
-def scope_top(graph: Graph, task):
+def scope_top(graph: Graph, task, edges: "list | None" = None):
     """The top of the one-session scope `task` lies in — the highest node above it, through nodes of the same
-    Del, whose whole subtree one session of that executor carries — or None where `task` is in no such scope
-    of more than one node. Within κ — what one executor session realizes and checks (§3.7) — the executor
-    absorbs the structure and presents one result (§10.3); a Del change is a seam and ends the walk."""
-    t = task
-    while ((p := graph.get_parent(t.id)) is not None and str(p.assignee) == str(t.assignee)
+    Del, whose whole subtree one session of that executor carries and no declared Dep leaves and re-enters — or None
+    where `task` is in no such scope of more than one node. Within κ — what one executor session realizes and checks
+    (§3.7) — the executor absorbs the structure and presents one result (§10.3); a Del change is a seam and ends the
+    walk. A session starts whole, so over a subtree a Dep leaves and re-enters (a member feeding a producer another
+    member waits on) it would wait on itself: its nodes start as their own. `edges`: E_Dep, when asked of many."""
+    up = [task]
+    while ((p := graph.get_parent(up[-1].id)) is not None and str(p.assignee) == str(up[-1].assignee)
            and fits_one_session(graph, p.id)):
-        t = p
-    return t if graph.get_active_children(t.id) and fits_one_session(graph, t.id) else None
+        up.append(p)
+    return next((t for t in reversed(up) if graph.get_active_children(t.id) and fits_one_session(graph, t.id)
+                 and _closed_under_dep(graph, t, graph.dep_edges(adopted=True) if edges is None else edges)), None)
+
+
+def _closed_under_dep(graph: Graph, top, edges: list) -> bool:
+    """Does no Dep path out of `top`'s subtree come back into it?"""
+    inside = {str(m.id) for m in scope_members(graph, top)}
+    below: dict = {}
+    for e in edges:
+        below.setdefault(str(e.from_id), set()).add(str(e.to_id))
+    todo = [y for x in inside for y in below.get(x, ()) if y not in inside]
+    seen = set(todo)
+    while todo:
+        for z in below.get(todo.pop(), ()):
+            if z in inside:
+                return False
+            if z not in seen:
+                seen.add(z)
+                todo.append(z)
+    return True
 
 
 def scope_members(graph: Graph, top) -> list:
@@ -224,9 +257,13 @@ def footing(graph: Graph, task) -> list:
                if (p := graph.get_task(TaskId(e.from_id))) is not None])
 
 
-def parts_procedure(graph: Graph, task) -> dict:
+def parts_procedure(graph: Graph, task, audit) -> dict:
     """{criterion of the whole: the pinned procedure of each part mapped to it (`part_criteria`)} — what a
     validation of `task` runs over its delivered result besides its own procedure (`procedure.unrun_parts`).
+
+    Less a pinned check the system's issuer ruled out under that criterion (`_ruled_out`): a part's pin true only while
+    its siblings were stubs is false on the finished whole, and retiring the finding alone left the system running the
+    pin and failing every criterion mapped to the part (GB_coreutils_tnyzqh948, 17 of 21).
 
     Only the parts already DONE: a part still in VALIDATING is validated in the same run as its whole — a scope's
     one validation lays parts and whole over one artifact — and runs its procedure there under its own name; one
@@ -236,20 +273,87 @@ def parts_procedure(graph: Graph, task) -> dict:
     then — and so, as a DONE part's procedure, its own DONE parts' too: a part's procedure here is the whole of what
     its validation ran (`settled_procedure`), so a rewrite at any depth below is read on this delivery (critic r1,
     2026-10-04: root → mid → leaf, a rewritten leaf closed the root DONE when only mid's probes were demanded)."""
+    raw = _parts_as_settled(graph, task, audit)
+    return without_pins(raw, _ruled_out(graph, audit, task, raw))
+
+
+def _parts_as_settled(graph: Graph, task, audit) -> dict:
     done = {str(c.id): c for c in graph.get_active_children(task.id) if settled_positive(c)}
     out: dict = {}
     for name in dict.fromkeys(m.criterion_name for m in task.criterion_mappings):
         kids = dict.fromkeys(str(m.child_id) for m in task.criterion_mappings
                              if m.criterion_name == name and str(m.child_id) in done)
-        if crits := tuple(c for k in kids for c in part_criteria(k, settled_procedure(graph, done[k]))):
+        if crits := tuple(c for k in kids for c in part_criteria(k, settled_procedure(graph, done[k], audit))):
             out[name] = crits
     return out
 
 
-def settled_procedure(graph: Graph, task) -> tuple:
+def _system_may_lift(graph: Graph) -> bool:
+    """A plan the system wrote and runs: a person's self-signed ruling keeps the part's check (a holder's plan is his to
+    re-cut: lifted, a SOLO root closed DONE over a check its parent would have reworked on, critic over 9c51566), and a
+    plan handed in is closed (`issuer.settle` stops the run)."""
+    return mode_kind(graph) == Mode.AUTO and not users_plan(graph)
+
+
+def _pins_then(graph: Graph, audit, task, ts: str) -> set:
+    """What each pinned check below `task` was when the log stood at `ts` (`same_probe`, read off its append-only versions):
+    a ruling lifts that check, and another corpus or expectation pinned since is another check, demanded again."""
+    out: set = set()
+    for t in graph.subtree(task.id):
+        versions = [e for e in audit.get_entries(t.id) if e.signal in VERSION_INSTALLING and not e.rejected and e.spec
+                    and e.timestamp.isoformat() <= ts]
+        for c in logged_criteria(versions[-1].spec) if versions else ():
+            out |= {same_probe(Probe.of(p)) for p in c.get("check") or ()}
+    return out
+
+
+def _ruled_out(graph: Graph, audit, task, raw: dict) -> dict:
+    """{criterion: the ids of the parts' checks the system's rulings in force took off it} (`procedure.pins_ruled_out`)."""
+    if not raw or not _system_may_lift(graph):
+        return {}
+    rulings = [{**r, "then": _pins_then(graph, audit, task, r["ts"])}
+               for r in standing_rulings(graph._storage, audit.get_entries(task.id), task.id) if r["by_system"]]
+    return pins_ruled_out(raw, rulings, task.spec.criteria)
+
+
+def checks_no_longer_run(graph: Graph, audit, task) -> list[dict]:
+    """Each part's check a ruling took off a criterion, at `task` or anywhere below it: what its PASS, and every PASS over
+    it, no longer ran (Thm 11) — {node, criterion, check, command, expect, inputs, decided_by, at, why}."""
+    out = []
+    for t in graph.subtree(task.id):
+        entries = audit.get_entries(t.id)
+        if not any(e.retire_findings for e in entries):
+            continue
+        raw = _parts_as_settled(graph, t, audit)
+        rulings = standing_rulings(graph._storage, entries, t.id)
+        for name, ids in _ruled_out(graph, audit, t, raw).items():
+            for c in raw[name]:
+                for p in c.check or ():
+                    if (i := probe_id(c.name, p)) in ids:
+                        by = next((r for r in rulings if r["by_system"] and runs_pin(r, i, p)), {})
+                        out.append({"node": str(t.id), "criterion": name, "check": i, "command": p.command,
+                                    "expect": p.expect, "inputs": sorted(k for k, _ in p.inputs), "finding": by.get("id"),
+                                    "decided_by": "system", "at": by.get("at"), "why": by.get("why"),
+                                    "says": f"this part's check no longer runs under the criterion {name!r} of {t.id}"})
+    return out
+
+
+def settled_procedure(graph: Graph, task, audit) -> tuple:
     """Every criterion whose pinned probes a validation of `task` runs over its delivery: its own, then its DONE
     parts' (`parts_procedure`) — what a whole above it demands again of it."""
-    return tuple(task.spec.criteria) + tuple(c for cs in parts_procedure(graph, task).values() for c in cs)
+    return tuple(task.spec.criteria) + tuple(c for cs in parts_procedure(graph, task, audit).values() for c in cs)
+
+
+def plans_own_findings(graph: Graph, audit, task) -> list[str]:
+    """The findings standing on `task` that only say a settled part's pinned check does not hold: a check of the plan the
+    system wrote, which contact may refute and its issuer may rule on, even at an AUTO root (the author, 2026-11-04: «он
+    может быть сильным но не идеальным»). Only a check of a part THEIR criterion rests on, none the task's own criteria
+    pin too, and never the criterion's last check: those speak for the goal (`procedure.findings_a_ruling_could_lift`).
+    None under a plan the user handed in."""
+    if task is None or not _system_may_lift(graph):
+        return []
+    return findings_a_ruling_could_lift(regression(graph._storage, audit.get_entries(task.id), task),
+                                        parts_procedure(graph, task, audit), task.spec.criteria)
 
 
 def record_stands(graph: Graph, audit, task, rec: Optional[dict]) -> bool:
@@ -303,7 +407,7 @@ def split_owed(graph: Graph, task) -> Optional[dict]:
             or project_mode(graph) is None):
         return None
     return {"kind": "split_owed", "fails": [],
-            "why": (f"its plan's author judged it larger than one session of its executor"
+            "why": ("its plan's author judged it larger than one session of its executor"
                     + (f" ({fit.get('volume')})" if fit.get("volume") else "")
                     + " — a node above κ, one executor session (§3.7), is not a leaf (§3.7), and its split is owed "
                       "(§11.5, deferred decomposition): its parts are what get delivered and validated"),
@@ -419,6 +523,16 @@ def _split_the_fail_refutes(graph: Graph, task, covered_then, audit, fail_at: in
     return split, {k for _, k in covered_then or () if k not in active and -1 < audit.last_at(TaskId(k)) < fail_at}
 
 
+def _failed_criteria(rec: dict, audit, task_id, fail_at: int, was: dict, now: dict) -> list:
+    """The names a FAIL record lists that are criteria now or were of the version in force at the FAIL (off the log) —
+    a name that version did not hold was dropped by nobody: an older engine's FAIL could name a Dep edge's declaration,
+    kept among the criteria then (`logged_criteria`)."""
+    read = next((e.spec for e in reversed(audit.get_entries()[:fail_at + 1]) if e.task_id == task_id
+                 and e.signal in VERSION_INSTALLING and not e.rejected and e.spec), None)
+    then = {c.get("name") for c in logged_criteria(read)} if read else set(was) or set(now)
+    return [n for n in rec.get("failed_criteria") or () if n in now or n in then]
+
+
 def _refuted_coverage_refusal(graph: Graph, task, rec: dict, audit) -> Optional[str]:
     """The disposition of a re-delivery under a contact-refuted decomposition — the FM-1 branch.
 
@@ -456,7 +570,7 @@ def _refuted_coverage_refusal(graph: Graph, task, rec: dict, audit) -> Optional[
     read_here = rec.get("parts_not_shown_holding") or {}
     dropped, loosened, edited, unrepaired = [], [], [], []
     split, left = _split_the_fail_refutes(graph, task, covered_then, audit, fail_at)
-    for crit in rec.get("failed_criteria") or ():
+    for crit in _failed_criteria(rec, audit, task.id, fail_at, was, now):
         coverers = [m.child_id for m in split.criterion_mappings if m.criterion_name == crit]
         if crit not in now:
             dropped.append(crit)
@@ -505,7 +619,7 @@ def _refuted_coverage_refusal(graph: Graph, task, rec: dict, audit) -> Optional[
         return (f"cannot re-DELIVER {task.id}: the refuted criteria were LOOSENED to what the current "
                 f"result already delivers ({', '.join(loosened)}) — the bound moved, the work did not. "
                 f"That is a false close in the shape of a repair (§1.3 fail-extension). " + revision)
-    if edited and l2_gate_on():
+    if edited and l2_gate_on(graph):
         if (holes := _l0_holes(graph, task)):
             return (f"cannot re-DELIVER {task.id}: its criteria were revised after contact refuted "
                     f"them ({', '.join(edited)}), and the revised plan does not pass Level 0 — "
@@ -563,6 +677,21 @@ def whole_waits_for_its_parts(graph: Graph, task) -> bool:
     return task is not None and str(graph.issuer_of(task.id)) == str(task.assignee)
 
 
+def parts_outside_the_delivery(graph: Graph, audit, task) -> set[str]:
+    """The active parts a machine's PASS would close this whole without: open, or — under a mode, where such a PASS is
+    the system's own — settled after its DELIVER by the log's order, for what the PASS accepts is the commit DELIVER
+    recorded (§11.3), which holds no such part (Thm 1). A scope's top delivers with its parts, whose signatures follow
+    in its one validation: they stand in that commit."""
+    kids = graph.get_active_children(task.id)
+    outside = {str(k.id) for k in kids if not settled_positive(k)}
+    if mode_kind(graph) is None or audit is None:
+        return outside
+    delivered = audit.last_at(task.id, signal=Signal.DELIVER)
+    late = {str(k.id) for k in kids if audit.last_at(k.id, new_state=State.DONE) > delivered}
+    top = scope_top(graph, task) if late else None
+    return outside if top is not None and top.id == task.id else outside | late
+
+
 def _pass_rules(signal_data: SignalData, graph: Graph, audit) -> None:
     """PASS: Theorem 1 over the children, and the seam's independent verdict.
 
@@ -599,6 +728,14 @@ def _pass_rules(signal_data: SignalData, graph: Graph, audit) -> None:
                 f"cannot PASS {signal_data.task_id}: not all children have PASSed "
                 f"(V=AND of children): {unaccepted}"
             )
+        # …AND A MACHINE'S SIGNATURE, HERE IN THE LOG'S ONE STEP: a part's ASSIGN is serialized before this and is read,
+        # or after it and meets the issuing condition (§12.7). Under AUTO every signature is the system's. Not a refusal
+        # the canon's sender cannot lift (§12.16 (ii)): the system is the sender, and it presents the delivery again.
+        if (not _waits and (mode_kind(graph) == Mode.AUTO or str(signal_data.source or "") in graph.authorized_validators)
+                and (_outside := parts_outside_the_delivery(graph, audit, _t0))):
+            raise ValidationError(
+                f"cannot PASS {signal_data.task_id}: a machine signs no whole over an active part its delivery does not "
+                f"hold (Thm 1, §11.3): {', '.join(sorted(_outside))}")
         # …AND THE AND MUST STILL BE ABOUT THIS GOAL. Thm 1 (§7.3) makes a parent's PASS the
         # conjunction over its children, and that conjunction only establishes the PARENT because
         # the children jointly cover its criteria — which is what L0 checks. The L0 gate fired in
@@ -844,7 +981,7 @@ def _accept_rules(signal_data: SignalData, graph: Graph) -> None:
             # the decomposer's moves, so the refusal binds a child his own executor takes (an internal node). A child
             # under another executor is not refused for its issuer's missing review — the system holds its own spawn
             # there (`Engine.execution_blocked_by`, read by the dispatcher), and a person taking it explores (§9.9).
-            if (l2_gate_on() and str(signal_data.source) == str(parent.assignee)
+            if (l2_gate_on(graph) and str(signal_data.source) == str(parent.assignee)
                     and not (checked_by_contact(graph, graph.get_task(signal_data.task_id))
                              and not _l0_holes(graph, parent))):   # L2 only: the Syntactic level always runs (§9.9)
                 gaps = _l2_undischarged(graph, parent)
@@ -876,7 +1013,8 @@ def _accept_rules(signal_data: SignalData, graph: Graph) -> None:
                            f"again — a reply that could not be read may not recur. If every run comes back "
                            f"like this, give the server a checker "
                            f"(the Claude CLI on PATH, signed in), or take the canon's EXPLORE branch "
-                           f"with `GFSO_L2_GATE=0`, where the plan's verification is bought with "
+                           f"(`set_mode(..., l2_gate=False)` for this project, or `GFSO_L2_GATE=0` for the "
+                           f"server), where the plan's verification is bought with "
                            f"contact instead (§9.9) — a deployment decision, not a skipped step"
                            if _ran_and_said_nothing else ""))
                 if gaps:
@@ -905,12 +1043,28 @@ def is_auto_root(graph: Graph, task) -> bool:
     return task is not None and task.parent_id is None and mode_kind(graph) == Mode.AUTO
 
 
+def users_plan(graph: Graph) -> bool:
+    """Is this project's plan the user's — handed in whole (`auto_decompose` with `spec`) and run under AUTO? Then it is
+    theirs as the root's criteria are: the system does not re-split it, nor rewrite any of its nodes' criteria — a weak
+    model re-splitting a given plan turned the "plan given" condition into its own plan (2, 9 and 16 nodes added on the
+    sql × haiku 4.5 rows of Amendment 2; none on coreutils), and an accepted dispute re-pinned a part's expected output
+    to what the build printed (GB_sql_database_tne9fg736, 09:30)."""
+    return mode_kind(graph) == Mode.AUTO and bool(graph._storage.get_setting(USERS_PLAN_KEY))
+
+
+def users_criteria(graph: Graph, task) -> bool:
+    """Are this node's criteria the user's, so that the system moving for them may only ADD to them — an AUTO root's
+    goal, and every node of a plan the user handed in (`users_plan`)? The one predicate every door that rewrites a
+    contract on the system's side reads."""
+    return is_auto_root(graph, task) or (task is not None and users_plan(graph))
+
+
 def ruling_refusal(signal_data: SignalData, graph: Graph, audit=None) -> Optional[str]:
     """Why the ruling this signal carries (`retire_findings`) is refused, or None — the signal refused whole, so the
     node stays CHALLENGED with both truthful answers open: ACCEPT_CHALLENGE without a ruling, or REJECT_CHALLENGE
     (Inv-8). A ruling rides an ACCEPT_CHALLENGE only, and names findings standing on the node that the CHALLENGE named
     by id (`findings.ruling_defect`). Who may make it is not this gate's to tell: at an AUTO root the user and the
-    system both sign as the root's issuer, and only the system is barred — it makes no move on such a dispute
+    system both sign as the root's issuer, and only the system is barred — it answers such a dispute without a ruling
     (`Engine.users_dispute`), while the user's own ruling there is his to make."""
     sd = signal_data
     if not sd.retire_findings:
@@ -1050,6 +1204,13 @@ def project_mode(graph: Graph) -> Optional[dict]:
     return json.loads(raw) if raw else None
 
 
+def pause_record(graph: Graph) -> Optional[dict]:
+    """The project's stop as set — {by, at, why} — or None while it runs: the one reading the dispatcher and the
+    clock share (`Engine.pause`)."""
+    raw = graph._storage.get_setting(PAUSE_KEY)
+    return json.loads(raw) if raw else None
+
+
 def mode_kind(graph: Graph) -> Optional[Mode]:
     """The project's mode, typed — None with no mode set. A rule branching on the mode reads this, never the stored
     string (ortho audit, D-F9: raw `"semi"` / `"auto"` compares in eight places)."""
@@ -1061,8 +1222,8 @@ def party_kind(graph: Graph, party: str, registered=None) -> str:
     """WHO makes a party's issuer moves — the one owner of a question four places answered four ways (D-F9):
     `holder` — the user's standing agent under SOLO/SEMI, whose moves the system never makes;
     `machine` — the standing agent under AUTO (the customer, who does not intervene), or a registered participant;
-    `legacy` — the standing agent with no mode set: as before modes, the system answers its disputes and resolves its
-    mechanical blocks, the instrument signs, and its plan moves stay its own;
+    `legacy` — the standing agent with no mode set: as before modes, the system answers its disputes at a seam (one its
+    own node raises is its own, §10.3) and resolves its mechanical blocks, the instrument signs, and its plan moves stay its own;
     `person` — anyone else, unregistered: the system is passive.
     The standing agent is read first: a role registered under the user's own id does not make it a machine.
     `registered` is the registry consulted (the dispatcher's own; the engine's published roster by default)."""
@@ -1221,9 +1382,9 @@ def no_live_deadline(graph: Graph, task, parent_id=None) -> Optional[str]:
     one, or its parent leaves no time inside its own for a default. With the default switched off
     (`GFSO_DEFAULT_DEADLINE_S=0`) a packet without one is the installation's choice; only a spent kept one is refused."""
     dl, _ = version_deadline(graph, None, task, parent_id)
-    if dl is not None and dl > datetime.now() or dl is None and not default_deadline_s():
+    if dl is not None and dl > project_now(graph) or dl is None and not project_deadline_s(graph):
         return None
-    return ((f"it would keep {dl:%Y-%m-%d %H:%M}, already passed" if dl is not None else
+    return ((f"it would keep {on_the_wall(graph, dl):%Y-%m-%d %H:%M}, already passed" if dl is not None else
              "its parent leaves no time inside its own for a default")
             + " — a task is given out with a live deadline, and under a parent whose deadline has passed the issuer "
               "types one (§2.5, §12.16); give one")
@@ -1247,14 +1408,16 @@ def issuing_condition(parent, task_id) -> Optional[str]:
     return None
 
 
-def dep_cycle_closed(graph: Graph, task_id, criteria) -> Optional[str]:
-    """Why a contract for `task_id` with these criteria would close a Dep cycle, or None. Of the guards a revision
-    re-runs only CHECK-2's Dep clause refuses (§12.10): the node's declared edges are its criteria's `depends_on`, the rest
-    of E_Dep stands. One owner — the signal gate (every ASSIGN and ACCEPT_CHALLENGE) and `add_dependency` read it; a
-    revision closing a cycle used to be admitted wherever it did not come through `add_dependency` (sync audit, A-F4)."""
+def dep_cycle_closed(graph: Graph, task_id, producers) -> Optional[str]:
+    """Why `task_id` reading these `producers` along Dep would close a cycle, or None. Of the guards a revision
+    re-runs only CHECK-2's Dep clause refuses (§12.10): E_Dep stands, and the edges a version's criteria reference, or a
+    declaration names, are added. One owner — the signal gate (every ASSIGN and ACCEPT_CHALLENGE) and `add_dependency`
+    read it; a revision closing a cycle used to be admitted wherever it did not come through `add_dependency` (sync
+    audit, A-F4)."""
     tid = str(task_id)
-    rest = [(str(e.from_id), str(e.to_id)) for e in graph.dep_edges(adopted=True) if e.discovered or str(e.to_id) != tid]
-    new = [(str(c.depends_on), tid) for c in criteria if c.depends_on is not None]
+    # …with a parent's wait on its parts: a Dep on one's own ancestor, or through it, is a wait no order ends
+    rest = [(str(e.from_id), str(e.to_id)) for e in graph.dep_edges(adopted=True) + parent_waits(graph)]
+    new = [(str(p), tid) for p in producers]
     if not new:
         return None
     # THIS contract closes a cycle iff one of its producers is reached from the node itself — asked of the node, not of
@@ -1309,9 +1472,9 @@ def packet_refusal(signal_data: SignalData, graph: Graph, state) -> Optional[str
     §12.14), and no Dep cycle closed by its criteria (§12.10)."""
     if signal_data.signal not in (Signal.ASSIGN, Signal.ACCEPT_CHALLENGE):
         return None
-    if signal_data.deadline is not None and signal_data.deadline <= datetime.now():
+    if signal_data.deadline is not None and signal_data.deadline <= project_now(graph):
         return (f"{signal_data.signal.name} on {signal_data.task_id} carries a deadline already passed "
-                f"({signal_data.deadline:%Y-%m-%d %H:%M}) — a task is given out with a live deadline, one still ahead "
+                f"({on_the_wall(graph, signal_data.deadline):%Y-%m-%d %H:%M}) — a task is given out with a live deadline, one still ahead "
                 f"(§2.5); give one that is")
     if why := refuse_a_version_with_no_live_deadline(signal_data, graph):
         return why
@@ -1324,7 +1487,7 @@ def packet_refusal(signal_data: SignalData, graph: Graph, state) -> Optional[str
             return why
     # the dispute's answer installs `new_spec` exactly as ASSIGN installs `spec` (§12.16)
     packet = signal_data.spec or signal_data.new_spec
-    return dep_cycle_closed(graph, signal_data.task_id, packet.criteria) if packet else None
+    return dep_cycle_closed(graph, signal_data.task_id, producers_of(packet)) if packet else None
 
 
 def signer_refusal(graph: Graph, task_id, signal: Signal, source) -> Optional[str]:

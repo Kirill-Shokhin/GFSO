@@ -293,7 +293,7 @@ def _drive_done(e, tid, assignee="exec-1"):
     T.record_verdict(e, tid, "PASS", reviewer="agent",
                      observed={c.name: {"note": f"ran {tid} and read its output",
                                         "ran": [p.command for p in (c.check or ())]}
-                               for c in t.spec.criteria if not c.depends_on})
+                               for c in t.spec.criteria})
     T.signal(e, tid, "PASS", "agent")
 
 
@@ -305,14 +305,7 @@ def test_accept_spawn_gated_on_dependency_producers(tmp_path):
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     _goal(e, "par", "agent")
     _children(e, "prod", "cons")
-    T.add_dependency(e, "prod", "cons")                       # cons consumes prod's delivery
-    # …and the glue criterion that desugars from gets its procedure. A criterion now carries the
-    # decision procedure that decides it (A1/§2), and `add_dependency` synthesizes `dep__prod`
-    # with none, so without this the consumer is held back by its OWN contract and the dependency
-    # gate — what this test is about — would never be the thing under test.
-    T.edit_criteria(e, "cons", [criterion("c", "C"),
-                                criterion("dep__prod", "reads prod's output", depends_on="prod")],
-                    agent="agent")
+    T.add_dependency(e, "prod", "cons")                       # cons consumes prod's delivery: an edge, no criterion
     d = Dispatcher(e, agents, runner=lambda *a: None)
     started = d.dispatch_once()
     assert "prod" in started and "cons" not in started       # producer free; consumer gated on it
@@ -761,7 +754,7 @@ def test_executor_turn_cap_is_declared_with_the_role(tmp_path):
     class _LLM:
         calls: list = []
 
-        def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None, max_turns=None):
+        def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None, max_turns=None, session=None):
             seen["max_turns"] = max_turns
             return '{"status": "delivered", "summary": "ok", "self_validation": "ran"}'
 

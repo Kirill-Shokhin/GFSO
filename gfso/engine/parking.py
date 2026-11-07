@@ -70,11 +70,30 @@ class Parking:
         answer and only one of them is true."""
         return frozenset(self._validation_parked)
 
-    def park_execution(self, task_id: TaskId) -> None:
-        """The dispatcher's record: this node's executor stopped twice without a signal."""
+    def park_execution(self, task_id: TaskId, why: Optional[str] = None, note: Optional[str] = None) -> None:
+        """The dispatcher's record: this node's executor stopped twice without a signal — or once, ended by what no
+        retry lifts, `why` (its place past its disk bound); `note`, what its last end was, said beside the plain park."""
         t = self._graph.get_task(task_id)
         if t is not None:
-            self._execution_parked[str(task_id)] = self._park_key(t)
+            self._execution_parked[str(task_id)] = self._park_key(t) + (why, note)
+
+    def execution_park_reason(self, t: Task) -> Optional[str]:
+        """Why the node's executor was parked at once rather than after two stops, while that park stands."""
+        return self._execution_parked[str(t.id)][-2] if self.is_execution_parked(t) else None
+
+    def execution_park_note(self, t: Task) -> Optional[str]:
+        """What ended the parked node's last session, where it was the disk's watch and the place is not past its bound
+        alone: a session there has only what its place leaves of the bound."""
+        return self._execution_parked[str(t.id)][-1] if self.is_execution_parked(t) else None
+
+    def execution_park_said(self, t: Task) -> Optional[str]:
+        """What a park with a cause means, said once for every reader — the frontier's step and the machine issuer's
+        question: its place's directories hold more than its bound, so no session in that place lifts it."""
+        if (why := self.execution_park_reason(t)) is None:
+            return None
+        return (f"{why}, so every session started in that place — a new packet version's included — is ended again; "
+                f"its work so far is kept on disk")
+
 
     def unpark_execution(self, task_id: TaskId) -> None:
         """A fresh executor run has started on the node — the park no longer describes it."""
@@ -87,8 +106,14 @@ class Parking:
         """Parked = in the work-state visit, under the Del and packet version, the park was recorded for."""
         key = self._execution_parked.get(str(t.id))
         return (key is not None and t.state in (State.OFFERED, State.EXECUTING, State.REWORKING)
-                and key == self._park_key(t))
+                and key[:-2] == self._park_key(t))
 
     def parked_executions(self) -> frozenset:
         """Nodes whose delegated executor stopped twice without a signal — the issuer's to decide."""
         return frozenset(str(t.id) for t in self._graph.subtree(None) if self.is_execution_parked(t))
+
+
+#: what only the user does to lift a place past its disk bound — the frontier's step and the machine issuer's stop say it
+USERS_WAY = ("only the user lifts it: a server restart counts the place again from what it then holds (GFSO_NODE_DISK "
+             "and GFSO_NODE_FILES set the bound), then `start_project`; or hand a corrected plan as a new goal "
+             "(`refine_plan` on its file, then `auto_decompose(plan=path)` on a new project; or `auto_decompose` with `spec`); or leave it stopped (`stop_project`)")

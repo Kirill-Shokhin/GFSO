@@ -10,6 +10,7 @@ packet. A directory that is not a repository behaves as before. Fake agent runne
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import threading
@@ -22,9 +23,9 @@ from gfso import delegate, tools as T
 from gfso.adapters import worktrees as W
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.procedure import probe_id
-from gfso.core.types import State, TaskId
+from gfso.core.types import PlaceUnavailable, State, TaskId
 from gfso.delegate import Dispatcher, _auto_validate
-from gfso.sessions import run_executor
+from gfso.sessions import run_consent, run_executor
 from gfso.workspaces import _ensure_place, _workspace, node_workspace
 from gfso.roster import AgentRegistry
 from tests import test_one_session_carries_a_scope as S
@@ -122,18 +123,21 @@ def _run(e, agents, sessions: dict, until, validated: dict | None = None, rounds
                    runner=lambda en, t, ex, ag: run_executor(en, t, ex, ag, _llm=sessions[str(t)]),
                    validator_runner=lambda en, t, ag, **k: _auto_validate(
                        en, t, ag, _llm=_Validator(en, t, validated if validated is not None else {}), **k))
-    for _ in range(rounds):
-        d.dispatch_once()
-        time.sleep(0.05)
-        e.wait_idle()
-        if until():
-            return d
+    S._drive(e, d, until, rounds, pause=0.05)
+    if until():
+        return d
     raise AssertionError(f"not reached: {({t.id: t.state.name for t in e.all_tasks()})}")
 
 
 def _until(pred, timeout=20.0) -> None:
     end = time.monotonic() + timeout
-    while not pred():
+
+    def holds():
+        try:
+            return pred()
+        except subprocess.CalledProcessError:    # a git read beside the system's own ref work: not yet, the bound decides
+            return False
+    while not holds():
         assert time.monotonic() < end, "not reached in time"
         time.sleep(0.05)
 
@@ -162,7 +166,8 @@ def test_a_nodes_validator_reads_that_nodes_own_tree(tmp_path):
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}), "par": _Executor("par", {})}
     where: dict = {}
     _run(e, agents, sessions, _in(e, "a", "b", states=(State.DONE,)), validated=where)
-    assert where == {"a": sessions["a"].cwd, "b": sessions["b"].cwd}
+    # …each in a COPY of that node's own tree (§10.3: the validator must not be able to change what it judges)
+    assert all(where[k].endswith("delivery") and f".gfso-scratch-{k}" in where[k] for k in ("a", "b")), where
     assert node_workspace(e, agents, "a") == sessions["a"].cwd
 
 
@@ -183,24 +188,117 @@ def test_a_part_that_passed_joins_where_its_whole_works(tmp_path):
     assert not any(places.joinpath(t).exists() for t in ("a", "b", "par"))
 
 
-def test_a_part_that_conflicts_is_left_unjoined_and_named_to_its_whole(tmp_path):
+class _Merger(_Executor):
+    """The whole's session that does its integration: merges every branch its packet names, the part's side winning."""
+
+    def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+        for b in re.findall(r"on branch `([^`]+)`", user):
+            _git(cwd, "merge", "--no-edit", "-X", "theirs", b)
+        return super().run_agent(system, user, allowed_tools, cwd=cwd, timeout=timeout)
+
+
+class _HalfMerger(_Executor):
+    """The whole's session that starts the merge its packet names, meets the conflict, and delivers without resolving."""
+
+    def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+        for b in re.findall(r"on branch `([^`]+)`", user):
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-edit", b], cwd=cwd,
+                           capture_output=True)
+        return super().run_agent(system, user, allowed_tools, cwd=cwd, timeout=timeout)
+
+
+def test_a_whole_that_leaves_a_merge_unresolved_is_not_delivered(tmp_path):
+    """Committed as it stood, the half-done merge concluded with the conflict markers in the files and the tree then
+    contained the part's branch, so the hold let it through (finder over 190f4db)."""
+    e, agents, base, said, sessions = _conflicting(tmp_path, _HalfMerger("par", {}))
+    _run(e, agents, sessions, lambda: any("merge left unfinished" in m for m in said))
+    assert e.graph.get_state(TaskId("par")) in (State.EXECUTING, State.REWORKING)
+    e.stop()
+
+
+class _Nester(_Executor):
+    """A part's session that delivers a nested repository — `inner_commit` or not — and, once its packet names the
+    refusal, does what it says: deletes the inner `.git`, untracks the gitlink where there is one, delivers again."""
+
+    def __init__(self, tid, files, inner_commit=True):
+        super().__init__(tid, files)
+        self.inner_commit = inner_commit
+
+    def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+        dep = Path(cwd) / "dep"
+        if "git rm --cached <path>" in user:
+            shutil.rmtree(dep / ".git", onerror=lambda f, p, _: (Path(p).chmod(0o700), f(p)))
+            subprocess.run(["git", "rm", "-q", "--cached", "dep"], cwd=cwd, capture_output=True)
+        elif not dep.exists():
+            dep.mkdir()
+            (dep / "d.c").write_text("D\n")
+            _git(dep, "init", "-q")
+            if self.inner_commit:
+                _git(dep, "add", "-A")
+                _git(dep, "commit", "-q", "-m", "inner")
+        return super().run_agent(system, user, allowed_tools, cwd=cwd, timeout=timeout)
+
+
+@pytest.mark.parametrize("inner_commit, checked, cause", [
+    (True, True, "nested git repositories"), (True, False, "nested git repositories"),
+    (False, True, "could not be staged")],
+    ids=["refused at DELIVER", "control: no check at DELIVER", "an inner repository with no commit: unstaged, held"])
+def test_a_delivery_holding_a_nested_repository_is_refused_with_its_cause_until_lifted(tmp_path, monkeypatch,
+                                                                                         inner_commit, checked, cause):
+    """§12.16 (ii): refused only at the judge's copy, the node was re-asked blind until it escalated — its executor
+    never told what to lift; with no commit inside, staging failed unread and the delivery went in without the files.
+    Held at DELIVER, named in its next packet, and lifted by the executor's own moves, it is then judged."""
+    if not checked:
+        monkeypatch.setattr("gfso.reports.W.nested", lambda *a, **k: [])
+    e, agents, base = _plan(tmp_path)
+    said: list = []
+    e.on_info(lambda src, msg: said.append(msg))
+    where: dict = {}
+    sessions = {"a": _Nester("a", {"a.c": "A\n"}, inner_commit), "b": _Executor("b", {"b.c": "B\n"})}
+    _run(e, agents, sessions, lambda: any("delivery held" in m for m in said)
+         or any(x.signal.name == "DELIVER" for x in e.audit_log(TaskId("a"))), validated=where)
+    assert checked == any("NOT delivered" in m and cause in m and "(dep)" in m for m in said)
+    if checked:
+        assert e.graph.get_state(TaskId("a")) in (State.EXECUTING, State.REWORKING)
+        assert not any(x.signal.name == "DELIVER" for x in e.audit_log(TaskId("a"))), "nothing recorded as delivered"
+        _run(e, agents, sessions, lambda: "a" in where, validated=where)
+        assert "NOT handed in" in sessions["a"].packet and cause in sessions["a"].packet
+        assert _git(base, "show", "gfso/p/a:dep/d.c") == "D", "its files are in the delivered tree"
+    e.stop()
+
+
+def _conflicting(tmp_path, whole):
     e, agents, base = _plan(tmp_path, whole="exec-1")
     said: list = []
     e.on_info(lambda src, msg: said.append(msg))
-    sessions = {"a": _Executor("a", {"shared.c": "A\n"}), "b": _Executor("b", {"shared.c": "B\n"}),
-                "par": _Executor("par", {})}
-    _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)))
-    _until(lambda: e.joins.joining_nodes() == [])            # the root's own join lands before the base is read
+    sessions = {"a": _Executor("a", {"shared.c": "A\n"}), "b": _Executor("b", {"shared.c": "B\n"}), "par": whole}
+    return e, agents, base, said, sessions
+
+
+def test_a_whole_that_does_not_merge_a_conflicting_part_is_not_delivered(tmp_path):
+    """G13's shape (GB_sql_database_tn03ao788): the root's executor, told to merge parts that conflicted, rewrote
+    their files instead and delivered a tree without a part's work."""
+    e, agents, base, said, sessions = _conflicting(tmp_path, _Executor("par", {}))
+    _run(e, agents, sessions, lambda: any("delivery held" in m for m in said))
     named = [b for b in ("gfso/p/a", "gfso/p/b") if f"on branch `{b}`" in sessions["par"].packet]
     assert len(named) == 1 and "Parts NOT joined into your workspace" in sessions["par"].packet
-    left = named[0].rsplit("/", 1)[1]
-    # the merge was aborted where it ran: the base holds the other part, whole and clean, and no conflict markers
-    assert (base / "shared.c").read_text() == ("B\n" if left == "a" else "A\n")
+    assert e.graph.get_state(TaskId("par")) in (State.EXECUTING, State.REWORKING), "handed in without its part's work"
+    # the merge was aborted where it ran: the base holds no conflict markers
     assert _git(base, "status", "--porcelain") == ""
-    # the unjoined branch and its tree stay, and are named, at the root's PASS
-    _until(lambda: any("not joined into the base are kept" in m for m in said))
-    assert (tmp_path / ".gfso-nodes-ws" / "p" / left).is_dir()
-    assert _git(base, "branch", "--list", named[0]).strip().endswith(named[0])
+    e.stop()
+
+
+def test_a_whole_that_merges_its_conflicting_part_is_delivered_with_both(tmp_path):
+    """The control: the same plan, the whole's session merging what its packet names — DONE, and both parts' work
+    reach the base."""
+    e, agents, base, said, sessions = _conflicting(tmp_path, _Merger("par", {}))
+    _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)))
+    _until(lambda: e.joins.joining_nodes() == [])
+    assert "Parts NOT joined into your workspace" in sessions["par"].packet
+    assert not any("delivery held" in m for m in said)
+    named = [b for b in ("gfso/p/a", "gfso/p/b") if f"on branch `{b}`" in sessions["par"].packet]
+    assert (base / "shared.c").read_text() == ("A\n" if named == ["gfso/p/a"] else "B\n")
+    e.stop()
 
 
 def test_a_directory_that_is_not_a_repository_is_shared_as_before(tmp_path):
@@ -215,7 +313,7 @@ def test_a_directory_that_is_not_a_repository_is_shared_as_before(tmp_path):
     assert sessions["a"].cwd == sessions["b"].cwd == str(base) == where["a"] == where["b"]
     assert {"a.c", "b.c"} <= sessions["a"].saw
     assert sum("is not the top of a git repository" in m for m in said) == 1
-    assert not (tmp_path / ".gfso-nodes-ws").exists()
+    assert not [p for p in (tmp_path / ".gfso-nodes-ws").glob("*/*") if not p.name.startswith(".gfso-scratch-")],         "no node's place: only the base's validation rounds, among its project's"
 
 
 def test_a_scopes_session_and_its_validation_share_the_scopes_one_tree(tmp_path):
@@ -237,7 +335,8 @@ def test_a_scopes_session_and_its_validation_share_the_scopes_one_tree(tmp_path)
     executor, validator = _Session(S._delivered("root.a", "root.b", "root")), _Check(e)
     S._drive(e, S._dispatcher(e, agents, executor, validator, []), lambda: e.graph.get_state(TaskId("root")) == State.DONE)
     place = tmp_path.parent / f".gfso-nodes-{tmp_path.name}" / "p" / "root"
-    assert where == {"session": str(place), "validation": str(place)}
+    assert where["session"] == str(place)
+    assert where["validation"].endswith("delivery") and ".gfso-scratch-root" in where["validation"], where
     # one tree, a commit per node's delivery in build order; its parts join nothing (their whole works there), and
     # the top, at its PASS, joins the base
     _until(lambda: (tmp_path / "scope.c").exists() and not place.exists() and e.joins.joining_nodes() == [])
@@ -256,7 +355,7 @@ def test_a_delivery_commits_no_cache_a_sibling_would_collide_on(tmp_path):
     (place / "__pycache__").mkdir()
     (place / "__pycache__" / "common.cpython-311.pyc").write_bytes(b"\0")
     (place / "lib.o").write_bytes(b"\0")
-    W.commit_all(base, place, "gfso: a delivery", "exec-1")
+    W.commit_all(base, place, "gfso: a delivery", "exec-1", branch="gfso/p/a")
     assert _git(base, "ls-tree", "-r", "--name-only", "gfso/p/a").splitlines() == ["README", "a.py"]
 
 
@@ -266,7 +365,7 @@ def test_a_whole_is_not_validated_over_parts_still_joining(tmp_path, monkeypatch
     gate, seen = threading.Event(), {}
     real = W.merge
 
-    def held(base, into, branch, message):
+    def held(base, into, branch, message, **_):
         gate.wait(20)
         return real(base, into, branch, message)
     monkeypatch.setattr(W, "merge", held)
@@ -323,7 +422,7 @@ def test_a_root_whose_result_did_not_land_is_not_complete_until_it_does(tmp_path
     assert out["complete"] is False and out["stuck"] is True and "did not land" in out["directive"], out
     assert "gfso/p/par" in out["directive"], "the branch that holds the result is named (critic r4)"
     gate, real = threading.Event(), W.merge
-    monkeypatch.setattr(W, "merge", lambda *a: (gate.wait(20), real(*a))[1])
+    monkeypatch.setattr(W, "merge", lambda *a, **k: (gate.wait(20), real(*a, **k))[1])
     d.dispatch_once()                                   # WHILE a retry runs, the refusal still stands (critic r4)
     _until(lambda: "par" in e.joins.joining_nodes())
     assert e.next_steps()["stuck"] is True, "a retry erased the refusal: the root read 'being joined'"
@@ -342,7 +441,7 @@ def test_a_held_whole_is_not_told_to_aggregate_over_parts_still_joining(tmp_path
     (critic r3, 2026-10-04: SEMI's AGGREGATE step and `validate_result` read the base ahead of the merges)."""
     gate = threading.Event()
     real = W.merge
-    monkeypatch.setattr(W, "merge", lambda *a: (gate.wait(20), real(*a))[1])
+    monkeypatch.setattr(W, "merge", lambda *a, **k: (gate.wait(20), real(*a, **k))[1])
     e, agents, base = _plan(tmp_path)
     T.signal(e, "par", "ACCEPT", "kirill")
     _run(e, agents, {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"})}, _in(e, "a", "b"))
@@ -371,7 +470,7 @@ def test_a_refused_root_join_is_retried_less_often_each_time(tmp_path, monkeypat
     _until(lambda: "par" in e.joins.unjoined_roots() and not e.joins.joining_nodes())
     tries = []
     real = W.merge
-    monkeypatch.setattr(W, "merge", lambda *a: (tries.append(a[2]), real(*a))[1])
+    monkeypatch.setattr(W, "merge", lambda *a, **k: (tries.append(a[2]), real(*a, **k))[1])
     for _ in range(20):
         d.dispatch_once()
         time.sleep(0.01)
@@ -469,4 +568,64 @@ def test_a_place_is_cut_from_where_its_whole_works_made_first_up_the_tree(tmp_pa
     assert (Path(cw[1]) / "h.py").exists(), "the part's tree misses what joined above it"
     assert Path(_workspace(e, agents, e.graph.get_task(TaskId("g")))[1]).is_dir(), "its whole's place was made first"
     assert not (base / "h.py").exists()
+    e.stop()
+
+
+def test_a_parents_consent_is_asked_in_its_own_place_not_the_base(tmp_path):
+    """A parent's consent asked before its executor made its place worked in the base, sharing the base's model-client
+    state with the root's executor — whose conversations its readers then read (measured, a stand-in model driving the
+    real CLI 2.1.310). Asked in its own place, made now as its first session would make it, it holds a state of its own."""
+    base = _repo(tmp_path / "ws")
+    e = make_engine(llm=StubLLM())
+    e.start()
+    e.project_name = "p"
+    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    for aid in ("exec-1", "exec-2", "exec-3"):
+        agents.register(aid, "llm-executor", workdir=str(base), project="p")
+    T.create_task(e, "r", {"description": "top", "criteria": [criterion("t")]}, assignee="exec-1")
+    for whole, part, crit, holder, mine in (("r", "g", "t", "exec-2", "m"), ("g", "c", "m", "exec-3", "l")):
+        T.decompose(e, whole, [{"task_id": part, "spec": {"description": part, "criteria": [criterion(mine)]},
+                                "assignee": holder, "covers": [crit]}], accepted_risks=_RISK)
+    e.wait_idle()
+    assert node_workspace(e, agents, "g") is None, "no session of g has made its place yet"
+    asked = []
+
+    class _Consent:
+        calls = []
+
+        def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+            asked.append(cwd)
+            self.calls.append({"duration_ms": 1, "output_tokens": 1})
+            return _fenced({"decision": "accept", "reason": "ok"})
+
+        def tag_last(self, stage):
+            pass
+
+    run_consent(e, TaskId("g"), "exec-2", agents, _llm=_Consent())
+    assert asked and asked[0] == node_workspace(e, agents, "g") and Path(asked[0]) != base, asked
+    e.stop()
+
+
+def test_a_consent_that_meets_its_place_down_waits_and_is_not_parked(tmp_path, monkeypatch):
+    """Its place made first now, a consent meets a place that is down before any model call: the stop a booked call
+    makes, waited out, never "signalled nothing twice — PARKED" (critic over the consent's own place)."""
+    base = _repo(tmp_path / "ws")
+    e = make_engine(llm=StubLLM())
+    e.start()
+    e.project_name = "p"
+    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    for aid in ("exec-1", "exec-2"):
+        agents.register(aid, "llm-executor", workdir=str(base), project="p")
+    T.create_task(e, "r", {"description": "top", "criteria": [criterion("t")]}, assignee="exec-1")
+    T.decompose(e, "r", [{"task_id": "g", "spec": {"description": "g", "criteria": [criterion("m")]},
+                          "assignee": "exec-2", "covers": ["t"]}], accepted_risks=REGISTER)
+    e.wait_idle()
+
+    def down(*a, **k):
+        raise PlaceUnavailable("box", "docker daemon is not running")
+    monkeypatch.setattr(W, "ensure", down)
+    d = Dispatcher(e, agents)
+    for _ in range(2):
+        d._consent_guarded(TaskId("r"), "exec-1")
+    assert e.paused(), "the place down is its project's stop"
     e.stop()

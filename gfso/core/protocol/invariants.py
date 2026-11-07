@@ -62,10 +62,13 @@ def fail_names_this_contract(failed_criteria: Sequence[str],
 
 def probes_of(entry: Mapping) -> list:
     """A report entry's probes, as mappings — THE one reading of its `probe` field (a list, or one probe written bare);
-    seven readers spelled it by hand (ortho audit, D-F6)."""
+    seven readers spelled it by hand (ortho audit, D-F6). A probe its validator says it did NOT run (`ran: false`) is no
+    probe of the entry: it observed nothing (§2.3), so it meets no demand and refutes nothing — counted, a regression line
+    whose own setup failed in a later round met its demand with nothing judged (series 2 REF 2, 2026-10-29)."""
     raw = entry.get("probe")
-    return ([p for p in raw if isinstance(p, Mapping)] if isinstance(raw, (list, tuple))
-            else [raw] if isinstance(raw, Mapping) else [])
+    return [p for p in ([q for q in raw if isinstance(q, Mapping)] if isinstance(raw, (list, tuple))
+                        else [raw] if isinstance(raw, Mapping) else [])
+            if probe_held(p.get("ran")) is not False]
 
 
 def good_probes(entry: Mapping) -> list:
@@ -74,6 +77,27 @@ def good_probes(entry: Mapping) -> list:
     refuting = spoken_verdict(entry.get("verdict")) == "fail" and str(entry.get("evidence", "")).strip()
     return [p for p in probes_of(entry)
             if str(p.get("command", "")).strip() and (str(p.get("expect", "")).strip() or refuting)]
+
+
+def criterion_meant(label, names: Sequence[str]):
+    """The contract's criterion a report's label names: the label itself; else, its markup stripped (`` ` ``, `*`,
+    quotes, a leading `1.`, a trailing `.`), the one criterion it then is, or whose exact name it starts with before a
+    separator and more (`Name: what it requires`, `Name — …`, `Name (…)`) — compared without case only where exactly one
+    criterion matches; else the label as written, so a name the contract lacks is still refused as foreign. Read exactly,
+    a haiku validator's thirty root reports labelled "Name: description" were each refused whole as naming a foreign
+    criterion, and two deliveries lapsed with no verdict at ~$120 (GB_sql_database_tn03ao788, 2026-10-16); the packet
+    itself lists criteria as `**Name**: description`, so a bold or backticked label is the same name."""
+    s = str(label)
+    if s in names:
+        return label
+    bare = re.sub(r"^\s*(?:\d+[.)]|[-•])\s+", "", re.sub(r"[`*\"']", "", s)).strip().rstrip(".").strip()
+    for fold in (str, str.lower):
+        hits = [n for n in names if fold(bare) == fold(n)
+                or fold(bare).startswith(fold(n)) and re.match(r"\s*:|\s+[-–—(]", bare[len(n):])]
+        longest = max(hits, key=len, default=None)
+        if longest is not None and [len(h) for h in hits].count(len(longest)) == 1:
+            return longest
+    return label
 
 
 def spoken_verdict(raw) -> str:
@@ -190,7 +214,7 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
         defects.append(f"criterion '{missing}' has no verdict — V = AND over ALL criteria (§2); "
                        f"an unevaluated criterion is ⊥, not pass. Speak to it under its exact name — in a "
                        f"validator's report, its own `per_criterion` entry {{criterion: '{missing}', verdict, "
-                       f"evidence, behaviours, probe, divergences}}; a `dep__*` seam criterion too, since the "
+                       f"evidence, behaviours, probe, divergences}} — the "
                        f"`seams` note is free text and decides no criterion")
     # …SAVE AN EMPTY PASS: about a non-criterion it observes nothing, no conjunct of V; "every criterion spoken" guards.
     # Refused, one `placeholder` entry voided a root's validation of seven criteria (GB_coreutils_tmsq57348).

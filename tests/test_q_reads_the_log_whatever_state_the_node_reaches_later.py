@@ -121,7 +121,7 @@ def test_a_pair_a_block_named_first_is_never_declared():
         S(e, Signal.RESOLVE_BLOCK, "b", "boss", action="not a's to give", external=True)
         assert M.q_Dep(e.graph) is None, "a refuted discovery is in neither half"
         T.add_dependency(e, "a", "b"); e.wait_idle()
-        assert any(str(c.depends_on) == "a" for c in e.graph.get_task(TaskId("b")).spec.criteria)
+        assert [str(x.from_id) for x in e.graph.declared_edges(TaskId("b"))] == ["a"]
         assert M.q_Dep(e.graph) is None, "declared AFTER a BLOCK named it: not declared before any BLOCK"
         T.remove_dependency(e, "a", "b"); e.wait_idle()
         if e.graph.get_state(TaskId("b")) == State.OFFERED:

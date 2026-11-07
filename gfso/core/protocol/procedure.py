@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import os
 import re
 import sys
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Optional, Sequence
 
-from gfso.core.types import Criteria, Probe
+from gfso.core.types import HOST, Criteria, Probe, files_at, unprojected
 from gfso.core.protocol.invariants import emits_a_constant, probe_held, probes_of, spoken_verdict, underprobed
 
 
@@ -83,17 +84,28 @@ def finding_id(criterion_name: str, command: str) -> str:
 
 
 def _content(path: Path) -> str | None:
-    """A digest of what stands at `path` — a file's bytes, or a directory's files by their place in it — or None."""
+    """A digest of what stands at `path` — a file's bytes, or a directory's files by their place in it — or None. Read
+    where the place holding it is (`files_at`): a round's scratch may stand nowhere on this host. Once while the round
+    stands (`_read_once`)."""
     try:
-        if path.is_file():
-            return hashlib.sha256(path.read_bytes()).hexdigest()
-        if path.is_dir():
-            h = hashlib.sha256()
-            for f in sorted(x for x in path.rglob("*") if x.is_file()):
-                h.update(f.relative_to(path).as_posix().encode("utf-8") + b"\x00" + f.read_bytes() + b"\x00")
-            return h.hexdigest()
+        return _read_once("digest", path, lambda: _digest(path))
     except OSError:
         return None                       # unreadable is not there to read: the round stays in the id
+
+
+#: the most of a file a digest reads: past it, no digest, and the round stays in the id
+DIGEST_CAP = 64 << 20
+
+
+def _digest(path: Path) -> str | None:
+    fs = files_at(path)
+    if (raw := fs.read_bytes(str(path), DIGEST_CAP + 1)) is not None:     # …an agent writes it: never whole into this process
+        return hashlib.sha256(raw).hexdigest() if len(raw) <= DIGEST_CAP else None
+    if (tree := fs.read_tree(str(path))) is not None:
+        h = hashlib.sha256()
+        for rel, raw in sorted(tree.items(), key=lambda x: Path(x[0])):
+            h.update(rel.encode("utf-8") + b"\x00" + raw + b"\x00")
+        return h.hexdigest()
     return None
 
 
@@ -142,6 +154,8 @@ def procedure_digest(criteria: Iterable[Criteria]) -> str:
             h.update(b"\x03" + _norm(p.expect).encode("utf-8"))
             if p.inputs:
                 h.update(b"\x06" + inputs_digest(p).encode("utf-8"))
+            if p.exact:       # only where set: every digest pinned before the field stays
+                h.update(b"\x07")
     return h.hexdigest()[:16]
 
 
@@ -176,18 +190,11 @@ def criteria_without_procedure(criteria: Iterable[Criteria]) -> list[str]:
     supplied later out of someone's head, and a behaviour named with no way to observe it is that
     same defect written one line higher.
 
-    A SEAM criterion (`depends_on` — the `dep__<producer>` encoding of a declared Dep) is not in
-    this population, and not as a convenience: it is not a claim the consumer decides at all. It
-    DECLARES a coupling; what makes the coupling true is the producer's own PASS, and the claim
-    that the joined parts constitute the parent is the **integration implication**, which the canon
-    attributes to the PARENT and to no child (§6.5; §8.7 "a forgotten glue criterion = FM-1" — at
-    the parent's level). Demanding a probe here would put the integration truth-maker on the wrong
-    node, and — measured while landing this rule — it made every graph carrying a declared seam
-    unexecutable, with no door able to supply what was demanded. A caller who WANTS the seam probed
-    from the consumer's side may still pin one (`add_dependency(..., check=[…])`).
+    A declared Dep edge is no criterion (§2.7), so nothing here asks it for a probe: the coupling holds by the
+    producer's own PASS, and the integration implication is the PARENT's (§6.5, §8.7). A criterion that reads a
+    producer's result (`depends_on`, `add_dependency(..., check=[…])`) is a criterion like any other.
     """
-    return [c.name for c in (criteria or ())
-            if not c.depends_on and not any(_norm(p.command) for p in (c.check or ()))]
+    return [c.name for c in (criteria or ()) if not any(_norm(p.command) for p in (c.check or ()))]
 
 
 INPUTS_TOKEN = "{inputs}"
@@ -202,6 +209,30 @@ def inputs_unpinned(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     for c in criteria or ():
         if bad := [probe_id(c.name, p) for p in (c.check or ()) if INPUTS_TOKEN in (p.command or "") and not p.inputs]:
             out[c.name] = bad
+    return out
+
+
+#: a file a command names under `{inputs}` — a literal name; a glob or a shell variable names no one file
+_NAMED_INPUT = re.compile(re.escape(INPUTS_TOKEN) + r"/([^\s'\";|&<>()]+)")
+#: …a file the command itself makes there — a redirect's or an `-o`'s target — which no one has to pin (critic)
+_MADE_INPUT = re.compile(r"(?:>>?|-o)\s*" + re.escape(INPUTS_TOKEN) + r"/([^\s'\";|&<>()]+)")
+_PATTERN = re.compile(r"[*?\[\]${}`]")
+
+
+def inputs_named_not_pinned(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
+    """{criterion: [`{inputs}/<file>` its probes name that the probe itself does not pin]}: each probe's inputs are laid
+    down in its own directory, so a file pinned under a sibling probe, or nowhere, is "cannot open" at validation — a
+    false FAIL of every delivery, correct ones included (V3_cc2's `builtins_memory_setjmp_va`, read on the oracle's
+    good trees, 2026-10-31)."""
+    out: dict[str, list[str]] = {}
+    for c in criteria or ():
+        for p in c.check or ():
+            have = {input_name(path) for path, _ in _input_items(p.inputs)}
+            made = set(_MADE_INPUT.findall(p.command or ""))
+            bad = [n for n in dict.fromkeys(_NAMED_INPUT.findall(p.command or "")) if n not in made
+                   and not _PATTERN.search(n) and n.rstrip("/") not in have and not any(h.startswith(n.rstrip("/") + "/") for h in have)]
+            if bad:
+                out.setdefault(c.name, []).extend(f"{INPUTS_TOKEN}/{n}" for n in bad)
     return out
 
 
@@ -232,6 +263,56 @@ def unsafe_input_paths(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
         if bad:
             out[c.name] = bad
     return out
+
+
+def _input_items(inputs) -> list[tuple[str, str]]:
+    """A probe's pinned files as (path, body), whichever shape carries them: a spec's dict or pairs, a `Probe`'s tuple, or
+    the answer's own [{path, content}] — read as `body`, every file a model wrote that way came out empty and its move
+    was refused as pinning EMPTY inputs (9 refusals in GB_c_compiler_tnl51c552); `Probe` reads `content` the same way."""
+    if isinstance(inputs, dict):
+        return [(str(k), str(v or "")) for k, v in inputs.items()]
+    return [(str(x[0]), str(x[1] or "")) if isinstance(x, (list, tuple))
+            else (str(x.get("path")), str(x.get("content") or "")) for x in inputs or ()]
+
+
+def input_name(path: str) -> str:
+    """A pinned file's path inside its probe's inputs directory: the `{inputs}` token is the command's, not the path's."""
+    return path.replace("\\", "/").removeprefix(INPUTS_TOKEN + "/")
+
+
+def pinned_files(criteria: Iterable) -> dict[tuple, str]:
+    """The content every probe of these criteria pins, by (criterion, command, file) — and by (criterion, file) only
+    where every probe of that criterion pins one content under that name: two probes of one criterion, or two parts'
+    criteria of one name, over different files of one name must not lend each other's (critic, 2026-10-22)."""
+    by_cmd: dict[tuple, str] = {}
+    by_name: dict[tuple, set] = {}
+    for c in criteria or ():
+        name, check = (c.get("name"), c.get("check")) if isinstance(c, dict) else (c.name, c.check)
+        for p in check or ():
+            cmd = " ".join(str(p.get("command") if isinstance(p, dict) else p.command).split())
+            for path, body in _input_items(p.get("inputs") if isinstance(p, dict) else p.inputs):
+                if body:
+                    by_cmd.setdefault((str(name), cmd, input_name(path)), body)
+                    by_name.setdefault((str(name), input_name(path)), set()).add(body)
+    return {**{k: next(iter(v)) for k, v in by_name.items() if len(v) == 1}, **by_cmd}
+
+
+def with_named_files(criterion: dict, files: dict[tuple[str, str], str]) -> dict:
+    """The criterion with each probe that NAMES files without their content given the content its plan already pins
+    under that criterion (`pinned_files`), every path's `{inputs}` token normalized away. A model writing a probe reads
+    a projection that shows its command and never the corpus behind `{inputs}`: re-homing a root's 21 probes into an
+    integration node, the machine issuer pinned all 41 files empty under `{inputs}/<name>` paths, the command reworded,
+    and every validation read empty inputs for twelve rounds until the ceiling (GB_sql_database_tnajs5800,
+    2026-10-22). A body written stands; a probe pinning nothing (`inputs` absent or empty) is not touched."""
+    if not isinstance(criterion, dict) or not criterion.get("check"):
+        return criterion
+    def _probe(p):
+        if not isinstance(p, dict) or not p.get("inputs"):
+            return p
+        name, cmd = str(criterion.get("name")), " ".join(str(p.get("command", "")).split())
+        return {**p, "inputs": {input_name(path): body or files.get((name, cmd, input_name(path)))
+                                or files.get((name, input_name(path)), "") for path, body in _input_items(p["inputs"])}}
+    return {**criterion, "check": [_probe(p) for p in criterion["check"]]}
 
 
 def unread_inputs(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
@@ -332,6 +413,28 @@ def shared_scratch(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     return out
 
 
+#: A `cd`/`pushd` into a literal absolute directory — `/…`, `C:\…`, `~` — not a token (`{inputs}`) or a variable (`$T`).
+_CD_ABSOLUTE = re.compile(r"(?:^|[;&|(]|\s)(?:cd|pushd)\s+[\"']?(?:/|~|[A-Za-z]:[\\/])")
+
+#: The one wording of that refusal, for every door that admits a contract.
+LEAVES_THE_WORKDIR = ("its probe changes into an absolute directory, so it checks whatever stands there rather than the "
+                      "work this node delivers — a probe runs in its node's own working directory; name the files by "
+                      "relative paths")
+
+
+def probes_that_leave_the_workdir(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
+    """{criterion: [pinned commands that `cd` into an absolute directory]}. A plan is written before the work has a
+    place, so any absolute directory a probe names is a guess: a plan's author running where the server stands pinned
+    `cd <state home> && …` on all 72 probes, the validators ran their own commands instead, and one following a probe
+    removed the project's database (GB_sql_database_tmzgc0724, 2026-10-16). Lifted by the decomposer's re-pin
+    (§12.16 (ii))."""
+    out: dict[str, list[str]] = {}
+    for c in criteria or ():
+        if bad := [p.command for p in (c.check or ()) if _CD_ABSOLUTE.search(p.command or "")]:
+            out[c.name] = bad
+    return out
+
+
 def criterionless(criteria: Iterable[Criteria]) -> Optional[str]:
     """Why a contract with no criterion the node itself decides is no packet — or None when it has one.
 
@@ -339,10 +442,8 @@ def criterionless(criteria: Iterable[Criteria]) -> Optional[str]:
     V is the empty AND: every result passes and "every criterion pins its check" holds of nothing —
     the measured shape (spreadsheet_engine, 2026-10-11): an authoring that came back empty built a
     root with `criteria: []`, a system executor took it, and its delivery waited in VALIDATING for a
-    verdict over nothing. A `depends_on` seam is not one (`criteria_without_procedure`): it declares a
-    coupling the producer's PASS makes true and decides nothing about this node's result — a node left
-    holding only seams ran to DONE over no check at all."""
-    if any(not c.depends_on for c in criteria or ()):
+    verdict over nothing."""
+    if criteria:
         return None
     return ("the contract has no criterion the node itself decides — a task's criteria are a finite NONEMPTY set of "
             "decidable predicates (§2.2, A1), and over none every result passes; give it at least one "
@@ -365,14 +466,43 @@ def admission_defects(criteria: Iterable[Criteria]) -> list[str]:
             f"{{inputs}})" for k, v in sorted(twin_probes(crit).items())]
     out += [f"{k}: its probe reads {INPUTS_TOKEN} and pins nothing there ({', '.join(v)}) — it would run over an empty "
             f"directory; pin the files it reads in its `inputs`" for k, v in sorted(inputs_unpinned(crit).items())]
+    out += [f"{k}: its probe names {', '.join(v)} and does not pin it — each probe's inputs are laid down in its own "
+            f"directory, so a file pinned under another probe or nowhere cannot be opened; pin it in THIS probe's `inputs`"
+            for k, v in sorted(inputs_named_not_pinned(crit).items())]
+    out += [f"{k}: pinned input file(s) it feeds or runs are EMPTY ({', '.join(v)}) — the probe would run over nothing "
+            f"and decide nothing; write their content (an empty expected output under `diff`/`cmp` is fine, and an empty "
+            f"stdin is `< /dev/null`)" for k, v in sorted(empty_inputs(crit).items())]
     out += [f"{k}: pinned inputs would land outside their own probe's directory ({', '.join(v)}) — the system writes "
             f"them at validation time under a directory the validator owns; give each a relative path inside it"
             for k, v in sorted(unsafe_input_paths(crit).items())]
     out += [f"{k}: {OFF_THE_WORKDIR} — {', '.join(v)}" for k, v in sorted(probes_off_the_workdir(crit).items())]
     out += [f"{k}: {SHARED_SCRATCH} — {', '.join(v)}" for k, v in sorted(shared_scratch(crit).items())]
+    out += [f"{k}: {LEAVES_THE_WORKDIR} — {', '.join(v)}" for k, v in sorted(probes_that_leave_the_workdir(crit).items())]
     out += [f"{k}: every probe it pins emits a constant ({', '.join(v)}) and cannot come out false, so the criterion "
             f"forbids nothing (§1.3, §9.6) and a PASS on it observes no work; pin a command that runs the delivery"
             for k, v in sorted(hollow_procedures(crit).items())]
+    return out
+
+
+#: A pinned file a probe runs, sources, compiles or feeds on stdin — empty, it runs nothing. An empty file passed as an
+#: ARGUMENT is a case of its own (`tail -n 1 a e b`, a coreutils plan's probe) and stays admissible.
+_RUN_AS_CODE = re.compile(r"\.(?:c|h|sh|bash|py|sql)$")
+
+
+def empty_inputs(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
+    """{criterion: the names of its pinned input files that are empty and that its command runs, sources, compiles or
+    feeds on stdin}. Measured on build 9155db9: the machine's repair parts pinned 0-byte `.sql`, `.c` and `.sh` inputs on
+    their first ASSIGN — 40 in GB_sql_database_tncfrm404, 79 in GB_c_compiler_tne9g0864 — and an issuer then re-pinned
+    the expectations to what the build printed over them."""
+    def fed(n: str, cmd: str) -> bool:
+        """Is file `n` code by its name, or what `cmd` sources, runs or reads on stdin?"""
+        at =rf"(?:{re.escape(INPUTS_TOKEN)}/)?{re.escape(n)}(?![\w./-])"
+        return bool(_RUN_AS_CODE.search(n) or re.search(rf"(?:<|(?:^|[;&|(]\s*)(?:\.|source|bash|sh|python3?))\s+{at}", cmd))
+    out: dict = {}
+    for c in criteria or ():
+        for p in c.check or ():
+            if names := [n for n, body in (p.inputs or ()) if not str(body).strip() and fed(n, p.command)]:
+                out.setdefault(c.name, []).extend(names)
     return out
 
 
@@ -392,8 +522,9 @@ def hollow_procedures(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     return out
 
 
-def materialize_inputs(criteria: Iterable[Criteria], base: str | Path) -> dict[str, Path]:
-    """Write every pinned probe's inputs under `base/<probe id>/`, from the contract, at validation time.
+def materialize_inputs(criteria: Iterable[Criteria], base: str | Path, files) -> dict[str, Path]:
+    """Write every pinned probe's inputs under `base/<probe id>/`, from the contract, at validation time — where
+    `files` (a `FilesPort`) writes, in one operation (`write_files`).
 
     {probe id: its directory}. Done by the SYSTEM so nothing the executor writes can stand in for
     the corpus the issuer pinned; unsafe paths were refused at admission and are skipped here."""
@@ -409,17 +540,23 @@ def materialize_inputs(criteria: Iterable[Criteria], base: str | Path) -> dict[s
             + "; ".join(f"{k}: {', '.join(v)}" for k, v in sorted(unsafe.items()))
             + " — a probe over a truncated corpus is not the procedure the contract pins")
     dirs: dict[str, Path] = {}
+    laid: dict[str, bytes] = {}
     for c in criteria or ():
         for p in (c.check or ()):
             if not p.inputs:
                 continue
             pid = probe_id(c.name, p)
-            d = Path(base) / inputs_dir_name(pid)
             for path, body in p.inputs:
-                f = d / PurePosixPath(path.replace("\\", "/"))
-                f.parent.mkdir(parents=True, exist_ok=True)
-                f.write_text(body, encoding="utf-8")
-            dirs[pid] = d
+                # a path naming `{inputs}` is the same file: the token is the command's (an integration node's 41
+                # pinned files were stored so, 2026-10-22) — laid down where the command reads it; byte for byte: a
+                # text-mode write on Windows made every newline a CRLF, and a check's `diff` against its expected file
+                # failed for every program inside a Linux execution (gb-sql-database-tngdkx244)
+                laid[(PurePosixPath(inputs_dir_name(pid)) / input_name(path)).as_posix()] = body.encode("utf-8")
+            dirs[pid] = Path(base) / inputs_dir_name(pid)
+    if laid:
+        # …as the system's (`seal_files`): laid as the agent's, the judged code run beside them rewrote an expected file
+        # its own output was then compared with — inside the very command that compared them
+        files.seal_files(str(base), laid)
     return dirs
 
 
@@ -471,6 +608,39 @@ def degenerate_procedures(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     return out
 
 
+def canonical_citations(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria],
+                        parts: Mapping[str, Sequence[Criteria]] | None = None) -> list:
+    """The report with each probe it cites by a spelling the system gave a pinned probe — the name of the directory its
+    inputs were laid down in (`inputs_dir_name`), whichever separators the citation kept — cited by that probe's id, the
+    node's own or a part's; a spelling two probes share is left as it came. Read once, where a report is recorded, so no
+    reader spells it again: a validator citing the directory it ran from had 65 truthful PASS reports refused, part
+    probes at a root among them, and its FAILs' runs of pinned probes filed as findings to re-run (E3, 2026-10-22)."""
+    ids = {probe_id(c.name, p) for cs in [criteria or ()] + list((parts or {}).values()) for c in cs
+           for p in (c.check or ()) if _norm(p.command)}
+    by: dict[str, set[str]] = {}
+    for pid in ids:
+        by.setdefault(inputs_dir_name(pid), set()).add(pid)
+    one = {d: next(iter(s)) for d, s in by.items() if len(s) == 1}
+
+    def _cite(q):
+        i = str(q.get("id", "")).strip()
+        to = one.get(inputs_dir_name(i)) if i and i not in ids else None
+        return {**q, "id": to} if to else q
+    return [{**e, "probe": [_cite(q) for q in probes_of(e)]} if probes_of(e) else e for e in per_criterion or ()]
+
+
+def _cited(name: str, cited: str) -> str:
+    """The probe id a citation under criterion `name` names: `criterion#hash` as written, a bare hash read inside `name`,
+    and the spellings the system itself gave the probe — the directory its inputs were laid down in
+    (`inputs_dir_name`), or that name's `#` kept. A validator cited the directory it ran from, `Statements_and_control_flow
+    _79bd1260`, and 65 truthful PASS reports over 7 rows were refused as not having run their pinned checks (E3, 2026-10-22)."""
+    crit, sep, h = cited.rpartition("#")
+    if sep:
+        return f"{name}#{h}" if inputs_dir_name(crit) == inputs_dir_name(name) else cited
+    pre = inputs_dir_name(name) + "_"
+    return f"{name}#{cited[len(pre):]}" if cited.startswith(pre) and len(cited) > len(pre) else f"{name}#{cited}"
+
+
 def _reported_ids(name: str, probes: Sequence[Mapping], dirs: Iterable[tuple[str, object]] = ()) -> set[str]:
     """The probe ids a report accounts for under criterion `name`: its cited ids — a bare hash read
     inside the criterion it is reported under — and, for each probe, the id of the command it ran.
@@ -481,7 +651,7 @@ def _reported_ids(name: str, probes: Sequence[Mapping], dirs: Iterable[tuple[str
     out: set[str] = set()
     for p in probes:
         if (_id := str(p.get("id", "")).strip()):
-            out.add(_id if "#" in _id else f"{name}#{_id}")
+            out.add(_cited(name, _id))
         # …AND BY THE COMMAND WHEN THE ID IS ABSENT. A report that ran the pinned command and
         # spelled no id has still run it; refusing it would teach the reader to paste ids
         # instead of commands, which is the fabrication this whole module exists against.
@@ -606,6 +776,90 @@ def coverage(criteria: Sequence[Criteria], per_criterion: Sequence[Mapping],
             "named_beyond_the_procedure": named_beyond_procedure(criteria, per_criterion, dirs)}
 
 
+def runs_a_past_build(command: str) -> bool:
+    """Does the command use a BUILD a past validation round left in its scratch, rather than make it? Re-run on a later
+    delivery it runs that round's build of the old source: its outcome no longer depends on what was delivered, and a
+    finding kept with it fails every round whatever the executor fixes (root.parse_stmt, 7 FAILs in 33 min on
+    `printf … | …/.gfso-scratch-root.parse_stmt/root.parse_stmt_<epoch>/x/chk`, GB_sql_database_tn9kf3836).
+
+    Read off the FILE, not the shell's syntax — a wrapper (`timeout`, `env`, `valgrind`), a second line or a test hides
+    a program from any parse, and a script or Makefile there runs the delivery: a word in a round's scratch naming a
+    binary the command does not itself write. A scratch source compiled with the delivery, a script, a pinned probe's
+    inputs (laid again each round) stay findings; a file no longer there is not identified, so it stays too."""
+    return any(_binary(Path(w)) and not _writes(command or "", w) for w in round_words(command))
+
+
+def round_inputs(command: str) -> list[str]:
+    """`round_words` the command reads rather than makes — a compiler's or redirect's output is no input (`_writes`)."""
+    return [w for w in round_words(command) if not _writes(command or "", w)]
+
+
+def round_words(command: str) -> list[str]:
+    """The words of `command` naming a file in a validation round's scratch — its judge's own, not a pinned probe's
+    inputs, which are laid again each round — once each, in order."""
+    return [w for w in dict.fromkeys(_WORD.split(command or ""))
+            if _ROUND.search(w) and "/probe_inputs/" not in w.replace("\\", "/")]
+
+
+def _binary(path: Path) -> bool:
+    """A built program: an executable's header (ELF, PE, Mach-O). Not any file with a NUL in it — a database the delivery
+    writes, or an input of NUL bytes, is data the delivery reads, and a finding over it re-runs the delivery (critic)."""
+    try:
+        head = _read_once("head", path, lambda: files_at(path).read_bytes(str(path), 4))   # where the round stands
+    except OSError:
+        return False
+    return bool(head) and head.startswith((b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe"))
+
+
+#: what was read of a round's files, by (what, path) — every read of the standing findings asks it again
+#: (`without_past_builds`, `finding_id`), and a round's files are its judge's, done, until the system removes the round
+_READ: dict = {}
+
+
+def _read_once(what: str, path, read):
+    """`read()` of a round's file, once per process while the round stands (`forget_round`)."""
+    if (key := (what, os.path.normcase(os.path.normpath(str(path))))) not in _READ:
+        _READ[key] = read()
+    return _READ[key]
+
+
+def forget_round(path: str) -> None:
+    """The round at `path` is gone: what was read of its files goes with it."""
+    under = os.path.normcase(os.path.normpath(str(path)))
+    for k in [k for k in _READ if k[1] == under or k[1].startswith(under + os.sep)]:
+        _READ.pop(k, None)
+
+
+def _writes(cmd: str, path: str) -> bool:
+    """Does the command make `path` itself — a compiler's or redirect's output, a copy's target, or a build run over its
+    directory?"""
+    p, end = re.escape(path), r"(?=$|[\s'\"`;&|)<>])"
+    name = re.escape(path.replace("\\", "/").rsplit("/", 1)[-1])
+    # `-o chk` after a `cd` into its directory makes it too; not the `-o` inside a word (`pytest-of-…`)
+    return bool(re.search(rf"(?:(?<![\w-])-o\s*|--output[= ]\s*|>\s*)['\"]?(?:{p}|{name}){end}", cmd)
+                or re.search(rf"\b(?:cp|mv|install|ln)\b[^;&|\n]*\s['\"]?{p}{end}", cmd)
+                or (re.search(r"\b(?:make|cmake|ninja|meson)\b", cmd)
+                    and path.replace("\\", "/").rsplit("/", 1)[0] in cmd.replace(path, "")))
+
+
+def without_past_builds(regression: Mapping) -> dict[str, list[dict]]:
+    """The regression set less the findings that run a past round's build (`runs_a_past_build`) — read so wherever the
+    set is demanded, so one filed before this rule stops failing the node too."""
+    return {c: kept for c, ps in (regression or {}).items()
+            if (kept := [p for p in ps if not runs_a_past_build(str(p.get("as_run") or p.get("command") or ""))])}
+
+
+#: what marks a probe that records an act of the SYSTEM's own over the delivery — its build, its copy — failed: the
+#: delivery's FAIL with its cause, never a finding that stands (`refuting_probes`). The next delivery's own build and
+#: copy are its re-check: kept, a failed `make` was demanded of a redelivery whose tree had no Makefile any more, and
+#: only an issuer lifted it (critic over 909e417)
+SYSTEMS_ACT = "systems_act"
+#: on a probe the system marked `held: false` by running it itself, not by the report's word
+SYSTEM_SAW = "system_saw"
+#: on an entry the report passed and the system's own run of a pin failed: what the report ran under it refuted nothing
+OVER_A_PASS = "over_a_pass"
+
+
 def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, object]] = (),
                     texts: Mapping[str, str] | None = None) -> dict[str, list[dict]]:
     """{criterion: [the probes that REFUTED it this round]} — the regression set's new members, each with the text of
@@ -628,8 +882,19 @@ def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, 
             continue
         name = _norm(e.get("criterion"))
         probes = probes_of(e)
+        # …nor, beside a probe the entry says did not hold, one it says nothing of: the entry named its refutation, and its
+        # own run that matched was filed as one, a shorthand of it standing six rounds (`cat-integrated#2bd5e0d5`,
+        # GB_coreutils_tnyzqh948: the run printed vT-same, the report wrote a line that creates no file)
+        # …the report's own word: the system's mark on a pin it ran (`with_engine_observations`) names nothing of the rest
+        named = any(probe_held(p.get("held")) is False and not p.get(SYSTEM_SAW) for p in probes)
+        # …never one the report says HELD (a part's pinned check), nor one of a split run that passed its share
+        # (`share`, `tools_llm._fold`); unmarked, a root FAIL with 1 refuting probe of 1,336 grew the store by hundreds a
+        # round to 1,414 findings (GB_sql_database_tmxu0n436, 2026-10-15). An unsaid probe of the failing entry is
+        # kept: the validator says `held` only of a part's pinned check, never of its own probes
         for p in probes:
-            if not _norm(p.get("command", "")):
+            if (not _norm(p.get("command", "")) or probe_held(p.get("held")) is True or p.get("share") == "pass"
+                    or p.get(SYSTEMS_ACT) or p.get(NOT_REFUTING) or (named and probe_held(p.get("held")) is None)
+                    or (e.get(OVER_A_PASS) and not p.get(SYSTEM_SAW))):
                 continue
             # …AS RUN, with this round's inputs directories NAMED rather than spelled: normalizing a multi-line
             # program onto one line left a command no shell runs, and the round's directory is gone the next round
@@ -637,6 +902,8 @@ def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, 
             # 2026-09-28: one pass refused three times). The id is over the named form, so a later round that runs
             # the line over its own directory matches it by command as well as by id.
             run = tokenized(str(p.get("command", "")), dirs)
+            if runs_a_past_build(run):     # this round's inputs directories are named by now, never this
+                continue
             cited = str(p.get("id", "")).strip()
             out.setdefault(name, []).append(
                 {"id": finding_id(name, run), "behaviour": _norm(p.get("behaviour", "")) or "found by contact",
@@ -647,12 +914,55 @@ def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, 
     return out
 
 
+#: what a report's probe says of a standing finding it re-ran as filed: why it refutes no criterion, beside what it printed
+NOT_REFUTING = "not_refuting"
+#: …run as filed: from the directory it was asked to run in, and nothing else around it
+_IN_A_DIRECTORY = re.compile(r"""^(?:cd (?:"[^"]*"|'[^']*'|\S+) && )+""")
+
+
+def _in_any_directory(command) -> str:
+    return _IN_A_DIRECTORY.sub("", _norm(command))
+
+
+def plan_pins(plan: Mapping[str, Sequence[Criteria]]) -> list[tuple[str, Probe]]:
+    """[(id, check)] of every check the plan runs ({criterion: criteria}; a check a ruling lifted is no longer in it)."""
+    return [(probe_id(c.name, p), p) for cs in (plan or {}).values() for c in cs for p in c.check or () if _norm(p.command)]
+
+
+def findings_not_reproduced(per_criterion: Sequence[Mapping], regression: Mapping, plan: Mapping[str, Sequence[Criteria]],
+                            dirs: Iterable[tuple[str, object]] = ()) -> list[tuple[str, str, dict]]:
+    """[(criterion, finding id, what the report said)] — each standing finding of a validator's own this report re-ran AS
+    FILED, showed what it printed and said why it refutes no criterion. A finding is his claim about the work, not a
+    criterion (§2.2, §12.8): it stands while the next independent run reproduces it. A check of the plan (`plan`:
+    {criterion: criteria}), and a run the report says did not hold or did not run, is not such a finding."""
+    pins = plan_pins(plan)
+    out = []
+    for e in per_criterion or ():
+        name = _norm(e.get("criterion"))
+        for f in (regression or {}).get(name, ()):
+            if any(runs_pin(f, i, p) for i, p in pins):
+                continue
+            filed = _in_any_directory(f.get("as_run") or f.get("command"))
+            for p in probes_of(e):
+                if (p.get(NOT_REFUTING) and _norm(p.get("printed")) and p.get("ran") is not False
+                        and probe_held(p.get("held")) is not False and f.get("id") in _reported_ids(name, [p], dirs)
+                        and filed and filed == _in_any_directory(tokenized(str(p.get("command", "")), dirs))):
+                    out.append((name, f["id"], {"why": str(p[NOT_REFUTING]), "printed": str(p["printed"])}))
+                    break
+    return out
+
+
 def merge_regression(stored: Mapping, found: Mapping) -> dict[str, list[dict]]:
     """The node's regression set, grown by this round and never shrunk (dedup by probe id)."""
     out = {k: list(v) for k, v in (stored or {}).items()}
     for name, probes in (found or {}).items():
         have = {p.get("id") for p in out.get(name, ())}
-        out.setdefault(name, []).extend(p for p in probes if p.get("id") not in have)
+        # …and a re-run of a standing finding — the report cites its id — under a reworded command is that finding,
+        # standing already: filed under a fresh id, 605 of 1,467 entries were such re-runs, chains six deep
+        # (GB_sql_database_tmxu0n436, 2026-10-15)
+        held_ids = have | {str(i).split("#")[-1] for i in have}
+        out.setdefault(name, []).extend(p for p in probes if p.get("id") not in have and not (
+            p.get("cited") and (p["cited"] in held_ids or str(p["cited"]).split("#")[-1] in held_ids)))
     return out
 
 
@@ -686,14 +996,16 @@ def without_pinned_runs(regression: Mapping, pinned: Mapping[str, str]) -> dict[
 
 
 def laid_down_dirs(criteria: Iterable[Criteria], base: str | Path | None) -> tuple[tuple[str, Path], ...]:
-    """(probe id, directory) for every pinned probe's inputs laid down anywhere under `base` this round —
-    batches lay them in subdirectories of their own."""
-    if not base or not Path(base).is_dir():
+    """(probe id, directory) for every pinned probe's inputs laid down under `base` this round — in its `probe_inputs`,
+    and in each batch's, a directory of its own (`materialize_inputs`): where the system lays them, read where the
+    round stands (`files_at`), not wherever a run made a directory of that name."""
+    if not base:
         return ()
-    names = {inputs_dir_name(probe_id(c.name, p)): probe_id(c.name, p)
-             for c in criteria or () for p in (c.check or ()) if p.inputs}
-    return tuple((names[d.name], d) for d in sorted(Path(base).rglob("*"))
-                 if d.is_dir() and d.parent.name == "probe_inputs" and d.name in names)
+    fs, names = files_at(base), {inputs_dir_name(probe_id(c.name, p)): probe_id(c.name, p)
+                                 for c in criteria or () for p in (c.check or ()) if p.inputs}
+    laid = [Path(base, d) for d in fs.subdirs(str(base), 3)              # one walk: [<batch>/]probe_inputs/<probe>
+            if d.split("/")[-2:-1] == ["probe_inputs"]]
+    return tuple((names[d.name], d) for d in sorted(laid) if d.name in names)
 
 
 def inputs_token(pid: str) -> str:
@@ -718,6 +1030,35 @@ def laid(command: str, dirs: Mapping[str, object]) -> str:
     return command
 
 
+def shows(printed: str, expect: str) -> bool:
+    """Does `printed` show exactly what a check must, as a check reads a printed output: written `\\t`/`\\n` escapes as
+    the characters, whitespace runs as one."""
+    return as_read(printed) == as_read(expect)
+
+
+def as_read(s: str) -> str:
+    """A printed text as a check reads it: written `\\t`/`\\n` escapes as the characters, whitespace runs as one."""
+    return " ".join(str(s or "").replace("\\t", "\t").replace("\\n", "\n").split())
+
+
+#: How an exact check's output is compared with its `expect` (`as_read`) — said in these words to its author and to
+#: its validator alike: told nothing of it, a validator read `a ok` against `a` and `ok` on two lines as no substring
+#: and failed six rounds the system's own runs had matched (gf-cc root.preprocessor.pp-rest, 2026-11-06).
+EXACT_READ = "whitespace runs count as one, `\\n` as a newline"
+
+#: What an author is told `exact` means — one text for every schema that pins a probe (`Probe.exact`).
+EXACT_TEXT = ("true when `expect` is the COMPLETE output the command prints on correct work (" + EXACT_READ
+              + ") — its standard output, or that followed by its errors; where the two streams "
+              "alternate, merge them in the command (`2>&1`). The system then runs the command itself, as written, on "
+              "the delivered tree in a fresh copy, and a different output fails the criterion whatever the validator "
+              "says. So an exact command builds what it runs (`make -s prog && ./prog …`), creates any state it reads "
+              "(starts from a fresh temp file, not one an earlier run may have left), and prints the same every time it "
+              "runs; a build that records its own directory (a CMake or autotools build tree) is built afresh in the "
+              "command, not reused from the tree; a probe that cannot is left false. false also when `expect` "
+              "describes the output in words or "
+              "names only part of it")
+
+
 def pinned_run(p: Mapping, pinned: Mapping[str, str], criterion: str = "") -> str | None:
     """The id of the pinned probe `p` is a run of — its id, or its command with the probe's own directory named
     `{inputs}` — else None. Only a probe of the same criterion: another criterion's pinned probe with the same
@@ -731,9 +1072,73 @@ def pinned_run(p: Mapping, pinned: Mapping[str, str], criterion: str = "") -> st
                  if inputs_token(w) in cmd and _norm(cmd.replace(inputs_token(w), INPUTS_TOKEN)) == _norm(c)), None)
 
 
+def same_expectation(said: str, pinned: str) -> bool:
+    """Is `said` what `pinned` expects, whole or one whole line of it? A substring is not: `rc=1` in `rc=10`, `ok` in
+    `not ok` (critic over 9c51566). A finding's expectation is stored on one line (`refuting_probes`), so several lines
+    of a pin are compared only as all of them."""
+    said = _norm(said)
+    return bool(said) and (said == _norm(pinned) or said in {_norm(line) for line in str(pinned or "").splitlines()})
+
+
+def runs_pin(finding: Mapping, pid: str, pin: Probe) -> bool:
+    """Does this finding say only what pinned check `pin` (id `pid`) says — its command, over its own inputs directory,
+    and the pin's expectation? The same command with an expectation of the validator's own, or none said, is his
+    reading of the work, not the pin's."""
+    return same_expectation(finding.get("expect"), pin.expect) and _norm(pin.command) == _norm(
+        str(finding.get("as_run") or finding.get("command") or "").replace(inputs_token(pid), INPUTS_TOKEN))
+
+
+def _pins_lifted(crits: Sequence[Criteria], ruled: Iterable[Mapping], keeps_own: bool) -> set[str]:
+    """The ids of the pinned checks in `crits` that `ruled` run (each within what it says stood then, `then`, where said)
+    and their copies — or none where the criterion, with no pin of its own (`keeps_own`), would keep no check at all."""
+    pins = [(probe_id(c.name, p), p) for c in crits for p in c.check or () if _norm(p.command)]
+    gone = {same_probe(p) for i, p in pins for r in ruled
+            if runs_pin(r, i, p) and ("then" not in r or same_probe(p) in r["then"])}
+    return {i for i, p in pins if same_probe(p) in gone} if keeps_own or any(same_probe(p) not in gone for _, p in pins) else set()
+
+
+def _pinned_criteria(criteria: Iterable[Criteria]) -> set[str]:
+    return {_norm(c.name) for c in criteria or () if any(_norm(p.command) for p in c.check or ())}
+
+
+def pins_ruled_out(parts: Mapping[str, Sequence[Criteria]], rulings: Iterable[Mapping], own: Iterable[Criteria]) -> dict[str, set[str]]:
+    """{criterion of the whole: the ids of its parts' pinned checks these rulings take off it} — ONE decision of what a
+    ruling lifts: under the criterion it names only, and never a criterion's last check."""
+    pinned = _pinned_criteria(own)
+    out = {}
+    for name, crits in (parts or {}).items():
+        mine = [r for r in rulings or () if _norm(r.get("criterion")) == _norm(name)]
+        if mine and (ids := _pins_lifted(crits, mine, _norm(name) in pinned)):
+            out[name] = ids
+    return out
+
+
+def without_pins(parts: Mapping[str, Sequence[Criteria]], gone: Mapping[str, set]) -> dict:
+    """`parts` less `gone` (`pins_ruled_out`). The part's own contract stays as it settled."""
+    out = {}
+    for name, crits in (parts or {}).items():
+        kept = (replace(c, check=tuple(p for p in c.check or () if probe_id(c.name, p) not in gone.get(name, ()))) for c in crits)
+        if left := tuple(c for c in kept if c.check):
+            out[name] = left
+    return out
+
+
+def findings_a_ruling_could_lift(regression: Mapping, parts: Mapping[str, Sequence[Criteria]], own: Sequence[Criteria]) -> list[str]:
+    """The ids of the findings in `regression` that only say a pinned check of a part THEIR criterion rests on does not
+    hold, a check none of `own` pins, and whose ruling that criterion's last check would not hold back."""
+    mine = [(probe_id(c.name, p), p) for c in own or () for p in c.check or () if _norm(p.command)]
+    named = [{**f, "criterion": k} for k, fs in (regression or {}).items() for f in fs
+             if not any(runs_pin(f, i, p) for i, p in mine)]
+    lifted = pins_ruled_out(parts, named, own)
+    pins = {name: [(i, p) for c in crits for p in c.check or () if (i := probe_id(c.name, p)) in lifted.get(name, ())]
+            for name, crits in (parts or {}).items()}
+    return [f["id"] for f in named for name, ps in pins.items()
+            if _norm(name) == _norm(f["criterion"]) and any(runs_pin(f, i, p) for i, p in ps)]
+
+
 def unrun_regression(regression: Mapping, per_criterion: Sequence[Mapping],
                      dirs: Iterable[tuple[str, object]] = (), layable: Iterable[str] | None = None,
-                     delivery: str | Path | None = None) -> dict[str, list[str]]:
+                     delivery: str | Path | None = None, *, standing) -> dict[str, list[str]]:
     """{criterion: [ids of once-refuting probes this PASS did not re-run]}.
 
     A criterion that failed here before passes now only if the observation that refuted it was
@@ -745,7 +1150,7 @@ def unrun_regression(regression: Mapping, per_criterion: Sequence[Mapping],
         if verdicts.get(_norm(name)) != "pass":
             continue
         missing = [p["id"] for p in probes if p.get("id") not in ran.get(_norm(name), set())
-                   and not unrerunnable(p, layable, delivery)]
+                   and not unrerunnable(p, layable, delivery, standing=standing)]
         if missing:
             out[name] = missing
     return out
@@ -754,9 +1159,11 @@ def unrun_regression(regression: Mapping, per_criterion: Sequence[Mapping],
 #: A word of a command that names a file by an absolute path — POSIX, or a Windows drive. A bare backslash begins no
 #: path: `\n#endif` in a printf is an escape, and read as a rooted path it was "gone" on a Windows engine.
 _ABSOLUTE = re.compile(r"^(?:/|[A-Za-z]:[\\/])")
+#: The system tree every container of an execution carries (FHS): what a command reads there is the environment's.
+_ENVIRONMENT = re.compile(r"^/(?:dev|proc|sys|usr|bin|sbin|lib|lib32|lib64|libx32|etc)(?:/|$)")
 
 
-def unrerunnable(p: Mapping, layable: Iterable[str] | None, delivery: str | Path | None = None) -> str:
+def unrerunnable(p: Mapping, layable: Iterable[str] | None, delivery: str | Path | None = None, *, standing) -> str:
     """Why a stored finding cannot be re-run as recorded — '' where it can. Such a finding is SHOWN, not demanded: a
     probe that cannot run decides nothing (A1 (i)), and demanding it holds the node `undecidable` whatever is repaired.
 
@@ -764,9 +1171,9 @@ def unrerunnable(p: Mapping, layable: Iterable[str] | None, delivery: str | Path
     orphaned by a rename. Or it names a file by an absolute path that is GONE here, now — neither it nor the directory
     it would sit in exists — outside the delivery's own tree, where a missing file is what the finding may be about:
     an earlier validation's pruned scratch (`root.pp_1791646628/dt/hh3.c`, GB_c_compiler_tmp5cb096). Read where the
-    engine stands, when it is asked. A marker for "some validation's scratch" in its place made 198 of that node's
-    271 findings advisory, most of them programs the validator wrote there that still stood and still ran (critic over
-    f0584f3): a finding is demanded while it can run."""
+    place holding it stands (`files_at`), when it is asked. A marker for "some validation's scratch" in its place made
+    198 of that node's 271 findings advisory, most of them programs the validator wrote there that still stood and still
+    ran (critic over f0584f3): a finding is demanded while it can run."""
     cmd = str(p.get("as_run") or p.get("command") or "")
     if layable is not None and set(re.findall(r"\{inputs:([^}]*)\}", cmd)) - set(layable):
         return "it reads the inputs of a probe the contract no longer pins"
@@ -774,9 +1181,34 @@ def unrerunnable(p: Mapping, layable: Iterable[str] | None, delivery: str | Path
     # a path under a pinned probe's inputs is laid down every round: never gone — cut whole, `{inputs:X}/tests/a.c`
     # left `/tests/a.c` behind, an absolute path that never existed
     gone = [w for w in re.split(r"[\s'\"=<>|;&()`]+", re.sub(r"\{inputs:[^}]*\}[^\s'\"=<>|;&()`]*", "", cmd))
-            if _ABSOLUTE.match(w) and not (home and Path(w).as_posix().startswith(home))
-            and not Path(w).exists() and not Path(w).parent.exists()]
+            if _ABSOLUTE.match(w) and not (home and (Path(w).as_posix() + "/").startswith(home)) and _gone(w, standing)]
     return f"it names {', '.join(gone)}, which no longer exist here" if gone else ""
+
+
+def round_of(path) -> Optional[tuple[str, str]]:
+    """(the round's own path, its name in the record — `.gfso-scratch-<place>/<round>`, one spelling whatever separators
+    the path came in) of the validation or contact round `path` lies in; None for no round's."""
+    m = re.match(r"(.*?[\\/](\.gfso-scratch-[^\\/]+)[\\/]+([^\\/]+))", str(path))
+    return (m.group(1), f"{m.group(2)}/{m.group(3)}") if m else None
+
+
+def _gone(path: str, standing) -> bool:
+    """Is what `path` names gone? In a round, the round no longer standing and its content not in the system's record
+    either (`standing`, asked of (the round's path, its name, `path`)) — kept as it makes and removes rounds and files
+    findings, asked of no container; else neither it nor its directory there on this host: the
+    base and what lies outside every place are this host's until the places and the base move into volumes. Under a
+    system directory of the layout before each named its project, gone: no container mounts it, a re-run would not
+    find it (`unprojected`)."""
+    if unprojected(path):
+        return True
+    if (r := round_of(path)) is not None:
+        return not standing((*r, path))
+    # …the system tree of the environment a command runs in is never gone: asked of a Windows engine, `/dev/stdin` and
+    # `/dev/null` did not exist, and a finding kept and laid whole went out raw to judge and executor alike — 429 of
+    # one day's findings, c_compiler rows looping on lines no one could run (2026-10-30)
+    if _ENVIRONMENT.match(Path(path).as_posix()):
+        return False
+    return not HOST.exists(path) and not HOST.exists(str(Path(path).parent))
 
 
 def layable_pids(criteria: Iterable[Criteria]) -> set[str]:
@@ -806,6 +1238,150 @@ def _cited_as(p: Mapping) -> str:
     return f"`{i}`" if (i := str(p.get("id", "")).strip()) else "its command"
 
 
+def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping]) -> list:
+    """The report's entries, each part probe it observed written out in full where a criterion rests on it: a citation
+    `{id, held}` — the form the validator's packet asks for — given the pinned command and expectation it names, and a
+    criterion resting on a part probe another entry of the report observed given that observation. A criterion whose only
+    procedure was a part probe carried by another run was refused for "no reproducible probe", and a validator invented
+    one whose expectation then disagreed with the pinned one (finder over 190f4db; GB_sql_database_tn03ao788). An entry
+    with nothing to write out is returned as it came."""
+    pinned = {probe_id(c.name, p): p for cs in (parts or {}).values() for c in cs for p in (c.check or ()) if _norm(p.command)}
+    if not pinned:
+        return list(per_criterion or ())
+    full = lambda q, pid: {**q, "command": pinned[pid].command, "expect": pinned[pid].expect,
+                           "behaviour": q.get("behaviour") or pinned[pid].behaviour}
+    cited = lambda q: str(q.get("id", "")).strip() in pinned and not _norm(q.get("command", ""))
+    out = [{**e, "probe": [full(q, str(q["id"]).strip()) if cited(q) else q for q in probes_of(e)]}
+           if any(cited(q) for q in probes_of(e)) else e for e in per_criterion or ()]
+    # …never one the report says, anywhere and however cited, did not hold (one observation: `part_credit`)
+    failed = {pid for e in out for q in probes_of(e) if probe_held(q.get("held")) is False
+              for pid in pinned if str(q.get("id", "")).strip() in (pid, pid.split("#")[-1])}
+    failed |= {pid for pid in pinned if same_probe(pinned[pid]) in {same_probe(pinned[x]) for x in failed}}
+    seen = {str(q.get("id")): q for e in out for q in probes_of(e) if str(q.get("id", "")) in pinned
+            and str(q.get("id")) not in failed and _norm(q.get("command", "")) and probe_held(q.get("held")) is True}
+    lent = []
+    for e in out:
+        rests = [probe_id(c.name, p) for c in (parts or {}).get(str(e.get("criterion")), ()) for p in (c.check or ())]
+        got = [seen[i] for i in rests if i in seen]
+        if got and not probes_of(e):     # lent only to an entry that cites nothing itself
+            e = {**e, "probe": got}
+        # …and what such a probe observes is the behaviour the entry names, where it named none
+        if not [b for b in (e.get("behaviours") or ()) if str(b).strip()] and                 (named := [q["behaviour"] for q in probes_of(e) if str(q.get("id", "")) in pinned and q.get("behaviour")]):
+            e = {**e, "behaviours": named}
+        lent.append(e)
+    return lent
+
+
+#: an entry's exact pinned checks the system ran that did not finish within their own bound: ⊥ for its criterion,
+#: written here only (`with_engine_observations`), read by the engine as under-observation (`Engine.record_verdict`)
+PAST_BOUND = "past_bound"
+#: the seconds one exact pinned check the system runs may take, its build included — the bound every reader names
+PROBE_S = 60
+#: …and whether every one of them had its WHOLE bound (no budget cutting it): then the same tree times out again, and
+#: asking the validation again only pays for the same ⊥ (`BOUND_SPENT`, the dispatcher's `no-verdict:bound`)
+PAST_WHOLE = "past_bound_whole"
+#: said in a refusal whose every unobserved criterion is PAST_WHOLE — read by the dispatcher, which stops re-asking
+BOUND_SPENT = ("NOT ASKED AGAIN: every unobserved check ran past its whole own bound on this delivered tree, which would "
+               "time out again — VALIDATING's bound hands the node to its issuer (§12.2), who may re-pin the check to finish "
+               f"inside the system's fixed per-check bound, {PROBE_S} s with its build (a slow corpus split across "
+               "checks), or cancel")
+
+
+def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria],
+                             parts: Mapping[str, Sequence[Criteria]] | None, observed: Mapping | None) -> list:
+    """The report with what the system itself observed of its `exact` pinned probes (`observed`: {probe id: {matched,
+    out, note}}, `tools_llm._observe_exact`) put where every reader of `held` reads it: a probe it saw print other than
+    its `expect` did NOT hold — each citation of it, by id or bare hash, says `held: false`, and every entry of a
+    criterion resting on it or on a copy of it (`same_probe`), the node's own or through a part, is a `fail` citing it
+    with what it printed (Inv-2, §12.8: an observed divergence is that criterion's fail; Inv-3). Matched, the report
+    stands as it came; not run (a row with a `note` and no `matched`), the entries resting on it stand too, their
+    evidence saying the system did not observe it — a run the system could not make decides nothing (A1 (i)), and the
+    `held` there is visibly the validator's word. A `held: false` is never raised. Before it the PASS on such a probe
+    was the validator's word alone, and FM-3 has no structural guard (§9.10) — a false FAIL costs a round, a false PASS
+    closes a node."""
+    pinned = {probe_id(c.name, p): p for cs in [criteria or ()] + list((parts or {}).values()) for c in cs
+              for p in (c.check or ()) if _norm(p.command)}
+    exact = {pid: o for pid, o in (observed or {}).items() if pid in pinned and pinned[pid].exact}
+    def _the_reports(e: Mapping) -> dict:    # …the system's marks alone: a report cannot ⊥ its own FAIL, nor speak as the system
+        e = {k: v for k, v in e.items() if k not in (PAST_BOUND, PAST_WHOLE, OVER_A_PASS)}
+        return {**e, "probe": [{k: v for k, v in q.items() if k != SYSTEM_SAW} for q in probes_of(e)]} if probes_of(e) else e
+    if not exact:
+        return [_the_reports(e) for e in per_criterion or ()]
+
+    def _copies(seen: dict) -> dict:   # every id one observation is of (`same_probe`)
+        seen_as = {same_probe(pinned[pid]): o for pid, o in seen.items()}
+        return {pid: seen_as[same_probe(p)] for pid, p in pinned.items() if same_probe(p) in seen_as}
+    off = _copies({pid: o for pid, o in exact.items() if o.get("matched") is False})
+    unseen = {pid: o for pid, o in _copies({pid: o for pid, o in exact.items() if "matched" not in o}).items()
+              if pid not in off and "matched" not in exact.get(pid, {})}
+    rests: dict[str, list[str]] = {}
+    for k, cs in [*((c.name, (c,)) for c in criteria or ()), *(parts or {}).items()]:
+        rests.setdefault(_norm(k), []).extend(probe_id(c.name, p) for c in cs for p in (c.check or ()))
+    named = lambda q: next((pid for pid in off if str(q.get("id", "")).strip() in (pid, pid.split("#")[-1])), None)
+    out = []
+    for e in per_criterion or ():
+        e = _the_reports(e)
+        probes = [{**q, "held": False, SYSTEM_SAW: True} if named(q) else q for q in probes_of(e)]
+        on = list(dict.fromkeys(rests.get(_norm(e.get("criterion")), ())))
+        if hit := [pid for pid in on if pid in off]:
+            why = [f"the system ran pinned check {pid} itself and it printed {off[pid].get('out', '')!r}, not the "
+                   f"whole output it pins, {pinned[pid].expect!r}" for pid in hit]
+            cited = {named(q) for q in probes}
+            e = {**e, **({OVER_A_PASS: True} if spoken_verdict(e.get("verdict")) != "fail" else {}), "verdict": "fail", "evidence": " | ".join(why + [str(e["evidence"])] if e.get("evidence") else why),
+                 "divergences": [*why, *(e.get("divergences") or ())],
+                 "probe": probes + [{"id": pid, "behaviour": pinned[pid].behaviour, "command": pinned[pid].command,
+                                     "expect": pinned[pid].expect, "held": False, SYSTEM_SAW: True} for pid in hit if pid not in cited]}
+        elif (late := [pid for pid in on if unseen.get(pid, {}).get("timed_out")]) and not (
+                spoken_verdict(e.get("verdict")) == "fail" and str(e.get("evidence", "")).strip()):
+            # …a check that ran past its own bound decided nothing (A1 (i)): ⊥, and no PASS over it (Inv-2) — read as
+            # the validator's word, a looping delivery hid from the system's FAIL (security's critic, 2026-10-31). It
+            # only LOWERS a pass: a FAIL the validator showed with evidence is a decision this absence does not undo
+            why = [f"the system ran exact pinned check {pid} itself and it {unseen[pid].get('note')}: undecided"
+                   for pid in late]
+            e = {**e, "verdict": "undecidable", "probe": probes, PAST_BOUND: late,
+                 PAST_WHOLE: all(unseen[pid].get("whole") for pid in late),
+                 "evidence": " | ".join(why + [str(e["evidence"])] if e.get("evidence") else why)}
+        else:
+            if probes:
+                e = {**e, "probe": probes}
+            if blind := [f"the system did not run exact pinned check {pid} itself ({unseen[pid].get('note')}): its "
+                         f"holding is the validator's word" for pid in on if pid in unseen]:
+                e = {**e, "evidence": " | ".join([str(e["evidence"])] + blind if e.get("evidence") else blind)}
+        out.append(e)
+    return out
+
+
+def same_probe(p: Probe) -> tuple:
+    """What makes two pinned probes ONE observation over a delivery — the same command, expectation and inputs, as
+    `integrate` copying `scaffold`'s check or the root's: whatever ids they are pinned under, running one is running
+    each. THE one identity: the packet owes such a probe once (`packets.owed_probes`) and a citation of any of its ids
+    credits all of them (`part_credit`)."""
+    # …NOT `exact`: it says who can decide the output, not what running the command observes — told apart by it, one
+    # run of a command pinned twice would be owed twice and credit only the copy it was cited by
+    return p.command.strip(), (p.expect or "").strip(), tuple(p.inputs or ())
+
+
+def _citable(known: Mapping) -> tuple[dict, dict, dict]:
+    """The ways a citation names a pinned probe — by bare hash, by command over its own inputs directory — and each
+    probe's copies (`same_probe`), over every probe a report may cite."""
+    by_hash: dict[str, set[str]] = {}
+    by_cmd: dict[str, set[str]] = {}
+    copies: dict[tuple, set[str]] = {}
+    for pid, (c, p) in known.items():
+        copies.setdefault(same_probe(p), set()).add(pid)
+        by_hash.setdefault(pid.split("#")[-1], set()).add(pid)
+        by_cmd.setdefault(_cmd_key(p.command.replace(INPUTS_TOKEN, inputs_token(pid))), set()).add(pid)
+    return by_hash, by_cmd, copies
+
+
+def _named_by(p: Mapping, known: Mapping, by_hash: Mapping, by_cmd: Mapping, dirs: tuple) -> tuple[set, set]:
+    """(every probe a citation could mean, the ones it names): its full id names one; else hash and command together."""
+    i, cmd = str(p.get("id", "")).strip(), str(p.get("command", ""))
+    h = set() if "#" in i else by_hash.get(i, set())
+    m = {x for k in {_cmd_key(cmd), _cmd_key(tokenized(cmd, dirs))} for x in by_cmd.get(k, ())} if _norm(cmd) else set()
+    return h | m, {i} if i in known else (h & m) or (h | m)
+
+
 def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping],
                 dirs: Iterable[tuple[str, object]] = (), own: Sequence[Criteria] = ()) -> tuple[set[str], dict[str, list[str]]]:
     """(the parts' pinned probes this report shows holding over the delivery, {demanded part probe it names but cannot
@@ -823,50 +1399,53 @@ def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence
     demanded = {probe_id(c.name, p): (c, p) for cs in (parts or {}).values() for c in cs for p in (c.check or ())
                 if _norm(p.command)}
     known = {**{probe_id(c.name, p): (c, p) for c in own or () for p in (c.check or ()) if _norm(p.command)}, **demanded}
-    by_hash: dict[str, set[str]] = {}
-    by_cmd: dict[str, set[str]] = {}
-    for pid, (c, p) in known.items():
-        by_hash.setdefault(pid.split("#")[-1], set()).add(pid)
-        by_cmd.setdefault(_cmd_key(p.command.replace(INPUTS_TOKEN, inputs_token(pid))), set()).add(pid)
+    by_hash, by_cmd, copies = _citable(known)
     dirs = tuple(dirs or ())
     # which part probes each criterion of the whole RESTS on: a passed criterion vouches, without `held`, only for those —
     # a command met under an unrelated criterion that passes (its own exploration, "3 failed") is no observation of it
-    rests = {_norm(k): {probe_id(c.name, p) for c in cs for p in (c.check or ()) if _norm(p.command)}
-             for k, cs in (parts or {}).items()}
+    # …and on its OWN pinned probes: cited there it is their run (`unrun_pinned`), so of every copy of them a part carries
+    # — which the packet no longer lists again (critic over the probe identity, 2026-10-27)
+    rests: dict[str, set[str]] = {}
+    for k, cs in [*(parts or {}).items(), *((c.name, (c,)) for c in own or ())]:
+        rests.setdefault(_norm(k), set()).update(probe_id(c.name, p) for c in cs for p in (c.check or ()) if _norm(p.command))
     good: set[str] = set()
     bad: set[str] = set()
     why: dict[str, list[str]] = {}
     for e in per_criterion or ():
         name, verdict = _norm(e.get("criterion")), spoken_verdict(e.get("verdict"))
         for p in probes_of(e):
-            i, cmd = str(p.get("id", "")).strip(), str(p.get("command", ""))
-            h = set() if "#" in i else by_hash.get(i, set())
-            m = {x for k in {_cmd_key(cmd), _cmd_key(tokenized(cmd, dirs))} for x in by_cmd.get(k, ())} if _norm(cmd) else set()
-            cand = h | m
-            named = {i} if i in known else (h & m) or cand
-            if len(named) > 1:
+            cand, named = _named_by(p, known, by_hash, by_cmd, dirs)
+            if len({same_probe(known[x][1]) for x in named}) > 1:
                 for pid in named & set(demanded):
                     why.setdefault(pid, []).append(f"cited by {_cited_as(p)} under '{name}', which names {len(named)} "
                                                    f"demanded probes ({', '.join(sorted(named))}) — cite it by its full id")
                 continue
-            for pid in (cand - named) & set(demanded):
+            # …one observation, cited by any of its ids, is each copy's: SHOWN HOLDING it holds for each (the sql root,
+            # 2026-10-27: six of seven validations ⊥ on one sound delivery, a twin cited by its copy's full id read as
+            # "not run"), reported NOT holding it voids each (a contradiction errs to a false FAIL — replay mutation,
+            # 2026-10-27); cited short of either it speaks only of the id it names (critic r3, 2026-10-26)
+            each = set().union(*(copies[same_probe(known[x][1])] for x in named))
+            for pid in (cand - each) & set(demanded):
                 why.setdefault(pid, []).append(f"its hash or command, cited under '{name}', was read as {', '.join(named)} "
                                                "— cite this one by its own full id")
-            if not named & set(demanded):
+            if not each & set(demanded):
                 continue
-            pid, held = next(iter(named)), probe_held(p.get("held"))
-            if held is True or (held is None and verdict == "pass" and pid in rests.get(name, ())):
-                good.add(pid)
+            held = probe_held(p.get("held"))
+            if held is True or (held is None and verdict == "pass" and each & rests.get(name, set())):
+                good |= each & set(demanded)
                 continue
-            if held is None and verdict == "pass":
-                why.setdefault(pid, []).append(f"cited by {_cited_as(p)} under '{name}', which does not rest on it, "
-                                               "without `held: true` — say whether it held")
-                continue
-            bad.add(pid)
-            why.setdefault(pid, []).append(
-                f"reported `held: false` under '{name}' — it did not hold, and every criterion resting on it fails"
-                if held is False else f"cited by {_cited_as(p)} under '{name}', which the report does not pass, "
-                                      "without `held: true` — say whether it held")
+            if held is False:                                # one observation said failing: no copy of it holds
+                named = each
+            for pid in named & set(demanded):
+                if held is None and verdict == "pass":
+                    why.setdefault(pid, []).append(f"cited by {_cited_as(p)} under '{name}', which does not rest on it, "
+                                                   "without `held: true` — say whether it held")
+                    continue
+                bad.add(pid)
+                why.setdefault(pid, []).append(
+                    f"reported `held: false` under '{name}' — it did not hold, and every criterion resting on it fails"
+                    if held is False else f"cited by {_cited_as(p)} under '{name}', which the report does not pass, "
+                                          "without `held: true` — say whether it held")
     credited = good - bad
     return credited, {pid: w for pid, w in why.items() if pid not in credited}
 
@@ -922,7 +1501,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
                     regression: Mapping, internal: bool = False,
                     dirs: Iterable[tuple[str, object]] = (),
                     parts: Mapping[str, Sequence[Criteria]] | None = None,
-                    delivery: str | Path | None = None) -> dict[str, list[str]]:
+                    delivery: str | Path | None = None, *, standing) -> dict[str, list[str]]:
     """{criterion: [what this report did not account for]} — ONE owner for that question.
 
     Four sources, one answer: the behaviours the report itself named and did not probe
@@ -943,6 +1522,14 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # criterion falls short on another count below, where the refusal names everything it is short of, as before
     stood = named_beyond_procedure(task.spec.criteria, per_criterion, dirs) if task is not None else {}
     gaps = underprobed(per_criterion)
+    # …and an exact check the SYSTEM ran and left unfinished in the time it was given (`with_engine_observations`): it
+    # decided nothing in finite time (A1 (i)), whoever validates — no PASS over it, and no FAIL either: an honest slow
+    # check is no defect of the work (the first form landed it in `failed_criteria` and reworked honest work)
+    for e in per_criterion or ():
+        if e.get(PAST_BOUND):
+            gaps.setdefault(str(e.get("criterion")), []).append(
+                f"the system ran its pinned check(s) {', '.join(map(str, e[PAST_BOUND]))} and they did not finish within "
+                f"the time they were given — undecided")
     # The internal-node exemption (§10.3) is narrowed to the case that HAS it: §10.3 lets an INTERNAL node
     # self-verify; at a seam independence is owed and a self-validation is not a verdict at all. The
     # caller guarantees that upstream today, and the repo's own recurring class is a rule that
@@ -958,7 +1545,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # a repair CHECKED rather than asserted: the loop this closes is the executor fixing what was
     # named while the next validator writes fresh probes and never looks there again.
     layable = layable_over(task.spec.criteria, parts)
-    for name, ids in unrun_regression(regression, per_criterion, dirs, layable, delivery).items():
+    for name, ids in unrun_regression(regression, per_criterion, dirs, layable, delivery, standing=standing).items():
         gaps.setdefault(name, []).append(
             "a probe that REFUTED this criterion in an earlier round was not re-run: "
             + ", ".join(ids)

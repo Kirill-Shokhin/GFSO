@@ -100,11 +100,11 @@ def test_create_task_refuses_an_id_that_already_exists():
 
 
 def test_editing_criteria_keeps_the_dependency_edges():
-    """Dep seams are stored AS criteria (`dep__{producer}` carrying `depends_on`), so replacing the
-    whole set used to delete the graph's edges without a word — and restoring a staled plan gate
-    forces the caller through this very verb, putting the trap on the recovery path. Editing what a
-    node must ACHIEVE is not a request to sever what it WAITS FOR; removal stays explicit
-    (`remove_dependency`, or passing the `dep__` criterion yourself)."""
+    """While Dep seams were stored AS criteria (`dep__{producer}` carrying `depends_on`), replacing the
+    whole set deleted the graph's edges without a word — and restoring a staled plan gate forces the
+    caller through this very verb, putting the trap on the recovery path. Editing what a node must
+    ACHIEVE is not a request to sever what it WAITS FOR; the edge is a record of its own now (§2.7),
+    and removal stays explicit (`remove_dependency`)."""
     e = _engine()
     _root(e, [criterion("c2", "the other thing")])
     _split(e, {"prod": "c2", "cons": "c1"}, "agent")
@@ -399,10 +399,15 @@ def test_the_observation_log_carries_the_humans_own_signals():
         f"the human's signal is absent from the observation log: {lines}")
 
 
-def test_the_human_door_hands_out_the_ui_link_too(capsys):
+def test_the_human_door_hands_out_the_ui_link_too(capsys, monkeypatch, tmp_path):
     """The agent door attaches `ui` to its entry verbs and repeats it; the CLI/HTTP door never did,
     so the person the UI exists for was the one never told its address (measured: fourteen calls,
-    no link anywhere). One list of verbs now serves both doors."""
+    no link anywhere). One list of verbs now serves both doors.
+
+    In process, in its own data dir: through a live server this test created `ui-link-probe` in the
+    person's own project list on every run of the suite (found three times, 2026-10-24/25)."""
+    monkeypatch.setattr(driver, "_through_server", lambda *a, **k: None)
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
     assert "use_project" in serverctl.UI_LINK_VERBS and "create_task" in serverctl.UI_LINK_VERBS
     assert "?project=demo" in serverctl.ui_link("demo"), serverctl.ui_link("demo")
 
@@ -1726,7 +1731,7 @@ def test_the_roster_verbs_do_not_ask_for_a_project_that_has_no_graph_yet(tmp_pat
     graph existing, so registering a role before authoring anything answered "no such project"
     (measured on a cold start 2026-08-21). The roster verbs are about the roster."""
     monkeypatch.setenv("GFSO_HOME", str(tmp_path))
-    assert {"register_agent", "unregister_agent", "list_agents"} == set(T.PROJECTLESS_VERBS)
+    assert {"register_agent", "unregister_agent", "list_agents"} <= set(T.PROJECTLESS_VERBS)
     e = _engine()
     out = TL.TOOLS["register_agent"](e, "w-val-1", "llm-validator", workdir=str(tmp_path))
     assert out["registered"] == "w-val-1"
@@ -1901,10 +1906,10 @@ def test_a_rebuild_leaves_one_criterion_per_name():
 def test_the_directive_lists_every_criterion_the_record_will_demand():
     """A person validated exactly the criteria the directive printed and was refused for missing one.
 
-    V is the conjunction over ALL criteria (§2) — seams included, since a `dep__` criterion IS a
-    criterion of the consumer — and `record_verdict` enforces exactly that. The directive listed only
-    the node's own, dropping the seams, so following the instruction was an error (measured on the
-    human door 2026-08-22, two round-trips)."""
+    V is the conjunction over ALL criteria (§2) — one whose check reads the producer's result included —
+    and `record_verdict` enforces exactly that. The directive listed only the node's own, dropping the
+    seams, so following the instruction was an error (measured on the human door 2026-08-22, two
+    round-trips)."""
     e = _engine()
     _root(e)
     T.edit_criteria(e, "root", [criterion("c1", "one"),

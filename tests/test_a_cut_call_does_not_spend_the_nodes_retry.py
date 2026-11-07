@@ -86,10 +86,39 @@ def test_a_thin_report_still_spends_the_retry_and_still_escalates(tmp_path, monk
 def test_the_redials_end(tmp_path, monkeypatch):
     """The bound. Past its own budget a cut call falls through to the ordinary path and parks."""
     monkeypatch.delenv("GFSO_VALIDATOR_RETRY_MODEL", raising=False)
+    monkeypatch.setattr(D, "TORN_DELAY_S", 0)            # the spacing has its own test
     _, parked = _drive(tmp_path, "no-verdict:torn", passes=D.TORN_REDIALS + 2)
     assert parked, \
         f"after {D.TORN_REDIALS} redials plus the ordinary retry the node must reach a person — " \
         f"an unbounded redial is the loop Inv-5 exists against"
+
+
+def _an_offer(e):
+    T.create_task(e, "par", {"description": "parent", "criteria": [criterion("g", "G")], "accepted_risks": _RISK},
+                  assignee="a-human")
+    T.decompose(e, "par", [{"task_id": "kid", "spec": {"description": "the work", "criteria": [criterion("k", "K")]},
+                            "assignee": "exec-1", "covers": ["g"]}], accepted_risks=REGISTER)
+
+
+def test_an_executors_cut_call_is_redialled_after_its_spacing_not_parked(tmp_path):
+    """A session cut by "API Error: 403" was retried at once, cut again four seconds later and parked; its issuer's
+    reassign 15 min on broke the scope and re-armed the plan's gate (GB_coreutils_tn5q9r220). A cut executor call is
+    redialled within TORN_REDIALS, spaced; the control — a report that came and did not parse — still parks."""
+    for cut, want_parked in ((True, False), (False, True)):
+        e = make_engine(validate_signals=True, state_timeout=0)
+        e.start()
+        agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+        _an_offer(e)
+        said = []
+        e.emit_info = lambda src, msg, _s=said: _s.append(msg)
+        d = Dispatcher(e, agents, runner=lambda *a, _c=cut: {"status": "unparsed", "cut": _c})
+        for _ in range(3):
+            d.dispatch_once()
+            time.sleep(1.0)
+        parked = "kid" in {str(x) for x in e.parking.parked_executions()}
+        e.stop()
+        assert parked == want_parked, (cut, said)
+        assert cut == any(f"redialled in {D.TORN_DELAY_S}s" in m for m in said), said
 
 
 def test_where_the_system_is_the_issuer_no_verdict_is_asked_again_not_parked(tmp_path, monkeypatch):

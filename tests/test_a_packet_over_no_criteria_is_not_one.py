@@ -8,6 +8,7 @@ gate passed over the empty set, the empty authoring was built, and the reply pro
 """
 from __future__ import annotations
 
+from gfso.decompose.loop import AGREE_SCHEMA
 import dataclasses
 import json
 
@@ -118,8 +119,10 @@ def test_the_execution_gate_does_not_pass_over_the_empty_set(empty):
 
 _PLAN = {"name": "Thing", "root_criteria": [criterion("rc", "the whole holds")],
          "subtasks": [{"id": "a", "name": "A", "description": "do A", "criteria": [criterion("a1", "A ok")],
+                       "volume": "small", "fits_one_session": True},
+                      {"id": "b", "name": "B", "description": "do B", "criteria": [criterion("b1", "B ok")],
                        "volume": "small", "fits_one_session": True}],
-         "mappings": [{"criterion": "rc", "child_id": "a"}], "deps": [],
+         "mappings": [{"criterion": "rc", "child_id": "a"}, {"criterion": "rc", "child_id": "b"}], "deps": [],
          "accepted_risks": [{"item": "provider outage", "predictability": "STATISTICAL", "justification": "rare",
                              "invalidation": "seen", "p": 0.01, "impact": "waits"}],
          "denial": {"p": 0.1, "justification": "fixture"}, "whole_volume": "small", "whole_fits_one_session": False}
@@ -134,19 +137,21 @@ class _Model:
 
     def complete(self, prompt, context=""):
         self.calls.append({"stage": "x", "output_tokens": 1})
-        if "Name the obligations of the GOAL" in prompt:
+        if "obligation of the GOAL" in prompt:          # the goal's reading; its deciding call is read as no answer
             return "```json\n" + json.dumps({"gaps": [{"obligation": g, "admits": "a result that ignores it"}
                                                       for g in self.gaps]}) + "\n```"
         return "ALREADY-COVERED" if "CURRENT DECOMPOSITION" in prompt else "holes"
 
     def complete_structured(self, system, user, schema):
+        if schema is AGREE_SCHEMA:
+            return {"contradictions": []}
         self.structured += 1
         self.calls.append({"output_tokens": 1, "parse_failed": self.structured not in self.plans})
         return self.plans.get(self.structured, {})
 
 
 def _auto(monkeypatch, model, request="ship the spreadsheet engine"):
-    monkeypatch.setattr(D, "_default_llm", lambda m: model)
+    monkeypatch.setattr(D, "_default_llm", lambda m, **_: model)
     e = _engine(Mode.AUTO)
     return e, TL.auto_decompose(e, request)
 
@@ -159,7 +164,7 @@ def test_an_authoring_that_produced_no_plan_builds_no_root(monkeypatch):
     model = _Model(plans={1: {"name": _PLAN["name"], "add_root_criteria": _PLAN["root_criteria"],
                               "add_subtasks": _PLAN["subtasks"], "add_mappings": _PLAN["mappings"],
                               "add_accepted_risks": _PLAN["accepted_risks"], "denial": _PLAN["denial"]}})
-    monkeypatch.setattr(D, "_default_llm", lambda m: model)
+    monkeypatch.setattr(D, "_default_llm", lambda m, **_: model)
     out = TL.auto_decompose(e, "ship the spreadsheet engine")
     assert not out.get("error"), out
     assert [c.name for c in e.graph.get_task(TaskId("root")).spec.criteria] == ["rc"]
@@ -175,6 +180,44 @@ def test_an_empty_authoring_is_retried_within_the_repair_budget(monkeypatch):
 
 
 # === 4. the reply: "the gate will refuse" only where a gate does ===
+
+def test_a_split_into_one_part_is_built_as_the_leaf_it_is(monkeypatch):
+    """It splits nothing: a small utility ran as a whole over a part of it, each validated apart (wordtop, 2026-11-03)."""
+    (part, *_) = _PLAN["subtasks"]
+    patch = {"name": _PLAN["name"], "add_root_criteria": _PLAN["root_criteria"], "add_subtasks": [part],
+             "add_accepted_risks": _PLAN["accepted_risks"], "denial": _PLAN["denial"]}
+    e, out = _auto(monkeypatch, _Model(plans={1: patch}))
+    assert not e.graph.get_active_children(TaskId("root"))
+    names = {c.name for c in e.graph.get_task(TaskId("root")).spec.criteria}
+    assert {c["name"] for c in part["criteria"]} <= names, names
+    e.stop()
+
+
+def test_a_one_part_split_of_a_node_judged_over_a_session_leaves_no_split_owed(monkeypatch):
+    """Its author judged it larger than one session and cut one part: a leaf all the same, worked over sessions. Kept
+    owed, no session ever started on it and the split question came back as one part again (GL_cc_light1, 6×, $0.24)."""
+    (part, *_) = _PLAN["subtasks"]
+    patch = {"name": _PLAN["name"], "add_root_criteria": _PLAN["root_criteria"], "add_subtasks": [part],
+             "add_accepted_risks": _PLAN["accepted_risks"], "denial": _PLAN["denial"],
+             "whole_volume": "a compiler", "whole_fits_one_session": False}
+    e, out = _auto(monkeypatch, _Model(plans={1: patch}))
+    assert not e.graph.get_active_children(TaskId("root"))
+    assert e.split_owed(TaskId("root")) is None, e.session_fit(TaskId("root"))
+    e.stop()
+
+
+def test_a_leaf_s_obligations_are_said_and_not_repaired_at_authoring(monkeypatch):
+    """No split to secure at an atomic root (§8.3): the rounds cost ~40% of a small task's plan (wordtop, 2026-11-03)."""
+    leaf = {k: v for k, v in _PLAN.items() if k not in ("subtasks", "mappings")}
+    patch = {"name": leaf["name"], "add_root_criteria": leaf["root_criteria"],
+             "add_accepted_risks": leaf["accepted_risks"], "denial": leaf["denial"]}
+    rounds = []
+    monkeypatch.setattr(D, "_refine_round", lambda *a, **k: rounds.append(1) or (False, None, []))
+    monkeypatch.setattr(D, "_pin_by_part", lambda *a, **k: rounds.append(1) or (False, None, []))
+    e, out = _auto(monkeypatch, _Model(plans={1: patch}, gaps=["empty cells read as zero"]))
+    assert out.get("undecided_obligations") and not rounds
+    e.stop()
+
 
 def test_the_reply_promises_no_refusal_over_a_root_no_gate_holds(monkeypatch):
     leaf = {k: v for k, v in _PLAN.items() if k not in ("subtasks", "mappings")}
@@ -208,7 +251,8 @@ def test_the_reply_names_the_refusal_only_where_the_gate_holds_the_children(monk
 
 def test_a_contract_of_seams_alone_is_refused_and_one_with_its_own_criterion_is_not():
     """Measured by probe: `edit_criteria(cons, [])` kept the carried `dep__prod` and the consumer ran to DONE over no
-    check — a seam is made true by the producer's PASS and decides nothing about this node's result."""
+    check — a seam is made true by the producer's PASS and decides nothing about this node's result. The seam is an
+    edge now, no criterion, and an empty contract is refused whatever edges stand into it."""
     e = make_engine()
     e.start()
     _a_producer_and_a_consumer(e)
@@ -217,7 +261,8 @@ def test_a_contract_of_seams_alone_is_refused_and_one_with_its_own_criterion_is_
     assert any(not c.depends_on for c in e.graph.get_task(TaskId("root.cons")).spec.criteria)
     out = TL.TOOLS["edit_criteria"](e, "root.cons", [criterion("own", "its own result holds")], "agent")
     assert not out.get("error"), out
-    assert {c.name for c in e.graph.get_task(TaskId("root.cons")).spec.criteria} == {"own", "dep__root.prod"}
+    assert {c.name for c in e.graph.get_task(TaskId("root.cons")).spec.criteria} == {"own"}
+    assert [str(x.from_id) for x in e.graph.declared_edges(TaskId("root.cons"))] == ["root.prod"]
     e.stop()
 
 
@@ -226,8 +271,8 @@ def test_the_execution_gate_holds_a_node_of_seams_alone():
     e.start()
     _a_producer_and_a_consumer(e)
     assert e.execution_blocked_by(TaskId("root.cons")) is None
-    emptied(e, "root.cons", seams=True)
-    assert [c.name for c in e.graph.get_task(TaskId("root.cons")).spec.criteria] == ["dep__root.prod"]
+    emptied(e, "root.cons")
+    assert e.graph.get_task(TaskId("root.cons")).spec.criteria == () and e.graph.declared_edges(TaskId("root.cons"))
     assert e.execution_blocked_by(TaskId("root.cons")), "a node deciding nothing of its own was ready to execute"
     e.stop()
 
@@ -259,14 +304,14 @@ def _settled_seams_only(done: bool):
     for tid in ("root.prod", "root.cons"):
         sig(tid, Signal.ACCEPT)
         if tid == "root.cons" and not done:
-            emptied(e, tid, seams=True)
+            emptied(e, tid)
         sig(tid, Signal.DELIVER, result="made")
         if tid == "root.cons" and not done:
             return e, instrument_passes
         instrument_passes(e, TaskId(tid))
         e.wait_idle()
         sig(tid, Signal.PASS)
-    emptied(e, "root.cons", seams=True)
+    emptied(e, "root.cons")
     return e, None
 
 
@@ -280,7 +325,7 @@ def test_a_verdict_over_seams_alone_is_refused_where_it_lands():
 def test_a_settled_child_of_seams_alone_neither_blocks_a_refine_nor_holes_its_plan():
     e, _ = _settled_seams_only(done=True)
     cons = e.graph.get_task(TaskId("root.cons"))
-    assert cons.state.name == "DONE" and [c.name for c in cons.spec.criteria] == ["dep__root.prod"]
+    assert cons.state.name == "DONE" and cons.spec.criteria == () and e.graph.declared_edges(cons.id)
     D._no_plan(extract_spec(e, "root"), e, "root", _Model(), contract_fixed=False)   # no NoPlan
     assert check_procedure(cons).passed
     e.stop()
