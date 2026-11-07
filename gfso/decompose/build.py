@@ -1,8 +1,7 @@
 """Build a CORE graph from a structured decomposition spec THROUGH the FSM (signals) — the SINGLE build path.
 
-Every node enters the graph via a logged ASSIGN (no `_graph.save_task` bypass); Dep is criteria-content
-(§2): a seam = a `depends_on` criterion on the CONSUMER, declared at creation so no post-hoc cascade fires;
-the DepEdge is derived (`graph.dep_edges()`).
+Every node enters the graph via a logged ASSIGN (no `_graph.save_task` bypass); each Dep seam is a declared edge
+the split's admission writes (§15.1), with its glue — no criterion of its consumer (§2.7).
 """
 from __future__ import annotations
 
@@ -15,7 +14,7 @@ from gfso.config import ROOT_ID
 from gfso.core.protocol.procedure import probes_from as _checks_of
 from gfso.core.types import (
     Spec, Criteria, AcceptedRiskItem, CriterionMapping, TaskId, AgentId,
-    Signal, SignalData, State, Register, register_of,
+    Mode, Signal, SignalData, State, Register, register_of, DepEdge, seams_apart, system_decides,
 )
 
 log = logging.getLogger(__name__)
@@ -23,19 +22,20 @@ log = logging.getLogger(__name__)
 
 def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = ROOT_ID,
                      assignee: str = "human", max_iterations: int | None = None,
-                     child_assignee: str | None = None, contract_fixed: bool = False) -> tuple[Engine, TaskId, list[str]]:
+                     child_assignee: str | None = None, contract_fixed: bool = False,
+                     closed: bool = False) -> tuple[Engine, TaskId, list[str]]:
     """Build the decomposition into a LIVE (started) engine THROUGH the FSM — the canon-faithful counterpart
     to the offline `build_graph`. The root enters via a logged ASSIGN (if absent); the children via
-    `decompose_task` (one ASSIGN each), with each Dep seam declared as a `depends_on` CRITERION **at
-    creation** (§2 Dep=criteria-content) so no post-hoc `add_dependency` fires (which would CANCEL+re-ASSIGN
-    the consumer and cascade). Every node thus enters the graph by a signal — no `_graph.save_task` bypass.
+    `decompose_task` (one ASSIGN each), with each Dep seam a declared edge of the same admission (§15.1). Every
+    node thus enters the graph by a signal — no `_graph.save_task` bypass.
 
     Returns (engine, root_id, dropped): `dropped` lists every spec item that could NOT be placed, with its
     reason — nothing is filtered silently; the caller's repair loop feeds these back to the audit.
     Re-running with a corrected spec is safe: an ASSIGN on an existing live node is a REVISION (same id,
     subtree retained, v3.7 §12.3 Inv-1) — wholesale rebuild = wholesale revise.
     `contract_fixed`: the split's author is not the node's issuer, so the node's contract stands as issued (Inv-1)
-    and the split maps onto its criteria — the spec's own root criteria are not applied."""
+    and the split maps onto its criteria — the spec's own root criteria are not applied.
+    `closed`: the plan is the user's, handed in whole (`decompose_into`), so its split is not the system's decision."""
     rid, A = TaskId(root_id), AgentId(assignee)
     # QUIESCE the dispatcher for the signal burst: the build is not atomic (root ASSIGN → children
     # ASSIGNs land milliseconds apart), and an event-driven dispatcher evaluating the half-built graph
@@ -46,7 +46,7 @@ def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = ROOT_
     try:
         return _build_graph_live(held_contract(d, engine.graph.get_task(rid)) if contract_fixed else d, request,
                                  engine, rid, A, max_iterations, AgentId(child_assignee) if child_assignee else A,
-                                 contract_fixed)
+                                 contract_fixed, closed)
     finally:
         engine._dispatch_quiesce = max(0, getattr(engine, "_dispatch_quiesce", 1) - 1)
         if not engine._dispatch_quiesce:
@@ -60,7 +60,7 @@ def _children_from_spec(engine, d: dict, ns, existing_kids: set, C, max_iteratio
     the root, deps collected per consumer, every unusable item recorded rather than filtered
     in silence — and LANDING them through the FSM. They lived in one body of eighty
     statements, so a reader after either walked both. Returns
-    (children, mappings, deps_by_consumer, dropped)."""
+    (children, mappings, deps — child → its declared edges, whole — dropped)."""
     ids = {str(c["id"]) for c in d.get("subtasks", [])}
     dropped: list[str] = []  # NOTHING is filtered silently — every dropped item is surfaced (returned + logged)
     deps_by_consumer: dict = {}
@@ -79,12 +79,11 @@ def _children_from_spec(engine, d: dict, ns, existing_kids: set, C, max_iteratio
     children = []
     for c in d.get("subtasks", []):
         cid = str(c["id"])
-        crit = [Criteria(x["name"], x.get("description", ""), check=_checks_of(x))
+        crit = [Criteria(x["name"], x.get("description", ""), check=_checks_of(x),
+                         depends_on=TaskId(ns(str(x["depends_on"]))) if x.get("depends_on") else None)
                 for x in c.get("criteria", [])]
-        crit += [Criteria(name=f"dep__{f}", description=glue, depends_on=TaskId(ns(f)))
-                 for f, glue in deps_by_consumer.get(cid, [])]
         # ONE CRITERION PER NAME. A refine re-derives the set, and a name that appears twice — the
-        # decomposer restating a criterion, or a `dep__x` seam described differently on two passes —
+        # decomposer restating a criterion, or a seam described differently on two passes —
         # produced a contract carrying both, with contradictory text under one label. Measured on the
         # human door 2026-08-22: `dep__D1_scaffold` twice, one naming a package that had been renamed
         # away and one naming the real one. It is not only confusing: `record_verdict` takes its
@@ -126,16 +125,22 @@ def _children_from_spec(engine, d: dict, ns, existing_kids: set, C, max_iteratio
         else:
             mappings.append(CriterionMapping(m["criterion"], TaskId(ns(str(m["child_id"])))))
 
-    return children, mappings, deps_by_consumer, dropped
+    # …a seam the spec does not speak to — from outside the split — stands: the spec's `deps` are its siblings'
+    sibs = {ns(i) for i in ids}
+    deps = {str(cid): tuple(DepEdge(TaskId(ns(f)), cid, glue=g) for f, g in deps_by_consumer.get(sid, ()))
+            + tuple(e for e in engine.graph.declared_edges(cid) if str(e.from_id) not in sibs)
+            for cid, sid in ((c[0], str(s["id"])) for c, s in zip(children, d.get("subtasks", [])))}
+    return children, mappings, deps, dropped
 
 
-def _admit(engine, rid, changed, mappings, max_iterations, register, drops, dropped: list, contract=None) -> bool:
+def _admit(engine, rid, changed, mappings, max_iterations, register, drops, dropped: list, contract=None,
+           deps=None) -> bool:
     """The admission (§11.5), one act: the root's contract where this round re-authors it, the children it issues, its
     register, its drops. Does the split stand? What refused it, or what it dropped, goes into `dropped` in the spec's
     ids — the repair loop's problems; refused, nothing of it was written, the contract included (critic r8)."""
     try:
         engine.decompose_task(rid, changed, mappings or None, max_iterations, register=register, drops=drops,
-                              contract=contract)
+                              contract=contract, deps=deps)
         engine.wait_idle()
     except AdmissionRefused as no:
         dropped += [f"the admission refused the split — {h.replace(f'{rid}.', '')}" for h in no.holes]
@@ -145,7 +150,7 @@ def _admit(engine, rid, changed, mappings, max_iterations, register, drops, drop
 
 
 def _this_round(engine, rid, changed, mappings, max_iterations, authored: tuple, drops, dropped: list,
-                contract) -> bool:
+                contract, deps: dict) -> bool:
     """ONE ACT: the children, the root's contract and the register this round changes are one re-admission of the
     split (§11.5) — revised first and admitted after, a refused admission left the contract re-authored over the old
     split (critic r8). A root with no split has nothing to admit: its contract is a plain revision. Does it stand?"""
@@ -156,7 +161,8 @@ def _this_round(engine, rid, changed, mappings, max_iterations, authored: tuple,
     # split and is its re-admission — it was dropped in silence, no child having changed (critic r17)
     remapped = set(mappings or ()) != set(node.criterion_mappings)
     if changed or drops or (engine.graph.get_active_children(rid) and (contract is not None or moved or remapped)):
-        return _admit(engine, rid, changed, mappings, max_iterations, register, drops, dropped, contract)
+        return _admit(engine, rid, changed, mappings, max_iterations, register, drops, dropped, contract,
+                      {str(c[0]): deps[str(c[0])] for c in changed})
     if contract is not None:
         engine.revise(rid, contract, engine.graph.issuer_of(rid)); engine.wait_idle()
     return True
@@ -180,20 +186,23 @@ def _the_children_this_split_drops(engine, rid, children) -> tuple:
                  if str(c.id) not in keep and c.state not in (State.DONE, State.ABANDONED))
 
 
-def _children_that_changed(engine, rid, children, mappings, dropped: list) -> list:
-    """The children whose contract actually differs — and which are FROZEN.
+def _children_that_changed(engine, rid, children, mappings, dropped: list, deps: dict) -> list:
+    """The children whose contract or declared Dep edges actually differ — and which are FROZEN.
 
-    A child already built with the same spec needs no re-ASSIGN — the criteria it covers are the split's (§2.4) and
-    ride the admission's mappings — and a terminal one admits none at all: the FSM would reject it, so the
-    unapplied change is surfaced as a problem rather than lost into a refused signal.
+    A child already built with the same spec and edges needs nothing — the criteria it covers are the split's (§2.4)
+    and ride the admission's mappings; one whose edges alone moved is named to the act, which re-declares them and
+    re-issues nothing — and a terminal one admits none at all: the FSM would reject it, so the unapplied change is
+    surfaced as a problem rather than lost into a refused signal.
     """
+    edges = lambda es: {(str(e.from_id), e.glue) for e in es}
     changed = []
     # …and only a child still IN the split stands unchanged: one that left it (dropped, settled out) is named to the act
     # so the act refuses it as such, not as a mapping onto a missing child (critic r7 P5)
     active = {str(k.id) for k in engine.graph.get_active_children(rid)}
     for cid_t, spec_c, actor in children:
         ex = engine.graph.get_task(cid_t)
-        if ex is not None and ex.spec == spec_c and str(ex.id) in active:
+        if (ex is not None and ex.spec == spec_c and str(ex.id) in active
+                and edges(engine.graph.declared_edges(ex.id)) == edges(deps[str(cid_t)] + seams_apart(spec_c, cid_t)[1])):
             continue
         # COMPLETED work is FROZEN: a terminal node admits no revision (§12.3 — the FSM would reject
         # the re-ASSIGN anyway; observed live: a refine fold updated DONE children and its intent
@@ -235,12 +244,22 @@ def _whose_the_children_are(engine, d: dict, rid: TaskId, parent_del, C):
 
 def _record_the_session_fit(engine, d: dict, rid: TaskId, ns) -> None:
     """Keep the decomposer's count and judgement beside the contract, node by node (`record_session_fit`)."""
+    # …but a split of nothing — one part folded back into its whole (`_one_part_is_the_whole`) — makes the node a leaf
+    # (§3.7), worked over sessions: kept "over a session", it owed a split no session would start on, and the question
+    # came back as one part again (GL_cc_light1, six times)
     if "whole_fits_one_session" in d:
-        engine.record_session_fit(rid, str(d.get("whole_volume", "")), bool(d.get("whole_fits_one_session")))
+        engine.record_session_fit(rid, str(d.get("whole_volume", "")),
+                                  bool(d.get("whole_fits_one_session")) if d.get("subtasks") else None)
     for c in d.get("subtasks", []):
         if "fits_one_session" in c:
             engine.record_session_fit(TaskId(ns(str(c["id"]))), str(c.get("volume", "")),
                                       bool(c.get("fits_one_session")))
+        # …and what its work touches, so a plan read back for a refine or a repair is checked as it was authored
+        reads = {str(x.get("from")): list(x.get("reads") or []) for x in d.get("deps", [])
+                 if str(x.get("to")) == str(c.get("id")) and "reads" in x}
+        claim = {k: list(c[k] or []) for k in ("writes", "runs") if k in c} | ({"reads": reads} if reads else {})
+        if claim:
+            engine.record_seam_claim(TaskId(ns(str(c["id"]))), claim)
 
 
 def held_contract(d: dict, node) -> dict:
@@ -249,8 +268,8 @@ def held_contract(d: dict, node) -> dict:
     nothing on the node, and a mapping onto a name the contract lacks is a CHECK-1 hole the repair loop sees."""
     if node is None:
         return d
-    # …ALL of them, its Dep seams included: CHECK-1 reads every criterion of the node (§9.5), so a seam left out of
-    # the names a mapping may target was a hole no repair round could close (critic r5)
+    # …ALL of them: CHECK-1 reads every criterion of the node (§9.5), so one left out of the names a mapping may target
+    # was a hole no repair round could close (critic r5)
     return {**d, "root_criteria": [{"name": c.name, "description": c.description} for c in node.spec.criteria]}
 
 
@@ -297,7 +316,8 @@ def _root_register(engine: Engine, rid: TaskId, register: tuple) -> Optional[Reg
 
 def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
                       A: AgentId, max_iterations: int | None = None,
-                      C: AgentId | None = None, contract_fixed: bool = False) -> tuple[Engine, TaskId, list[str]]:
+                      C: AgentId | None = None, contract_fixed: bool = False,
+                      closed: bool = False) -> tuple[Engine, TaskId, list[str]]:
     root_id = str(rid)
     # Whose the ROOT is and whose the WORK is are two questions. `A` answers the first (the root's
     # Del, and so the ISSUER of every child, §10.1); `C` answers the second. They coincide unless a
@@ -351,14 +371,18 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
         return cid if cid.startswith(f"{root_id}.") else f"{root_id}.{cid}"
 
     C = _whose_the_children_are(engine, d, rid, root_actor, C)
-    children, mappings, deps_by_consumer, dropped = _children_from_spec(
-        engine, d, ns, existing_kids, C, max_iterations)
+    children, mappings, deps, dropped = _children_from_spec(engine, d, ns, existing_kids, C, max_iterations)
     # IDEMPOTENT REBUILD: an untouched child costs ZERO signals — its live state (EXECUTING, a
     # delivered result, its own registers) survives a parent-level refine; only a child whose contract
     # actually changed is re-ASSIGNed (→ OFFERED: the executor re-consents, Inv-1); coverage is the split's.
-    changed = _children_that_changed(engine, rid, children, mappings, dropped)
+    changed = _children_that_changed(engine, rid, children, mappings, dropped, deps)
     drops = _the_children_this_split_drops(engine, rid, children)
-    if not _this_round(engine, rid, changed, mappings, max_iterations, _register_of(d), drops, dropped, contract):
+    # under AUTO a plan the model authored is the system's, though the customer's call runs it: the root's first ASSIGN
+    # above is his go, and a closed plan is his too. Elsewhere a system's split comes by `settle`, a party's call is his
+    with system_decides(engine.mode_kind() == Mode.AUTO and not closed):
+        stands = _this_round(engine, rid, changed, mappings, max_iterations, _register_of(d), drops, dropped, contract,
+                             deps)
+    if not stands:
         return engine, rid, dropped   # nothing of this split stands: no contract, no register, no consent
     _record_the_session_fit(engine, d, rid, ns)
     for item in dropped:

@@ -17,37 +17,50 @@ import json
 import logging
 import os
 import re
-import shutil
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import nullcontext, suppress
 from pathlib import Path
 from datetime import datetime
 from dataclasses import asdict
-from typing import Optional
+from typing import Optional, Union
 
 from gfso import runtime
 from gfso.llm import llm_factory
-from gfso.core.types import AgentId, Mode, State, TaskId, Stage, Verdict, passed
-from gfso.core.protocol.invariants import probes_of, spoken_verdict, verdict_word
-from gfso.core.protocol.procedure import laid_down_dirs
-from gfso.core.protocol.validation import SIGNAL_ROLES, Role
+from gfso.workspaces import declaring_role, execution_of, where_it_runs
+from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snapshot, swap
+from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, committed, left_out,
+                                     scratch_of)
+from gfso.issuer import CONTACT_ROUND as _CONTACT
+from gfso.core.types import (BATCH, HOST, LAID, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
+                             Verdict, passed)
+from gfso.core.protocol.invariants import criterion_meant, probes_of, spoken_verdict, verdict_word
+from gfso.core.protocol.procedure import (SYSTEMS_ACT, canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
+                                          with_part_observations)
+from gfso.observe import FRESH_S, OBSERVE_S, run_checks
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
-from gfso.decompose import NoPlan, decompose_into
+from gfso.adapters.execution import network_of, node_key
+from gfso.decompose import NoPlan, decompose_into, artifact as _artifact, planning as _planning
 from gfso.engine.events import emit_cb
+from gfso.engine.findings import record_round
+from gfso.engine.moves import DOOR_KEYS, door_holder
 from gfso.engine.validation import _l0_holes, _l2_undischarged, whole_waits_for_its_parts
+from gfso.core.graph.model import project_now
 from gfso.engine.loop import state_bound_left
-from gfso.adapters.llm.stats import _stat_line, the_call_was_cut
+from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.engine import Engine
 from gfso import tools as _tools
 from gfso.tools import _agent_id
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
-from gfso.config import (DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, validation_batch,
-                         validate_internal, state_bound)
-from gfso.packets import _last_deliver_result, _scope_validator_packet, _validator_packet, owed_probes
+from gfso.config import (DEFAULT_EXECUTION, DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, executions, local_agents,
+                         validation_batch, validate_internal, state_bound)
+from gfso.packets import (BUILT, UNCOPIED, TECH_REPORT, _last_deliver_result, _scope_validator_packet, _validator_packet, file_tech_reports,
+                          owed_probes, snapshot_note)
 from gfso.llm import session_calls
-from gfso.inflight import _inflight
+from gfso.inflight import _inflight, in_flight
 
 log = logging.getLogger(__name__)
 
@@ -96,12 +109,13 @@ def _nothing_was_validated(a_model_ran: bool) -> str:
     thing you did: a loop with no exit named, for everyone without the CLI.
     """
     return ("not measured: the checker was admitted and returned no readable verdict"
-            + (" — it made NO model call, so most likely no provider is available (the Claude CLI "
-               "on PATH, signed in)" if not a_model_ran else "")
+            + (" — it made NO model call, so most likely no provider is available (the Claude CLI on PATH, "
+               "a credential set by `gfso credential claude`)" if not a_model_ran else "")
             + ". No verdict is never read as clean (§9.5 fail-closed), so execution stays shut. Run this "
               "again — a reply that could not be read may not recur. If every run comes back like this, two "
               "supported ways on: make a checker available and run this again, or take the canon's "
-              "EXPLORE branch — `GFSO_L2_GATE=0` on the server, where the plan's causal check is "
+              "EXPLORE branch — `set_mode(..., l2_gate=False)` for this project (`GFSO_L2_GATE=0` for the "
+              "server), where the plan's causal check is "
               "bought with contact instead of with the checker (§9.9). The second is a deployment "
               "decision, not a workaround: it is what a system with no checker honestly is.")
 
@@ -140,7 +154,7 @@ def _delta_since_the_last_review(out: dict, prev_open, prev_ts) -> None:
                          "so nothing here is new or closed.")
 
 
-def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAULT) -> dict:
+def review_decomposition(engine: Engine, task_id: str, model: Optional[str] = None) -> dict:
     """Validate a node's decomposition: the STRUCTURAL gate (L0/L1: coverage, DAG, glue, non-redundancy —
     fails ⇒ fix those first) + the L2 CHECKER (canon §9.1 Level 2): one zero-tool call checking, per
     parent criterion, whether the mapped children's criteria — taken as real-world facts — CAUSALLY
@@ -161,8 +175,9 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
                         "reads it when it does). If nothing lands, the plan has changed under it "
                         "or its runner died: `revise` moves the node to a new version and the "
                         "check can be asked again."}
+    llm = None
     try:
-        llm = llm_factory(model)
+        llm = llm_factory(model or engine.system_model(), execution=execution_of(engine))
         llm.on_tick = _cb
         llm.stage_hint = f"{task_id} L2-checker"
         _cb(f"{task_id}: L2 checker (causal entailment per parent criterion)…")
@@ -181,6 +196,8 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
         # storage reads. `llm_factory` raises on an ordinary misconfiguration, and the claim then
         # leaked with no model ever having run: no kill, no hang, no thread teardown needed.
         engine.claims.end_review(_slot)
+        if llm is not None:   # what the check cost, on the record — a raise after the model ran loses none of it
+            engine.record_llm_usage(Stage.L2_CHECK_PLAN, llm, TaskId(task_id))
     out["stats"] = list(llm.calls)
     # …AND HOW TO READ IT AGAIN FOR FREE. This verb SPENDS a model run every call, and it is also
     # the only place the review is rendered — so a reader whose first answer scrolled past re-ran it
@@ -190,7 +207,6 @@ def review_decomposition(engine: Engine, task_id: str, model: str = MODEL_DEFAUL
     out["reread_free"] = (f"this ran the checker ({len(llm.calls)} model call(s)) — `get_review("
                           f"'{task_id}')` reads the SAME record again for free; re-run this verb "
                           f"only after the plan changed.")
-    engine.record_llm_usage(Stage.L2_CHECK_PLAN, llm, TaskId(task_id))   # what the check cost, on the record
     # WHAT IT MEANS FOR EXECUTION, said in the reply. `gate_passed` is about Level 0/1 only, and a
     # reader took `gate_passed: true` for "the plan is good" while the checker was saying a criterion
     # is not carried (measured 2026-08-20). The question anyone actually has is whether the children
@@ -315,7 +331,21 @@ _VALIDATOR_SCHEMA = {
                                "held": {"type": "boolean", "description":
                                    "for a PART'S PINNED CHECK: did it show what it must on this delivery. "
                                    "false fails every criterion resting on it; left out, it counts as "
-                                   "holding only under a criterion you pass"},
+                                   "holding only under a criterion you pass. For a probe of your OWN that refutes "
+                                   "the criterion: false — beside a probe that says false, one that says nothing "
+                                   "is read as not refuting"},
+                               # …and a finding of an earlier validator's that this run does not reproduce
+                               "not_refuting": {"type": "string", "description":
+                                   "only on a REGRESSION line you re-ran exactly as written, whose output refutes nothing "
+                                   "the criterion requires: why. With `printed`, it is demanded no more"},
+                               "printed": {"type": "string", "description": "with `not_refuting`: what the command printed"},
+                               # …and whether it RAN: a probe whose own setup failed (a cd, a file it writes, a
+                               # build) printed whatever its fallback prints, which can be the line it expects
+                               "ran": {"type": "boolean", "description":
+                                   "false when the command could not run as written — its own setup failed (a cd, "
+                                   "a file it writes, a build it needs) and the artifact was never exercised; say "
+                                   "why in `expect`. It then observed nothing: it meets no demand, so a criterion "
+                                   "whose pinned check or regression line did not run cannot pass"},
                                # Re-runnable BY SOMEONE ELSE, against the artifact as delivered.
                                # Measured: validators copy the delivery into a scratch directory
                                # under a new name and then cite that name (`from md_real import …`)
@@ -357,11 +387,23 @@ _VALIDATOR_SCHEMA = {
             "required": ["criterion", "verdict", "evidence", "behaviours", "probe",
                          "divergences"]}},
         "seams": {"type": "string"},
+        # WHAT WAS SEEN BEYOND THE CRITERIA, as data for the issuer and never a verdict input (Inv-2): written in prose
+        # ("observed but outside the stated criteria … NOT IN (SELECT …) give NULL"), the row's held-out miss was seen
+        # at contact and no channel carried it to the one who could write the criterion (§8.3 FM-1.f at contact)
+        "outside": {"type": "array", "description":
+                    "what you OBSERVED that no criterion here states — a behaviour the goal or the spec plainly needs "
+                    "that the delivery lacks. Not a divergence and no verdict: it fails nothing; it goes to the issuer, "
+                    "who judges it against the goal. Leave it empty when there was none",
+                    "items": {"type": "object", "properties": {
+                        "what": {"type": "string", "description": "the behaviour, one line"},
+                        "evidence": {"type": "string", "description": "the command you ran and what it printed"}},
+                        "required": ["what"]}},
         "failed_criteria": {"type": "array", "items": {"type": "string"}},
+        "tech_report": TECH_REPORT,
     },
-    # …and `failed_criteria` NOT required: the record derives it from the entries (`_listed_failed`), so a report that
-    # left it out was refused as unparsed over a list it did not need (AUTO coreutils, 2026-10-10)
-    "required": ["verdict", "per_criterion"],
+    # …and neither `verdict` nor `failed_criteria` required: the engine computes both from the entries (§2.3, Inv-3),
+    # so a report that left one out was refused as unparsed over a word it did not need (AUTO coreutils, 2026-10-10)
+    "required": ["per_criterion"],
 }
 
 
@@ -424,21 +466,43 @@ def _left_to_validate(engine: Engine, task) -> tuple[list, list]:
     return crits, kept
 
 
-def _validation_cap(task) -> Optional[int]:
+def _validation_cap(task, graph) -> Optional[int]:
     """THE VALIDATOR'S PROCESS CAP IS WHAT IS LEFT OF THIS VISIT'S T_validate (§12.2) — one clock, as the
     executor's cap is its deadline. It was the adapter's fixed 900 s: on the delegated coreutils run
     four validations of rich nodes were cut at it mid-stream (725–913 s) and came back ⊥, paid for again
     on a slower tier. And the REMAINDER, not the whole bound: a retry after ⊥ runs in the same visit,
     and a validator outliving it would land its verdict on a node the clock has already handed on."""
-    if task.state.name == "VALIDATING" and (left := state_bound_left(task, time.time())) is not None:
+    if task.state.name == "VALIDATING" and (left := state_bound_left(task, project_now(graph).timestamp())) is not None:
         return max(60, int(left))
     return int(state_bound("VALIDATING")) or None
 
 
-def _run_each(llm, spawn, scratch: Optional[str], batches: list, run) -> list:
+def _no_start(llm, ended: str, place: str, error: str) -> str:
+    """A validator run that never started, booked as its provider books one (`headless._never_started`): no answer."""
+    llm.calls.append({"duration_ms": 0, "ended": ended, "place": place, "error": error, "at": time.time()})
+    return ""
+
+
+def _own_place(scratch: Optional[str], i: int, ex) -> Optional[str]:
+    """The directory batch `i` copies the delivery into, under the validation's scratch — None without one."""
+    return _fresh(ex, str(Path(scratch) / f"{BATCH}{i + 1}")) if scratch else None
+
+
+def _fresh(ex, place: str) -> str:
+    """`place` made by the system where nothing stood: a batch's own writable root (`execution._writable_root`), which
+    no session has held — a directory or a link found there is refused, never copied into."""
+    if ex.files.exists(place):
+        raise OSError(f"{place} already stands: a batch's directory is made fresh")
+    ex.files.mkdir(place)
+    return place
+
+
+def _run_each(llm, spawn, scratch: Optional[str], batches: list, run, ex) -> list:
     """One validator call per batch, `run(batch, client, place)`, the texts in batch order."""
     if spawn is None:
-        return [run(batch) for batch in batches]
+        # …ALONE, STILL IN A COPY: a validator judges the delivery and must not be able to change it (§10.3) — run in
+        # the place itself, an edit of its own went into the next commit as the executor's delivery
+        return [run(batch, None, _own_place(scratch, i, ex)) for i, batch in enumerate(batches)]
     # THE BATCHES ARE INDEPENDENT, SO THEY RUN AT THE SAME TIME. Splitting the contract unblocked
     # acceptance on a rich node but left its LATENCY additive, and latency is what stalls a run:
     # measured over 170 recorded validations, the median validation takes 46 s at ≤5 criteria, 90 s
@@ -453,9 +517,7 @@ def _run_each(llm, spawn, scratch: Optional[str], batches: list, run) -> list:
         i, batch = i_batch
         client = spawn()
         client.on_tick, client.stage_hint = llm.on_tick, llm.stage_hint
-        place = str(Path(scratch) / f"batch{i + 1}") if scratch else None
-        if place:
-            Path(place).mkdir(parents=True, exist_ok=True)
+        place = _own_place(scratch, i, ex)
         try:
             return i, run(batch, client, place)
         finally:
@@ -471,7 +533,18 @@ def _run_each(llm, spawn, scratch: Optional[str], batches: list, run) -> list:
     return texts
 
 
-def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm):
+def validation_execution(engine):
+    """Where a validation of this project runs, read ONCE for all of it — its model, scratch, exact checks and every batch: never the host
+    for a project whose places stand in volumes. Each read the roster again, and a role lost meanwhile put the later ones on the host. Work
+    in chat with no execution declared validates on the host, as it always did; a project that had one and lost its roles has only lost
+    its roles. Nor over a base no session of its project may run in (`agents_refused`): a volume holding a base as a tree gave its
+    validator its `.env` (critic)."""
+    if (ex := execution_of(engine)).files is not HOST and (why := ex.agents_refused()):
+        raise PlaceUnavailable(str(ex.base), why)
+    return ex
+
+
+def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm, ex):
     """Should a validator run be spent here at all — and if not, the answer that says why.
 
     Six refusals, each bought by a run spent for nothing: an unknown node; children that
@@ -529,11 +602,8 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     # asks the same question of the same directory. A rule kept in two places moves in one of them,
     # which is the defect this repository keeps paying for; both now read `cheap_to_ask`. A network
     # workdir is therefore not pre-checked: the validator opens it and reports what it finds.
-    _wd = Path(workdir) if workdir and cheap_to_ask(workdir) else None
-    if _llm is None and cheap_to_ask(workdir) and (
-            _wd is None or not _wd.is_dir()
-            or not any(q.name not in ("__pycache__", ".gfso-scratch")
-                       for q in _wd.iterdir())):
+    if _llm is None and cheap_to_ask(workdir) and not any(
+            q not in ("__pycache__", ".gfso-scratch") for q in workdir and ex.files.listdir(workdir) or ()):
         # …and the way OUT of the refusal depends on whether the roster was able to answer. It used
         # to read "`list_agents` shows where this node's executor works" in both cases — advice that
         # is a dead end for a node held by a person, and homework the server has already done for a
@@ -570,7 +640,7 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm)
     return None, task, deliverable
 
 
-def _validation_place(task_id: str, workdir, named: tuple = ()):
+def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None, project=None):
     """Where the validator runs, and what the delivery held before it did.
 
     Two needs once collapsed into one: a fresh scratch per validation (a shared one let
@@ -588,17 +658,30 @@ def _validation_place(task_id: str, workdir, named: tuple = ()):
         # criterion like "every file under the target dir belongs to this package" is then true:
         # our own scratch was sitting in the deliverable while the validator dutifully reported
         # everyone else's leavings (measured on the human door 2026-08-22).
-        root = Path(workdir).parent / f".gfso-scratch-{Path(workdir).name}"
-        scratch = str(root / f"{task_id}_{int(time.time())}")
-        Path(scratch).mkdir(parents=True, exist_ok=True)
+        root = scratch_of(workdir, project)
+        # …a round of its own, never one an earlier validation in the same second holds: its batches are made fresh
+        at = int(time.time())
+        # …one path component, whatever the id spells: `db/schema` had a place and no round, a node stuck with no validator run (critic, ran)
+        while ex.files.exists(scratch := str(root / f"{node_key(task_id)}_{at}")):
+            at += 1
+        ex.files.mkdir(scratch)
+        if graph is not None:              # …in the record of the rounds standing, as it goes (`findings.record_round`)
+            record_round(graph, scratch, True)
         # Keep the recent ones (a verdict's evidence is worth reading after the fact) and drop
         # the rest: one directory per validation, inside the repository being validated, otherwise
         # accumulates for the life of the project — a rework loop alone makes several.
         # …but never a round a standing finding runs: gone, its probe would read as unrunnable and stop being
         # demanded with no ruling (a 16-round root, GB_c_compiler — critic 2026-10-11)
-        for old_dir in sorted(root.iterdir(), key=lambda d: d.name)[:-20]:
-            if old_dir.is_dir() and not any(f"{root.name}/{old_dir.name}" in str(n).replace("\\", "/") for n in named):
-                shutil.rmtree(old_dir, ignore_errors=True)
+        # …nor an issuer's contact running in this scratch beside them (`issuer._contact_place`): it removes itself
+        # …what was laid for a lone round beside it (`LAID`) going with it
+        for old in sorted(d for d in ex.files.listdir(str(root)) if not d.startswith(_CONTACT)
+                          and not d.endswith(LAID))[:-20]:
+            if not any(f"{root.name}/{old}" in str(n).replace("\\", "/") for n in named):
+                with suppress(OSError):
+                    ex.remove_tree(str(root / (old + LAID)))
+                    ex.remove_tree(str(root / old))
+                    if graph is not None:
+                        record_round(graph, str(root / old), False)
     # What the delivery held BEFORE the validator touched it. The instruction above is a prompt, and
     # a prompt is not enforcement (the lesson this project keeps relearning), so the difference is
     # MEASURED rather than assumed. Nothing is deleted: the executor's tree is not this code's to
@@ -611,9 +694,11 @@ def _validation_place(task_id: str, workdir, named: tuple = ()):
     _before = None
     if workdir and cheap_to_ask(workdir):     # see `gfso.places.cheap_to_ask`: a share can hang
         try:
-            _before = {q.name for q in Path(workdir).iterdir()}
-        except OSError as e:
-            log.warning(f"the delivery could not be listed before validation ({e}) — this run can "
+            _before = set(ex.files.listdir(workdir)) if ex.files.is_dir(workdir) else None
+        except OSError:
+            pass                      # …an unlistable delivery is unknown, said just below
+        if _before is None:
+            log.warning(f"the delivery {workdir} could not be listed before validation — this run can "
                         f"say NOTHING about what the validator left behind, and says nothing")
 
     return scratch, _before
@@ -627,11 +712,7 @@ def _strays_left_behind(engine, task_id: str, workdir, _before, out: dict, _cb) 
     assumed. Nothing is deleted: the executor's tree is not this code's to prune, and a
     stray named in the record is a fact its owner can act on."""
     if workdir and _before is not None and cheap_to_ask(workdir):
-        try:
-            strays = sorted({q.name for q in Path(workdir).iterdir()}
-                            - _before - {".gfso-scratch"})
-        except OSError:
-            strays = []
+        strays = sorted(set(execution_of(engine).files.listdir(workdir)) - _before - {".gfso-scratch"})
         if strays:
             # …AND WHO ELSE COULD HAVE WRITTEN THEM. Two executors of one plan legitimately share
             # a workspace, so files appearing during a validation may be a SIBLING's work, not
@@ -673,10 +754,11 @@ def _the_validators_answer(engine, task_id, out, parsed, recorded, _cb, llm) -> 
     engine had just refused to store. Split out because the run and the answer are two
     things, and the second had grown to half the verb.
     """
-    verdict = recorded.get("verdict") or parsed["verdict"]
-    failed = list(recorded.get("failed_criteria") or parsed["failed_criteria"])
+    verdict = recorded.get("verdict") or parsed.get("verdict")
+    failed = list(recorded.get("failed_criteria") or parsed.get("failed_criteria") or ())
     out.update({"verdict": verdict, "per_criterion": parsed["per_criterion"],
                 "failed_criteria": failed, "seams": parsed.get("seams", ""),
+                **({"outside": parsed["outside"]} if parsed.get("outside") else {}),
                 # WHO IT WAS RECORDED UNDER, read off the record. The reply echoed the `validator`
                 # PARAMETER, so a run that named none answered `"validator": null` beside twelve
                 # per-criterion verdicts and twenty Bash calls — while the docstring says
@@ -737,14 +819,15 @@ def _ready_to_validate(engine, task_id, deliverable, workdir, validator, model, 
     the validator say — and the first had grown into the body of the second.
     """
     workdir = workdir or _registered_workdir(engine, task_id, validator)
-    _stop, task, deliverable = _refuse_validation(engine, task_id, deliverable, workdir, _llm)
+    ex = validation_execution(engine)
+    _stop, task, deliverable = _refuse_validation(engine, task_id, deliverable, workdir, _llm, ex)
     if _stop is not None:
         return _stop, None
     _cb = emit_cb(engine, "validate_result", _progress)
-    llm = _llm or llm_factory(model)
-    if not hasattr(llm, "run_agent"):
-        return {"error": "validate_result needs the headless agent-runner (Anthropic transport); "
-                         "GFSO_PROVIDER=generic covers zero-tool one-shots only"}, None
+    llm = _llm or llm_factory(model, execution=ex)
+    if not (llm.runs_agents if isinstance(llm, LLMProviderPort) else hasattr(llm, "run_agent")):
+        return {"error": f"validate_result needs a provider that runs agents (tool calling): {model!r} answers "
+                         f"one-shots only — `gfso provider-check {model}` names the roles it can hold"}, None
     # the claim names the delivery THIS run reads — the node's generation (§10.3 gate) — and where the log stood
     inflight_key = engine.claims.begin_validation(TaskId(task_id))
     if inflight_key is None:
@@ -781,7 +864,7 @@ def _ready_to_validate(engine, task_id, deliverable, workdir, validator, model, 
                         "two reports it cannot decide, it parks the node and says so. Validating it "
                         "yourself — `record_verdict` with what you observed — is the door that does "
                         "not queue behind it."}, None
-    return None, (task, deliverable, llm, _cb, inflight_key, workdir)
+    return None, (task, deliverable, llm, _cb, inflight_key, workdir, ex)
 
 
 def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = None,
@@ -808,14 +891,14 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
                                  _llm, _progress)
     if _stop is not None:
         return _stop
-    task, deliverable, llm, _cb, inflight_key, workdir = _ctx
+    task, deliverable, llm, _cb, inflight_key, workdir, ex = _ctx
     try:
         llm.on_tick = _cb
         llm.stage_hint = f"{task_id} node-validator({validator or 'standalone'})"   # names whose trace it is
         _cb(f"{task_id}: independent validator (read-only agent) over the deliverable…")
         out, text = _validation_pass(engine, task_id, [(task, deliverable)], {task_id: inflight_key}, workdir,
                                      validator, model, llm,
-                                     _spawn or (None if _llm is not None else lambda: llm_factory(model)), _cb)
+                                     _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=ex)), _cb, ex=ex)
         out["state"] = task.state.name
         if out.get("error"):
             # The transport refuses to spawn an agent with no working directory (it would run in the state home
@@ -859,10 +942,11 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
 def _naming_the_node(schema: dict) -> dict:
     """The node validator's report schema, each per-criterion entry naming the node it is about."""
     out = copy.deepcopy(schema)
-    item = out["properties"]["per_criterion"]["items"]
-    item["properties"]["task_id"] = {"type": "string", "description":
-                                     "the node this criterion belongs to — its id exactly as its heading gives it"}
-    item["required"] = list(item["required"]) + ["task_id"]
+    for key, what in (("per_criterion", "criterion"), ("outside", "observation")):
+        item = out["properties"][key]["items"]
+        item["properties"]["task_id"] = {"type": "string", "description":
+                                         f"the node this {what} belongs to — its id exactly as its heading gives it"}
+        item["required"] = list(item["required"]) + ["task_id"]
     return out
 
 
@@ -923,7 +1007,13 @@ def _fold(es: list) -> dict:
     return {**es[0], "verdict": worst.get("verdict"),
             "evidence": " | ".join(str(e["evidence"]) for e in [worst] + [x for x in es if x is not worst]
                                    if e.get("evidence")),
-            "probe": [p for e in es for p in probes_of(e)],
+            # …a probe of a run that PASSED its share refuted nothing: unioned unmarked into the failed
+            # entry, every one was filed as a refutation — one FAIL listed 1,036 probes, one of them refuting, and the
+            # store grew to 1,414 findings (GB_sql_database_tmxu0n436, 2026-10-15)
+            # (a mark of its own: `held` is the part-credit gate's word, and written here it vouched a part's probe a
+            # passing share only cited — critic, 2026-10-15)
+            "probe": [dict(p, share="pass") if w == "pass" else p
+                      for w, e in zip(words, es) for p in probes_of(e)],
             **{k: [x for e in es for x in e.get(k) or ()] for k in ("behaviours", "divergences")}}
 
 
@@ -941,31 +1031,44 @@ def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optio
     against its own entries (`_report_contradicts_itself`) — a FAIL that names nothing or names what no entry failed
     decided nothing, for every node it covers (Inv-3; critic V1: read per node, such a report closed a project DONE).
     Each node's failed list is then its own entries' red set — names alone collide, two consumers of one producer both
-    carrying `dep__<producer>` (critic V1)."""
+    carrying a criterion of one name (critic V1)."""
     owners: dict = {}
-    for task, _, crits in parts:
-        for c in crits:
-            owners.setdefault(c.name, []).append(str(task.id))
+    for task, _, crits in parts:   # …over the WHOLE contract: a criterion kept from a refused attempt has its owner too
+        for name in dict.fromkeys([c.name for c in crits] + [c.name for c in task.spec.criteria]):   # (critic r5)
+            owners.setdefault(name, []).append(str(task.id))
     out: dict = {str(t.id): [] for t, _, _ in parts}
-    said: dict = {tid: {"verdict": Verdict.PASS if own else None, "failed_criteria": [], "seams": "",
+    said: dict = {tid: {"verdict": Verdict.PASS if own else None, "failed_criteria": [], "seams": "", "outside": [],
                         "contradiction": None} for tid in out}
+    failed_said, unplaced = set(), set()
     for text in texts:
-        parsed = parse_structured(text or "", schema)
+        parsed = _shaped(parse_structured(text or "", schema))
         if parsed is None:
             return None
+        # every reader below — the node an entry goes to, the report against its own entries, the record — reads the
+        # contract's name, never the label as the validator decorated it
+        for e in parsed.get("per_criterion") or ():
+            e["criterion"] = criterion_meant(e.get("criterion"), list(owners))
+        if parsed.get("failed_criteria"):
+            parsed["failed_criteria"] = [criterion_meant(n, list(owners)) for n in parsed["failed_criteria"]]
+        _place_outside(parsed, said, own)
         named = set()
         for e in parsed.get("per_criterion") or ():
-            tid = next(iter(out)) if own else str(e.get("task_id") or "")
-            if tid not in out and len(owners.get(str(e.get("criterion")), ())) == 1:
+            tid = next(iter(out)) if own else _named_node(e)
+            # …by its criterion's name only where it names no node: naming one outside this validation, a consumer's
+            # seam entry was credited to its sibling's like-named seam (critic over the round, 2026-10-19)
+            if not tid and len(owners.get(str(e.get("criterion")), ())) == 1:
                 tid = owners[str(e.get("criterion"))][0]
             if tid in out:
                 out[tid].append(e)
                 named.add(tid)
+            elif spoken_verdict(e.get("verdict")) != "pass":
+                unplaced.add(str(e.get("criterion")))
         # EVERY REPORT IS JUDGED WHOLE, a batch of one node's contract as a scope's report is: a word that decided
         # nothing, or one its own entries contradict, decided nothing for any node it covers (Inv-3, §7.1) — the batches
         # of one node read by a rule of their own made ⊥ or FAIL depend on which malformed word came (critic V4). A
         # node's single report is judged by the same clause at the record, in the record's own words.
-        why = _report_contradicts_itself(parsed) if not own or len(texts) > 1 else None
+        why = _report_contradicts_itself(parsed)   # one node's single report too: the record no longer reads its word
+        failed_said.update(_listed_failed(parsed), _red(parsed))   # held to the names' owners below
         for tid in (out if own else named):
             s = said[tid]
             s["contradiction"] = s["contradiction"] or why
@@ -973,13 +1076,43 @@ def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optio
             if own:
                 # …and the decided words conjoined, in any order; an undecided one kept as said, so the record
                 # refuses it by name — None would read there as "derive it from the entries" (critics V2, V3)
-                word = verdict_word(parsed.get("verdict"))
+                word = Verdict.FAIL if _red(parsed) else verdict_word(parsed.get("verdict"))
                 s["verdict"] = (s["verdict"] if s["verdict"] not in (Verdict.PASS, Verdict.FAIL) else
                                 str(parsed.get("verdict") or "").strip() if word is None else
                                 Verdict.FAIL if Verdict.FAIL in (word, s["verdict"]) else Verdict.PASS)
                 s["failed_criteria"] = list(dict.fromkeys(  # …once each, a criterion split between runs too
-                    s["failed_criteria"] + _listed_failed(parsed)))
+                    s["failed_criteria"] + (_red(parsed) or _listed_failed(parsed))))
+    if not own or len(texts) > 1:      # one node's single report: the record holds its list to its entries
+        for tid, why in _unanswered_fails(out, owners, failed_said, unplaced).items():
+            said[tid]["contradiction"] = said[tid]["contradiction"] or why
     return out, said
+
+
+def _named_node(x: dict) -> str:
+    """The node a scope report's item names in `task_id`, as its heading gives it, the validator's quoting taken off."""
+    return str(x.get("task_id") or "").strip().strip("`'\"").strip()
+
+
+def _place_outside(parsed: dict, said: dict, own: bool) -> None:
+    """What the report observed outside the criteria, onto the node each observation names (one node's report: that
+    node) — data beside the verdict for its issuer, read by nothing that decides it (Inv-2). One naming no node of
+    this validation is dropped, as an unplaced entry is."""
+    for o in (o for o in parsed.get("outside") or () if isinstance(o, dict)):
+        tid = next(iter(said)) if own else _named_node(o)
+        if tid in said and str(o.get("what") or "").strip():
+            said[tid]["outside"].append({"what": str(o["what"]).strip(), "evidence": str(o.get("evidence") or "").strip()})
+
+
+def _shaped(parsed: Optional[dict]) -> Optional[dict]:
+    """The report in the shape it is read in, or None — a report that did not parse. `parse_structured` checks keys, not
+    types: a `failed_criteria` written as one string was read letter by letter, no letter had an owner, and a node passed
+    over its own criterion named failed (critic over 37579f8); entries that are not objects broke the read uncaught."""
+    if isinstance((parsed or {}).get("failed_criteria"), str):
+        parsed["failed_criteria"] = [parsed["failed_criteria"]]
+    ok = (parsed is not None and isinstance(parsed.get("per_criterion") or [], list)
+          and isinstance(parsed.get("failed_criteria") or [], list)
+          and all(isinstance(e, dict) for e in parsed.get("per_criterion") or ()))
+    return parsed if ok else None
 
 
 def _listed_failed(parsed: dict) -> list:
@@ -994,13 +1127,47 @@ def _listed_failed(parsed: dict) -> list:
     return listed if "failed_criteria" in parsed and not set(listed) < set(red) else red
 
 
+def _unanswered_fails(out: dict, owners: dict, failed_said: set, unplaced: frozenset = frozenset()) -> dict:
+    """{node: why} — for each criterion some report of this validation calls failed, by its list or by an entry under any
+    node's id, every owner of it when no owner's own entry fails it: the word is then a fail its owner does not carry,
+    and the owner decides nothing. Held per report or only where a red entry stood, a fail written under a non-owner's
+    id, or listed by a batch with no red entry, let the owner pass on its own pass or on one kept from a refused attempt
+    (critics over the round, 2026-10-19). A name two nodes share is answered by either owner failing it — except a red
+    entry placed under no node (`unplaced`), which may be either's: every owner not failing it itself decides nothing,
+    or the other owner's fail answered it and the second passed on a pass kept from a refused attempt (critic over
+    37579f8)."""
+    red_by = {(tid, str(e.get("criterion"))) for tid, es in out.items() for e in es
+              if spoken_verdict(e.get("verdict")) != "pass"}
+    unanswered: dict = {}
+    for name in sorted(failed_said | set(unplaced)):
+        holders = [t for t in owners.get(name, ()) if t in out]
+        short = [t for t in holders if (t, name) not in red_by]
+        if name in unplaced or not any((t, name) in red_by for t in holders):
+            for tid in short:
+                unanswered.setdefault(tid, f"a report of this validation calls '{name}' failed and no entry of its node "
+                                           f"fails it — the issuer's FAIL payload must be the red set (Inv-3)")
+    return unanswered
+
+
+def _red(parsed: dict) -> list:
+    """The report's own non-pass criteria, read off its entries."""
+    return list(dict.fromkeys(str(e.get("criterion")) for e in parsed.get("per_criterion") or ()
+                              if spoken_verdict(e.get("verdict")) != "pass"))
+
+
 def _report_contradicts_itself(parsed: dict) -> Optional[str]:
-    """Why a report's verdict or failed list disagrees with its own per-criterion entries, or None."""
-    red = {str(e.get("criterion")) for e in parsed.get("per_criterion") or ()
-           if spoken_verdict(e.get("verdict")) != "pass"}
+    """Why a report decided nothing its entries can carry, or None. Where an entry is red the report is a FAIL on its red
+    set, whatever its word or list say: a false FAIL is guarantee-safe (§8.4) and a PASS over a red entry is read as the
+    FAIL it is. Refused, one batch's `FAILED` or a list naming another batch's criterion voided a root's every batch and
+    the probed FAIL with them — of ~17 batches a round, all had to be well-formed (finder over 190f4db, after
+    GB_sql_database_tn03ao788). A FAIL claimed over entries that all pass names nothing observed, and decides nothing."""
+    red, listed = set(_red(parsed)), set(_listed_failed(parsed))
+    if red:      # what the list names beyond the red set is held to its owners' entries (`_entries_by_node`)
+        return None
     said = verdict_word(parsed.get("verdict"))   # a word that is neither decided nothing: no verdict to agree (§7.1)
-    listed = set(_listed_failed(parsed))
-    if said is None or (said == Verdict.FAIL) != bool(red) or listed != red:
+    if parsed.get("verdict") is None and not listed:   # …and no word is no claim: the entries are the verdict (§2.3)
+        return None
+    if said != Verdict.PASS or listed:
         return (f"the report's verdict {parsed.get('verdict') or '(none)'} and failed_criteria {sorted(listed)} contradict its own "
                 f"entries, whose non-pass criteria are {sorted(red)} — the issuer's FAIL payload must be the red set "
                 f"(Inv-3)")
@@ -1022,11 +1189,13 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
     `get_verdict` shows what it did manage to check (measured 2026-08-21: a 25-criterion contract refused twice, the
     node parked, and the only trace of what was checked was a text file); with how many refusals the node has had."""
     tools, _model = _instrument_of(llm, model)
-    # a node read out of a report over several: its claim is its own entries' — every NON-PASS one failed, as the
-    # validator reports an undecidable criterion FAIL (validator.md)
-    failed = (list(said["failed_criteria"]) if said["verdict"] is not None else
-              [str(e.get("criterion")) for e in entries if spoken_verdict(e.get("verdict")) != "pass"])
-    verdict = said["verdict"] if said["verdict"] is not None else (Verdict.FAIL if failed else Verdict.PASS)
+    parts = engine.parts_procedure(task.id)
+    entries = with_part_observations(parts, canonical_citations(entries, task.spec.criteria, parts))   # the packet's `{id, held}` form, read
+    # THE ENGINE'S CONJUNCTION, NOT THE REPORT'S WORD: V is the AND of the per-criterion values (§2.3) and the FAIL
+    # payload is their red set (Inv-3), so both are computed here from the entries over this node's criteria; a word or
+    # list the report adds decides nothing
+    failed = list(dict.fromkeys(str(e.get("criterion")) for e in entries if spoken_verdict(e.get("verdict")) != "pass"))
+    verdict = Verdict.FAIL if failed else Verdict.PASS
     try:
         if said.get("contradiction"):
             raise ValueError(said["contradiction"])
@@ -1035,6 +1204,7 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
                                          validator or "validate_result", per_criterion=entries,
                                          tools_used=tools, require_probe=True, generation=claim.key[1:],
                                          log_at=claim.log_at, model=_model, workdir=workdir,
+                                         outside=said.get("outside") or (),
                                          inputs_dirs=laid_down_dirs(
                                              engine.validation_procedure(task.id), scratch)) or {}
     except ValueError as e:
@@ -1051,15 +1221,80 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
             "validator": rec.get("validator")}
 
 
-def _scope_cap(batch: list) -> Optional[int]:
+def _scope_cap(batch: list, graph) -> Optional[int]:
     """A scope run's cap: the longest bound left among the nodes it validates. One run serves every node in it, and
     each node's own clock hands it on when its own bound passes (`_validation_cap` is that bound for a run of one);
     capped at the first-listed node's remainder, or the shortest, a top that had waited in VALIDATING cut a run over
     deliveries made seconds before to 119 s and 299 s, and every verdict in it came back ⊥ (critics, 2026-09-28)."""
-    return max((c for t, *_ in batch if (c := _validation_cap(t))), default=None)
+    return max((c for t, *_ in batch if (c := _validation_cap(t, graph))), default=None)
 
 
-def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn) -> list:
+def _observe_exact(engine: Engine, parts: list, workdir, built: Optional[list] = None, ex=None) -> dict:
+    """{(node, probe id): {matched, out, note, …}} — every `exact` pinned probe of the criteria left to validate, own and
+    parts', run by the system itself ON THE DELIVERY: a fresh copy of it with the inputs laid from the contract
+    (`observe.run_checks`), once per validation and before any validator run. The validator's copy was no such run —
+    a probe that leaves state printed "already exists" there, and the validator's edits changed what it printed
+    (critic over 38c16f9) — and a lone validator works in the place itself, so after it no copy is the delivery. An
+    exact probe builds what it runs and creates what it reads (`procedure.EXACT_TEXT`). A probe the system could not
+    run is a row with a `note` and no `matched`, said in the record as not observed. Laid over the report before it is
+    recorded (`procedure.with_engine_observations`); the place itself is never run in. The copy is built first, what
+    ran appended to `built`; a build that fails raises `BuildFailed`, and nothing here runs."""
+    probes = []
+    for task, _, crits in parts:
+        own = engine.parts_procedure(task.id)
+        probes += [((str(task.id), pid), c, p) for c in [*crits, *(pc for x in crits for pc in own.get(x.name, ()))]
+                   for p in (c.check or ()) if p.exact and p.command.strip() and (pid := probe_id(c.name, p))]
+    if not probes:
+        return {}
+    ex, rows = ex or validation_execution(engine), {}
+    shell = bool(workdir) and ex.shell()
+    why = ("the delivery could not be copied" if shell else "no shell to run it in" if workdir else
+           "the delivery has no place to copy")
+    if shell:
+        # …in the system's own scratch, never the validation's round: these run the delivery's own scripts, and in the
+        # round a judge's copy follows they shared its container and CLI state and could plant or rewrite its tree
+        # (critic 3 over the judges slice)
+        with ex.scratch("gfso-exact-", system=True) as tmp:
+            ex.files.mkdir(str(at := Path(tmp) / "exact"))
+            # …a copy the delivery makes impossible raises `NotTheDelivery`: its FAIL, as a judge's copy's (`_unjudged`);
+            # one that failed for another cause leaves these not run, said so
+            try:
+                with snapshot(workdir, at / "delivery", ex, delivered=engine.delivered(*(t.id for t, *_ in parts)),
+                              built=built) as tree:
+                    if tree:
+                        # …the tree DELIVER recorded, built, and never `git clean`ed: one emptied a shared place's
+                        # copy inside an enclosing repository (critic over the fresh copy). State an executor's own run
+                        # left in a place with no recorded commit is the pin's to start clean of (`EXACT_TEXT`)
+                        why, rows = ("its inputs could not be laid",
+                                     dict(run_checks(ex, probes, workdir, tree, OBSERVE_S + FRESH_S * len(probes))))
+            except Uncopied as e:
+                why = str(e)
+    return {k: rows.get(k) or {"note": f"not run: {why}"} for k, _, _ in probes}
+
+
+def _unjudged(parts: list, e: Exception) -> tuple:
+    """The reports a validation stands on whose judge's copy could not be made (`NotTheDelivery`) or built
+    (`BuildFailed`), shaped as `_entries_by_node` reads them: every criterion left to validate failed on that one
+    observation — the delivery's FAIL, the cause said, no check run (JOINT judge-on-the-delivered-tree). A copy that
+    cannot be made is no verdict to wait for again and again: a false FAIL is guarantee-safe (§8.4), and its cause
+    reaches the executor's next packet (`packets._last_delivery_text`), whose re-delivery lifts it."""
+    # …each with the step that failed as its probe — a verdict states what it observed (§2), and a FAIL with none was
+    # refused as no verdict —, marked the system's own act: no finding stands on it (`SYSTEMS_ACT`), the next
+    # delivery's own build and copy re-check it
+    built = isinstance(e, BuildFailed)
+    probe = {"command": e.command if built else "the system's checkout of the commit DELIVER recorded",
+             "expect": "exit 0" if built else "the tree DELIVER recorded, read back whole", SYSTEMS_ACT: True}
+    return ({str(t.id): [{"criterion": c.name, "verdict": "fail", "evidence": str(e),
+                          "behaviours": ["the delivered tree builds in the validation's copy" if built else
+                                         "the tree DELIVER recorded is copied whole for its judge"],
+                          "probe": [probe]} for c in crits] for t, _, crits in parts},
+            {str(t.id): {"verdict": Verdict.FAIL, "failed_criteria": [c.name for c in crits], "seams": "",
+                         "outside": [], "contradiction": None} for t, _, crits in parts})
+
+
+def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
+                     edits: Optional[list] = None, built: Optional[list] = None, ex=None,
+                     seen: Optional[dict] = None) -> list:
     """The validator's reports over the parts' deliveries — one run, or one per batch at the same time (`_run_each`),
     each batch carrying a disjoint share of the probes the validation owes over one unchanging set of deliveries, so
     their conjunction is the verdict whatever order they finish in (§2 V = ⋀ cᵢ; `_scope_batches`, `_conjoined`). A
@@ -1067,23 +1302,54 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
     batched or partly kept from a refused report. The engine refuses a report that leaves a criterion unspoken (⊥ is
     not a pass, §2.3), and on a rich contract one report did: 44 refused against 57 recorded, two E3 runs stalled at 25
     and 42 root criteria (2026-08-21) — so a long contract is batched, every owed probe carried exactly once.
-    `GFSO_VALIDATION_BATCH=0` restores the single run, whatever the size."""
+    `GFSO_VALIDATION_BATCH=0` restores the single run, whatever the size. Each copy is built before its run, what ran
+    appended to `built`; a build that fails raises `BuildFailed` (`snapshots._build`). `seen`: what the system's own
+    runs of the exact checks observed (`_observe_exact`), told to the validator in its packet."""
     system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
     batches = _scope_batches(engine, parts, validation_batch())
+    ex, delivered = ex or validation_execution(engine), engine.delivered(*(t.id for t, *_ in parts))
 
     def _run(batch, client=None, place=None) -> str:
         if inside is not None:
-            body = (_scope_validator_packet(engine, batch, workdir, place or scratch, inside)
+            body = (_scope_validator_packet(engine, batch, workdir, place or scratch, inside, seen)
                     + schema_instruction(_SCOPE_VALIDATOR_SCHEMA))
-            cap = _scope_cap(batch)
+            cap = lambda: _scope_cap(batch, engine.graph)
         else:
             (task, deliverable, crits, *carry), = batch
             body = (_validator_packet(engine, task, deliverable, workdir, place or scratch,
                                       criteria=None if len(crits) == len(task.spec.criteria) else crits,
-                                      carry=carry[0] if carry else None)
+                                      carry=carry[0] if carry else None, seen=seen)
                     + schema_instruction(_VALIDATOR_SCHEMA))
-            cap = _validation_cap(task)
-        return (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=workdir, timeout=cap)
+            cap = lambda: _validation_cap(task, engine.graph)
+        # RUNS SIDE BY SIDE EACH IN A COPY OF THE PLACE OF ITS OWN (`adapters.snapshots`): sharing the place, one run's
+        # pinned `make clean` took the binary from under the others' probes — a false root FAIL (GB_sql_database_tngtvm580).
+        # A run alone gets its copy too (`_run_each`); without a scratch it works in the place. Mapped back, the report
+        # reads as run in the place.
+        # Its cap is read once the copy stands: what is left of T_validate when the run starts, not before the copy took
+        # its share — a cap read first let the run outlive the visit by the copy's minutes (`_validation_cap`).
+        ran: list = []
+        try:
+            with snapshot(workdir, Path(place) / "delivery", ex, edits, delivered, ran) if place else nullcontext() as tree:
+                if not tree and ex.apart:
+                    # …never in the executor's place where places stand apart: its container, its CLI state, its tree
+                    # to change (§10.3). No validator started: not a report it failed to write nor a contract to
+                    # narrow, nor the place down (it answers) — the never-started run, asked again on its own tier and
+                    # then of a person (critics over this slice: read as the place down, the project flapped)
+                    return _no_start(client or llm, "uncopied", str(workdir), f"no copy of {workdir} to judge in")
+                if tree:
+                    body = swap(body, workdir, tree) + snapshot_note(tree, ran[0] if ran else None)
+                text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=tree or workdir,
+                                                 timeout=cap())
+                return swap(text, tree, workdir) if tree else text
+        except PlaceUnavailable as e:        # …the place down while copying: the stop a call that could not start makes
+            return _no_start(client or llm, "unavailable", e.place, str(e))
+        except Uncopied as e:                # …no copy, for a cause not the delivery's: no verdict, asked again
+            return _no_start(client or llm, "uncopied", str(workdir), str(e))
+        finally:
+            if built is not None:
+                built.extend(ran)
+            if place:          # …the run's container ended, whatever its processes left running (`release`)
+                ex.release(place)
 
     def _run_again_if_unread(batch, client=None, place=None) -> str:
         """A batch whose report does not parse is run once more, alone, inside this validation, in a fresh place of its
@@ -1096,14 +1362,19 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
             return text
         again = f"{place}_again" if place else None
         if again:
-            Path(again).mkdir(parents=True, exist_ok=True)
+            _fresh(ex, again)
+            record_round(engine.graph, again, True)
         return _run(batch, client, again)
-    return _run_each(llm, spawn if len(batches) > 1 else None, scratch, batches,
-                     _run_again_if_unread if len(batches) > 1 else _run)
+    # a lone run copies a node's own place; on this host never a shared directory with no git base: that is the user's
+    # whole tree (a copy per validation was refused on one of 77k files), and nothing there is isolated to begin with.
+    # Where places stand apart it copies whatever it judges, a root's base too: else it would run in its executor's
+    lone = scratch if workdir and (_NODES in str(workdir) or ex.apart) else None
+    return _run_each(llm, spawn if len(batches) > 1 else None, scratch if len(batches) > 1 else lone, batches,
+                     _run_again_if_unread if len(batches) > 1 else _run, ex)
 
 
 def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, workdir, validator, model, llm, spawn,
-                     _cb, inside: Optional[frozenset] = None) -> tuple:
+                     _cb, inside: Optional[frozenset] = None, ex=None) -> tuple:
     """ONE validation pass over deliveries — a scope's (`inside` its members), or one node's, a scope of one: the
     validator's reports over every node's criteria left to validate (`_left_to_validate` keeps what a refused attempt
     already decided), then each node's OWN verdict recorded over its own entries (`_record_node`). Records only; the
@@ -1114,21 +1385,41 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     kept report and no `verdicts`."""
     left = {str(t.id): _left_to_validate(engine, t) for t, _ in nodes}
     parts = [(t, d, left[str(t.id)][0]) for t, d in nodes]
+    ex = ex or validation_execution(engine)
     # The validator runs WHERE THE WORK IS, with a private scratch BESIDE it (`_validation_place`): a shared scratch
     # let one run validate another's leftovers, and a scratch made the working directory opened the validator in an
     # empty tree, where it failed correct work saying nothing was there. A false FAIL at the seam is worse than none.
-    scratch, _before = _validation_place(top_id, workdir, tuple(
+    scratch, _before = _validation_place(top_id, workdir, ex, tuple(
         p.get("as_run") or p.get("command") for t in engine.all_tasks()
-        for ps in engine.regression_probes(t.id).values() for p in ps))
+        for ps in engine.regression_probes(t.id).values() for p in ps), engine.graph, engine.project_name)
+    edits, built, unbuilt = [], [], None
     try:
-        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn)
+        # the system's own run of the exact checks FIRST, on the delivery as delivered (`_observe_exact`)
+        if observed := _observe_exact(engine, parts, workdir, built, ex):
+            _cb(f"{top_id}: the system ran {len(observed)} exact pinned check(s) on a fresh copy of the delivery — "
+                f"{sum(o.get('matched') is True for o in observed.values())} print what they pin, "
+                f"{sum('matched' not in o for o in observed.values())} could not be run")
+        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built, ex, observed)
     except ValueError as ex:
         return {"task_id": top_id, "error": str(ex)}, ""
+    except (BuildFailed, NotTheDelivery) as ex:       # …the delivery's FAIL, nothing checked (`_unjudged`)
+        observed, texts, unbuilt = {}, [], ex
+        _cb(f"{top_id}: {ex}")
+    if said := str(unbuilt) if unbuilt else built[0] if built else None:
+        for t, _ in nodes:          # …said to each node's executor in its next packet (`packets._last_delivery_text`)
+            engine.emit_info("validation", f"{t.id}: {UNCOPIED if isinstance(unbuilt, NotTheDelivery) else BUILT}{said}")
     text = "\n\n".join(x or "" for x in texts)
     out: dict = {"task_id": top_id, "stats": session_calls(llm, Stage.VALIDATE_RESULT)}
     _strays_left_behind(engine, top_id, workdir, _before, out, _cb)   # `.gfso-scratch` is the offered place
-    read = _entries_by_node(texts, parts, _SCOPE_VALIDATOR_SCHEMA if inside is not None else _VALIDATOR_SCHEMA,
-                            own=inside is None)
+    if edits:   # …and what a run changed in its copy of the place, said as a stray is: a fact, not a verdict
+        out["validator_edits"] = sorted(set(edits))
+        _cb(f"{top_id}: a validator run changed {len(out['validator_edits'])} committed file(s) in its copy of the "
+            f"delivery ({', '.join(out['validator_edits'][:5])}) — rebuilt outputs a pinned check makes, or edits a "
+            f"read-only instrument must not make; the delivery itself is untouched")
+    _schema = _SCOPE_VALIDATOR_SCHEMA if inside is not None else _VALIDATOR_SCHEMA
+    for x in texts:
+        file_tech_reports(engine, parse_structured(x or "", _schema), "validator", validator or "validator", top_id)
+    read = _unjudged(parts, unbuilt) if unbuilt else _entries_by_node(texts, parts, _schema, own=inside is None)
     if read is None:
         # No retry here: an agent run is minutes-long. The report is KEPT, on disk and on the node, as a report the
         # engine refuses is: under delegation the caller is the dispatcher, which reads a verdict and nothing else,
@@ -1137,6 +1428,11 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
         # (`the_call_was_cut`, the provider's own observation first) is a run that stopped, worth re-running on the
         # same tier, unlike a report that parsed and decided nothing (measured 2026-09-06: fifteen minutes, one
         # sentence, $0.00).
+        if (_stopped := what_stopped(calls_of(llm))):
+            # …AND A CALL THE ACCOUNT'S LIMIT REFUSED IS NO REPORT AT ALL: booked as a refused one, every probe of a
+            # limit window raised the node's refusal count — the next validation bought on the retry tier, the issuer
+            # told to narrow the contract, the validator told "attempt 16" (critic over this fix, 2026-10-24)
+            return {**out, "error": f"{_stopped}: the validator's call was refused — nothing was validated"}, text
         if getattr(llm, "calls", None):
             llm.calls[-1]["parse_failed"] = True
         _said = text.strip()
@@ -1155,7 +1451,11 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     # on the same delivery, and the record reads the last word on it — kept last, a kept `pass` hid a fresh `fail`
     # and a PASS over its own red entry closed a node DONE (critic V5; main's order). The runs of THIS validation are
     # read otherwise: a criterion split between them is their conjunction, never the word of whichever came last
-    whole = {tid: left[tid][1] + _conjoined(entries[tid]) for tid in entries}
+    # …and over them what the system itself saw its exact checks print (`_observe_exact`), so the record and the answer
+    # both read the same report
+    whole = {str(t.id): with_engine_observations(
+        left[str(t.id)][1] + _conjoined(entries[str(t.id)]), t.spec.criteria, engine.parts_procedure(t.id),
+        {pid: o for (tid, pid), o in observed.items() if tid == str(t.id)}) for t, _ in nodes}
     out["reports"] = {tid: {**said[tid], "per_criterion": whole[tid]} for tid in entries}
     out["verdicts"] = {str(t.id): _record_node(engine, t, whole[str(t.id)], said[str(t.id)], validator, llm,
                                                claims[str(t.id)], model, workdir, scratch, text)
@@ -1173,13 +1473,14 @@ def validate_scope(engine: Engine, top_id: str, workdir: Optional[str], validato
     one of them, and no verdicts where the report did not parse."""
     members = engine.scope_members(TaskId(top_id))
     nodes = [t for t in members if t.state.name == "VALIDATING" and (only is None or str(t.id) in only)]
+    ex = validation_execution(engine) if nodes else None    # …before a claim: refused past them, they stood held until a restart
     keys = [engine.claims.begin_validation(t.id) for t in nodes]
     if not nodes or None in keys:
         for k in keys:
             if k is not None:
                 engine.claims.end_validation(k)
         return {"task_id": str(top_id), "verdicts": {}, "inflight": bool(nodes)}
-    llm = _llm or llm_factory(model)
+    llm = _llm or llm_factory(model, execution=ex)
     try:
         llm.on_tick = _cb = emit_cb(engine, "validate_result")
         llm.stage_hint = f"{top_id} scope-validator({validator or 'standalone'})"
@@ -1187,8 +1488,8 @@ def validate_scope(engine: Engine, top_id: str, workdir: Optional[str], validato
         out, _ = _validation_pass(engine, str(top_id), [(t, _last_deliver_result(engine, t.id) or "(none recorded)")
                                                         for t in nodes],
                                   {str(t.id): k for t, k in zip(nodes, keys)}, workdir, validator, model, llm,
-                                  _spawn or (None if _llm is not None else lambda: llm_factory(model)), _cb,
-                                  inside=frozenset(str(m.id) for m in members))
+                                  _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=ex)), _cb,
+                                  inside=frozenset(str(m.id) for m in members), ex=ex)
         out.pop("reports", None)
         out["verdicts"] = {tid: {"verdict": v["verdict"], "failed_criteria": v["failed_criteria"],
                                  **({"error": v["error"]} if v.get("error") else {})}
@@ -1212,20 +1513,27 @@ def _named_documents(engine: Engine, request: str) -> str:
     The plan author, its auditors and the root's reviewer are zero-tool completions: a request saying
     "implement what prompt.md specifies" reached them as its one-paragraph summary, and the plan's criteria
     contradicted the 12 KB statement the root's executor then read in its workdir (spreadsheet_engine, AUTO
-    haiku, 2026-10-10 — EVIDENCE_LOG §13.38). Whoever reads the contract now reads what the executor reads."""
-    bases = _work_places(engine)
+    haiku, 2026-10-10 — EVIDENCE_LOG §13.38). Whoever reads the contract now reads what the executor reads: in the
+    user's chat the tree as it stands; elsewhere what the new root imports, the user's committed HEAD (`committed`) — read
+    from the live tree, a project in a container carried an uncommitted edit and an untracked `.env` to the provider (critic,
+    ran); read from its volume, a second goal's contract quoted what the earlier root's executors left there (critic)."""
+    ex = execution_of(engine)
+    bases, files = _work_places(engine, ex), ex.files
+    read = ((lambda b, p: files.read_bytes(str(p), _DOC_MAX + 1) if files.exists(str(p)) and not files.is_dir(str(p)) else None)
+            if files is HOST else (lambda b, p: committed(b, p.relative_to(b).as_posix())))
     seen, parts = set(), []
     for tok in re.findall(r"[^\s`'\"(),;<>\[\]]+", request or ""):
         tok = tok.rstrip(".:")
         # a word of prose is no file name; a path to a file that stands is one, `Makefile` included
-        if "://" in tok or not (Path(tok).suffix or (Path(tok).is_absolute() and Path(tok).is_file())):
+        # …a share named here, by the request or by the reader's answer, is asked about from this host: not asked
+        if "://" in tok or not cheap_to_ask(tok) or not (Path(tok).suffix or Path(tok).is_absolute()):
             continue
         # the first base the name stands in is the one it names; a name met again is the same document
         for b in bases:
             p = Path(os.path.normpath(Path(tok) if Path(tok).is_absolute() else b / tok))
-            if not p.is_relative_to(b) or not p.is_file():
+            if not p.is_relative_to(b) or (raw := read(b, p)) is None:
                 continue
-            if p not in seen and p.stat().st_size <= _DOC_MAX and b"\0" not in (raw := p.read_bytes()):
+            if p not in seen and len(raw) <= _DOC_MAX and b"\0" not in raw:
                 parts.append(f"## {p.relative_to(b).as_posix()}\n\n{raw.decode('utf-8', errors='replace')}")
             seen.add(p)
             break
@@ -1233,9 +1541,12 @@ def _named_documents(engine: Engine, request: str) -> str:
             + "\n\n".join(parts)) if parts else ""
 
 
-def _work_places(engine: Engine) -> list:
+def _work_places(engine: Engine, ex) -> list:
     """The directories this project's registered roles work in — this project's own only: an unscoped or another
-    project's role stands in someone else's place."""
+    project's role stands in someone else's place. Where the work runs apart, its one base (`ex.base`), the one imported:
+    another role's workdir, a typo or a role left from a name reused, gave the contract a repository never imported (critic, ran)."""
+    if ex.files is not HOST:
+        return [Path(os.path.normpath(ex.base))]
     return sorted({Path(os.path.normpath(w)) for c in _roster().list().values()
                    if (c or {}).get("kind") in ("llm-executor", "llm-validator")
                    and c.get("project") and c.get("project") == engine.project_name
@@ -1248,7 +1559,7 @@ _PLACE_SYSTEM = ("You read the place where a goal's work will be done, before it
                  "text defines the work the request asks for: its statement or specification, the interface the "
                  "delivery must meet (how it is built and invoked, what it reads and what it prints), the stubs and "
                  "build files it starts from. Read them to judge; write nothing. Return their paths relative to "
-                 "this directory.")
+                 "the place named in the request.")
 
 
 def _work_place_documents(engine: Engine, request: str, model: str) -> str:
@@ -1258,12 +1569,25 @@ def _work_place_documents(engine: Engine, request: str, model: str) -> str:
     interface that does not exist and, out of budget, `echo` in their place (AUTO haiku 4.5 sql_database,
     GB_sql_database_tmu9cb784, 0.09 held-out). Criteria take their content from contact with the work (d6, §4.1)."""
     named: list = []
-    for base in _work_places(engine):
-        llm = llm_factory(model)
+    ex = execution_of(engine)
+    # …not over a base no session of its project may run in: a volume of a base with no git, from before such bases
+    # were refused, gave the reader its `.env` and ignored files, and the reader gave them to the provider (critic)
+    if ex.files is not HOST and (why := ex.agents_refused()):
+        engine.emit_info("plan", f"the work's place is not read for the plan: {why}")
+        return ""
+    for base in _work_places(engine, ex):
+        llm = llm_factory(model, execution=ex)
         llm.stage_hint = f"root place-reader({engine.project_name})"   # named like every role's trace, so it is read
         try:
-            text = llm.run_agent(_PLACE_SYSTEM, (request or "") + schema_instruction(_PLACE_SCHEMA),
-                                 allowed_tools=("Read", "Glob", "Grep"), cwd=str(base), timeout=600, max_turns=30)
+            # …from a temp of its own where the places stand apart, reading the base read-only: in the base it shared the
+            # model client's state of the root's executor, and read the conversations that state holds
+            if ex.files.holds(str(base)):
+                ex.files.mkdir(here := os.path.join(ex.temp_root(), "plan-reader"))
+            else:
+                here = str(base)
+            text = llm.run_agent(_PLACE_SYSTEM, f"The work's place: {base.as_posix()}\n\n" + (request or "")
+                                 + schema_instruction(_PLACE_SCHEMA),
+                                 allowed_tools=("Read", "Glob", "Grep"), cwd=here, timeout=600, max_turns=30)
         except Exception:                                   # noqa: BLE001 — the goal is set from the request alone
             log.warning("reading the work's place failed", exc_info=True)
             continue
@@ -1292,11 +1616,20 @@ def _what_the_gate_does(engine: Engine, root_id, kids: list, n: int) -> str:
             f"takes them — EXPLORE, §9.9) — fix the criteria they name and run `review_decomposition('{root_id}')`.")
 
 
+def _no_plan(no, verb: str = "auto_decompose") -> str:
+    """Why no plan was built — and where a system stop refused its calls, that none was written, not that it was
+    unreadable (critic over b5f7350) — in the words of `verb`, the one to call again."""
+    stopped = what_stopped(no.stats)
+    return (f"{stopped}: no plan was authored — the project is stopped until it lifts; then call {verb} again"
+            if stopped else str(no).replace("auto_decompose", verb))
+
+
 def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                    assignee: Optional[str] = None, executor: Optional[str] = None,
-                   depth: int = 1, model: str = MODEL_DEFAULT, fast: bool = False,
+                   depth: int = 1, model: Optional[str] = None, fast: bool = False,
                    max_iterations: Optional[int] = None, spec: Optional[dict] = None,
-                   _progress=None, author: Optional[str] = None) -> dict:
+                   _progress=None, author: Optional[str] = None, open_plan: bool = False,
+                   plan: Optional[str] = None) -> dict:
     """THE one decomposition verb — dispatched by the target's state (one operation over graph state):
     (a) empty project / undecomposed node → authors a real GFSO subtree from `request` (the root node
     itself is created from the request — no hand create_task needed), builds INTO the live CORE through
@@ -1326,7 +1659,15 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     out**: the mode, the user's choice, already answers both.
 
     `spec` builds a plan already authored — the shape `extract_spec` reads off a graph — as it
-    stands, with no search: the way to execute ONE plan twice and compare the executions."""
+    stands, with no search: the way to execute ONE plan twice and compare the executions. A plan handed in is the
+    user's (append-only, never re-split; refuted at contact, the run stops for the user); `open_plan=true` hands it in
+    as a DRAFT the system may repair and re-split like its own — the run that polishes a plan, whose final graph
+    `export_plan` then reads back as the plan to hand in closed.
+
+    `plan` is THE GO on a plan file (`plan` / `refine_plan`, a path or the text): the project is built from the goal
+    and the plan the file holds, exactly or refused; from then on contact may repair it, for the system wrote it."""
+    request, spec = _the_go(engine, plan, request, spec) if plan is not None else (request, spec)
+    model = model or engine.planner_model()
     _cb = emit_cb(engine, "decompose", _progress)
     # …and SAY it, once, at the moment it happens: naming someone else here makes them the issuer of
     # every child, which is the opposite of what "delegate the work" usually means to the caller.
@@ -1366,11 +1707,12 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                 f"by {'the system' if str(_kid) != _agent_id() else 'you'}, so they cannot go to "
                 f"{executor}. Call it again without `executor` — the mode assigns them.")
         executor = executor or str(_kid)
-    if engine.graph.get_task(TaskId(root_id)) is None:
+    if fresh := engine.graph.get_task(TaskId(root_id)) is None:
         # the place is read for the plan's author; a plan handed in (`spec`) has none
         found = "" if spec is not None else _work_place_documents(engine, request, model)
-        request = (request or "") + _named_documents(engine, f"{request} {found}")
-    planner = _decompose.default_llm(model)   # the one door to the plan's transport, as decompose builds it
+        # …a plan file's goal already carries the documents it names (`plan`)
+        request = (request or "") + ("" if plan is not None else _named_documents(engine, f"{request} {found}"))
+    planner = _decompose.default_llm(model, execution=execution_of(engine))   # the one door to the plan's transport
     try:
         res = decompose_into(engine, request, root_id=root_id, assignee=assignee or _agent_id(),
                              child_assignee=executor, llm=planner,
@@ -1378,16 +1720,22 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                              # A term of the CONTRACT, chosen per decomposition: how many
                              # rework rounds a node gets before the loop settles (§12.15).
                              max_iterations=max_iterations, spec=spec, author=author,
+                             closed=spec is not None and not open_plan,
                              # WHICH EXECUTOR ONE SESSION IS: the fact the decomposer judges each piece's fit
                              # against, so the seams move with the model rather than with a number we set
                              executor=engine.workforce.executor_session(executor or assignee))
     except NoPlan as no:            # no root built: what was spent is still on the record
-        return {"root_id": None, "subtasks": [], "holes": [], "stats": no.stats, "error": str(no)}
+        return {"root_id": None, "subtasks": [], "holes": [], "stats": no.stats, "error": _no_plan(no)}
     finally:
         # …on every path: a build that raised took its calls with it, and a row's ledger showed no plan at all
         # while the plan's author and auditors had spent $0.56 (GB_sql_database_tmu9cb784)
         engine.record_llm_usage(Stage.DECOMPOSER, planner, TaskId(root_id))
     kids = engine.graph.get_active_children(res.root_id)
+    # …A PLAN BEING POLISHED IS NOT YET THE USER'S: `open_plan` hands the spec in as a draft the system may repair and
+    # re-split on contact, so its final graph (export_plan) shows what the plan needed — the author, 2026-10-25: «пока
+    # план полируется оставлять открытым возможность менять, потом смотреть что менялось и фиксировать итог»
+    if spec is not None and not open_plan and plan is None:
+        engine.give_users_plan(res.root_id)
     out = {"root_id": str(res.root_id),
            "subtasks": [{"id": str(c.id), "description": c.spec.description} for c in kids],
            "holes": res.holes,
@@ -1425,11 +1773,163 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     # as a clean, confident, "verified" empty decomposition — which reads as a statement about the
     # GOAL ("nothing to split") rather than about the installation. It is what a fresh install
     # without credentials hits, on the one verb it is told to start with.
-    if not out["subtasks"] and not res.stats:
-        out["error"] = ("no subtasks were produced and the model completed no call — the LLM "
-                        "provider answered nothing (unreachable, or not authenticated; see the "
-                        "server log). A fact about the provider, not about the goal.")
-    return out
+    out.update(_no_provider_answer(out["subtasks"], res.stats, spec))
+    return {**out, **(_not_imported(engine) if fresh else {})}
+
+
+#: {the call's arguments: (its future, when it ended)} — a plan is paid for minutes, its answer can be lost on the way to
+#: the client while the verb goes on, and no graph shows it. Kept for KEPT_PLAN_S once written, as nothing changes a file.
+_PLANNING: dict = {}
+_PLANNING_LOCK = threading.Lock()
+KEPT_PLAN_S = 3600
+
+
+def _once(key: tuple, write) -> dict:
+    """`write()`'s answer, one writing per `key`: a second call waits on the first, or reads what it wrote. An error is
+    kept by nobody: asked again, it is written again."""
+    with _PLANNING_LOCK:
+        now = time.monotonic()
+        for k in [k for k, (_, ended) in _PLANNING.items() if ended and now - ended > KEPT_PLAN_S]:
+            del _PLANNING[k]
+        mine = key not in _PLANNING
+        if mine:
+            _PLANNING[key] = (Future(), None)
+        future = _PLANNING[key][0]
+    if not mine:
+        return dict(future.result())    # …each caller its own: the MCP door moves `say` out of what it is handed
+    try:
+        out = write()
+    except BaseException as e:
+        with _PLANNING_LOCK:
+            del _PLANNING[key]
+        future.set_exception(e)
+        raise
+    with _PLANNING_LOCK:
+        if "error" in out:
+            del _PLANNING[key]
+        else:
+            _PLANNING[key] = (future, time.monotonic())
+    future.set_result(out)
+    return dict(out)
+
+
+def plan(engine: Engine, request: str, model: Optional[str] = None, executor: Optional[str] = None,
+         depth: int = 1, review_model: Optional[str] = None, _progress=None) -> dict:
+    """Author a plan for `request` WITHOUT a project: the plan file (`.gfso`) — the goal, the split with its criteria,
+    pinned checks, mappings, dependencies and register, the Level-2 review over it — for the customer to read whole.
+    Nothing executes and no project is made. The answer holds the file's whole `text` beside its `path`, unless it is
+    longer than PLAN_TEXT_MAX characters. Send a note with `refine_plan`; give the go with
+    `auto_decompose(plan=<path>)`, which builds the project from the file as it stands. `executor` names the registered
+    executor whose session the fit of each part is judged against."""
+    model = model or engine.planner_model()
+    # …the goal as the project's root will hold it — with the documents it names written under it, as the go would add
+    # them — so the plan and its review are written against the contract the work will run on (critic)
+    request = (request or "") + _named_documents(engine, request or "")
+
+    def write() -> dict:
+        """The file written and kept, or why not."""
+        try:
+            text = _planning.author(request, model, engine.workforce.executor_session(executor) if executor else "",
+                                    depth, review_model or engine.system_model(), emit_cb(engine, "plan", _progress),
+                                    execution=execution_of(engine), ledger=engine.record_llm_usage)
+        except NoPlan as no:
+            return {"error": _no_plan(no, "plan")}
+        return _plan_written(text)
+    return _once(("plan", engine.project_name, request, model, executor, depth, review_model or engine.system_model()),
+                 write)
+
+
+def refine_plan(engine: Engine, plan: str, note: str, model: Optional[str] = None,
+                review_model: Optional[str] = None, _progress=None) -> dict:
+    """The customer's note on a plan file (a path or the text): one refine round with the note as its finding, by
+    `model` (an older one may be named), and the review run again. The new file carries the note with its answer —
+    what the round changed in the plan, read off the plan itself, and the answer holds it as `plan`'s does. The old file
+    stays as it was."""
+    model = model or engine.planner_model()
+
+    def write() -> dict:
+        """The refined file written and kept, or why not."""
+        try:
+            # …the review is the system's, on its model: a planner named stronger authors, it does not also review (critic)
+            text = _planning.refine(_planning.text_of(plan), note, model, review_model or engine.system_model(),
+                                    emit_cb(engine, "plan", _progress),
+                                    execution=execution_of(engine), ledger=engine.record_llm_usage)
+        except NoPlan as no:
+            return {"error": _no_plan(no, "refine_plan")}
+        except (ValueError, OSError) as e:
+            return {"error": str(e)}
+        return _plan_written(text)
+    return _once(("refine", engine.project_name, plan, note, model, review_model or engine.system_model()), write)
+
+
+def _no_provider_answer(subtasks, stats, spec) -> dict:
+    """The `error` of a decomposition that built nothing while no model answered — the provider's, not the goal's; a
+    plan handed in calls no model by design."""
+    return ({"error": "no subtasks were produced and the model completed no call — the LLM provider answered nothing "
+                      "(unreachable, or not authenticated; see the server log). A fact about the provider, not about "
+                      "the goal."} if not subtasks and not stats and spec is None else {})
+
+
+def _the_go(engine: Engine, plan: str, request: str, spec) -> tuple[str, dict]:
+    """The goal and the plan a plan file holds, for the go — refused beside a second plan or another goal."""
+    if spec is not None:
+        raise ValueError("auto_decompose: pass the plan file (`plan`) or a spec (`spec`), not both")
+    p = _artifact.parse(_planning.text_of(plan))
+    if (request or "").strip() and request.strip() != p["goal"].strip():
+        raise ValueError("auto_decompose: `request` differs from the goal the plan file answers — the go builds "
+                         "the plan for its own goal; leave `request` out, or plan the new goal anew")
+    # …its review ran where it was written and its customer read it: a second one, over the same file, was minutes and
+    # one more round of findings before any work (critic: no row ever ran this; every row of a plan handed in had the
+    # gate off, as `set_mode` says of a plan verified where it was authored). And not closed after its build, for the
+    # system wrote it (`auto_decompose`): a check of its own that contact refutes is repaired, where a closed plan spun on
+    # a true CHALLENGE, its issuer's right answer thrown away 29 times, 27 min (tracker, 2026-11-03; the author:
+    # «подчинять систему безоговорочно этому плану нельзя, он может быть сильным но не идеальным»). `spec` stays closed.
+    engine.set_settings({"l2_gate": "0"}, AgentId(_agent_id()), "the go on a plan file: its review is in the file")
+    return p["goal"], p["spec"]
+
+
+#: The longest plan text an answer holds: a read of the file lies outside the person's folder, and a fresh client's auto
+#: mode stopped there on a prompt, with no one present before the go (measured). Past this, `path` stands alone. About
+#: 20k tokens, ASSUMING 4 characters a token, under a client's default 25k; the MCP door declares the room (`ANSWER_ROOM`).
+PLAN_TEXT_MAX = 80_000
+
+
+def _plan_written(text: str) -> dict:
+    """The plan file kept under the state directory by its content, with what the customer reads first and, last in the
+    answer, the file's text to read it by. The text only reads: the note and the go take the file."""
+    path = _planning.kept(text)
+    p = _artifact.parse(text)
+    r = p["review"]
+    return {"path": str(path), "chars": len(text), "parts": [s["id"] for s in p["spec"].get("subtasks") or ()],
+            "undecided_obligations": len(r.get("undecided_obligations") or ()),
+            "covered": r.get("semantic_covered"), "notes": len(p["notes"]),
+            "how_to_read": "read `text` whole, the file at `path` if there is none (the [inputs] at its end are the "
+                           "checks' files, named by hash); a client's background result shows the plan's ampersands and "
+                           "angle brackets as HTML entities: that is its display, the file is exact; "
+                           "a check whose `expect` its command cannot print will fail correct work: that is a note. "
+                           "A note → refine_plan(plan=path, note); the go → auto_decompose(plan=path)",
+            "say": "Write to the person now, before any other call: it splits into "
+                   f"{', '.join(s['id'] for s in p['spec'].get('subtasks') or ()) or 'one piece of work'}; "
+                   f"{len(r.get('undecided_obligations') or ())} of what the goal asks no check decides yet; and any "
+                   "decision in the file they never asked for.",
+            **({"text": text} if len(text) <= PLAN_TEXT_MAX else {})}
+
+
+@functools.wraps(_tools.create_task)
+def create_task(*a, **kw):
+    """`gfso.tools.create_task`; the call that makes the root by hand (MANUAL) says what the agents' copy lacks too
+    (`_not_imported`), as `auto_decompose` does where it authors the root."""
+    out = _tools.create_task(*a, **kw)
+    at = inspect.signature(_tools.create_task).bind(*a, **kw).arguments
+    made_root = isinstance(out, dict) and "error" not in out and not at.get("parent_id")
+    return {**out, **_not_imported(at["engine"])} if made_root else out
+
+
+def _not_imported(engine) -> dict:
+    """What of the user's repository the agents' copy lacks (`left_out`), said in the answer of the call that starts
+    the work — the import itself runs at a container's first start or on the root's thread, whose log no agent reads."""
+    ex = execution_of(engine)
+    return {"not_imported": said} if isinstance(ex, ContainerExecution) and (said := left_out(ex.volume.base)) else {}
 
 
 # The COMPLETE transport registry: structural surface + the LLM verbs. Binding layers use THIS.
@@ -1488,6 +1988,12 @@ def _answering(fn):
                 msg = (f"the payload is missing a required key: {msg}. `gfso run {fn.__name__} "
                        f"--help` (or the tool's description) gives the shape it expects.")
             return {"error": msg, "refused": True}
+        except PlaceUnavailable as ex:
+            # …met outside a model call — a place's file read or written through its execution: the stop a booked call
+            # makes (`Engine.stop_for_the_place`)
+            if (engine := sig.bind(*a, **kw).arguments.get("engine")) is not None:
+                engine.stop_for_the_place(ex.place, str(ex))
+            return {"error": str(ex)}
         except Exception as ex:                                   # noqa: BLE001 — see the docstring
             log.exception(f"{getattr(fn, '__name__', 'verb')} failed")
             return {"error": f"{type(ex).__name__}: {ex}", "unexpected": True}
@@ -1528,7 +2034,8 @@ def _delegation():
 def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_DEFAULT,
                    workdir: Optional[str] = None, validator: Optional[str] = None,
                    oracle_map: Optional[str] = None, max_turns: Optional[int] = None,
-                   client: Optional[str] = None) -> dict:
+                   client: Optional[str] = None, execution: Optional[str] = None,
+                   context_budget: Optional[int] = None) -> dict:
     """Register a NON-human participant (humans need no registration — an unregistered Del = human,
     the system stays passive). kind: `llm-executor` (nodes assigned to this id AUTOSTART: headless
     executor with work tools in `workdir`, its report wrapped into ACCEPT/DELIVER/BLOCK/CHALLENGE) ·
@@ -1550,6 +2057,12 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
     `client` (optional) ties the role's LIFETIME to your own lease: while that lease is live the role
     is dispatchable, and when it lapses the dispatcher stops starting work for it — nothing is
     cancelled, no state moves, and the same owner returning resumes where the graph stood.
+
+    `execution` (optional) names where this project's sessions and commands run — an execution the server
+    DECLARES (its executions.json: a Linux container per project, say); one per project, and none = this host.
+
+    `context_budget` (optional, tokens) is the executor's: a session whose context reaches it writes a handover note
+    and a fresh session continues the task from it — whatever the model's provider offers (none = no budget).
 
     THIS VERB LIVED ON THE AGENT DOOR ALONE. A person driving from the CLI or the HTTP API was told
     by the log to `reassign` a node to a registered role and had no verb anywhere to make one —
@@ -1575,10 +2088,18 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
                 f"its kind would attach to whoever simply omitted a name. Register the role under "
                 f"its own id (`{agent_id}-val`, `{agent_id}-exec`, or anything else) and assign "
                 f"nodes to THAT id — which is also what makes the delegation visible in the graph."}
+    if execution and (engine.mode() or {}).get("perform") == "in_chat":
+        return {"refused": True, "error": _IN_CHAT_APART.format(execution)
+                + " Set the mode again with `perform=\"dispatch\"` first."}
     agents = _roster(engine)
+    # …a role of this project registered again keeps where it runs: to change its model, its project's only declaring role came back
+    # with none, the project on the host and its validations there, said nowhere (critic, ran)
+    own = agents.get(agent_id) or {}
+    kept = own.get("execution") if own.get("project") == engine.project_name else None
+    execution = execution or kept or (_default_execution(engine, engine.mode(), agents) if kind == "llm-executor" else None)
     out = agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
-                          oracle_map=oracle_map, max_turns=max_turns, client=client,
-                          project=engine.project_name)
+                          oracle_map=oracle_map, max_turns=max_turns, client=client, context_budget=context_budget,
+                          project=engine.project_name, execution=execution)
     _delegation().publish_the_workforce(engine, agents.list())
     # THE SPELLING THAT BINDS, not the one that was typed. The roster stores the workdir RESOLVED,
     # and the workspace binding is decided on that value — while the advice below interpolated the
@@ -1669,8 +2190,122 @@ def unregister_agent(engine: Engine, agent_id: str, workdir: Optional[str] = Non
 _MODE_STAFF = {Mode.AUTO: 2, Mode.SEMI: 1, Mode.SOLO: 0}
 
 
-def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
-             agent: Optional[str] = None, user_said: str = "", perform: str = "dispatch") -> dict:
+def _default_execution(engine: Engine, mode: Optional[dict], agents) -> Optional[str]:
+    """WHERE A PROJECT'S EXECUTORS NAMING NO EXECUTION WORK: the installation's "default" (`gfso setup` declares it), so
+    delegation on a new install runs in a container with no hand step — once the project's `mode` dispatches its work (a
+    mode set, not `in_chat`): with none set, the user's agent builds nodes in its own chat beside delegated ones, and
+    the whole project moved into a volume that does not hold that work (critic). Not where the project already runs
+    somewhere, nor where the user said unattended work may run on this host."""
+    if not mode or mode.get("perform") == "in_chat" or local_agents() or declaring_role(engine, agents) is not None:
+        return None
+    try:
+        return DEFAULT_EXECUTION if DEFAULT_EXECUTION in executions() else None
+    except ValueError:
+        return None          # …an unreadable declaration: the registration names no execution, as before setup
+
+
+def _executors_into(engine: Engine, execution: Optional[str], agents, which: Optional[list] = None,
+                    moved: Optional[list] = None) -> list:
+    """The project's executors (`which`, else every one naming no execution) registered again under `execution` — the
+    ones it moved, each in `moved` as it moves: a move that raises half way leaves its caller the ones to move back."""
+    moved = [] if moved is None else moved
+    for aid, c in _movable(engine, agents, which).items():
+        agents.register(aid, "llm-executor", **{k: c.get(k) for k in ("model", "workdir", "validator", "oracle_map",
+                        "max_turns", "client", "project", "context_budget")}, execution=execution)
+        moved.append(aid)
+    return moved
+
+
+def _movable(engine: Engine, agents, which: Optional[list] = None) -> dict:
+    """{id: registration} of the project's executors `which`, else of every one naming no execution."""
+    return {aid: c for aid, c in agents.list().items()
+            if c.get("kind") == "llm-executor" and c.get("project") == engine.project_name
+            and (aid in which if which is not None else not c.get("execution"))}
+
+
+#: why `in_chat` is refused under a container execution
+_IN_CHAT_APART = ("this project's work runs in the container execution {!r}, where every place and the base "
+                  "stand in the project's volume and only what stands there is judged; in_chat work is done on this "
+                  "host, in none of them. Set `perform=\"dispatch\"` (a session of this project's executor performs "
+                  "your nodes in its own place), or do in_chat work in a new project on this host, whose roles name no "
+                  "`execution`: this project's work stands in its volume and does not move to this host, and with its "
+                  "roles unregistered it does nothing until they are back.")
+
+
+def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
+    """What a mode needs registered in this project, and whether it has it — the one rule `set_mode`
+    enforces, readable before anyone asks for the mode (the page shows it; a copy of the rule in the
+    page had already drifted from this one). Executors: auto two (the root and its children must be
+    different executors, or the children would self-verify), semi one, solo none — and one in any mode
+    whose held nodes are DISPATCHED to a session of this project's executor. A validator in every mode:
+    the system validates wherever κ ends, whoever holds the node, so solo needs the instrument as much
+    as auto does — without one, the agent is its own only verifier."""
+    m = Mode(str(mode).strip().lower())
+    agents = _roster(engine)
+    _delegation().publish_the_workforce(engine, agents.list())
+    pool = [str(a) for a in engine.workforce.executor_pool()]
+    validators = [a for a, c in agents.list().items()
+                  if c.get("kind") in ("llm-validator", "unittest-checker")
+                  and c.get("project") in (engine.project_name, None)]
+    dispatch = perform == "dispatch" and m != Mode.AUTO          # under AUTO the user-agent holds nothing
+    need = max(_MODE_STAFF[m], int(dispatch))
+    if perform == "in_chat" and m != Mode.AUTO and (role := declaring_role(engine)) is not None:
+        return {"mode": m.value, "perform": perform, "dispatch": False, "needs_executors": need, "executors": pool,
+                "validators": validators, "ready": False, "missing": _IN_CHAT_APART.format(role["execution"])}
+    # …and work dispatched runs unattended: where the project runs refuses it, no count of roles makes the mode ready
+    refused = execution_of(engine).agents_refused() if need else None
+    ready = len(pool) >= need and bool(validators) and not refused
+    missing = "" if ready else refused or (
+        f"{m.value} needs {need} registered executor(s) of this project and a validator; it "
+        f"has {len(pool)} executor(s) ({', '.join(pool) or 'none'}) and {len(validators)} validator(s)"
+        + (" — dispatch performs your nodes in a session of this project's executor" if dispatch else "")
+        + ". Register them with `register_agent(<id>, \"llm-executor\" | \"llm-validator\", "
+        "workdir=<the work's directory>)` in this project, then set the mode.")
+    return {"mode": m.value, "perform": perform, "dispatch": dispatch, "needs_executors": need,
+            "executors": pool, "validators": validators, "ready": ready, "missing": missing}
+
+
+def run_state(engine: Engine) -> dict:
+    """THE RUN'S ONE STATE — `running`; `stopping` once stopped while sessions of this project still run (`working`:
+    each one's verb, node and since); `stopped` when none does. Derived from the stop as set and the work in flight,
+    never a second flag."""
+    if not (stop := engine.paused()):
+        return {"state": "running"}
+    working = [w for w in in_flight() if w.get("project") == (engine.project_name or DEFAULT_PROJECT)]
+    # `off_s` is the doors' own reading of the stop (`model.door_off_s`), nothing a client acts on
+    return {"state": "stopping" if working else "stopped", **{k: v for k, v in stop.items() if k != "off_s"},
+            "working": working}
+
+
+def stop_project(engine: Engine, why: str = "", by: Optional[str] = None) -> dict:
+    """STOP the project's run: the system starts no new session in it (executor, validator, issuer); those running
+    finish and their signals land — `stopping` until the last one has, then `stopped`. No timeout fires while stopped
+    and the graph is not changed. `start_project` runs it again."""
+    engine.pause(by or _agent_id(), why)
+    return run_state(engine)
+
+
+def start_project(engine: Engine, by: Optional[str] = None) -> dict:
+    """RUN the project again after `stop_project`; the time it stood stopped is left off its clocks, so no bound ran out
+    in it (`project_now`)."""
+    engine.resume(by or _agent_id())
+    return {**run_state(engine), **({} if engine.graph.setting(VOLUME + IMPORTED) else _not_imported(engine))}
+
+
+def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[str] = None, wait: float = 0.0) -> dict:
+    """The frontier with the run's state beside it — `run`: running, stopping or stopped (`stop_project` /
+    `start_project`). What follows is the frontier's own text (`gfso.tools.next_steps`)."""
+    return {**_tools.next_steps(engine, root_id, actor, wait), "run": run_state(engine)}
+
+
+next_steps.__doc__ += "\n\n    " + (_tools.next_steps.__doc__ or "").strip()
+
+
+def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int] = None,
+             agent: Optional[str] = None, user_said: str = "", perform: Optional[str] = None,
+             system_model: Optional[str] = None, planner_model: Optional[str] = None, l2_gate: Optional[bool] = None,
+             deadline_s: Optional[float] = None, observe: Optional[bool] = None,
+             network: Optional[Union[str, dict]] = None) -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
 
     - `solo` — you (the user-agent) hold and execute every node; the one seam is the root.
@@ -1681,7 +2316,7 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
       customer — state the goal, and read its status. You do not intervene: the system makes every
       issuer move, and the project refuses your structuring and validation verbs on its nodes.
 
-    The choice is the USER's: explain the three and ask; do not pick one for them. It governs nodes
+    The choice is the USER's: recommend `auto` and go on, unless they ask for another. It governs nodes
     issued AFTER it (an issued node keeps its Del). A mode that needs executors is refused until this
     project has them: auto needs two (the root and its children must be different executors, or the
     children would self-verify with no validator between them), semi needs one, and every mode — solo
@@ -1694,9 +2329,25 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
     yourself, with your own tools, and nothing keeps it inside the contract but you.
 
     Once the project has work in it, a change needs `user_said` — the user's own words asking for it,
-    recorded with the mode: a refusal or a stall is a reason to ask the user, never to switch yourself."""
+    recorded with the mode: a refusal or a stall is a reason to ask the user, never to switch yourself.
+
+    What the project sets for itself, recorded with the mode (unset = the server's): `system_model` — the model the
+    system's own roles run on here (its issuer, its plan's reviewer, and its author unless named apart); `planner_model`
+    — the model that AUTHORS the plan (`auto_decompose`, `plan`, `refine_plan`), when it is to be another than the
+    system's: a stronger author once, the system's roles after it; `l2_gate` — whether the plan's
+    Level-2 review gates execution (off: the plan was verified where it was authored); `deadline_s` — how far ahead a
+    deadline nobody typed is written (0 = none); `observe` — whether the system runs a node's pinned checks once on its
+    place before an executor session and hands it what they printed (on unless set off; `observe.observe_place`);
+    `network` — how far this project's container reaches out, where its execution is a container: `open` (everything but
+    your host), `off` (nothing), or `{"mode": "allowlist", "hosts": [...]}` (only the named hosts, on 443, through one
+    gateway) — it only narrows the execution's own declaration, the more closed of the two holding (the operator's is a
+ceiling), `declared` to follow that alone again; a turn ends the project's running container at once. Under
+    `allowlist` and `off` a session still reaches its model through the project's model door — list no provider host
+    for it (SECURITY.md); the answer names the switch in force, `network_in_force`.
+
+    Without `mode`, only the settings named change — who holds what stays as recorded (a switch turned mid-run)."""
     try:
-        m = Mode(str(mode).strip().lower())
+        m = None if mode is None else Mode(str(mode).strip().lower())
     except ValueError:
         return {"refused": True, "error": f"mode must be one of solo | semi | auto, got {mode!r}"}
     if engine.all_tasks() and not str(user_said).strip():
@@ -1704,36 +2355,92 @@ def set_mode(engine: Engine, mode: str, boundary: Optional[int] = None,
         return {"refused": True, "error":
                 "this project already has work in it, and who holds it is the USER's choice: ask the "
                 "user, and pass their own words asking for the change as `user_said`."}
-    agents = _roster(engine)
-    _delegation().publish_the_workforce(engine, agents.list())
-    pool = engine.workforce.executor_pool()
-    validators = [a for a, c in agents.list().items()
-              if c.get("kind") in ("llm-validator", "unittest-checker")
-              and c.get("project") in (engine.project_name, None)]
+    if m is None and (boundary is not None or perform is not None):
+        return {"refused": True, "error": "boundary and perform belong to a mode: name the mode with them"}
+    perform = perform or "dispatch"
     if perform not in ("dispatch", "in_chat"):
         return {"refused": True, "error": f"perform must be dispatch | in_chat, got {perform!r}"}
-    dispatch = perform == "dispatch" and m != Mode.AUTO          # under AUTO the user-agent holds nothing
-    need = max(_MODE_STAFF[m], int(dispatch))
-    # A VALIDATOR IN EVERY MODE: the system validates wherever κ ends, whoever holds the node, so solo
-    # needs the instrument as much as auto does — without one, the agent is its own only verifier.
-    if len(pool) < need or not validators:
-        return {"refused": True, "error":
-                f"{m.value} needs {need} registered executor(s) of this project and a validator; it "
-                f"has {len(pool)} executor(s) ({', '.join(map(str, pool)) or 'none'}) and "
-                f"{len(validators)} validator(s)"
-                + (" — dispatch performs your nodes in a session of this project's executor" if dispatch else "")
-                + f". Register them with `register_agent(<id>, "
-                f"\"llm-executor\" | \"llm-validator\", workdir=<the work's directory>)` in this "
-                f"project, then set the mode.", "executors": [str(a) for a in pool]}
+    if deadline_s is not None and float(deadline_s) < 0:
+        return {"refused": True, "error": f"deadline_s is seconds ahead, 0 or more, got {deadline_s!r}"}
+    if network is not None and network != "declared":
+        network = {"mode": network} if isinstance(network, str) else network
+        try:
+            network_of(network if isinstance(network, dict) and "mode" in network else ())
+        except ValueError as e:
+            return {"refused": True, "error": str(e)}
+    settings = {k: v for k, v in (("system_model", str(system_model).strip() or None if system_model else None),
+                                  ("planner_model", str(planner_model).strip() or None if planner_model else None),
+                                  ("network", None if network is None else "" if network == "declared"
+                                   else json.dumps(network)),
+                                  ("l2_gate", None if l2_gate is None else "1" if l2_gate else "0"),
+                                  ("deadline_s", None if deadline_s is None else float(deadline_s)),
+                                  ("observe", None if observe is None else "1" if observe else "0")) if v is not None}
+    # …asked of the roster, not of the declaration: an unreadable declaration still names a container, whose switch the
+    # user must be able to store (it holds the way out shut meanwhile, `execution_of`)
+    no_container = {"refused": True, "error": "this project's sessions run on this host — no execution is declared for its "
+                                              "roles (`register_agent(..., execution=)`) — so there is no container whose "
+                                              "network a switch could turn"}
+    if m is None and network is not None and declaring_role(engine) is None:
+        return no_container
+    if m is None:
+        if not settings:
+            return {"refused": True, "error": "name a mode, or a setting of this project to change"}
+        rec = engine.set_settings(settings, AgentId(agent or _agent_id()), said=str(user_said).strip())
+        return {**rec, **(_turn_the_way_out(engine) if network is not None else {})}
+    # …the project's executors that name no execution placed in the default as the mode is set — the door registers
+    # first and sets the mode after, and a registration saw no mode (critic); moved back where the mode is refused, or
+    # a refusal shut the user's other choices — in their chat, on this host (critic)
+    def held() -> dict:
+        """The mode recorded, its staffing read once the default holds the executors — or the refusal."""
+        if network is not None and declaring_role(engine) is None:      # …asked here: the default has placed them by now
+            return no_container
+        staff = mode_staffing(engine, m.value, perform)
+        pool, dispatch = [AgentId(a) for a in staff["executors"]], staff["dispatch"]
+        if not staff["ready"]:
+            return {"refused": True, "error": staff["missing"], "executors": staff["executors"]}
+        try:
+            rec = engine.set_mode(m, boundary, AgentId(agent or _agent_id()), said=str(user_said).strip(),
+                                  hands=str(pool[0]) if dispatch else None, settings=settings)
+        except ValueError as e:
+            return {"refused": True, "error": str(e)}
+        return {**rec, "executors": [str(a) for a in pool],
+                "holds": {"solo": "you hold every node",
+                          "semi": f"you hold depths below {engine.holder_boundary()}; the system the rest",
+                          "auto": "the system holds every node; you are the customer"}[m.value]}
+    out = _in_the_default(engine, {"mode": m.value, **({} if m == Mode.AUTO else {"perform": perform})}, held)
+    return {**out, **(_turn_the_way_out(engine) if network is not None and not out.get("refused") else {})}
+
+
+def _in_the_default(engine: Engine, mode: dict, held) -> dict:
+    """`held()` — the mode recorded, or its refusal — with the project's executors that name no execution placed in the
+    default meanwhile (`_default_execution`), and moved back on any way out but the mode recorded: one that raised past
+    the refusals left them in the container and the user with no choice left (critic: a moved executor's workdir gone
+    made the move itself raise half done)."""
+    agents = _roster(engine)
+    default = _default_execution(engine, mode, agents)
+    if default and (gone := [a for a, c in _movable(engine, agents).items() if not os.path.isdir(c.get("workdir") or "")]):
+        return {"refused": True, "error": f"executor(s) {', '.join(gone)} of this project name a workdir that no longer "
+                                          f"exists: `unregister_agent` them, or register them again on an existing one"}
+    moved, out = [], {"refused": True}
     try:
-        rec = engine.set_mode(m, boundary, AgentId(agent or _agent_id()), said=str(user_said).strip(),
-                              hands=str(pool[0]) if dispatch else None)
-    except ValueError as e:
-        return {"refused": True, "error": str(e)}
-    return {**rec, "executors": [str(a) for a in pool],
-            "holds": {"solo": "you hold every node",
-                      "semi": f"you hold depths below {engine.holder_boundary()}; the system the rest",
-                      "auto": "the system holds every node; you are the customer"}[m.value]}
+        if default:
+            _executors_into(engine, default, agents, moved=moved)
+        out = held()
+        return out
+    finally:
+        if out.get("refused"):
+            _executors_into(engine, None, agents, moved)
+
+
+def _turn_the_way_out(engine: Engine) -> dict:
+    """Read the project's switch NOW: a turned one ends its running container at once (`WayOut.switch`), not at the
+    next session's lookup — a session already out under the old one stays out until then (critic). The switch IN FORCE,
+    the declaration's ceiling applied: asked `open` under a declared `off`, the user must not read "open" (review)."""
+    try:
+        mode, hosts = where_it_runs(engine).way.network
+    except (ValueError, KeyError):
+        mode, hosts = "off", ()             # an unreadable switch or declaration has shut the way out already
+    return {"network_in_force": {"mode": mode, "hosts": list(hosts)}}
 
 
 def list_agents(engine: Engine, match: str = "", limit: int = 25) -> dict:
@@ -1803,47 +2510,30 @@ PROJECTLESS_VERBS = _tools.PROJECTLESS_VERBS
 
 _RAW_TOOLS = {
     **_tools.TOOLS,
+    "create_task": create_task,
     "auto_decompose": _tracked("auto_decompose", auto_decompose),
+    "plan": _tracked("plan", plan), "refine_plan": _tracked("refine_plan", refine_plan),   # a plan with no project
     "review_decomposition": _tracked("review_decomposition", review_decomposition),   # L2, §9.1
     "validate_result": _tracked("validate_result", validate_result),                  # §10.1
     "register_agent": register_agent, "unregister_agent": unregister_agent, "list_agents": list_agents,                     # the roster
     "set_mode": set_mode,                                                             # who holds what
+    "stop_project": stop_project, "start_project": start_project,                     # the run's switch
+    "next_steps": next_steps,
 }
-
-# WHO MAY MOVE WHAT UNDER A MODE — checked at the doors only. The system's own moves (the dispatcher,
-# the issuer function) call the verbs in-process, not through this registry, so the lock binds the
-# people and agents outside and never the system it hands the work to. Each verb names the node its
-# move is about and whose move it is: the ISSUER's (the node's contract, its verdict, its Del) or the
-# SPLIT's (the node's decomposition — its executor's act, §11.5 "deferred decomposition").
-_MOVE_OWNER = {
-    "edit_criteria": ("task_id", "issuer"), "revise": ("task_id", "issuer"),
-    "reassign": ("task_id", "issuer"), "reopen": ("task_id", "issuer"),
-    "record_verdict": ("task_id", "issuer"),
-    "map_criterion": ("parent_id", "split"), "dispute_finding": ("task_id", "split"),
-    # the split's register where its Del writes over a split, else the packet's pre-fill — the issuer's (§9.2, §10.1)
-    "edit_accepted_risks": ("task_id", "risks"), "create_task": ("parent_id", "split"),
-    "decompose": ("parent_id", "split"), "auto_decompose": ("root_id", "split"),
-    "signal": ("task_id", "signal"),
-    "validate_result": ("task_id", "issuer"), "edit_scope": ("task_id", "issuer"),
-    "review_decomposition": ("task_id", "split"),
-    "add_dependency": ("to_id", "issuer"), "remove_dependency": ("to_id", "issuer"),
-    # the roster names no node: under AUTO re-staffing the validator is a move on the work, below it is free
-    "register_agent": (None, None), "unregister_agent": (None, None),
-}
-#: the executor's signals, read off the one table of who sends what (§11.2) — a hand copy was the second list (D-F18)
-_EXECUTOR_SIGNALS = frozenset(s.name for s, r in SIGNAL_ROLES.items() if r is Role.EXECUTOR)
-
 
 def _mode_lock(name: str, fn):
-    """Refuse, at a door, a move the project's mode gave to the system.
+    """Refuse, at a door, a move the project's mode gave to the system — checked at the doors only: the system's own
+    moves (the dispatcher, the issuer function) call the verbs in-process, so the lock binds the people and agents
+    outside and never the system it hands the work to. The key and the holder are `engine.moves`' (`DOOR_KEYS`,
+    `door_holder`), the ones every offering sentence is built from.
 
     Under AUTO the user-agent is the customer and does not intervene: every move but stating the goal
     (`auto_decompose` on a project with no root yet) is refused. Under any mode, a move whose owner the
     mode made a system executor is refused. With no mode set nothing changes."""
-    if name not in _MOVE_OWNER:
+    if name not in DOOR_KEYS:
         return fn
     sig = inspect.signature(fn)
-    key, side = _MOVE_OWNER[name]
+    key = DOOR_KEYS[name][0]
 
     @functools.wraps(fn)
     def _call(*a, **kw):
@@ -1852,43 +2542,24 @@ def _mode_lock(name: str, fn):
         except TypeError:
             return fn(*a, **kw)                  # the door answers a malformed call in its own terms
         engine, node = args.get("engine"), args.get(key)
-        mode = engine.mode() if engine is not None else None
-        if mode is None:
+        if engine is None or (holder := door_holder(engine, name, node, args.get("signal"))) is None:
             return fn(*a, **kw)
-        if name == "auto_decompose" and not engine.all_tasks():
-            return fn(*a, **kw)                  # stating the goal is the customer's one act
-        if (name == "signal" and str(args.get("signal", "")).upper() in ("ACCEPT_CHALLENGE", "REJECT_CHALLENGE")
-                and node and engine.users_dispute(TaskId(node))):
-            return fn(*a, **kw)                  # …and ruling a finding out of his own goal, which the system does not
+        mode = engine.mode()
         if engine.mode_kind() == Mode.AUTO:
             raise ValueError(
                 f"this project runs in AUTO (set by {mode.get('by')}): every role on its nodes is held "
                 f"by a machine — the autonomous level of §10.4 — and you are the goal's customer: you "
                 f"state the goal and read its status (`next_steps`, `get_graph`, `get_verdict`), you "
                 f"do not intervene. `{name}` is a move on the work, whatever name it is signed with. "
-                + ("Nothing is stated yet: the goal is stated by `auto_decompose(request)` with the user's request. "
+                + ("Nothing is stated yet: `plan(request)` with the user's request writes the plan you read, and `auto_decompose(plan=path)` is the go. "
                    if not engine.all_tasks() else "") +
                 f"The mode is the USER's choice, not yours: if the work seems to need another holder, "
                 f"tell the user and ask — change it only on their word.")
-        t = engine.graph.get_task(TaskId(node)) if node else None
-        if t is None or side is None:
-            return fn(*a, **kw)
-        if side == "signal":
-            role = "split" if str(args.get("signal", "")).upper() in _EXECUTOR_SIGNALS else "issuer"
-        elif side == "risks":
-            # a machine Del's own moves are in-process, never through this door: here the caller writes as the issuer
-            # (the packet's pre-fill) wherever the Del is a machine, and as the split's decomposer otherwise
-            role = "issuer" if AgentId(t.assignee) in engine.workforce.executor_pool() else "split"
-        else:
-            role = side
-        owner = engine.graph.issuer_of(t.id) if role == "issuer" else t.assignee
-        if owner is not None and AgentId(owner) in engine.workforce.executor_pool():
-            raise ValueError(
-                f"this project runs in {mode['mode']} (set by {mode.get('by')}): '{t.id}' is held "
-                f"below the boundary, so `{name}` on it is {owner}'s move — a machine's role at the "
-                f"autonomous level of §10.4, whatever name the call is signed with. You hold the "
-                f"levels above; moving the boundary is the user's choice — ask them.")
-        return fn(*a, **kw)
+        raise ValueError(
+            f"this project runs in {mode['mode']} (set by {mode.get('by')}): '{node}' is held "
+            f"below the boundary, so `{name}` on it is {holder}'s move — a machine's role at the "
+            f"autonomous level of §10.4, whatever name the call is signed with. You hold the "
+            f"levels above; moving the boundary is the user's choice — ask them.")
     return _call
 
 

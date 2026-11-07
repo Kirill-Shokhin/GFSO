@@ -1,13 +1,14 @@
 """SQLite StoragePort — persistent storage."""
 from __future__ import annotations
 
+from functools import lru_cache
 import json
 import logging
 import os
 import sqlite3
 import threading
 from contextlib import closing, contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from urllib.request import pathname2url
@@ -17,10 +18,11 @@ from gfso import __version__
 from gfso.core.types import (
     TaskId, AgentId, Task, State, DoneReason, AutonomyLevel,
     Spec, Criteria, Probe, CriterionMapping, AcceptedRiskItem, Register,
-    CheckResult, Recommendation, DepEdge,
+    CheckResult, Recommendation, DepEdge, seams_apart,
     StoragePort, TERMINAL_STATES, RETIRED_STATES, state_named,
 )
 from gfso.config import PIPELINE_PAGE, USAGE_PAGE
+from gfso.core.graph.model import PAUSE_KEY
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +37,72 @@ def _state_of(row: sqlite3.Row) -> "tuple[State, Optional[DoneReason]]":
     return state, done_reason
 
 
-def peek_root(db_path: str) -> "tuple[State, Optional[DoneReason]] | None":
-    """The root's state in a project file this process has not opened as a store — None when
-    there is no file, no root, or nothing readable (one bad file must not cost a picker the list).
+def _epoch(ts) -> Optional[float]:
+    try:
+        return datetime.fromisoformat(ts).timestamp() if ts else None
+    except ValueError:
+        return None
+
+
+def _all(c, sql: str) -> list:
+    """The rows of `sql`, or none where an older file lacks the table: that fact is then absent, not the
+    whole project."""
+    try:
+        return c.execute(sql).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
+def _one(c, sql: str):
+    return (_all(c, sql) or [None])[0]
+
+
+def _json_or_none(value: Optional[str]) -> Optional[dict]:
+    try:
+        return json.loads(value) if value else None
+    except ValueError:
+        return None
+
+
+def _mode_named(value: str) -> Optional[str]:
+    try:
+        return json.loads(value).get("mode")
+    except (ValueError, AttributeError):
+        return value or None
+
+
+def _looked_at(db_path: str):
+    """A file this process has not opened as a store, opened to be read alone (`peek_project` says why so)."""
+    how = "mode=ro" if os.path.exists(db_path + "-wal") else "immutable=1"
+    c = sqlite3.connect(f"file:{pathname2url(os.path.abspath(db_path))}?{how}", uri=True)
+    c.row_factory = sqlite3.Row
+    return closing(c)
+
+
+def settings_of(db_path: str) -> Optional[dict]:
+    """A project's own settings — the system's record of it that outlives the server — read from its file without
+    opening it as a store; None where no file stands or none reads, {} where a file older than settings holds none."""
+    if not os.path.exists(db_path):
+        return None
+    try:
+        with _looked_at(db_path) as c:
+            if not c.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone():
+                return {}
+            return dict(c.execute("SELECT key, value FROM settings").fetchall())
+    except sqlite3.Error:
+        return None
+
+
+def peek_project(db_path: str) -> Optional[dict]:
+    """What a project IS, read from a file this process has not opened as a store: its root (goal
+    name, state, started), its last protocol event, its spend and its mode — None when there is no
+    file or nothing readable (one bad file must not cost a picker the list). A list of projects is
+    answered from here and never by building an engine: that starts its dispatcher, and an AUTO
+    project's clock and machine issuer then act — paid calls woken by a look (2026-10-24).
+
+    "Last" is the last act of a party or model call in the log, not the file's stamp: an engine
+    merely loaded rewrites its file, so by mtime the projects someone LOOKED at today rose above the
+    runs actually worked in.
 
     `immutable` when no WAL lies beside it: a read-only open of a closed WAL database still
     CREATES an empty `-wal` and `-shm` (measured 2026-09-24) — litter in the data dir, on every
@@ -45,16 +110,38 @@ def peek_root(db_path: str) -> "tuple[State, Optional[DoneReason]] | None":
     it writes no WAL of its own."""
     if not os.path.exists(db_path):
         return None
-    how = "mode=ro" if os.path.exists(db_path + "-wal") else "immutable=1"
     try:
-        with closing(sqlite3.connect(f"file:{pathname2url(os.path.abspath(db_path))}?{how}",
-                                     uri=True)) as c:
-            c.row_factory = sqlite3.Row
-            row = c.execute("SELECT state, done_reason FROM tasks WHERE parent_id IS NULL "
-                            "ORDER BY created_at LIMIT 1").fetchone()
-        return None if row is None else _state_of(row)
-    except (sqlite3.Error, KeyError):
+        with _looked_at(db_path) as c:
+            root = _one(c, "SELECT state, done_reason, spec_json, created_at FROM tasks "
+                              "WHERE parent_id IS NULL ORDER BY created_at LIMIT 1")
+            spent = _one(c, "SELECT MAX(ts), SUM(cost_usd) FROM llm_usage")
+            # who ran it: the models of its sessions that did work — a refusal spends nothing — costliest first
+            models = [r[0] for r in _all(c, "SELECT model FROM llm_usage WHERE model != '' AND (cost_usd > 0 "
+                                              "OR input_tokens > 0 OR output_tokens > 0 OR cache_input_tokens > 0) "
+                                              "GROUP BY model ORDER BY SUM(cost_usd) DESC")]
+            # a party's act, not the clock's: lapses fire on a mere load of an old project's engine
+            # (dozens within one minute on 2026-10-24), and a lapse is no one working in it
+            acted = ((_one(c, "SELECT MAX(ts) FROM audit_log WHERE source IS NOT NULL") or (None,))[0]
+                     or (_one(c, "SELECT MAX(ts) FROM audit_log") or (None,))[0])
+            mode = _one(c, "SELECT value FROM settings WHERE key = 'mode'")
+            stop = _one(c, f"SELECT value FROM settings WHERE key = '{PAUSE_KEY}'")
+    except sqlite3.Error:
         return None
+    out = {"goal": None, "last": max(filter(None, (_epoch(spent and spent[0]), _epoch(acted))),
+                                     default=None),
+           "cost": round(spent[1] or 0.0, 2) if spent else 0.0,
+           "mode": mode and _mode_named(mode[0]), "models": models,
+           # the stop as set — {by, at, why} — the one record `Engine.paused` reads; None while it runs
+           "stopped": _json_or_none(stop and stop[0])}
+    if root is not None:
+        try:
+            state, reason = _state_of(root)
+        except KeyError:
+            return out
+        out["goal"] = {"state": state.name, "done_reason": reason and reason.name,
+                       "name": json.loads(root["spec_json"]).get("name") or None,
+                       "started": _epoch(root["created_at"])}
+    return out
 
 
 class _ProjectSettings:
@@ -70,6 +157,55 @@ class _ProjectSettings:
         return row["value"] if row else None
 
 
+#: a Dep record's columns, in `DepEdge`'s field order
+_EDGE_FIELDS = ("from_id", "to_id", "discovered", "glue", "provisional", "closed", "declared_first", "refuted", "removed")
+_INSERT_EDGE = f"INSERT INTO dep_edges ({', '.join(_EDGE_FIELDS)}) VALUES ({', '.join('?' * len(_EDGE_FIELDS))})"
+
+
+def _edge_row(edge: DepEdge) -> tuple:
+    return tuple(v if isinstance(v, str) else int(v) for v in (getattr(edge, k) for k in _EDGE_FIELDS))
+
+
+def _seams_to_edges(conn, spec_of, spec_json, maps_of, maps_json) -> None:
+    """An older engine wrote a declared Dep edge as an entry of its consumer's criteria (`dep__<producer>`, its
+    `depends_on` and the glue as its description) and derived E_Dep from those entries. Dep is a primitive beside T
+    (§2.7, §7.5): each such entry that pins no check becomes the declared edge record it stood for and leaves the
+    spec — with its node's mappings onto it — LOGGED AS A MIGRATION, not as a signal; V loses no conjunct (the
+    entry was none, `seams_apart`). An entry that pins a check on the producer's result stays a criterion and gains
+    its record. One pair is one edge (§2.7), however many entries named it. Idempotent: what it converts is gone, and
+    a pair already stored is not stored again."""
+    conn.execute("UPDATE dep_edges SET glue = '' WHERE glue IS NULL")
+    live = {(r["from_id"], r["to_id"]) for r in
+            conn.execute("SELECT from_id, to_id FROM dep_edges WHERE discovered = 0 AND removed = 0")}
+    notes = []
+    for row in conn.execute("SELECT id, spec_json, criterion_mappings_json FROM tasks").fetchall():
+        spec = spec_of(row["spec_json"])
+        try:
+            kept, edges = seams_apart(spec, row["id"])
+        except ValueError:          # a malformed producer (a list) is the signal gate's to refuse, never the open's
+            continue
+        bare = [c for c in spec.criteria if c not in kept.criteria]
+        # one pair one edge, the later entry's glue (`one_per_pair`); a pair already stored is not stored again
+        edges = [e for e in {(e.from_id, e.to_id): e for e in edges}.values() if (e.from_id, e.to_id) not in live]
+        if not (edges or bare):
+            continue
+        conn.executemany(_INSERT_EDGE, [_edge_row(e) for e in edges])
+        live |= {(e.from_id, e.to_id) for e in edges}
+        if bare:
+            names = {c.name for c in bare} - {c.name for c in kept.criteria}
+            maps = tuple(m for m in maps_of(row["criterion_mappings_json"] or "[]") if m.criterion_name not in names)
+            conn.execute("UPDATE tasks SET spec_json = ?, criterion_mappings_json = ? WHERE id = ?",
+                         (spec_json(kept), maps_json(maps), row["id"]))
+            notes.append(f"{row['id']}: {', '.join(f'{c.name} ({c.depends_on})' for c in bare)} — a Dep edge's "
+                         f"declaration an older engine kept among the criteria, now its declared edge record; "
+                         f"no conjunct of V changes (a migration, not a signal)")
+    conn.executemany("INSERT INTO pipeline_log (ts, source, message) VALUES (?, ?, ?)",
+                     [(datetime.now().isoformat(sep=" ", timespec="seconds"), "migration", n) for n in notes])
+    if notes:
+        log.info("migrated %d node(s)' Dep declarations from criteria to edge records", len(notes))
+    conn.commit()
+
+
 class SqliteStorage(_ProjectSettings, StoragePort):
     def __init__(self, db_path: str = "data/gfso.db"):
         self._db_path = db_path
@@ -80,7 +216,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         # One connection is shared by every dispatcher thread (`check_same_thread=False`), so the
         # lock below — not the connection — is what makes a multi-statement write atomic. Reentrant
         # because a reader may call another reader (`get_parent` → `get_task`).
-        self._lock = threading.RLock()
+        self._lock = self._one_write = threading.RLock()
         with self._write() as c:
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA busy_timeout=5000")
@@ -161,11 +297,24 @@ class SqliteStorage(_ProjectSettings, StoragePort):
     #: (table, column, declaration) — applied in order to a database that predates each column.
     #: The comments are the canon rows the columns exist for, kept where the columns are named.
     _ADDITIVE_MIGRATIONS = (
+        # what a model session read from the cache and what it wrote to it — priced apart, summed in
+        # `cache_input_tokens` — its fullest turn, its model's window, its turns; NULL where not recorded
+        ("llm_usage", "cache_read_tokens", "INTEGER"),
+        ("llm_usage", "cache_write_tokens", "INTEGER"),
+        ("llm_usage", "peak_context", "INTEGER"),
+        ("llm_usage", "context_window", "INTEGER"),
+        ("llm_usage", "turns", "INTEGER"),
+        ("llm_usage", "resumed", "INTEGER"),                            # 1: it continued a conversation (`--resume`)
+        ("llm_usage", "ended", "TEXT"),                                 # answered / cut / limit / the CLI's reason
+        ("llm_usage", "handover", "INTEGER"),                           # n: this round wrote the session's n-th note
+        ("llm_usage", "credential", "TEXT"),                            # the provider's credential it ran on, by name
+        ("llm_usage", "context_budget", "INTEGER"),                     # the budget its session ran under, tokens
         ("dep_edges", "glue", "TEXT DEFAULT ''"),
         ("dep_edges", "provisional", "INTEGER DEFAULT 0"),
         ("dep_edges", "closed", "INTEGER DEFAULT 0"),                   # a record nobody answered (§15.5)
         ("dep_edges", "declared_first", "INTEGER DEFAULT 0"),           # declared before its first BLOCK (§15.5)
         ("dep_edges", "refuted", "INTEGER DEFAULT 0"),                  # refuted, kept for the order (§15.5)
+        ("dep_edges", "removed", "INTEGER DEFAULT 0"),                  # a declaration taken out, still counted (§15.5)
         ("tasks", "verified", "INTEGER DEFAULT 0"),
         ("tasks", "reopens", "INTEGER DEFAULT 0"),                      # R′ (§12.14)
         ("tasks", "max_reopens", "INTEGER DEFAULT 1"),
@@ -181,6 +330,10 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         ("audit_log", "spec_json", "TEXT"),                  # Inv-7: the contract each ASSIGN set
         ("audit_log", "revision_reason", "TEXT"),            # §11.3: a re-ASSIGN's reason is signal data
         ("audit_log", "retire_findings_json", "TEXT"),       # §10.2: the ruling an ACCEPT_CHALLENGE makes
+        ("audit_log", "artifact", "TEXT"),                   # §11.2: what a DELIVER handed over, by identity
+        ("audit_log", "delivered_commit", "TEXT"),           # …and the commit that carried it
+        ("audit_log", "delivered_build", "TEXT"),            # …and how its judge builds it
+        ("audit_log", "by_system", "INTEGER DEFAULT 0"),     # §11.6: the system made this issuer move
     )
 
     def _init_tables(self):
@@ -234,7 +387,8 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                 provisional INTEGER DEFAULT 0,
                 closed INTEGER DEFAULT 0,
                 declared_first INTEGER DEFAULT 0,
-                refuted INTEGER DEFAULT 0
+                refuted INTEGER DEFAULT 0,
+                removed INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -289,7 +443,11 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                 in_flight TEXT,
                 spec_json TEXT,
                 revision_reason TEXT,
-                retire_findings_json TEXT
+                retire_findings_json TEXT,
+                artifact TEXT,
+                delivered_commit TEXT,
+                delivered_build TEXT,
+                by_system INTEGER DEFAULT 0
             );
         """)
         # Defensive migrations for DBs created before these columns existed. DATA, not twenty
@@ -300,21 +458,30 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         for table, column, decl in self._ADDITIVE_MIGRATIONS:
             have = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if column not in have:
-                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                try:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                # another process opening the same file added it between the look and the ALTER — it is there
+                except sqlite3.OperationalError as ex:
+                    if "duplicate column" not in str(ex):
+                        raise
+                    continue
                 if (table, column) == ("dep_edges", "closed"):
                     # a record an older build left open after its node left BLOCKED was never answered:
                     # closed now, or the node's NEXT block is blamed on it (critic, 2026-09-27)
                     self._conn.execute("UPDATE dep_edges SET closed = 1, provisional = 0 WHERE provisional = 1 "
                                        "AND to_id NOT IN (SELECT id FROM tasks WHERE state = 'BLOCKED')")
         self._migrate_retired_states()
+        _seams_to_edges(self._conn, self._spec_from_json, self._spec_to_json, self._mappings_from_json,
+                        self._mappings_to_json)
 
     def _migrate_retired_states(self):
         """A node stored in a state this machine no longer has is moved to the state that replaced
         it, once, here — and the move is LOGGED AS A MIGRATION, not as a signal: nobody sent one,
         and an audit row would claim a transition the protocol never made. The node enters its new
         state now, so its bound counts from the migration (a node parked in OVERDUE under the old
-        machine reaches ESCALATED with the issuer's whole window ahead of it)."""
-        now = datetime.now().isoformat()
+        machine reaches ESCALATED with the issuer's whole window ahead of it) — on the project's clocks (`project_now`)."""
+        off = float((self._conn.execute("SELECT value FROM settings WHERE key = 'clock_off_s'").fetchone() or [0])[0] or 0)
+        now = (datetime.now() - timedelta(seconds=off)).isoformat()
         for old, new in RETIRED_STATES.items():
             ids = [r["id"] for r in self._conn.execute("SELECT id FROM tasks WHERE state = ?", (old,))]
             if not ids:
@@ -364,6 +531,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         })
 
     @staticmethod
+    @lru_cache(maxsize=1024)   # a frozen Spec per text: one `next_steps` decoded 49 tasks' 7308 times
     def _spec_from_json(raw: str) -> Spec:
         d = json.loads(raw)
         return Spec(
@@ -549,26 +717,18 @@ class SqliteStorage(_ProjectSettings, StoragePort):
 
     def add_dep_edge(self, edge: DepEdge) -> None:
         with self._write() as c:
-            c.execute(
-                "INSERT INTO dep_edges (from_id, to_id, discovered, glue, provisional, closed, declared_first, "
-                "refuted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (edge.from_id, edge.to_id, int(edge.discovered), edge.glue, int(edge.provisional),
-                 int(edge.closed), int(edge.declared_first), int(edge.refuted)),
-            )
+            c.execute(_INSERT_EDGE, _edge_row(edge))
 
-    def remove_dep_edge(self, from_id: TaskId, to_id: TaskId) -> None:
+    def remove_dep_edge(self, edge: DepEdge) -> None:
         with self._write() as c:
-            c.execute(
-                "DELETE FROM dep_edges WHERE from_id = ? AND to_id = ?", (from_id, to_id)
-            )
+            c.execute(f"DELETE FROM dep_edges WHERE id = (SELECT id FROM dep_edges WHERE "
+                      f"{' AND '.join(f'{k} = ?' for k in _EDGE_FIELDS)} LIMIT 1)", _edge_row(edge))
 
     def get_dep_edges(self) -> list[DepEdge]:
         with self._read() as c:
-            rows = c.execute("SELECT * FROM dep_edges").fetchall()
-        return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]),
-                        r["glue"] or "", bool(r["provisional"]),
-                        *(bool(r[k]) if k in r.keys() else False for k in ("closed", "declared_first", "refuted")))
-                for r in rows]
+            return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]), r["glue"] or "",
+                            *(bool(r[k]) for k in _EDGE_FIELDS[4:]))
+                    for r in c.execute("SELECT * FROM dep_edges ORDER BY id").fetchall()]
 
     def store_critique(self, task_id: TaskId, critique_json: str) -> None:
         with self._write() as c:
@@ -622,14 +782,21 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         return [{"ts": r["ts"], "source": r["source"], "message": r["message"]} for r in rows]
 
     _USAGE_COLS = ("ts", "stage", "model", "node_id", "input_tokens", "output_tokens",
-                   "cache_input_tokens", "cost_usd", "duration_ms")
+                   "cache_input_tokens", "cost_usd", "duration_ms",
+                   "cache_read_tokens", "cache_write_tokens", "peak_context", "context_window", "turns", "ended", "resumed",
+                   "handover", "credential", "context_budget")
+    # an absent reading stays absent — tokens and price too: a provider that does not report them spent an unknown
+    # amount, and a 0 read as "spent nothing". Only the duration, which our own adapter measures, is always there.
+    _USAGE_KEPT_NULL = ("ts", "stage", "model", "node_id", "input_tokens", "output_tokens", "cache_input_tokens", "cost_usd",
+                        "cache_read_tokens", "cache_write_tokens", "peak_context", "context_window", "turns", "ended", "resumed",
+                        "handover", "credential", "context_budget")
 
     def log_usage(self, row: dict) -> None:
         with self._write() as conn:
             conn.execute(
                 f"INSERT INTO llm_usage ({', '.join(self._USAGE_COLS)}) "
                 f"VALUES ({', '.join('?' * len(self._USAGE_COLS))})",
-                tuple(row.get(c) if c in ("ts", "stage", "model", "node_id") else (row.get(c) or 0)
+                tuple(row.get(c) if c in self._USAGE_KEPT_NULL else (row.get(c) or 0)
                       for c in self._USAGE_COLS))
 
     def get_usage(self, limit: int = USAGE_PAGE) -> list[dict]:
@@ -646,13 +813,14 @@ class SqliteStorage(_ProjectSettings, StoragePort):
             c.execute(
                 "INSERT INTO audit_log (ts, task_id, signal, old_state, new_state, effects_json, "
                 "rejected, error, source, reason, justification, result, failed_criteria_json, "
-                "action, in_flight, spec_json, revision_reason, retire_findings_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "action, in_flight, spec_json, revision_reason, retire_findings_json, artifact, delivered_commit, "
+                "delivered_build, by_system) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (row["ts"], row["task_id"], row["signal"], row.get("old_state"), row.get("new_state"),
                  json.dumps(row.get("effects") or []), int(bool(row.get("rejected"))), row.get("error"),
                  row.get("source"), row.get("reason"), row.get("justification"), row.get("result"),
                  json.dumps(row.get("failed_criteria") or []), row.get("action"), row.get("in_flight"),
-                 row.get("spec"), row.get("revision_reason"), json.dumps(row.get("retire_findings") or [])))
+                 row.get("spec"), row.get("revision_reason"), json.dumps(row.get("retire_findings") or []),
+                 row.get("artifact"), row.get("commit"), row.get("build"), int(bool(row.get("by_system")))))
 
     def load_audit(self) -> list[dict]:
         with self._read() as c:
@@ -668,4 +836,8 @@ class SqliteStorage(_ProjectSettings, StoragePort):
             "spec": (r["spec_json"] if "spec_json" in r.keys() else None),
             "revision_reason": r["revision_reason"],
             "retire_findings": json.loads(r["retire_findings_json"] or "[]") if "retire_findings_json" in r.keys() else [],
+            "artifact": r["artifact"] if "artifact" in r.keys() else None,
+            "commit": r["delivered_commit"] if "delivered_commit" in r.keys() else None,
+            "build": r["delivered_build"] if "delivered_build" in r.keys() else None,
+            "by_system": bool(r["by_system"]),
         } for r in rows]

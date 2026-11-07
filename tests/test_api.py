@@ -10,6 +10,7 @@ import gfso.tools as T
 import gfso.tools_llm as TL
 from tests.support import criterion, make_engine, pinned
 from gfso import tools as T
+from gfso.core.graph.metrics import alarm
 
 
 def _client() -> TestClient:
@@ -151,6 +152,15 @@ def test_metrics_endpoint():
     assert r.status_code == 200
     m = r.json()
     assert "q_T" in m and "q_D" in m
+    # how far each can be trusted (§15.8) and which call a person, served beside `means` so the page keeps no copy
+    assert m["grades"] == {"q_D": "observed", "q_V": "observed", "q_T": "proxy", "q_Dep": "proxy", "q_Del": "weak"}
+    assert m["alarm"] == {"q_V": False, "q_D": False} and m["calls_person"] is False
+
+
+def test_only_an_observed_metric_calls_a_person_and_q_D_is_read_with_the_false_fail_share():
+    assert alarm({"q_V": 0.4}) == {"q_V": True, "q_D": False}
+    assert alarm({"q_D": 0.4, "false_fail_share": 0.2})["q_D"] and not alarm({"q_D": 0.4, "false_fail_share": 0.6})["q_D"]
+    assert alarm({"q_T": 0.0, "q_Dep": 0.0, "q_Del": 0.0, "q_V": None, "q_D": None}) == {"q_V": False, "q_D": False}
 
 
 def test_audit_endpoint():

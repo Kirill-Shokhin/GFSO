@@ -20,7 +20,9 @@ from pathlib import Path
 
 import pytest
 
+import gfso.issuer as I
 import gfso.tools as T
+from gfso.adapters.snapshots import BuildFailed, NotTheDelivery
 from gfso.delegate import ISSUER_VERBS
 from gfso.issuer import Unavailable, Verbs, answer_the_challenge, settle
 from gfso.core.types import State, TaskId
@@ -382,5 +384,83 @@ def test_a_cut_contact_run_is_not_the_issuers_answer(tmp_path):
         with pytest.raises(Unavailable):
             answer_the_challenge(e, TaskId("leaf"), "worker", _llm=_Cut({}, ran={"Bash": 1}), where=str(tmp_path))
         assert e.graph.get_state(TaskId("leaf")) == State.CHALLENGED
+    finally:
+        e.stop()
+
+
+def test_in_a_nodes_own_place_the_issuer_runs_in_a_copy_of_it(tmp_path):
+    """The issuer rules on that delivery and must not be able to change it (§10.3): in a node's own place its contact
+    runs in a copy, told where the copy stands; the place keeps what it had (security, 2026-10-27)."""
+    place = tmp_path / ".gfso-nodes-ws" / "p" / "leaf"
+    place.mkdir(parents=True)
+    (place / "delivered.c").write_text("x\n")
+    e = make_engine()
+    e.start()
+    try:
+        _disputed(e)
+        llm = _ContactLLM({"decision": "accept", "justification": "ran it: the check cannot pass"}, ran={"Bash": 1})
+        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
+        e.wait_idle()
+        (stood, _), = llm.where
+        assert stood != str(place) and stood.endswith("place") and stood in llm.packets[0]
+        assert [p.name for p in place.iterdir()] == ["delivered.c"]
+    finally:
+        e.stop()
+
+
+def test_a_dispute_is_ruled_only_on_the_delivery_the_fail_judged(tmp_path, monkeypatch):
+    """The ruling can retire findings, so it is held to the delivery the FAIL judged. When the place changed after
+    DELIVER — a rework edited it, which nothing restores — the dispute is still ruled by contact, in a copy of the place
+    as it stands, but that ruling retires nothing: asked again instead, the place never came back and series 2 REF 2
+    (2026-10-29) ran nothing for 2 h 26 min; ruled with no tools, the executor would choose whether its judge runs."""
+    place = tmp_path / ".gfso-nodes-ws" / "p" / "leaf"
+    (copy := tmp_path / "copy").mkdir()
+    place.mkdir(parents=True)
+    held = []
+
+    def _held(where, at, ex, delivered=None, **_):
+        held.append(delivered)
+        raise NotTheDelivery("the tree DELIVER recorded (c0ffee) cannot be read back as recorded")
+    monkeypatch.setattr(I, "snapshot", _held)
+    e = make_engine()
+    e.start()
+    try:
+        _disputed(e)
+        monkeypatch.setattr(e, "delivered", lambda *ids: ("tree", "c0ffee", None))
+        llm = _ContactLLM({"decision": "accept", "justification": "ran it"}, ran={"Bash": 1})
+        # …the delivery itself the cause: told so, the issuer rules on that, in no copy and with no tools — asked
+        # again as `Unavailable`, it failed again forever (critic over 909e417)
+        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
+        assert held == [("tree", "c0ffee", None)] and [w for w, _ in llm.where] == [None], llm.where
+        assert "NO COPY of this delivery" in llm.packets[-1] and "cannot be read back" in llm.packets[-1]
+    finally:
+        e.stop()
+
+
+def test_a_dispute_of_a_fail_its_build_made_is_ruled_on_the_unbuilt_copy_with_the_builds_output(tmp_path, monkeypatch):
+    """A build that failed is the FAIL being disputed: refused for it, the dispute read as no copy, was retried with
+    backoff and never ruled on. The issuer is handed the copy unbuilt, and what the build printed."""
+    place = tmp_path / ".gfso-nodes-ws" / "p" / "leaf"
+    place.mkdir(parents=True)
+    asked = []
+
+    @contextlib.contextmanager
+    def _unbuilt(where, at, ex, delivered=None, built=None, unbuilt_ok=False, **_):
+        asked.append(unbuilt_ok)
+        if not unbuilt_ok:
+            raise BuildFailed("the judge built with `make`, and it exited 2 — cc: not found", "make")
+        built.append("the judge built with `make`, and it exited 2 — cc: not found")
+        Path(at).mkdir(parents=True)
+        yield str(at)
+    monkeypatch.setattr(I, "snapshot", _unbuilt)
+    e = make_engine()
+    e.start()
+    try:
+        _disputed(e)
+        monkeypatch.setattr(e, "delivered", lambda *ids: ("tree", "c0ffee", None))
+        llm = _ContactLLM({"decision": "accept", "justification": "ran it: no compiler in the image"}, ran={"Bash": 1})
+        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
+        e.wait_idle()
+        assert asked == [True] and llm.where and "cc: not found" in llm.packets[0]
     finally:
         e.stop()

@@ -21,6 +21,7 @@ It is not the theory. What a criterion IS, and why the register is mandatory, is
                 "depends_on": "<producer task id>"}],
   "accepted_risks": [{"item": "what is being accepted",
                       "predictability": "STATISTICAL | EXTRAORDINARY",
+                      "p": 0.1, "impact": "what it costs if it happens",
                       "justification": "why carrying it is acceptable",
                       "invalidation_condition": "what would flip it back in scope"}],
   "scope": ["a capability this goal deliberately does NOT include — and why"]
@@ -31,9 +32,9 @@ It is not the theory. What a criterion IS, and why the register is mandatory, is
 |---|---|---|
 | `description` | yes | the obligation in full; `name` is only the UI label (≤6 words) |
 | `criteria` | yes, non-empty | the WHOLE obligation: decidable pass/fail conditions on the result. A node with children and no criteria of its own is a hole, not a covered node |
-| `criteria[].check` | yes, before execution | the DECISION PROCEDURE the criterion pins — what will be run to decide it, written with the criterion and before the work exists. A criterion is a decidable predicate (A1, §2), and a text quantified over what nobody can enumerate ("for ANY input …") decides nothing as written. A1 asks that a decidable predicate EXIST and leaves open which one it is; requiring it to be WRITTEN DOWN, and before the work, is this product's design decision (pre-registration, Inv-1 §12.3) — a criterion like "every function ≤ 50 lines" is decidable without a command and would still be asked for one here. What the pinned set does not reach stays unchecked and is said so at closure (FM-3, Ch. 20). Execution does not open while a criterion pins none, and a PASS that skips a pinned probe is refused. A seam criterion (`depends_on`) is exempt: the producer's PASS makes it true and the integration claim belongs to the parent (§6.4) |
-| `criteria[].depends_on` | when it applies | the ONE producer node this criterion consumes. It is what creates the Dep edge — a seam is criteria-content, not a separate declaration. A list is refused |
-| `accepted_risks` | **on any node you decompose** | risk EVENTS with a materialization probability, each with a predictability verdict. Empty on a decomposed node blocks execution (CHECK-4, §9.2: without the register the decomposition is incomplete by definition). A leaf carries none |
+| `criteria[].check` | yes, before execution | the DECISION PROCEDURE the criterion pins — what will be run to decide it, written with the criterion and before the work exists. A criterion is a decidable predicate (A1, §2), and a text quantified over what nobody can enumerate ("for ANY input …") decides nothing as written. A1 asks that a decidable predicate EXIST and leaves open which one it is; requiring it to be WRITTEN DOWN, and before the work, is this product's design decision (pre-registration, Inv-1 §12.3) — a criterion like "every function ≤ 50 lines" is decidable without a command and would still be asked for one here. What the pinned set does not reach stays unchecked and is said so at closure (FM-3, Ch. 20). Execution does not open while a criterion pins none, and a PASS that skips a pinned probe is refused. A Dep edge is no criterion and needs no procedure: the producer's PASS makes it true and the integration claim belongs to the parent (§6.4) |
+| `criteria[].depends_on` | when it applies | the ONE producer node whose result this criterion's `check` reads; it implies that Dep edge (§2.7). An entry with `depends_on` and no `check` is no criterion: it declares the edge, its description the glue, and is stored as the edge (also `add_dependency`, or a child's `deps: [{from, glue}]` in `decompose`). A list is refused |
+| `accepted_risks` | **on any node you decompose** | risk EVENTS with a materialization probability, each with its predictability, `p` and `impact`. In the spec it is the packet's pre-fill; the split's own register rides `decompose(accepted_risks=…)` with one `{denial: true, p, justification}` entry, and without it the admission is refused (CHECK-4, §9.2). A leaf carries none |
 | `scope` | when the exclusion is not obvious | capabilities the goal deliberately excludes. These have NO probability, so they do **not** belong in the register — CHECK-4 refuses them there |
 | `deadline` | optional | ISO-8601, passed beside the spec. A child's deadline must fall before its parent's |
 
@@ -50,7 +51,8 @@ a risk retires an obligation by writing prose; the canon's path for a criterion 
 ```
 create_task(task_id, spec, assignee=…, parent_id=…, deadline=…)
 decompose(parent_id, children=[{task_id, spec, assignee, covers: [parent criterion names]}],
-          mappings=[{criterion_name, child_id}])
+          mappings=[{criterion_name, child_id}],
+          accepted_risks=[…])
 edit_criteria(task_id, criteria, expect_criteria=[…])   # replaces criteria, carries the rest
 edit_accepted_risks(task_id, accepted_risks)     # replaces the register
 map_criterion(parent_id, child_id, criterion_name)
@@ -70,9 +72,6 @@ of the whole delivery. A PASS that says nothing about a criterion is refused, an
 only restates the verdict ("ok", "looks green"): an unobserved conjunct cannot carry a pass (§7.1).
 
 These names are pinned against the real signatures by `tests/test_the_packet_doc_names_real_keys.py`.
-They had drifted — `items`, `criterion`, and no `record_verdict` shape at all — and cost a tester
-three round trips on the door whose own page promises "the exact keys the engine reads" (wave 26,
-2026-09-06).
 
 Every parent criterion must be mapped to the child that delivers it — `covers` on the child and the
 flat `mappings` list are the same claim, and either is accepted.

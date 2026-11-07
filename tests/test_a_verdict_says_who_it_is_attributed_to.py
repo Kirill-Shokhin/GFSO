@@ -15,6 +15,8 @@ rather than to upgrade the name for free. The roster is a fact the engine alread
 from __future__ import annotations
 
 from gfso import tools as T
+from gfso.delegate import Dispatcher
+from gfso.roster import AgentRegistry
 from tests.support import criterion, instrument_passes, make_engine, REGISTER
 
 
@@ -57,3 +59,14 @@ def test_a_registered_validator_is_still_read_as_one():
     assert out["provenance"] == "instrument"
     assert "not on the validator roster" not in out["independence"], out["independence"]
     e.stop()
+
+
+def test_a_stopped_project_still_knows_its_validator(tmp_path):
+    """A project stands stopped after every server start: its finished run read «this name is not on the validator
+    roster» under the validator the page lists, for the roster was published past the stop's return (ui, 2026-11-03)."""
+    e = make_engine()
+    registry = AgentRegistry(tmp_path / "agents.json")
+    registry.register("v", "llm-validator", workdir=str(tmp_path))
+    e.pause("system", "the server started")
+    Dispatcher(e, registry).dispatch_once()
+    assert "v" in e.graph.authorized_validators

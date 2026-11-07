@@ -7,14 +7,30 @@ from __future__ import annotations
 
 from typing import Optional
 
+from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.config import agent_id as _config_agent_id
 from gfso.core.graph.model import root_of
 from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, Task, TaskId, Verdict, Wait,
                              settled_positive)
-from .validation import _l0_holes, _l2_undischarged, hole_kind, l2_gate_on, observation_blocker
+from .moves import Move
+from .parking import USERS_WAY
+from .validation import users_criteria, _l0_holes, _l2_undischarged, hole_kind, l2_gate_on, observation_blocker
 
 #: Actions whose signal is the ISSUER's to give (§11.2) — everything else is the executor's.
-_ISSUER_ACTIONS = frozenset({Action.VALIDATE, Action.RESOLVE, Action.REVISE, Action.CHECK_PLAN})
+
+
+def step_role(engine, task: Optional[Task], action) -> str:
+    """WHOSE ROLE a step's move is (§12.13, the state's owner) — `issuer` or `executor` — read once for every reader
+    (the step's `role` and `signed_by`, `tools._mark_mine`'s owner): validation and a block's ruling are the issuer's,
+    and so is a revision of an ESCALATED node or one whose execution is parked; a split owed, a plan repair and a plan
+    check are the node's executor's own act (§11.5). Two readings of it disagreed: a leaf owing its split was the
+    issuer's on the step and its executor's in `performed_by` (critic over 70452b2)."""
+    if action in (Action.VALIDATE, Action.RESOLVE):
+        return "issuer"
+    if action == Action.REVISE and task is not None and (
+            task.state == State.ESCALATED or engine.parking.is_execution_parked(task)):
+        return "issuer"
+    return "executor"
 
 
 class NodeSteps:
@@ -192,6 +208,42 @@ class NodeSteps:
                 f"child below now carries it and passed, integrate and DELIVER again; if none does, add or "
                 f"revise the child that will (`revise`, `auto_decompose` on it).")
 
+    def _parked_step(self, t, nm):
+        """The issuer's step on a node whose executor is parked — its place past its disk bound, the user's alone
+        to lift or its issuer's to cancel; or stopped twice without a signal — else None."""
+        if (past := self.engine.parking.execution_park_said(t)) and users_criteria(self.engine.graph, t):
+            # …the user's (`users_criteria`: an AUTO root, a part of their plan): no system move lifts it, none offered
+            # (critic: CANCEL offered as the system's, while the machine issuer stopped the run telling the user to restart)
+            return (2, t, Action.REVISE, f"ITS EXECUTOR CANNOT GO ON on '{t.id}' ({nm}): {past}; {USERS_WAY}.")
+        if past:
+            # ITS PLACE IS PAST ITS DISK BOUND — a new version or another executor works in the same place, whose
+            # charge stands, and is ended again within seconds: the parked directive below offered exactly those moves
+            return (2, t, Action.REVISE,
+                    f"ITS EXECUTOR CANNOT GO ON on '{t.id}' ({nm}): {past}. " + self.engine.offer(
+                        Move("signal", str(t.id), f"`signal('{t.id}', 'CANCEL')` " + (
+                            "(it abandons the goal: nothing above it re-issues the work)"
+                            if self.engine.graph.get_parent(t.id) is None else
+                            "(its parent's split can issue the work anew, in a place of its own)"), Signal.CANCEL.name),
+                        lead="The move is its issuer's: ") + " Else only the installation's user lifts it: a server "
+                    "restart counts the place again from what it then holds (the bound, GFSO_NODE_DISK and "
+                    "GFSO_NODE_FILES, is theirs too).")
+        if self.engine.parking.is_execution_parked(t):
+            # ITS EXECUTOR STOPPED — the step is the ISSUER's, not a wait on the executor: the door
+            # otherwise showed "NOT YOURS … in hand, not stuck" and a waiting issuer never returned.
+            return (2, t, Action.REVISE,
+                    f"ITS EXECUTOR STOPPED WITHOUT A SIGNAL on '{t.id}' ({nm}), twice: each run ended "
+                    f"with no readable report (a run cut at its turn cap, a crash, a malformed answer), "
+                    f"so nothing was signalled and nothing will be — only the deadline would move it. "
+                    + (f"Its last: {note}. " if (note := self.engine.parking.execution_park_note(t)) else "") +
+                    f"Its work so far is on disk. " + self.engine.offer(
+                        Move("revise", str(t.id), f"`revise('{t.id}', …)` (a new packet version starts a fresh run "
+                                                  f"over what is already there — narrow or split the contract if one "
+                                                  f"run cannot carry it)"),
+                        Move("reassign", str(t.id), f"`reassign('{t.id}', …)`"),
+                        Move("signal", str(t.id), f"`signal('{t.id}', 'CANCEL')`", Signal.CANCEL.name),
+                        lead="The moves are its issuer's: ") + ".")
+        return None
+
     def _step_for(self, t, kids, crits, nm, cands, held, _deps_ready, _passed):
         """What the holder of this node is asked to do next — one answer per state.
 
@@ -207,16 +259,8 @@ class NodeSteps:
             return (2, t, Action.REVISE,
                     f"ITS SPLIT IS OWED on '{t.id}' ({nm}): {owed['why']}. It is not delivered as a leaf and no "
                     f"executor session is started on it. The step: {owed['opens_with']}.")
-        if self.engine.parking.is_execution_parked(t):
-            # ITS EXECUTOR STOPPED — the step is the ISSUER's, not a wait on the executor: the door
-            # otherwise showed "NOT YOURS … in hand, not stuck" and a waiting issuer never returned.
-            cand = (2, t, Action.REVISE,
-                    f"ITS EXECUTOR STOPPED WITHOUT A SIGNAL on '{t.id}' ({nm}), twice: each run ended "
-                    f"with no readable report (a run cut at its turn cap, a crash, a malformed answer), "
-                    f"so nothing was signalled and nothing will be — only the deadline would move it. "
-                    f"Its work so far is on disk. The moves are YOURS as its issuer: `revise` it (a new "
-                    f"packet version starts a fresh run over what is already there — narrow or split "
-                    f"the contract if one run cannot carry it), `reassign` it, or CANCEL it.")
+        if (parked := self._parked_step(t, nm)) is not None:
+            cand = parked
         elif t.state == State.VALIDATING:
             return self._step_for_a_delivered_node(t, nm, crits)
         elif t.state in (State.OFFERED, State.EXECUTING, State.REWORKING) and                 (_held := self.engine.held_node_refusal(t.id, Signal.ACCEPT if t.state == State.OFFERED
@@ -345,16 +389,21 @@ class NodeSteps:
             # it was — the ownerless gap this whole revision exists against, one state over.
             cand = (2, t, Action.RESOLVE,
                     f"'{t.id}' ({nm}) is CHALLENGED — its executor disputes the contract: "
-                    f"\"{(self.engine.challenge_reason(t.id) or '')[:400]}\". This is YOURS and nothing "
-                    f"moves until you close it: ACCEPT_CHALLENGE with the new spec if the dispute is "
-                    f"right (the node returns to OFFERED and its executor consents afresh), or "
-                    f"REJECT_CHALLENGE with the justification if the contract stands."
-                    # …AND AT AN AUTO ROOT, A RULING ON A FINDING IS THE USER'S ALONE: the system makes no move on it
-                    + (f" | THE USER'S QUESTION: it asks to rule {', '.join(_asked)} outside the user's goal, and "
-                       f"under AUTO the system makes no move on it — ask the user, and send their answer: "
-                       f"ACCEPT_CHALLENGE with `retire_findings` naming what they rule out, or REJECT_CHALLENGE "
-                       f"with why the goal asks for it. Unanswered, the clock escalates it."
-                       if (_asked := self.engine.users_dispute(t.id)) else ""))
+                    f"\"{(self.engine.challenge_reason(t.id) or '')[:400]}\". "
+                    # …AND AT AN AUTO ROOT THE SYSTEM ANSWERS THE DISPUTE, only a ruling on a finding is the user's
+                    # (`Engine.users_dispute`): told "nothing moves until you close it", a customer stopped the whole
+                    # run to ask the person what the system closed a minute later (fresh install, run B, 2026-11-04)
+                    # …and a check of the plan the system wrote is not such a ruling (`Engine.plans_own_findings`)
+                    + (f"The system answers this dispute by itself and the work goes on: keep waiting."
+                       + (f" | THE USER'S QUESTION, optional: it asks to rule {', '.join(_theirs)} outside the user's "
+                          f"goal, which the system never rules: tell the person in a line. Only if they rule, send their "
+                          f"answer: ACCEPT_CHALLENGE with `retire_findings` naming what they rule out, or REJECT_CHALLENGE "
+                          f"with why the goal asks for it."
+                          if (_theirs := [i for i in _asked if i not in self.engine.plans_own_findings(t.id)]) else "")
+                       if (_asked := self.engine.users_dispute(t.id)) and not self.engine.paused() else
+                       f"This is YOURS and nothing moves until you close it: ACCEPT_CHALLENGE with the new spec if "
+                       f"the dispute is right (the node returns to OFFERED and its executor consents afresh), or "
+                       f"REJECT_CHALLENGE with the justification if the contract stands."))
         elif t.state == State.EXECUTING and kids and all(_passed(k) for k in kids):
             cand = self._aggregate_or_repair(t, nm, crits)
         elif t.state == State.CANCELLING:
@@ -411,7 +460,7 @@ class NodeSteps:
                           f"REPAIR THE PLAN of '{t.id}' ({nm}): its decomposition no longer passes the Syntactic "
                           f"level (§9.5) — " + "; ".join(f"{h.check_name}: {h.details}" for h in _holes)
                           + f". `list_holes` shows them across the graph."))
-        if _gating and l2_gate_on() and self.engine.claims.review_in_flight(t.id):
+        if _gating and l2_gate_on(self.engine.graph) and self.engine.claims.review_in_flight(t.id):
             # A CHECK ALREADY RUNNING IS NOT A STEP. The frontier kept saying "call
             # review_decomposition" while one was mid-flight — a duplicate paid round over a
             # plan that had not changed, and the other in-flight surface (`validate_result`)
@@ -423,7 +472,7 @@ class NodeSteps:
                                   "same plan twice and cost twice"),
                              opens_with="nothing: its verdict arrives by itself").as_dict())
             return True
-        if _gating and l2_gate_on() and not _l0_holes(self.engine.graph, t):
+        if _gating and l2_gate_on(self.engine.graph) and not _l0_holes(self.engine.graph, t):
             open_l2 = _l2_undischarged(self.engine.graph, t)
             if open_l2 is None:
                 cands.append((2.5, t, Action.CHECK_PLAN,
@@ -448,10 +497,11 @@ class NodeSteps:
                               f"(edit_criteria / map_criterion / add a child) and re-run "
                               f"review_decomposition('{t.id}'), or record why the finding is wrong "
                               f"(dispute_finding). Reasons: get_review('{t.id}')."
-                              + (f" NOTE — the `undecided` findings ({len(_own)}) are about "
-                                 f"'{t.id}'s OWN criteria, not its children's: a criterion added "
-                                 f"to a CHILD does not close one, and the finding comes back word "
-                                 f"for word. `edit_criteria('{t.id}', …)` is what closes them."
+                              + (f" NOTE — the `undecided` findings ({len(_own)}) are obligations of "
+                                 f"'{t.id}'s goal that no pinned check its validation runs decides — its "
+                                 f"own, or a mapped child's on the delivered product: a NEW pinned check "
+                                 f"of what each still admits closes it, on '{t.id}' or on the child "
+                                 f"mapped to it."
                                  if _own else "")))
                 return True
         return False
@@ -481,10 +531,14 @@ class NodeSteps:
             return (6, t, Action.REVISE,
                     f"REPAIR THE PLAN of '{t.id}' ({nm}) — do NOT re-deliver it: {wall}")
         left = self.engine.joins.unjoined_parts(t)
+        merge = [(k, why) for k, why in left if NOT_ON_ITS_BRANCH not in why]
+        lost = [(k, why) for k, why in left if NOT_ON_ITS_BRANCH in why]
         return (6, t, Action.DELIVER,
                 f"AGGREGATE '{t.id}' ({nm}): all its children PASSED — integrate them. "
                 + (f"These did NOT merge where it works — merge each and resolve, that is this whole's work: "
-                   + "; ".join(f"'{k}': {why}" for k, why in left) + ". " if left else "")
+                   + "; ".join(f"'{k}': {why}" for k, why in merge) + ". " if merge else "")
+                + ("These are NOT to be merged — what their PASS accepted is gone from their branch; reopen each: "
+                   + "; ".join(f"'{k}': {why}" for k, why in lost) + ". " if lost else "")
                 + f"Before you DELIVER, self-check the WHOLE by running: each parent criterion {crits} must hold "
                 f"over the REAL integrated result (not mocks, not the children's word for it). "
                 f"Signal from what the run actually shows.")
@@ -529,19 +583,25 @@ class NodeSteps:
             directive += (f" | ITS EXECUTOR DISPUTES THE CONTRACT and could not say so in a signal "
                           f"(the state does not admit CHALLENGE — §12.4 admits it from OFFERED and, "
                           f"after consent, from EXECUTING and REWORKING): "
-                          f"\"{_why}\". This is YOURS — nothing will move until you settle it. "
-                          f"`revise` the node if the dispute is right (that returns it to OFFERED, "
-                          f"where its executor takes it again under the new contract), or "
-                          f"`reassign` it if the contract stands and this executor cannot do it. "
-                          f"Re-running the same executor under the same contract reproduces the "
-                          f"dispute and pays for it.")
+                          f"\"{_why}\". "
+                          + self.engine.offer(
+                              Move("revise", str(t.id), f"`revise('{t.id}', …)` if the dispute is right (that returns "
+                                                        f"it to OFFERED, where its executor takes it again under the "
+                                                        f"new contract)"),
+                              Move("reassign", str(t.id), f"`reassign('{t.id}', …)` if the contract stands and this "
+                                                          f"executor cannot do it"),
+                              lead="This is YOURS — nothing will move until you settle it: ")
+                          + ". Re-running the same executor under the same contract reproduces the dispute and "
+                            "pays for it.")
         if unmet:
             directive += (f" | PLAN HOLES since its admission (§12.10 — a flag, no refusal of the children's "
-                          f"moves): {unmet} — the decomposer repairs them by re-admitting the split (`decompose` with the "
-                          f"new or changed children and their `covers`, `accepted_risks` and `drops`; a child named "
-                          f"unchanged keeps working)"
+                          f"moves): {unmet} — " + self.engine.offer(Move(
+                              "decompose", str(t.id), f"the decomposer repairs them by re-admitting the split "
+                                                      f"(`decompose('{t.id}', …)` with the new or changed children "
+                                                      f"and their `covers`, `accepted_risks` and `drops`; a child "
+                                                      f"named unchanged keeps working)"))
                           + ("; until then no Level-2 review runs, and children the decomposer executes himself "
-                             "wait for one" if l2_gate_on() else ""))
+                             "wait for one" if l2_gate_on(self.engine.graph) else ""))
         if flags:
             directive += (f" | DEADLINE FLAG for the consumer's issuer (§12.10): {flags} — re-ASSIGN the consumer "
                           f"with a deadline after its producer's, or let it run on its own; nothing is refused")
@@ -554,11 +614,36 @@ class NodeSteps:
         # that takes the signer as an argument can copy it.
         return {"complete": False, "task_id": str(t.id), "name": t.spec.name or str(t.id),
                 "state": t.state.name, "action": action, "assignee": t.assignee, "unmet_checks": unmet,
-                "signed_by": str(self.engine.graph.issuer_of(t.id)) if action in _ISSUER_ACTIONS else str(t.assignee or ""),
-                # ALL of them, seams included: a `dep__` criterion is a criterion of this node, V
-                # is the conjunction over the whole contract (§2.3), and `record_verdict` enforces
-                # that — so a step that lists fewer is a step whose instruction cannot be followed.
+                "signed_by": (str(self.engine.graph.issuer_of(t.id)) if (role := step_role(self.engine, t, action))
+                              == "issuer" else str(t.assignee or "")),
+                # …and in which ROLE (§12.13: the state's owner): where one party holds both, the name alone cannot say
+                "role": role,
+                # ALL of them: V is the conjunction over the whole contract (§2.3), and `record_verdict`
+                # enforces that — so a step that lists fewer is a step whose instruction cannot be followed.
                 "criteria": [c.name for c in t.spec.criteria], "directive": directive}
+
+
+def _not_complete_while_open(engine, open_now: list[str]) -> dict:
+    """Nodes still open under a passed root (Thm 1): the answer, and the move that earns its verdict again (§12.14)."""
+    # …a part a re-admission dropped settles by itself, and a whole may pass while it does: no move is owed over it
+    closed = {str(p.id) for n in open_now if (p := engine.graph.get_parent(TaskId(n))) is not None and p.state == State.DONE
+              and engine.graph.get_state(TaskId(n)) != State.CANCELLING}
+    return {"complete": False, "open_nodes": open_now,
+            "directive": (f"NOT COMPLETE — the root(s) passed, but {', '.join(open_now)} "
+                          f"{'is' if len(open_now) == 1 else 'are'} still open. A "
+                          f"parent's result is the AND over its children (Thm 1), so a "
+                          f"node attached after its parent closed leaves that parent's "
+                          f"verdict standing on work nobody has done. "
+                          + "; ".join(engine.offer(Move("reopen", n, f"`reopen('{n}')` earns it again", unmade=True), lead="")
+                                      for n in sorted(closed)))}
+
+
+def _left_standing(left: list[str]) -> dict:
+    """What `complete` must not leave out: what a validator saw and no issuer answered before the node above it closed."""
+    return {"questions_left_standing": left,
+            "questions_left_standing_note": ("observed outside the criteria, not answered when the node above it closed: "
+                                             "neither in the verdict nor worked. Under a settled node nothing is owed "
+                                             "(§12.7), so no one is asked it any more; it is yours to weigh.")} if left else {}
 
 
 class Frontier:
@@ -591,7 +676,7 @@ class Frontier:
         return [k for k in self.engine.graph.get_active_children(task_id)
                 if not settled_positive(k) and k.state in TERMINAL_STATES]
 
-    def _nothing_to_take(self, tasks, deps, _deps_ready, _passed) -> dict:
+    def _nothing_to_take(self, tasks, waits, _deps_ready) -> dict:
         """The answer when no node is takeable: working, blocked by dep order, or stuck.
 
         Three different facts share one silence — an instrument is running, a producer has
@@ -621,11 +706,13 @@ class Frontier:
         # in a minute", this is a run that polls for ever: measured on a root delivered over one
         # ESCALATED child and one DONE one, where the only move — the issuer's own FAIL — was named
         # nowhere. Asked BEFORE the in-flight branch, because that branch is what hid it.
-        _dead_waits = []
+        _dead_waits, _ways = [], []
         for t in tasks:
             if t.state != State.VALIDATING:
                 continue
             _gone = self._never_passes(t.id)
+            if _gone or any(k.state == State.ESCALATED for k in self.engine.graph.get_active_children(t.id)):
+                _ways.append(self._out_of_a_dead_wait(t, _gone))
             if _gone:
                 _dead_waits.append(
                     f"'{t.id}' is delivered and waits on "
@@ -645,9 +732,7 @@ class Frontier:
                         "; ".join(_dead_waits)
                         + ". The AND over a node's children (Thm 1) can never be satisfied while "
                           "one of them is settled and not passed, so no verdict will arrive here "
-                          "on its own — this is not a wait that ends. Either FAIL the delivered "
-                          "node and re-decompose around the hole, or REOPEN the settled child if "
-                          "it still has reopens left (§12.14).")}
+                          "on its own — this is not a wait that ends. " + "; ".join(_ways) + ".")}
         # A STRANDED NODE IS A FACT NO RUNNING WORK CAN CHANGE, so it is asked BEFORE what is in
         # flight — the in-flight branch was what hid it. That branch's own test is `state in
         # (EXECUTING, REWORKING) and the roster calls the assignee an executor`, which is a property
@@ -676,14 +761,11 @@ class Frontier:
                           "on this: what lands may be yours to sign.")}
         where = "; ".join(f"'{t.id}' ({t.spec.name or t.id}) is {t.state.name}"
                           for t in stranded)
-        waiting = [
-            f"'{t.id}' waits on " + ", ".join(
-                sorted(f"'{e.from_id}'" for e in deps if e.to_id == t.id
-                       and not (self.engine.graph.get_task(e.from_id) is not None
-                                and _passed(self.engine.graph.get_task(e.from_id)))))
-            for t in tasks
-            if t.state in (State.OFFERED, State.EXECUTING, State.REWORKING)
-            and not _deps_ready(t.id)]
+        _held_up = [t for t in tasks if t.state in (State.OFFERED, State.EXECUTING, State.REWORKING)
+                    and not _deps_ready(t.id)]
+        waiting = [f"'{t.id}' waits on " + ", ".join(f"'{p}'" for p in self._open_producers(t.id, waits))
+                   for t in _held_up]
+        _redo = [f"for '{t.id}', " + self._around(t) for t in stranded if t.state != State.ESCALATED]
         return {"complete": False, "stuck": True,
                 "blocked_by": [str(t.id) for t in stranded],
                 **({"in_flight": _running} if _running else {}),
@@ -693,9 +775,7 @@ class Frontier:
                     f"ISSUER (§12.5). "
                     + "; ".join(f"on '{t.id}' {self.engine.issuer_moves_on(t.id)}"
                                 for t in stranded if t.state == State.ESCALATED)
-                    + (" For a node settled for good, re-decompose around it (revise the parent so "
-                       "another child carries the criteria it left uncovered)."
-                       if any(t.state != State.ESCALATED for t in stranded) else "")
+                    + (" For a node settled for good: " + "; ".join(_redo) + "." if _redo else "")
                     if stranded else
                     # …and when the hold IS the dependency order, name the pair. The frontier
                     # now gates OFFERED and REWORKING on producers too (a leaf handed out before
@@ -704,8 +784,9 @@ class Frontier:
                     # to work out which, exactly as the ESCALATED case used to.
                     (f"Stuck: no actionable node, and the root is not DONE/PASS. What is waiting "
                      f"is the dependency order: " + "; ".join(waiting) + ". Those producers are "
-                     f"not PASSED, and nothing else can run meanwhile — drive them, or drop the "
-                     f"edge (`remove_dependency`) if it was declared in error."
+                     f"not PASSED, and nothing else can run meanwhile. "
+                     + "; ".join(self.engine.offer(*self._edges_into(t), lead=f"For '{t.id}': drive them, or ")
+                                 for t in _held_up) + "."
                      if waiting else
                      self._why_nothing_is_open()))}
 
@@ -724,15 +805,19 @@ class Frontier:
                     "closed on a FAIL" if root.done_reason == DoneReason.FAIL else "done")
             if root.state == State.DONE and root.done_reason != DoneReason.FAIL:
                 return (f"Nothing is open because the goal is finished: '{root.id}' is DONE. "
-                        f"If it should not be, `reopen('{root.id}')` puts it back to OFFERED while "
-                        f"nothing has been staked on it and reopens remain (§12.14).")
+                        + self.engine.offer(Move("reopen", str(root.id),
+                                                 f"If it should not be, `reopen('{root.id}')` puts it back to OFFERED "
+                                                 f"while nothing has been staked on it and reopens remain (§12.14)",
+                                                 unmade=True))
+                        + ".")
             left = max(0, root.max_reopens - root.reopens)
             return (f"Nothing is open, and that is not a block: the goal itself is settled — "
                     f"'{root.id}' is {root.state.name} ({what}). Nothing below a settled root can "
-                    + (f"move it. To take the goal up again: `reopen('{root.id}')` "
-                       f"({left} of {root.max_reopens} reopens left), which returns it to OFFERED "
-                       f"to be re-earned by fresh contact. To start a different goal, open another "
-                       f"project (`use_project`)." if left else
+                    + (f"move it. " + self.engine.offer(Move(
+                        "reopen", str(root.id), f"To take the goal up again: `reopen('{root.id}')` ({left} of "
+                                                f"{root.max_reopens} reopens left), which returns it to OFFERED to be "
+                                                f"re-earned by fresh contact", unmade=True))
+                       + ". To start a different goal, open another project (`use_project`)." if left else
                        f"move it, and its reopens are spent ({root.reopens}/{root.max_reopens}) — "
                        f"this goal is over. A different goal belongs in another project "
                        f"(`use_project`)."))
@@ -753,8 +838,11 @@ class Frontier:
                 "directive": (f"NOT COMPLETE — {', '.join(refuted)} stand(s) at PASS while the "
                               f"current recorded verdict for it is FAIL. A signature landed "
                               f"before the instrument's verdict did, and the graph is showing "
-                              f"the signature. Read `get_verdict` on it; recovery is `reopen` "
-                              f"if it is not consumed, and re-decomposition around it if it is.")}
+                              f"the signature. Read `get_verdict` on it. "
+                              + "; ".join(self.engine.offer(
+                                  Move("reopen", n, f"`reopen('{n}')` if it is not consumed", unmade=True),
+                                  Move("decompose", self._parent_of(n), "re-decomposition around it if it is", unmade=True),
+                                  sep=", and ", lead=f"For '{n}', recovery is ") for n in refuted) + ".")}
 
     def _how_this_closed(self, root_id: "Optional[TaskId]" = None) -> dict:
         """The facts a reader must weigh about a graph that answers COMPLETE.
@@ -770,7 +858,7 @@ class Frontier:
         check can establish that a self-named reviewer is independent (§15.7) — so a correct override
         must stay finishable. What must not happen is that it finishes SILENTLY.
         """
-        extra: dict = {}
+        extra: dict = _left_standing(self.engine.questions_left_standing(root_id))
         if _open_plan := self.engine.closed_over_an_open_plan_review(root_id):
             extra |= {"closed_over_an_open_plan_review": _open_plan,
                       "closed_over_an_open_plan_review_note":
@@ -835,8 +923,8 @@ class Frontier:
             # once there is work `set_mode` needs the user's own words. Entering a project now says this first, so a
             # directive naming only `auto_decompose` sent the plan ahead of the choice (critic, 2026-10-09).
             first = ("" if self.engine.mode() else
-                     "No mode set — explain solo / semi-auto / auto to the user, ask which, and `set_mode` with "
-                     "their words; then: ")
+                     "No mode set — say which you recommend (`auto` on `claude-haiku-5-5`, the most tested; `solo` "
+                     "and `semi` if the person asks) and `set_mode`; then: ")
             return ({"complete": False,
                     # The protocol handed to an agent says `auto_decompose` authors the root from
                     # the request itself, with no hand-made `create_task` — so this directive, the
@@ -844,13 +932,13 @@ class Frontier:
                     # …AND UNDER AUTO ONLY THE ONE ACT: the manual path offered there is refused at its door, and an AUTO
                     # customer that took it, refused, set about writing the code itself and quit (GB_spreadsheet_engine_
                     # tmpekc132, 2026-10-11)
-                    "directive": first + ("No graph yet — state the goal: `auto_decompose(request)` with the user's "
-                                          "request is your one act under AUTO; the system plans the work, does it and "
-                                          "validates it, and you read its status."
+                    "directive": first + ("No graph yet — `plan(request)` with the user's request writes the plan, you "
+                                          "read it whole, and `auto_decompose(plan=path)` is the go: the system does "
+                                          "the work and validates it, and you read its status."
                                           if self.engine.mode_kind() == Mode.AUTO else
-                                          "No graph yet — `auto_decompose(request)` authors the root and its "
-                                          "subtree from your goal; `create_task` + `decompose` is the manual "
-                                          "path when you want to build the structure yourself.")}, None)
+                                          "No graph yet — `plan(request)` writes the plan and `auto_decompose(plan=path)` "
+                                          "builds it; `create_task` + `decompose` is the manual path when you want "
+                                          "to build the structure yourself.")}, None)
         if root_id:
             root = self.engine.graph.get_task(root_id)
             if root is not None and _passed(root):
@@ -862,8 +950,9 @@ class Frontier:
                 # key at all (CLI door, wave 23, 2026-09-03; reproduced directly). One question, one
                 # predicate, both ways of asking it — a rule that holds at one door and not at the
                 # next is the class this product keeps finding in itself.
-                if refuted := self.engine.refuted_passes(root_id):
-                    return (self._not_complete_because_refuted(refuted), None)
+                if not_yet := (self._not_complete_because_refuted(r) if (r := self.engine.refuted_passes(root_id)) else
+                               _not_complete_while_open(self.engine, o) if (o := self.engine.open_nodes(root_id)) else None):
+                    return (not_yet, None)
                 if not self.engine.joins.root_landed(root):
                     return (self._not_complete_while_joining(root), None)
                 return ({"complete": True,
@@ -891,14 +980,8 @@ class Frontier:
             # it (HTTP door, 2026-09-02: "5 Done · 1 Not started · root DONE — the goal is met" on
             # one line). V(parent) is the AND over its children (Thm 1), so a passed parent with an
             # unsettled child is a claim that no longer holds; the honest answer is what is open.
-            if open_now := [str(t.id) for t in tasks if t.state not in TERMINAL_STATES]:
-                return ({"complete": False,
-                         "open_nodes": open_now,
-                         "directive": (f"NOT COMPLETE — the root(s) passed, but {', '.join(open_now)} "
-                                       f"{'is' if len(open_now) == 1 else 'are'} still open. A "
-                                       f"parent's result is the AND over its children (Thm 1), so a "
-                                       f"node attached after its parent closed leaves that parent's "
-                                       f"verdict standing on work nobody has done.")}, None)
+            if open_now := self.engine.open_nodes():
+                return (_not_complete_while_open(self.engine, open_now), None)
             # …and a ⊥ that landed anyway is SAID, never used to withhold the answer. A validator that
             # could not decide is not a validator that decided against: withholding COMPLETE over one
             # would be reading ⊥ as fail, which §2.3 forbids in those words.
@@ -976,22 +1059,16 @@ class Frontier:
         if terminal is not None:
             return terminal
 
-        deps = self.engine.graph.dep_edges(adopted=True)
+        waits = self.engine.start_waits()     # read once per walk (`Engine.producers_awaited`)
         def _deps_ready(tid: TaskId) -> bool:
             """A consumer is executable only once every producer it depends on has PASSED (dep order)."""
-            # A producer that does not EXIST yet counts as not ready (mid-build a consumer's ASSIGN
-            # can land before its producer's) — `_passed(None)` would have raised here instead.
-            return all(self.engine.graph.get_task(e.from_id) is not None
-                       and _passed(self.engine.graph.get_task(e.from_id))
-                       for e in deps if e.to_id == tid)
+            return not self._open_producers(tid, waits)
 
         cands = []  # (priority, task, action, directive); lower priority acts first
         for t in tasks:
             kids = self.engine.graph.get_active_children(t.id)
-            # EVERY criterion, seams included. The directive listed only the node's OWN criteria and
-            # dropped the `dep__` ones — and V is the conjunction over ALL of them (§2.3), which is
-            # what `record_verdict` enforces: a person who validated exactly the printed list was
-            # refused for "criterion 'dep__x' has no verdict" (measured on the human door
+            # EVERY criterion: V is the conjunction over ALL of them (§2.3), which is what `record_verdict`
+            # enforces — a directive listing fewer had a person refused for the one it left out (human door
             # 2026-08-22, two round-trips). Following the instruction has to be enough.
             crits = [c.name for c in t.spec.criteria]
             nm = t.spec.name or str(t.id)
@@ -1004,7 +1081,7 @@ class Frontier:
                 cands.append(_c)
 
         if not cands:
-            return self._nothing_to_take(tasks, deps, _deps_ready, _passed)
+            return self._nothing_to_take(tasks, waits, _deps_ready)
         cands.sort(key=lambda c: (c[0], str(c[1].id)))
         return cands
 
@@ -1040,8 +1117,7 @@ class Frontier:
                     why=(f"it was delivered while {_names} — settled WITHOUT passing, so the AND "
                          f"over its children (Thm 1) can never be satisfied and no verdict can "
                          f"ever be given here. This is not a wait that ends by itself"),
-                    opens_with=(f"FAIL('{t.id}') and re-decompose around the hole, or REOPEN the "
-                                f"settled child if it still has reopens left (§12.14)")).as_dict())
+                    opens_with=self._out_of_a_dead_wait(t, _dead)).as_dict())
                 return True
             held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
                              kind="children",
@@ -1100,7 +1176,10 @@ class Frontier:
         output + `parallel_ok`)."""
         result = self._frontier(root_id)
         if isinstance(result, dict):
-            return result if result.get("complete") or "steps" in result else {**result, "steps": []}
+            # …the waits in EVERY answer: given only beside steps, a consumer's wait on its producer vanished for the
+            # length of every validation, stuck or join (UI stream 2026-10-26)
+            return (result if result.get("complete") else
+                    {**result, "steps": result.get("steps", []), **self._waiting_on([])})
         steps = []
         for _, t, action, directive in result:
             step = self.steps._step_out(t, action, directive)
@@ -1113,8 +1192,6 @@ class Frontier:
         # `get_dependencies` had every edge and glue note. The pairs go in the answer, not in a
         # second verb the reader has to know about.
         out = {"complete": False, "steps": steps, **self._waiting_on(steps)}
-        if self._held_by_plan:
-            out["waiting"] = list(out.get("waiting", ())) + self._held_by_plan
         if stranded := [t for t in self.engine.stranded_nodes() if t.state != State.ABANDONED]:
             # …AND WHAT THE GRAPH CANNOT MOVE PAST, whether or not something else is actionable.
             out["stranded"] = [
@@ -1123,16 +1200,18 @@ class Frontier:
                          f"its rework loop was exhausted (§12.5) — a settled FAIL, and a parent's "
                          f"PASS is the AND over its children, so nothing above it can complete"),
                  "opens_with": (self.engine.issuer_moves_on(t.id) if t.state == State.ESCALATED else
-                                f"re-decompose around it: add a child that carries what "
-                                f"'{t.id}' left uncovered and map it (`map_criterion`). A terminal "
-                                f"node is not reopened and takes no revision.")}
+                                self._around(t) + ". A terminal node is not reopened and takes no revision.")}
                 for t in stranded]
         return out
 
     def _not_complete_while_joining(self, root) -> dict:
         """The root has passed and its result does not yet stand in the base: refused (the base must take it — the
         host retries the join, backing off, and a hand merge of the branch counts), or being joined (poll)."""
-        if (why := self.engine.joins.unjoined_roots().get(str(root.id))) is not None:
+        if (why := self.engine.joins.unjoined_roots().get(str(root.id))) is not None and NOT_ON_ITS_BRANCH in why:
+            return {"complete": False, "stuck": True, "steps": [],
+                    "directive": f"The root '{root.id}' has passed, but {why}. Do not merge its branch into the base: "
+                                 f"reopen the root and deliver its work again."}
+        if why is not None:
             return {"complete": False, "stuck": True, "steps": [],
                     "directive": f"The root '{root.id}' has passed, but its result did not land in the base: "
                                  f"{why}. Make the base take it — clear what blocks the merge (an untracked or "
@@ -1157,16 +1236,15 @@ class Frontier:
         return [t for t in self.engine.stranded_nodes() if t.state is not State.ABANDONED]
 
     def _waiting_on(self, steps: list) -> dict:
-        """`waiting`: the nodes not on the frontier because a producer of theirs has not passed."""
+        """`waiting`: the nodes not on the frontier because a producer of theirs has not passed, and what the last
+        walk's plan gate held back."""
         shown = {s["task_id"] for s in steps}
-        deps = self.engine.graph.dep_edges(adopted=True)
+        waits = self.engine.start_waits()
         out = []
         for t in self.engine.graph._storage.get_all_tasks():
             if str(t.id) in shown or t.state.name in ("DONE", "ABANDONED", "ESCALATED"):
                 continue
-            open_prod = sorted({str(e.from_id) for e in deps if str(e.to_id) == str(t.id)
-                                and not settled_positive(self.engine.graph.get_task(e.from_id))})
-            if open_prod:
+            if open_prod := self._open_producers(t.id, waits):
                 # The SAME shape as a plan-gated wait, because the two sat side by side in one answer
                 # with only one of them explaining itself (measured on the human door 2026-08-21).
                 out.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
@@ -1181,6 +1259,59 @@ class Frontier:
                                 # by the counterparty is not a lift).
                                 opens_with=(
                                     f"finish {', '.join(open_prod)} — or, if this node's contract "
-                                    f"does not really need what they produce, its ISSUER can "
-                                    f"`remove_dependency` and revise it")).as_dict())
+                                    f"does not really need what they produce, "
+                                    + self.engine.offer(*self._edges_into(
+                                        t, "its ISSUER can `remove_dependency('{p}', '{t}')` and revise it")))
+                                ).as_dict())
+        # …AND THE WAIT NOT TAKEN, said where waits are: a node starting before a producer its whole reads
+        for (tid, p), cycle in sorted(self.engine.waits_not_taken().items()):
+            if (t := self.engine.graph.get_task(TaskId(tid))) is not None:
+                out.append(Wait(task_id=tid, state=t.state.name, assignee=t.assignee, kind="dependency",
+                                waits_on=(p,), why=(f"not waited: would close a cycle with {' → '.join(cycle)} → {tid} "
+                                                    f"— its whole reads {p}, and no order ends that wait"),
+                                opens_with=f"nothing to wait for: if '{tid}' needs '{p}''s result, its BLOCK says so"
+                                ).as_dict())
+        out += self._held_by_plan
         return {"waiting": out} if out else {}
+
+    def _open_producers(self, tid, waits) -> list[str]:
+        """The producers `tid` waits on (`Engine.producers_awaited`, over the walk's `waits`) that have not landed (`joins.landed`) — a producer not yet
+        created counts as open. ONE reading for the dep gate and every wait reported over it: the gate read the join,
+        the waits the bare pass, so a consumer whose producer was being joined was neither a step nor a wait."""
+        return [f for f in self.engine.producers_awaited(tid, waits)
+                if not ((p := self.engine.graph.get_task(TaskId(f))) is not None and self.engine.joins.landed(p))]
+
+    def _edges_into(self, t, say: str = "drop the edge (`remove_dependency('{p}', '{t}')`) if it was declared "
+                                                "in error") -> list:
+        """Dropping each edge of its own `t` waits on: a move of the consumer's issuer (`remove_dependency`, keyed on
+        `to_id`). A wait taken from its whole is lifted on the whole's edge, not here."""
+        return [Move("remove_dependency", str(t.id), say.format(p=p, t=t.id))
+                for p in self._open_producers(t.id, {str(t.id): {str(e.from_id) for e in self.engine.adopted_dependencies()
+                                                                 if str(e.to_id) == str(t.id)}})]
+
+    def _parent_of(self, tid) -> str:
+        p = self.engine.graph.get_parent(TaskId(tid))
+        return str(p.id if p is not None else tid)
+
+    def _around(self, t) -> str:
+        """The way out of a node settled for good: its parent's split re-admitted around it — the split's own act
+        (§11.5), keyed on the parent's Del, not its issuer (critic over 25faf94) — or, for the goal itself, nothing in
+        this project."""
+        p = self._parent_of(t.id)
+        if p == str(t.id):
+            return (f"'{t.id}' is the goal, and nothing above it can carry what it left uncovered: a different goal "
+                    f"belongs in another project (`use_project`)")
+        return self.engine.offer(Move("map_criterion", p, f"re-decompose '{p}' around it: add a child that carries what "
+                                                          f"'{t.id}' left uncovered (`create_task(…, parent_id='{p}')`) "
+                                                          f"and map it (`map_criterion('{p}', …)`)"))
+
+    def _out_of_a_dead_wait(self, t, dead) -> str:
+        """The ways out of a delivery whose parts settled without passing: its issuer's FAIL and a re-decomposition
+        around the hole, or a REOPEN of a settled part (§12.14) — each its own holder's."""
+        return self.engine.offer(
+            Move("signal", str(t.id), f"`signal('{t.id}', 'FAIL')`", Signal.FAIL.name),
+            # …the re-decomposition is the split's move, keyed on the node's own split — never folded into the FAIL's words
+            Move("decompose", str(t.id), f"re-decompose around the hole (`decompose(parent_id='{t.id}', …)`)"),
+            *(Move("reopen", str(k.id), f"`reopen('{k.id}')` if it still has reopens left (§12.14)")
+              for k in dead if k.state != State.ESCALATED),
+            lead="either ")

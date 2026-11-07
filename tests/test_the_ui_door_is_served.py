@@ -53,6 +53,31 @@ def client():
         yield c
 
 
+def _served_modules(client) -> dict[str, str]:
+    """The page's script, as a browser gets it: every ES module reachable from the page's own
+    `<script type="module" src="/js/…">` through `import … from './x.js'`, each fetched through the door
+    that serves it. A module the page needs and the server does not serve fails here, not in a console."""
+    todo = re.findall(r'<script type="module" src="/js/([\w-]+\.js)"', client.get("/").text)
+    assert todo, "the page loads no script module — these tests would be reading nothing"
+    seen: dict[str, str] = {}
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        r = client.get(f"/js/{name}")
+        assert r.status_code == 200, f"the page imports /js/{name} and the server does not serve it"
+        assert "javascript" in r.headers["content-type"], f"/js/{name} came back as {r.headers['content-type']}"
+        seen[name] = r.text
+        todo += re.findall(r"from '\./([\w-]+\.js)'", r.text)
+    return seen
+
+
+def _ui(client) -> str:
+    """What the page says and does: the document plus every module it runs. The pins below are about
+    the UI's behaviour, which lives in the modules since the inline script was split into units."""
+    return client.get("/").text + "\n".join(_served_modules(client).values())
+
+
 def test_the_page_itself_is_served(client):
     r = client.get("/")
     assert r.status_code == 200, "the UI root did not answer"
@@ -69,6 +94,14 @@ def test_the_stylesheets_the_page_names_are_served_as_css(client, path):
     assert r.status_code == 200, f"{path} is referenced by the page and not served"
     assert "css" in r.headers["content-type"], f"{path} came back as {r.headers['content-type']}"
     assert r.text.strip(), f"{path} is empty"
+
+
+@pytest.mark.parametrize("path", ["/", "/gfso.css", "/tokens.css", "/icon.svg", "/js/main.js", "/js/hints.js"])
+def test_every_page_file_is_revalidated_on_reload(client, path):
+    """Sent with no Cache-Control, a browser kept an old module by its own heuristic: a day after the FAIL crosses were
+    made one colour the author still saw two (2026-10-27). Each reload asks the server again."""
+    r = client.get(path)
+    assert r.status_code == 200 and r.headers.get("cache-control") == "no-cache", (path, r.headers.get("cache-control"))
 
 
 def test_the_page_only_names_assets_the_server_serves(client):
@@ -174,17 +207,17 @@ def test_the_page_shows_who_validated_a_node_and_on_what(client):
     that the page asks the same question — the fields are the endpoint's, so if either side is
     renamed the other stops answering.
     """
-    page = client.get("/").text
+    page = _ui(client)
     assert "/verdict" in page, "the page reads the execution verdict, not only the plan review"
     for field in ("by_hand", "validator", "per_criterion", "failed_criteria", "refused_report"):
         assert field in page, f"the verdict block does not read `{field}`"
     assert "REFUSED as ⊥" in page, "…and a refused report is not shown as 'not validated'"
 
 
-def test_the_pages_javascript_parses():
+def test_the_pages_javascript_parses(client):
     """Nothing checked that the page is valid JavaScript.
 
-    The UI is one inline script, edited from Python as text, and the tests around it grep for
+    The UI is a set of ES modules, edited from Python as text, and the tests around it grep for
     substrings — so a broken edit ships a blank page that every other check calls healthy (which is
     exactly how the ORCHESTRATOR file once shipped empty). A parse is the cheapest true statement
     available: it does not say the page WORKS, it says it can run at all.
@@ -194,13 +227,14 @@ def test_the_pages_javascript_parses():
     node = shutil.which("node")
     if node is None:
         pytest.skip("no JS engine on this machine — the page's syntax is unchecked here")
-    html = (Path(__file__).resolve().parent.parent / "gfso" / "web" / "index.html").read_text(encoding="utf-8")
-    inline = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html, re.S)
-    assert inline, "the page has no inline script — this test is measuring the wrong file"
-    js = Path(tempfile.gettempdir()) / "gfso_ui_syntax_check.js"
-    js.write_text("\n".join(inline), encoding="utf-8")
-    r = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
-    assert r.returncode == 0, f"the page's script does not parse:\n{r.stderr[:800]}"
+    assert not re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", client.get("/").text, re.S), (
+        "an inline script is back in the page — the UI's code lives in /js modules, one per unit")
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, text in _served_modules(client).items():
+            js = Path(tmp) / (name[:-3] + ".mjs")        # .mjs: parsed as a module (import/export)
+            js.write_text(text, encoding="utf-8")
+            r = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
+            assert r.returncode == 0, f"/js/{name} does not parse:\n{r.stderr[:800]}"
 
 
 def test_the_runtime_panel_reports_the_acceptance_dial(monkeypatch, client):
@@ -222,7 +256,7 @@ def test_the_page_says_so_when_its_graph_library_does_not_load(client):
     page and no error at all (read as a user, 2026-09-02). Vendoring is a separate, parked decision;
     saying so is not.
     """
-    page = client.get("/").text
+    page = _ui(client)
     assert "!window.cytoscape" in page, "the page does not check whether its library arrived"
     assert "The graph library did not load" in page
     assert "gfso status" in page, "…and it names the door that needs no browser at all"
@@ -232,16 +266,19 @@ def test_the_page_offers_the_callers_real_identity(client):
     """It shipped a box reading `pm` — an id registered nowhere — so a person's first Pass/Fail was
     signed as a stranger and refused, correctly and uselessly."""
     assert "agent_id" in client.get("/api/runtime").json()
-    page = client.get("/").text
+    page = _ui(client)
     assert "rt.agent_id" in page and "box.value === 'pm'" in page
 
 
 def test_working_does_not_look_like_dead(client):
     """`EXECUTING` shared the palest style with IDLE and ABANDONED, while an untouched OFFERED node
     was drawn more prominently — the colours answered "what is being worked on" backwards."""
-    page = client.get("/").text
-    assert "EXECUTING: 'busy'" in page and "busy:" in page
-    assert "OFFERED:'Not started'" in page, "`OFFERED` is not 'In Review' — nobody has touched it"
+    page = _ui(client)
+    # The states are one table now (vocab.js, `STATE: [bucket, label, …]`), so the pin reads its row;
+    # what is pinned is unchanged: EXECUTING draws `busy`, a style of its own, and OFFERED reads 'Not started'.
+    assert re.search(r"EXECUTING:\s*\['busy'", page) and "busy:" in page
+    assert re.search(r"OFFERED:\s*\['attend',\s*'Not started'", page), (
+        "`OFFERED` is not 'In Review' — nobody has touched it")
 
 
 def test_the_numbers_arrive_with_what_they_are_about(client):
@@ -260,7 +297,10 @@ def test_the_numbers_arrive_with_what_they_are_about(client):
     """
     body = client.get("/api/metrics").json()
     means = body.get("means") or {}
-    scores = {k: v for k, v in body.items() if k != "means" and not k.endswith("_from")}   # `_from`: who the number counts
+    # `_from`: who the number counts; `grades`, `alarm`, `calls_person`: how far each holds and which call a person —
+    # served beside `means` for the same reason, so the page keeps no copy of §15.8 either
+    about = ("means", "grades", "alarm", "calls_person")
+    scores = {k: v for k, v in body.items() if k not in about and not k.endswith("_from")}
     assert scores, "the metrics read returned no numbers"
     assert set(means) == set(scores), "a number was served without what it is about"
 
@@ -280,10 +320,10 @@ def test_the_numbers_arrive_with_what_they_are_about(client):
     # …AND THE AGENT DOOR SAYS THE SAME. One rule, and both doors serve it, or the writing has
     # simply moved rather than been unified — which is the defect this whole test is about.
     tool = tool_metrics(make_engine())
-    assert set(tool.get("means") or {}) == {k for k in tool if k != "means"}, (
+    assert set(tool.get("means") or {}) == {k for k in tool if k not in about}, (
         "the agent door serves a number without what it is about")
 
-    page = (Path(__file__).resolve().parents[1] / "gfso" / "web" / "index.html").read_text("utf-8")
+    page = _ui(client)
     for k in scores:
         assert f"{k} —" not in page, (
             f"the page writes its own definition of {k}; it must render the served `means` "
@@ -844,7 +884,7 @@ def test_a_hand_asserted_verdict_is_not_replayed_under_an_instruments_name():
         e.verdict_provenance = lambda tid: "instrument"
         standing = _standing_instrument_verdict(e, TaskId("n"))
         assert standing == {"verdict": Verdict.PASS, "failed_criteria": []}
-        assert _replay_a_standing_verdict(e, TaskId("n"), standing, AgentId("the-instrument"), False) == "recorded"
+        assert _replay_a_standing_verdict(e, None, TaskId("n"), standing, AgentId("the-instrument"), False) == "recorded"
     finally:
         e.stop()
 
@@ -1157,7 +1197,7 @@ def test_the_page_draws_how_a_node_closed(client):
     (`Engine.closure_of`), and the picture reads it: contested closures ringed in the accent, hand
     ones dashed, and the counts beside the state tally say how many of each.
     """
-    page = client.get("/").text
+    page = _ui(client)
     assert "closureStyle" in page and "n.closure" in page, (
         "the drawing has to read the node's own closure, not a second copy of the rule")
     assert "closed by hand" in page and "contested" in page, (
@@ -1166,14 +1206,14 @@ def test_the_page_draws_how_a_node_closed(client):
 
 def test_the_identity_the_page_signs_with_survives_a_reload(client):
     """The box SIGNS every signal this page sends, and it reset to the server's id on refresh."""
-    page = client.get("/").text
+    page = _ui(client)
     assert "rememberedRole" in page and "localStorage" in page
     assert "rememberRole(myRole())" in page, "…and it is written down when it is typed"
 
 
 def test_one_edit_is_one_revision(client):
     """Each authoring verb is a re-ASSIGN (Inv-1); the form sent all of them on every submit."""
-    page = client.get("/").text
+    page = _ui(client)
     assert "critsMoved" in page and "risksMoved" in page, (
         "the form has to send what CHANGED — two identical ASSIGNs for one act is what wave 26 saw")
 
@@ -1184,4 +1224,45 @@ def test_the_graph_libraries_do_not_block_the_page(client):
     assert page.count("<script defer src=\"https://unpkg.com") == 3, (
         "the remote scripts must not block the first paint — vendoring them is a separate, parked "
         "decision")
-    assert "DOMContentLoaded" in page, "…and init has to wait for them, or it reports them missing"
+    assert "DOMContentLoaded" in _ui(client), "…and init has to wait for them, or it reports them missing"
+
+
+def test_a_page_file_the_browser_holds_is_not_sent_again(client):
+    first = client.get("/js/main.js")
+    assert first.status_code == 200 and first.headers["etag"]
+    again = client.get("/js/main.js", headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304 and not again.content
+    assert client.get("/js/main.js", headers={"If-None-Match": '"other"'}).status_code == 200
+
+
+def test_what_the_page_reads_comes_compressed(client):
+    r = client.get("/js/main.js", headers={"Accept-Encoding": "gzip"})
+    assert r.headers.get("content-encoding") == "gzip" and "import" in r.text
+
+
+def test_the_page_reads_the_graph_without_the_frontier_it_reads_elsewhere(client):
+    whole, read = client.get("/api/graph").json(), client.get("/api/graph?next=0")
+    assert read.status_code == 200 and "next" not in read.json()
+    assert read.json()["nodes"] == whole["nodes"] and read.json()["edges"] == whole["edges"]
+
+
+def test_no_read_a_move_starts_holds_the_later_moves(client):
+    """A read that never answers holds the moves after it past `within` and no longer: the page said «nothing needs you»
+    over a red call, in silence, with one hung read of the run (critic over 674dfbd)."""
+    main = client.get("/js/main.js").text
+    body = main[main.index("const settle = async"):main.index("// THE COUNT OF WORK IN FLIGHT")]
+    assert re.findall(r"await within\(\w+\(", body) and not re.findall(r"await (?!within\()\w+\(", body), body
+
+
+def test_the_panel_reads_what_a_verdict_did_not_re_run_under_the_names_the_verb_gives_it(client):
+    """A lifted check read as a plain PASS: the verb carried the records and the page showed none."""
+    verb = (Path(__file__).parent.parent / "gfso" / "tools.py").read_text(encoding="utf-8")
+    panel = client.get("/js/panel.js").text
+    for name in ("checks_no_longer_run", "findings_not_reproduced", "retired_after_refutation"):
+        assert f'out["{name}"]' in verb and f"'{name}'" in panel, name
+
+
+def test_the_page_reads_what_the_systems_records_say_of_a_run(client):
+    got = client.get("/api/records_say")
+    assert got.status_code == 200 and isinstance(got.json()["said"], list)
+    assert "/api/records_say" in client.get("/js/model.js").text

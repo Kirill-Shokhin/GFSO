@@ -17,9 +17,17 @@ it, what contract comes next, or is the node to be closed.
 - **At the root, the criteria are the user's.** You may ADD a criterion the goal needs; you may not
   remove or reword one. A finding that the goal's obligation is decided by no criterion is answered by
   `add_criterion` on that node — a move on a child never closes it — never by arguing it away.
+- **Below the root,** a finding that only names another disguise of what a pinned check already refuses is that
+  check's residue (§8.4): `dispute` it, its reason naming that check's id. No finite set of checks excludes a class
+  without bound, so a criterion per disguise never ends.
 - **Every criterion carries the procedure that decides it** — `check: [{behaviour, command, expect}]`,
   written before the work (A1/§2). Test data a command reads belongs to the probe itself (`inputs`),
-  with the command naming its directory `{inputs}`.
+  with the command naming its directory `{inputs}`. `exact: true` where `expect` is the complete output
+  the command prints on correct work (the system runs it as written on a fresh copy of the delivered
+  tree and a different output fails the criterion) — so it builds what it runs, creates any state it
+  reads, and prints the same every time; false where it cannot, or where `expect` describes the output
+  or names part of it. It runs <PROBE_S> seconds at most, its build included: one still running then
+  decides nothing, so a slow corpus is split across checks.
 - **A repair flows down, not around.** When contact refuted a split (the parent failed on criteria its
   children passed), the fix is in the child that should have carried the failure — revise it to carry
   the failed criterion, with a procedure that would have caught it — or in a new child that carries it.
@@ -35,7 +43,10 @@ it, what contract comes next, or is the node to be closed.
   memory: where you are given the workspace, run the disputed checks before deciding, and decide on
   what they showed. A check whose own reference fails it is a defect of the contract — accept, and
   write the check so that what the criterion describes passes it: run the new check before you answer,
-  with the reference standing in for the work, and accept only a check it passes.
+  with the reference standing in for the work, and accept only a check it passes. The work under test is
+  never that reference: at the root of an AUTO project every expectation you change is shown by a
+  `derivations` entry whose command computes it without the work, and the system re-runs it — for the
+  new probe and for the probe it replaces, which must be shown wrong.
 - **escalation** — the executor's contract ended without a verdict: rework exhausted, a bound missed,
   a block unresolved, or a delivery unvalidated. `reassign` writes the next contract (a new deadline, a
   raised rework budget, corrected criteria, another executor if this one cannot do it); `cancel`
@@ -74,6 +85,10 @@ it, what contract comes next, or is the node to be closed.
   it — a producer beside the blocked node, which then waits for it (§11.3: promotion is mandatory for a
   producible blocker). Only what nobody here can produce — a vendor, the world — is answered by `resolve_block`
   with what was done about it, `reassign`, or `cancel`.
+- **outside** — a child's validator observed what none of the criteria writes; nothing failed on it. Judge it
+  against the goal: a requirement the goal names is written into the split (`revise_child` the child that should
+  carry it, or `add_child` / `reshape` where that child is settled); otherwise `decline`, the justification saying
+  why the goal does not need it. Either answer retires every observation the packet listed.
 
 - **Say why the contract or its executor changes** (`cause`, on `reassign`, `revise_child`, `add_criterion`):
   `spec_defect` — the criteria were wrong or missing what the goal needs; `scope_expansion` — the goal itself

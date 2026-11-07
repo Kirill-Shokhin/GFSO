@@ -44,7 +44,8 @@ def test_every_canon_check_is_routed_by_the_product():
 def test_the_ui_reads_that_table_instead_of_carrying_its_own():
     """Enforcement, not narration: if the UI re-hardcodes the map, this goes red. The page may hold
     the FETCH and a rendering fallback; what it may not hold is a second source of truth."""
-    ui = (Path(__file__).resolve().parents[1] / "gfso" / "web" / "index.html").read_text(encoding="utf-8")
+    web = Path(__file__).resolve().parents[1] / "gfso" / "web"     # the page and its script modules
+    ui = "\n".join(f.read_text(encoding="utf-8") for f in [web / "index.html", *sorted((web / "js").glob("*.js"))])
     hardcoded = re.findall(r"'CHECK-\d\w*:\w+'\s*:\s*'FM-", ui)
     assert not hardcoded, f"the UI carries its own CHECK→FM table again: {hardcoded}"
     assert "/api/check_map" in ui, "the UI must read the routing from the product"

@@ -19,13 +19,18 @@ iteration count of the search↔audit refinement (the depth-of-working-through d
 """
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
 from gfso.adapters.llm.stats import _hint, _stat_line, tag_stage
+from gfso.inflight import staged
+from gfso.core.protocol.procedure import EXACT_TEXT, PROBE_S, pinned_files, with_named_files
 from gfso.core.types import LLMProviderPort, Stage
-from gfso.config import MODEL_DEFAULT
+from gfso.config import MODEL_DEFAULT, sufficiency_at_authoring
+from gfso.critic.runner import goal_obligations
 from gfso.llm import llm_factory
+from gfso.decompose.seams import critical_path, waves
 
 
 def _progress(msg: str, cb=None) -> None:
@@ -41,8 +46,9 @@ def _progress(msg: str, cb=None) -> None:
 
 
 def _spec_line(spec: dict) -> str:
-    """Shape readout of a structured spec (what is about to be built)."""
+    """Shape readout of a structured spec (what is about to be built), with the chain its seams make it wait on."""
     return (f"spec: {len(spec.get('subtasks', []))} subtasks · {len(spec.get('deps', []))} seams · "
+            f"{len(waves(spec))} waves ({' → '.join(critical_path(spec))}) · "
             f"{len(spec.get('root_criteria', []))} root criteria · {len(spec.get('accepted_risks', []))} risks")
 
 
@@ -54,7 +60,15 @@ def shape(spec: dict) -> tuple[int, int, int]:
 
 _PROMPTS = Path(__file__).parent / "prompts"
 SEARCH_PROMPT = (_PROMPTS / "search.md").read_text(encoding="utf-8")
-AUDIT_PROMPT = (_PROMPTS / "audit.md").read_text(encoding="utf-8")
+# …the bound a probe runs under is the engine's own, said where the probe is written (one owner: `procedure.PROBE_S`)
+AUDIT_PROMPT = (_PROMPTS / "audit.md").read_text(encoding="utf-8").replace("<PROBE_S>", str(PROBE_S))
+AGREE_PROMPT = (_PROMPTS / "agree.md").read_text(encoding="utf-8")
+AGREE_SCHEMA = {"type": "object", "required": ["contradictions"], "properties": {"contradictions": {
+    "type": "array", "items": {"type": "object", "required": ["node", "criterion", "description_says", "check_requires",
+                                                               "task_says", "task_takes"],
+                               "properties": {**{k: {"type": "string"} for k in (
+                                   "node", "criterion", "description_says", "check_requires", "task_says")},
+                                   "task_takes": {"enum": ["description", "check", "open", "both"]}}}}}}
 
 _NAME_DESC = {"type": "object", "properties": {
     "name": {"type": "string"}, "description": {"type": "string"},
@@ -70,7 +84,8 @@ _NAME_DESC = {"type": "object", "properties": {
         "THE DECISION PROCEDURE for this criterion — what will actually be run to decide it, written "
         "NOW, before the work exists. Each item: {behaviour: the conjunct it observes, command: how "
         "to observe it, runnable as written by someone who was not the executor, expect: what the "
-        "output must show}. A criterion quantified over an infinite domain ('for ANY input …') is "
+        "output must show, exact: true when `expect` is the whole output the command prints on correct work, "
+        "false when it describes the output or names a part of it}. A criterion quantified over an infinite domain ('for ANY input …') is "
         "not decidable as text: pin the finite, representative set that decides it — including the "
         "edge cases the requirement implies — and let the residue be visible rather than pretended "
         "away. Refer to the promised interface (the binary, the endpoint, the file) even though it "
@@ -91,8 +106,10 @@ _NAME_DESC = {"type": "object", "properties": {
         "items": {"type": "object", "properties": {
             "behaviour": {"type": "string"}, "command": {"type": "string"},
             "expect": {"type": "string"},
+            "exact": {"type": "boolean", "description": EXACT_TEXT},
             "inputs": {"type": "array", "description":
-                       "files the command reads, pinned with it: relative paths under `{inputs}`",
+                       "files the command reads, pinned with it: relative paths under `{inputs}`, read-only where it runs — a command "
+                       "may add files beside them, and edits one only in a copy it made",
                        "items": {"type": "object", "properties": {
                            "path": {"type": "string"}, "content": {"type": "string"}},
                            "required": ["path", "content"]}}},
@@ -109,6 +126,18 @@ _VOLUME = ("the obvious count of the work: roughly how much has to be written (l
 _FITS = ("can ONE session of the executor named under # EXECUTOR write this subtask AND run every one of its "
          "checks directly, holding all its requirements at once? Judged from the volume you counted, "
          "against that executor")
+# THE FILES, NAMED: a seam is the claim that the consumer's work reads the producer's output (§2.7), and the claim
+# becomes checkable once each part says which files it writes (`seams.seam_problems`)
+_WRITES = ("the files (or directories, written with a trailing `/`) this subtask creates or edits, relative to the "
+           "work's root — its own, so two "
+           "subtasks running at once never write the same file; a file both must edit needs the seam that orders them")
+_READS = ("the producer's files (from its `writes`) the consumer needs to WRITE and BUILD its own work — the "
+          "declarations it includes, the code it edits or extends. Not an implementation it only links to or runs "
+          "through so its probes can run: a function whose declaration the base owns is read from the base")
+_RUNS = ("the OTHER subtasks (ids) whose code this subtask's probes execute — a probe through the whole program runs "
+         "every part the program is built from; a driver of the subtask's own over the base's interfaces runs only "
+         "the base. Empty when its probes run only its own code and the base it builds on. Each one named must be a "
+         "producer this subtask waits on: it is checked in a place holding only what it waits on")
 _WHOLE_FITS = ("the same question for the WHOLE node being split — every subtask together with the "
                "integration: could one session of the named executor build and check all of it? The node is "
                "split for the plan either way; this decides whether its pieces are validated each on its "
@@ -133,8 +162,11 @@ AUDIT_SCHEMA = {
                 "id": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"},
                 "criteria": {"type": "array", "items": _NAME_DESC},
                 "volume": {"type": "string", "description": _VOLUME},
-                "fits_one_session": {"type": "boolean", "description": _FITS}},
-                "required": ["id", "name", "description", "criteria", "volume", "fits_one_session"]}},
+                "fits_one_session": {"type": "boolean", "description": _FITS},
+                "writes": {"type": "array", "items": {"type": "string"}, "description": _WRITES},
+                "runs": {"type": "array", "items": {"type": "string"}, "description": _RUNS}},
+                "required": ["id", "name", "description", "criteria", "volume", "fits_one_session", "writes",
+                             "runs"]}},
         "mappings": {"type": "array", "description":
             "Coverage: which subtask establishes which root criterion (every root criterion → >=1 subtask; "
             "every subtask → >=1 mapping).",
@@ -142,10 +174,13 @@ AUDIT_SCHEMA = {
                 "criterion": {"type": "string"}, "child_id": {"type": "string"}},
                 "required": ["criterion", "child_id"]}},
         "deps": {"type": "array", "description":
-            "Dep seams: {from: producer subtask id, to: consumer subtask id, glue: the seam truth-maker}.",
+            "Dep seams: {from: producer subtask id, to: consumer subtask id, glue: the seam truth-maker, reads: what "
+            "of the producer's files the consumer's WORK reads}. Every seam is wall time: the consumer waits for the "
+            "producer's PASS, so the longest chain of seams is the plan's floor on time.",
             "items": {"type": "object", "properties": {
-                "from": {"type": "string"}, "to": {"type": "string"}, "glue": {"type": "string"}},
-                "required": ["from", "to", "glue"]}},
+                "from": {"type": "string"}, "to": {"type": "string"}, "glue": {"type": "string"},
+                "reads": {"type": "array", "items": {"type": "string"}, "description": _READS}},
+                "required": ["from", "to", "glue", "reads"]}},
         "accepted_risks": {"type": "array", "description":
             "The RISK REGISTER — ONLY uncertain EVENTS with a real materialization probability that this "
             "decomposition ignores. predictability verdict per event: STATISTICAL = P estimable but rare "
@@ -252,6 +287,12 @@ AUDIT_FAST = ("Pace note: this is a SIMPLE task — keep the reduction TIGHT: no
               "measured 63-77s numbers below are from the prose-era wording.")
 
 
+def _stage(llm, label: str) -> None:
+    """A stage of the authoring starts: its name on the adapter's live ticks, and on the authoring's in-flight entry."""
+    _hint(llm, label)
+    staged(label)
+
+
 def _search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False) -> str:
     if prev_md:
         # The sentinel is an I/O-FORMAT convention only: the frozen prompt already mandates "say so
@@ -299,7 +340,16 @@ def _audit_fold(llm: LLMProviderPort, request: str, state_md: str, holes: str,
             "an empty patch.") + executor_line(executor)
     if fast:
         user += "\n\n" + AUDIT_FAST
-    return llm.complete_structured(AUDIT_PROMPT, user, FOLD_SCHEMA)
+    patch = llm.complete_structured(AUDIT_PROMPT, user, FOLD_SCHEMA)
+    # …THE SCHEMA'S TOP KEYS HOLD ON AN ANSWER WHOSE PARTS NAME NOTHING: no repair round can address a part with no id, and
+    # the plan was refused minutes later as "left None, None" (fresh install, 2 of 9 plans, 2026-11-04)
+    if nameless := [x for x in patch.get("add_subtasks") or () if not (isinstance(x, dict) and x.get("id"))]:
+        keys = sorted(nameless[0]) if isinstance(nameless[0], dict) else type(nameless[0]).__name__
+        logging.getLogger(__name__).warning(f"fold: {len(nameless)} part(s) with no id, the first carrying {keys}: asked again")
+        patch = llm.complete_structured(AUDIT_PROMPT, user + f"\n\nYour last answer gave {len(nameless)} entries of "
+                                        "`add_subtasks` with no `id`. Each entry is a whole part: id, name, description, "
+                                        "criteria; root criteria go in `add_root_criteria`.", FOLD_SCHEMA)
+    return patch
 
 
 def _apply_removals(s: dict, patch: dict, ops: list) -> None:
@@ -359,7 +409,8 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
 
     _apply_removals(s, patch, ops)
 
-    upd = {str(c.get("id")): _keeping_the_pinned_inputs(c, s["subtasks"])
+    files = _pinned_files(s)
+    upd = {str(c.get("id")): _filling_named_inputs(_keeping_the_pinned_inputs(c, s["subtasks"]), files)
            for c in patch.get("update_subtasks", [])}
     changed = [str(c.get("id")) for c in s["subtasks"] if str(c.get("id")) in upd and upd[str(c.get("id"))] != c]
     if changed:
@@ -373,14 +424,28 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
         if new:
             s[tgt] = s[tgt] + new
             ops.append(f"+{tgt} {len(new)}")
-    _add("subtasks", list(patch.get("add_subtasks", [])) + unknown_upd, lambda x: str(x.get("id")))
-    _add("root_criteria", patch.get("add_root_criteria", []), lambda x: str(x.get("name")))
+    _add("subtasks", [_filling_named_inputs(x, files) for x in patch.get("add_subtasks", [])] + unknown_upd,
+         lambda x: str(x.get("id")))
+    _add("root_criteria", _filling_named_inputs({"criteria": patch.get("add_root_criteria", [])}, files)["criteria"],
+         lambda x: str(x.get("name")))
     _add("mappings", patch.get("add_mappings", []),
          lambda x: (str(x.get("criterion")), str(x.get("child_id"))))
     _add("deps", patch.get("add_deps", []), lambda x: (str(x.get("from")), str(x.get("to"))))
     _add("accepted_risks", patch.get("add_accepted_risks", []), lambda x: str(x.get("item")))
     _add("scope", patch.get("add_scope", []), lambda x: str(x.get("item")))
     return s, ops
+
+
+def _pinned_files(spec: dict) -> dict[tuple[str, str], str]:
+    """{(criterion, file): body} of every file a probe of this plan pins with content — root criteria and subtasks."""
+    return pinned_files(list(spec.get("root_criteria") or [])
+                        + [c for k in spec.get("subtasks") or [] for c in k.get("criteria") or []])
+
+
+def _filling_named_inputs(item: dict, files: dict) -> dict:
+    """`item`'s criteria, each probe that names files without their content given the content this plan pins under its
+    criterion (`procedure.with_named_files`) — the fold's door; the machine issuer's is `issuer._new_child`."""
+    return dict(item, criteria=[with_named_files(c, files) for c in (item.get("criteria") or [])])
 
 
 def _keeping_the_pinned_inputs(replacement: dict, current: list) -> dict:
@@ -439,6 +504,22 @@ def _audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[st
     return llm.complete_structured(AUDIT_PROMPT, user, AUDIT_SCHEMA_PATCH)
 
 
+def _obligations_first(llm, request: str) -> str:
+    """The goal's obligations, read with the gate's own question from the goal alone, as the first fold's findings —
+    each to be decided by a pinned check on the part that builds it. A free search handed the first fold what IT found
+    missing, and haiku's first plan for c_compiler left 256 of the goal's obligations to no pin (sonnet's: 17); given the
+    list, 129 (one haiku reader, 2026-10-31). A reading that does not parse falls back to the search."""
+    gaps = goal_obligations(llm, request)
+    if not gaps:
+        return ""
+    return ("# THE GOAL'S OBLIGATIONS — every one must be DECIDED by the plan\n"
+            "Each line is an obligation of the goal and a result that would break it. Author the split so that EVERY "
+            "obligation is refused by a PINNED CHECK on the part that builds the behaviour (one check may decide "
+            "several: prefer integrated programs compared against the reference over one-case probes). A requirement "
+            "written only as prose in a criterion decides nothing.\n"
+            + "\n".join(f"- {g.get('obligation', '')}\n  breaks it: {g.get('admits', '')}" for g in gaps))
+
+
 def decompose_spec(request: str, model: str = MODEL_DEFAULT,
                    llm: LLMProviderPort | None = None, progress=None,
                    fast: bool = False, label: str = "1/1", executor: str = "") -> dict:
@@ -461,12 +542,20 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
     if getattr(llm, "on_tick", "absent") is None:  # adapter streams live ticks and none wired yet
         llm.on_tick = lambda msg: _progress(msg, progress)
     _progress(f"{label} searcher…", progress)
-    _hint(llm, f"{label} searcher")
-    holes = _search(llm, request, "", fast=fast)
+    _stage(llm, f"{label} searcher")
+    # …the search gives the split its structure (components, seams, failure modes), the goal's obligations its coverage:
+    # the obligations alone, in place of the search, lost structure on every E2 task (0.33–0.59 vs 0.50–0.84, 2026-10-31)
+    found = _search(llm, request, "", fast=fast)
     tag_stage(llm, Stage.SEARCH)
+    # …the gate's own question asked of the goal only where the authoring answers it at all: the measurement arm's
+    # switch exists so a plan the gate has NOT pre-repaired can still be authored (critic over the first fold)
+    owed = _obligations_first(llm, request) if sufficiency_at_authoring() else ""
+    if owed:
+        tag_stage(llm, Stage.AUTHORING_OBLIGATIONS)
+    holes = "\n\n".join(x for x in (found, owed) if x)
     _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
     _progress(f"{label} auditor (fold, first round)…", progress)
-    _hint(llm, f"{label} auditor")
+    _stage(llm, f"{label} auditor")
     patch = _audit_fold(llm, request, "", holes, fast=fast, executor=executor) or {}
     tag_stage(llm, Stage.AUDIT_FOLD)
     spec, ops = _fold_merge({}, patch)

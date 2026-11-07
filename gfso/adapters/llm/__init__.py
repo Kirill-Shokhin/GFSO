@@ -1,6 +1,6 @@
 """The model transports and the bookkeeping around them.
 
-Two ports, deliberately apart: zero-tool one-shots (`complete`) and TOOL-USING agent runs
-(`run_agent`, the headless CLI). A provider that covers only the first is usable for the checker
-and useless for a validator, and the verbs say so rather than failing halfway.
+A provider is chosen by the model spec (`registry.provider_for`): the Claude Code CLI (`headless`), or any chat API over
+its wire (`chat`) with the system's own agent loop (`toolloop`). Every provider records its calls in one neutral shape
+(`base`); `conformance` measures which roles a provider can hold.
 """

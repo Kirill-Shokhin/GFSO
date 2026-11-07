@@ -35,7 +35,7 @@ from gfso.serverctl import port_state
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.stdio import stdio_server
 from mcp.shared.message import SessionMessage
-from mcp.types import ErrorData, JSONRPCError, JSONRPCMessage
+from mcp.types import ErrorData, JSONRPCError, JSONRPCMessage, JSONRPCRequest
 
 from gfso.config import (reconcile_allowed, db_path as _db_path,
                          install_spawned_server_env, spawned_server_popen_env)
@@ -295,11 +295,19 @@ _RECONNECTS = 5
 _RECONNECT_WAIT_S = 2.0
 
 
-#: How long a forwarded call may go unanswered before the bridge calls the upstream gone. Well under
-#: any client's own idle timeout (Claude Code waits 1800s), because the point is to fail legibly
-#: rather than to outlast a slow verb: the long ones (`auto_decompose`, `validate_result`) stream
-#: progress, which arrives as traffic and clears the pending entry.
+#: How long a forwarded call may go unanswered before the bridge asks whether its session is still there. Well under
+#: any client's own idle timeout (Claude Code waits 1800s), because the point is to fail legibly.
 _CALL_TIMEOUT_S = 180.0
+#: How long the session has to answer that question, and how often the bridge looks.
+_ALIVE_WAIT_S = 30.0
+_WATCH_EVERY_S = 5.0
+#: The id of the bridge's own question: its answer ends here, the client never asked it.
+_ALIVE_ID = "gfso-bridge-alive"
+#: The longest a call waits on a live session, under the client's own ceiling (Claude Code's 1800 s): past it the client
+#: gives up with nothing said. The call may still be running: only the wait is answered.
+_CALL_CEILING_S = 1700.0
+_PAST_THE_CEILING = ("no answer in {:.0f} s, on a session still alive: the call may yet be running on the server. `next_steps` "
+                     "reads the work; the same `plan` again joins one under way, at no second price.")
 
 
 def _request_id(msg):
@@ -313,21 +321,40 @@ def _request_id(msg):
         return None
 
 
-async def _watch_unanswered(pending: dict, anyio) -> None:
-    """A CALL THAT WILL NEVER BE ANSWERED MUST NOT LOOK LIKE A SLOW ONE.
+async def _watch_unanswered(pending: dict, anyio, ask_alive, alive: dict, past_ceiling) -> None:
+    """A CALL THAT WILL NEVER BE ANSWERED MUST NOT LOOK LIKE A SLOW ONE, AND A SLOW ONE NOT LIKE THAT.
 
     The dead-session detector fires only when the server ANSWERS. After a restart the upstream can
     instead go quiet: the request leaves, nothing comes back, and the client waits out its own idle
     timeout — thirty minutes per call, measured on the agent door 2026-08-22, where two calls of the
     two simplest verbs in the product ate an entire session while the same server was answering HTTP
-    in 70 ms. Breaking the connection is what triggers the bridge's rebuild-and-replay path."""
+    in 70 ms. Breaking the connection is what triggers the bridge's rebuild path.
+
+    A long silence alone says neither, so the session is asked (`ask_alive`): its answer, in `alive`, is the evidence, a
+    server that forgot it says so to the dead-session detector, and silence breaks the leg. Broken on the silence
+    itself, every verb over 180 s failed for the agent, which sent it again: a new `plan` paid for each 204 s
+    (rehearsal, 2026-11-03). A call older than `_CALL_CEILING_S` is answered by `past_ceiling`, the leg left standing."""
+    asked = None
     while True:
-        await anyio.sleep(5)
-        oldest = min(pending.values(), default=None)
-        if oldest is not None and time.monotonic() - oldest > _CALL_TIMEOUT_S:
+        await anyio.sleep(_WATCH_EVERY_S)
+        now = time.monotonic()
+        for rid in [r for r, at in pending.items() if now - at > _CALL_CEILING_S]:
+            await past_ceiling(rid)
+        oldest = max(min(pending.values(), default=now), alive.get("at", 0))
+        if not pending or now - oldest <= _CALL_TIMEOUT_S:
+            asked = None
+        elif asked is None:
+            asked = now
+            await ask_alive()
+        elif now - asked > _ALIVE_WAIT_S:
             raise ConnectionError(
-                f"the shared server has not answered a call in {_CALL_TIMEOUT_S:.0f}s — rebuilding "
+                f"the shared server's session has not answered in {_CALL_TIMEOUT_S + _ALIVE_WAIT_S:.0f}s — rebuilding "
                 f"the bridge (a server restart orphans the session it was talking to)")
+
+
+def _alive_question() -> SessionMessage:
+    """The bridge's own `ping` on the session its calls are on."""
+    return SessionMessage(JSONRPCMessage(JSONRPCRequest(jsonrpc="2.0", id=_ALIVE_ID, method="ping")))
 
 
 def _is_dead_session(msg) -> bool:
@@ -457,7 +484,18 @@ async def _relay(url: str, client_read, client_write) -> None:
             # in the one place it is visible, and turned into the break that triggers a rebuild.
             if watch_for_dead_session and _is_dead_session(msg):
                 raise ConnectionError("the shared server no longer knows this session")
+            if watch_for_dead_session and _request_id(msg) == _ALIVE_ID:
+                alive["at"] = time.monotonic()
+                continue
             await dst.send(msg)
+
+    alive: dict = {}
+
+    async def late(rid) -> None:
+        """This call's wait alone answered, past the ceiling."""
+        pending.pop(rid, None)
+        await client_write.send(SessionMessage(JSONRPCMessage(JSONRPCError(
+            jsonrpc="2.0", id=rid, error=ErrorData(code=-32001, message=_PAST_THE_CEILING.format(_CALL_CEILING_S))))))
 
     try:
         async with streamablehttp_client(url, terminate_on_close=True) as (srv_read, srv_write, _sid):
@@ -465,7 +503,7 @@ async def _relay(url: str, client_read, client_write) -> None:
             async with anyio.create_task_group() as tg:
                 tg.start_soon(pump, client_read, srv_write)            # session → shared server
                 tg.start_soon(pump, srv_read, client_write, True)      # shared server → session
-                tg.start_soon(_watch_unanswered, pending, anyio)
+                tg.start_soon(_watch_unanswered, pending, anyio, lambda: srv_write.send(_alive_question()), alive, late)
     except BaseException:
         # …and NOBODY IS LEFT WAITING ON THE LEG THAT JUST BROKE.
         # WHAT THE BRIDGE KNOWS IS THAT THE CONNECTION BROKE. It does NOT know whether the call
@@ -478,11 +516,12 @@ async def _relay(url: str, client_read, client_write) -> None:
         # cannot be made from this side; what CAN be said is where to look.
         n = await _answer_the_orphans(
             client_write, pending,
-            "the shared server restarted and this bridge is rebuilding, so this call was not "
+            "the shared server restarted or stopped answering and this bridge is rebuilding, so this call was not "
             "answered. Whether it RAN on the server is not knowable from here — it may have "
             "completed, may have started, or may never have arrived. Check before you resend: "
             "`get_graph` / `get_task` for an authoring call, `get_verdict` for a validation, "
-            "`usage` for whether it was billed. Resending a call that did run costs a second one.")
+            "`usage` for whether it was billed. Resending a call that did run costs a second one; the same `plan` "
+            "again joins one still under way.")
         if n:
             print(f"[gfso connect] {n} call(s) in flight were ended rather than left waiting",
                   file=sys.stderr, flush=True)

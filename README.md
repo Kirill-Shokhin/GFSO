@@ -8,9 +8,9 @@
 ![Python](https://img.shields.io/badge/python-3.11%20%E2%80%93%203.13-blue)
 ![Status](https://img.shields.io/badge/status-preliminary-orange)
 
-<img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/hero.gif" alt="A task graph building itself, each node stepping through its states to Done, live" width="860">
+<img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/hero.gif" alt="A recorded run replayed in the web UI: parts of the plan run in parallel, each session on the timeline, a part and then the whole sent back and reworked, the goal delivered" width="860">
 <br>
-<sub>A goal becomes a live graph; each node is driven through its states to <code>DONE</code> — the protocol as agents and humans operate the same graph. <em>(a short capture, not the full flow)</em></sub>
+<sub>A recorded run, replayed in the UI: the goal's parts run in parallel, every session on the timeline below; a part, then the whole, sent back and reworked until its checks pass; the goal delivered. <em>(<code>sql_database</code> · Haiku 4.5, automatic mode — the run behind the table's 100% on the final plan. Midway an engine rule, since removed, stopped it for 6.6 h; it resumed on the fixed build, and the stop is folded out of the timeline.)</em></sub>
 
 </div>
 
@@ -29,6 +29,57 @@ Two properties carry that promise, and neither is a design choice you could tune
 <p align="center"><img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/gate.png" alt="The engine rejecting a self-signed PASS — verifier ≠ executor (§10.3)" width="820"></p>
 
 Self-approval is not discouraged. At a seam it is structurally impossible; the one way a self-issued verdict comes to stand there — signed while the node was internal, then made public by a change of Delegation — is named, not hidden (§16.9 exception 15, §16.13). Inside one scope an agent does check its own work — and stakes every bit of it a public delivery carries on the single public verdict at that scope's edge (§10.3).
+
+---
+
+## Measured
+
+One explicit contract per task, and nobody is handed tests. The agent alone is the default Claude Code agent: it writes the code, its own checks and its own report. Under GFSO's automatic mode one model plays every role and nobody holds the project, in two arms: **plan given**, where the system receives a plan whose checks were verified beforehand against the benchmark's oracle (for `c_compiler` some were derived from named held-out tests; `sql_database`'s was written by Sonnet 5.5 and repaired by hand, the areas of its probes chosen from what earlier trees failed on the held-out suite), and **own plan**, where the system writes the plan from the contract. Afterwards every arm is scored on the held-out suite.
+
+Two numbers per row, in this order. **Done** under GFSO means the promise was kept: every verdict ran the checks pinned to it, signed by a validator that is not the executor; every closed root below records all its pinned checks run. The **held-out score** is the second number: how complete the plan's checks were. Only the pre-registered rows count, by a pre-registration and its amendments, each written before its rows but one: the amendment that let the 100% final-plan row resume after an engine fix was written after that root's verdict was seen. One row of a cell is one observation, not a rate.
+
+### What each kind of value rests on
+
+| value | what shows it | where it stands |
+|---|---|---|
+| **A good plan is carried to the end** | plan given, a cheaper model | shown on `coreutils` · Haiku 4.5 and `c_compiler` · Haiku 5.5, under the plan-given condition above; `sql_database` · Haiku 4.5 closes only on a later plan, and those rows ran without the contract's addendum |
+| **A strong but imprecise plan is repaired in performance** | an open plan that contact completes | no row measures it |
+| **The system writes its own plan** | own plan, the same model | no comparison yet: on the counted builds, on Haiku 4.5 and on `c_compiler` · Haiku 5.5 this arm has no verdict on the contract, and where it closes the agent alone already reads at least 90%; earlier builds, below |
+| **Division of labour** | a stronger model writes the plan, a cheap one executes | seen only inside `sql_database`'s given plan on the Haiku rows; its cost is charged to no arm, so it is not priced |
+
+Where the agent alone already reads 90% or more, the row is no comparison of results. It shows what the system costs where the model needs no help.
+
+### The rows
+
+| task · model | the agent alone | GFSO, plan given | GFSO, own plan |
+|---|---|---|---|
+| `coreutils` · Haiku 4.5 | **done** 3 of 3; 59–73%; 8–13 min, $1.3–2.3 | **done** 2 of 2; 100%; 120–253 min, $21–40 | no verdict (stopped by hand at about $115, no ledger on disk) |
+| `coreutils` · Haiku 5.5 | **done** 3 of 3; 100%; 9–15 min, $0.3–1.0 | **done** 2 of 2; 100%; 19–33 min, $0.8–0.9 | **done** 1 of 1; 100%; 53 min, $1.0 |
+| `coreutils` · Sonnet 5.5 | **done** 3 of 3; 100%; 4–5 min, $0.7–0.9 | **done** 2 of 2; 100%; 7–10 min, $4.2–4.5 | **done** 1 of 1; 100%; 47 min, $24 |
+| `sql_database` · Haiku 4.5 | **done** 2 of 3; 9%; 10–12 min, $1.5–2.2 | first plan: not done 3 of 3, one ended by the issuer's cancel, two cut at the 9-hour ceiling; 7.9–8.4 h, $68–92; no reading. Amended build: not done 2 of 2; $89, $121; no reading on record. Final plan, addendum not served: done 2 of 2; 100% (resumed once after an engine fix) and 81.8%; 5.8 h, 7.6 h; $73, $63 | no verdict (stopped by the operator's spend guard at $60, no ledger on disk) |
+| `sql_database` · Haiku 5.5 | **done** 3 of 3; 100%, 100%, 90.9%; 16–21 min, $0.3–1.3 | **done** 2 of 2; 100%; 56–57 min, $1.0–1.2. Final plan, polished on this model's own earlier runs, addendum not served: done; 100%; 51 min, $2.4 | **done** 1 of 1; 90.9%; 4.4 h, $4.0 |
+| `sql_database` · Sonnet 5.5 | **done** 3 of 3; 100%; 6–8 min, $1.0–1.3 | **done** 2 of 2; 100%; 13–17 min, $4.3–5.6 | **done** 1 of 1; 100%; 110 min, $29 |
+| `c_compiler` · Haiku 4.5 | not done 3 of 3; 12–15%; 7–10 min, $0.9–1.6 | no root closed in 5 rows: two cut at the ceiling ($60, $65); two more on the amended build, no score on record ($85, $126); one on the last plan, addendum not served, stopped by the system after 8 h ($67) | no verdict ($34 by the spend guard's log, no ledger on disk) |
+| `c_compiler` · Haiku 5.5 | not done 3 of 3; 74–91%; 19–36 min, $1.4–4.4 | **done** 2 of 2; 98.6%, 99.7%; 71–92 min, $5.5–9.3 | no verdict on this contract |
+| `c_compiler` · Sonnet 5.5 | **done** 2 of 2; 99.7%; 112–117 min, $48–52 (a third row void) | **done** 2 of 2; 99.7%, 99.0%; 35–43 min, $12–15 | no verdict, two attempts |
+
+Time is active: the machine's sleep and the account's limit windows are measured off each row's own events and taken out. Cost is the CLI's reported cost, on the row's ledger under GFSO; a run cut before its report is priced by its model's measured factor. On the plan-given arm the cost leaves out writing and verifying the plan. `sql_database`'s held-out suite has 11 coarse items, so one item is 9%. On `c_compiler` the plan-given scores leave out the six held-out tests its probes were derived from, as pre-registered; the other arms are over all 299. On that shorter yardstick Sonnet 5.5 alone reads 100%: its one failing test is one of the six. The task's starter code alone reads 13% on `coreutils`, 9% on `sql_database`, 20% on `c_compiler`, so a row left at the starter has no reading, and the agent alone on `c_compiler` · Haiku 4.5 ends below it.
+
+Across the rows on one contract, the agent alone claimed "done" 19 times, 8 of them below the held-out suite (6 on the shorter yardstick). The plan-given arm closed 14 roots, 10 at 100% and 4 at 98.6–99.7%. The own-plan arm closed 4, 3 at 100% and one at 90.9%, a requirement its plan did not write.
+
+The final `sql_database` rows are counted by their amendment and read apart: their launch did not serve the addendum the agent alone ran on, so they are not on one contract with it, whatever the same oracle scores. The 81.8% row's gap is one `UPDATE … WHERE` defect no check of that plan could see; run on from that tree with one probe added, chosen after the held-out suite had shown the failure, a continuation and not a fresh sample, it closed at 100% for another 52 min and $11.
+
+**The builds are not one build.** The agent alone is in no build's path. Each arm's rows state theirs, and each change answers a defect measured on an earlier row.
+
+| rows | build | what differs from the one before |
+|---|---|---|
+| the agent alone; plan given, first plans | `65cf516` | the pre-registered build |
+| own plan, `coreutils` and `sql_database` · Haiku, `coreutils` · Sonnet | `fb85648` | a criterion the system writes is read against its own checks before the plan is built |
+| own plan, `sql_database` · Sonnet and `c_compiler`; plan given, amended, Haiku 4.5 | `9155db9` | pinned inputs kept through a repair; a leaf that keeps failing owes a split; a limit window no longer reads as an answer; a check cited by its directory counts as that check |
+| plan given, final plan, `sql_database` | `9b405b4`; `0ecd3de` then `7981da9`; `50d7835`; the continuation `31a5e40` | a handed plan is the user's at every node; a run has a stopped state; a count of failures no longer stops a run; addendum not served |
+| plan given, last plan, `c_compiler` · Haiku 4.5 | `7213607` | the same line; addendum not served |
+
+No row of this table ran on the current code. Beside it, not counted in it, two debugging rows of the same cell (`coreutils`, Haiku 5.5, own plan, addendum served): build `c5aa7ed` stopped at its plan's review after 78 min and $1.08 with no work started, a defect to read and not a result; build `7a8480c` closed **done** at 100%, on the accepted tree and the signed branch alike, in 77 min for $2.27, the plan 27 of them and $0.61 of it. Own-plan rows of 2026-10-27…31 ran without the addendum and do not read against the agent alone. Rows of earlier builds on the same contract and plan exist and none is counted here: `coreutils` · Haiku 4.5 over five rows each reads 59–76% alone and 100% plan given; `c_compiler` · Haiku 5.5 alone has a best of 94.6%, not done; own plan on `sql_database` · Haiku 4.5, the one place this arm closes where the agent alone is weak, reads 81.8% ($63; whether that row's promise held is disputed on its own record), 45.5% ($37) and one left at the starter ($3.9), its other rows not done at up to $216. Own plan without the addendum: `c_compiler` · Haiku 5.5 not done in four rows at the 4-hour ceiling, `coreutils` · Haiku 5.5 done at 89.1% and 87.4%. Every counted row is in [`e3_rows.csv`][e3rows]; the void rows and what is not shown are in [`EVIDENCE_LOG.md`][evidence] (13.46, 13.47, 13.51).
 
 ---
 
@@ -78,15 +129,23 @@ A reference implementation exercises the protocol end-to-end — a way to run th
 
 ```bash
 pipx install gfso        # or: uv tool install gfso — pip install gfso also works
-gfso setup               # registers the agent door, brings the one server up, opens the UI
+gfso setup               # registers the agent door, builds the agents' container, brings the one server up, opens the UI
 ```
 
-<sub>Working on GFSO itself, rather than with it: `git clone https://github.com/Kirill-Shokhin/GFSO
+It needs Python 3.11–3.13 and [Docker](https://docs.docker.com/get-docker/). <sub>Working on GFSO itself, rather than with it: `git clone https://github.com/Kirill-Shokhin/GFSO
 && cd GFSO && pip install -e .`, then the same `gfso setup`.</sub>
+
+Then talk to your agent in Claude Code. Your one step is a token (`claude setup-token`, then `gfso credential claude`). Tell it the task in words and to use gfso (a quick fix it otherwise keeps to itself): it checks the machine, makes the repository if there is none and says the scheme it recommends (`auto`, every role on Haiku 5.5, the most tested). The system writes the plan as a file of its own ([`PLAN_FORMAT.md`](docs/PLAN_FORMAT.md)); your agent reads it whole as its customer and sends a note (`refine_plan`, a stronger model if it wants) or gives the go, and the project is built from the file exactly. From there it runs unattended and you watch at the link it writes in the chat; contact may change a check of the plan, on the record with its reason. The root's verdict and the branch come back in the chat.
+
+What has run of this: fresh Claude Code clients on clean installs of one day's builds, the last `6e4a906`, fixes landing between the runs, each told a small command-line task in words, every role on Haiku 5.5, the network `open`. Nine runs reached the root's `PASS`, in 10 to 23 minutes where Docker answered in time, for $0.05–0.16 on the system's side and about $0.30 for the client, one of them in an interactive session on that last build, the rest with `claude -p` on earlier ones; one took 54 minutes on a stall since fixed. One added a command to an existing repository named with a space. On that build too, a task of four parts reached its `PASS` in 39 minutes, $0.39 on the system's side; an earlier one was stopped at 60 with no verdict. Each landed on a branch with `main` untouched; there is no held-out suite here, and the results on control data were right where they were run. Told only the name `gfso`, one client searched the web and gave up: give it this page's address. On build `ffe8b34`, three fresh clients side by side, each reached its `PASS`: a small task with `claude -p` in 24 minutes, a task of three parts with `claude -p` in 28, a small task in an interactive session in 24; $0.12–0.24 on the system's side, $0.24–0.62 for the client; no network flow dropped, each result right on control data, `main` untouched, and when each goal was over its containers ended. The interactive client said on screen what gfso is and gave the link right after the go; with `claude -p` a person sees only the final text. A first try of the parts task ended after 40 seconds: `claude -p` refused the client's `git` commands for a new repository with nobody there to approve them; it ran once they were allowed in advance. These clients had gfso's tools, their folder and their `git`, `python` and `gfso` commands allowed ahead. Five more had nothing allowed ahead and no git identity, in a fresh client's default auto mode, on the builds that followed: each reached its `PASS`, small tasks in 12, 14 and 27 minutes, tasks of parts in 27 and 45, $0.07–0.42 on the system's side, $0.30–1.34 for the client. A person answered the client's own three first-run menus, on the last two runs nothing else: once the answer carried the plan's text, the prompt about reading it outside the folder was gone. Afterwards a script opened two of the links: the verdict, the branch, the cost and the time stood on the first screen; no person has looked yet. Larger tasks through a client have not run.
+
+Dispatched work runs in [Docker](https://docs.docker.com/get-docker/), which the installation requires: nothing of your disk is mounted where an agent runs, no agent holds your provider's credential, no session reads another's files but by the plan's edges, no one validates its own delivery, and the result comes back on a branch, your own untouched. Choose the network per project: `open` (the default) when the work may leak or needs the current internet; `off` when it must not and for checking runs, reaching only the model. Your repository's whole history enters, and the model's provider reads what the agents send it. What is promised and what is not: [`SECURITY.md`](SECURITY.md). `gfso setup` builds the agents' image from the file the package ships and declares it as the execution `default`.
+
+Claude Code is the one provider that has run live. The others are built and have met only a stand-in model so far: a model spec `provider/model` names an OpenAI-compatible preset (Ollama, LM Studio, vLLM, llama.cpp, DeepSeek, Qwen, OpenRouter, Groq, Together, Mistral, Gemini, OpenAI), an address of your own, or a class you plug in, and every provider's credential has one place ([`architecture.md`][arch]).
 
 `gfso setup` is idempotent. It registers the door with Claude Code for your user — by the console script's absolute path, so it resolves from every directory and survives your leaving a virtualenv — and `--desktop` also writes the entry into Claude Desktop's configuration, keeping a backup. When something is wrong later, `gfso doctor` says what — and its output is what a bug report should carry.
 
-The engine, the UI and the gate cost nothing to run: no API key, no model. The four verbs that do call one — `auto_decompose`, `review_decomposition`, `validate_result`, and delegation to agent executors — ride the [Claude Code CLI][cc] as a subprocess, so they need no key of their own and spend the usage of whatever account that CLI is signed in to. Without it on your `PATH` they report that the provider answered nothing, and everything else still works.
+The engine, the UI and the gate cost nothing to run: no API key, no model. The verbs that do call one — `plan`, `refine_plan`, `auto_decompose`, `review_decomposition`, `validate_result`, and delegation to agent executors — ride the [Claude Code CLI][cc] as a subprocess, and spend the usage of the token or API key set by `gfso credential claude` (`claude setup-token` gives a token) — never the login of the machine the CLI happens to hold. With no credential set they refuse to run and say where to set one, and everything else still works. Delegation runs unattended, so its executors run in that container ([`SECURITY.md`](SECURITY.md)), which holds no login of your machine: its model is reached on a credential set by `gfso credential claude` (`claude setup-token` gives one). On your own machine they run only with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` — the explicit opt-out of isolation.
 
 The gate, in one second and with no AI involved:
 
@@ -103,7 +162,15 @@ The verifier ≠ executor gate from the opening runs in both of the system's reg
 - **Sequential** — one agent session structures a goal (`auto_decompose` runs the search↔audit method in one call), executes the frontier itself, and after each delivery gets a verdict from a fresh read-only validator that *runs* the criteria. The gate is on the node, not on the name signing it: at a seam a `PASS` needs a verdict for the delivery that stands, from the instrument or from a person recording what they observed.
 - **Delegated** — register executor and validator roles once, and assignment *is* delegation: a node assigned to a registered executor is picked up automatically, its report wrapped into the canonical signals, the validator auto-runs on delivery, and a failed criterion re-enters a bounded rework loop with the failure as feedback. Humans are never registered — a node assigned to a person simply waits for *their* signals. Mixed human/agent graphs are the normal case.
 
-The UI (shown at the top) surfaces every write live, and draws what a list of finished nodes cannot say: a node closed on a registered instrument's verdict, one closed on a person's word, and one standing at `PASS` over a record that contradicts it are three different greens, and the page tells them apart. Visual design beyond that is out of scope at this stage.
+The UI (shown at the top) surfaces every write live and says what the engine says: what is at work now and on which node, what waits and on what, the run's sessions in time and its spend. A node's panel fits one screen — its state, its last verdict, every criterion with its history across rounds; the long texts are one click away:
+
+<p align="center"><img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/ui-panel.png" alt="A node's panel: state, last verdict, and each criterion with its rounds — crosses where a round failed it, a dot where it passed" width="820"></p>
+
+Progress reads the goal's criteria along the split — each part's own criteria at its own verdicts, never a sum across a level — beside the parts the split made responsible for each of the goal's criteria:
+
+<p align="center"><img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/ui-progress.png" alt="The progress view: one track per part counting its criteria passing at each verdict, and the goal's criteria against the parts responsible for them" width="820"></p>
+
+The page also draws what a list of finished nodes cannot say: a node closed on a registered instrument's verdict, one closed on a person's word, and one standing at `PASS` over a record that contradicts it are three different closes, and the page draws them apart.
 
 ---
 
@@ -113,15 +180,15 @@ This is a preliminary release. The theory is stated in full; the thing that will
 
 **Theory.** Formal framework (6 theorems + 8 further results), the binary scale (sourced in A1) and the uniqueness of `AND` and the six-mode basis (complete modulo one named covering axiom), the agent-free ontology of the five links (§5), and a falsifiability register are in place. The canon is English (v4.1); the Russian working draft it was re-authored from stays frozen as the provenance record. **What the canon leaves falls in three classes**, kept apart by a criterion the document states and applies entry by entry (§20.1): named boundaries — questions inside the theory whose closure it shows unavailable from inside (§20.8); the questions around it whose answers would change none of its claims, where it says it stops (§20.9); and requirements not yet built or measured (§20.10). Its every load-bearing claim carries what would refute it in [`falsifiability.md`][fals]; that register, not a roadmap, is what would reopen the canon. The formal spine is a Lean 4 development on the language kernel — no mathlib, no `sorry` — that audits the axiomatic surface rather than standing in for the arguments: exactly three covering axioms carry the "no further kind" results inside it, every other postulate's placement is disclosed — the AI layer's covering of the inference types stands outside it — and a fail-closed CI guard rejects any axiom "outside the whitelist and Lean's three foundations" — the whitelist's six entries the three axioms and the three predicates they quantify over (§20.4; [`formal/README.md`][formal]). Three TLA+ models are model-checked, and of the five guards CI runs, that whitelist is one — the other four hold this README, the mirrors and the code to the canon's sections, names and counts, and their Lean and TLA citations to names that exist.
 
-**Implementation.** Protocol engine, production adapters, the web UI, `auto_decompose`, independent execution validation with the verifier ≠ executor gate, the Level-2 review of a decomposition before code exists, delegation with auto-validation and bounded rework, multi-project isolation, and a shared multi-session server — all working, across 1132 tests (6 of them exercise embedding the core into a foreign host, against a reference host carried in the suite; 6 more build the distribution, install the wheel into a fresh environment and drive it from a directory that is not this repository).
+**Implementation.** Protocol engine, production adapters, the web UI, `auto_decompose`, independent execution validation with the verifier ≠ executor gate, the Level-2 review of a decomposition before code exists, delegation with auto-validation and bounded rework, multi-project isolation, and a shared multi-session server — all working, across 3730 tests (7 of them exercise embedding the core into a foreign host, against a reference host carried in the suite; 6 more build the distribution, install the wheel into a fresh environment and drive it from a directory that is not this repository).
 
 **Empirical.**
 - **E0** — on 148 BCB-Hard tasks, explicit unit-test criteria raise Haiku 4.5's zero-shot solve rate from 29.1% to 63.5% — one attempt each, no rework loop; the spec-carrying prompt costs ×1.85 the tokens.
 - **E1** — the failure-mode taxonomy against 216 public post-mortems: **0 / 216** need a mode outside it (annotated over seven labels; every record carrying the seventh, withdrawn label carries one of the six).
 - **E2** — the search ↔ audit cycle raises coverage of a completeness-audited reference decomposition on 9 of 10 domains (74 → 81% average across ten diverse domains) and is productized as `auto_decompose`. Measured against a bare-built reference, this shows the cycle *converges* — not that the discipline itself pays off, which is **E3**.
-- **E3** *(open)* — whether compositional validation holds on real multi-agent engineering, where a decomposition's *faithfulness* to its domain is exercised, not just its structure. Long-horizon deployment validation follows.
+- **E3** *(in part)* — the bare agent against the same model under GFSO's automatic mode, on explicit contracts with held-out suites, three tasks by three models (above, *Measured*). Shown on a plan given and verified against the oracle; with the system writing its own plan, the weakest model has no verdict on the counted builds. Long-horizon deployment validation follows.
 
-Each of those is recorded run by run, with its own boundaries, in [`EVIDENCE_LOG.md`][evidence]; what GFSO does to real engineering work is **not** among them — that is E3, and it is open.
+Each of those is recorded run by run, with its own boundaries, in [`EVIDENCE_LOG.md`][evidence].
 
 The permanent boundaries are stated, not buried: a domain-silent false-`pass` cannot be caught a priori by any discipline (Lemma 1); the causal correctness of a decomposition is a characterized boundary, not an open algorithm; global uniqueness of the basis cannot be derived from inside (a named boundary), while on the protocol side the same question is **settled negatively over bare adequacy** (over a fully pinned design vector it meets the same wall) — requirements pin which exits must exist, not where they go, so the rows demand eight roles, not distinct states, two more (CANCELLING, ESCALATED) are pinned by a stated design decision, and the rest is free design; over the log, named conditions force every cell up to REWORKING's label, their naturalness unsettled (§13.3, §13.4, §13.6, §20.7).
 
@@ -168,6 +235,7 @@ MIT
 [fals]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/falsifiability.md
 [vision]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/applied_gfso_vision.md
 [depmap]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/gfso_dependency_map.md
+[e3rows]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/e3_rows.csv
 [evidence]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/EVIDENCE_LOG.md
 [arch]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/architecture.md
 [using]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/USING_GFSO.md

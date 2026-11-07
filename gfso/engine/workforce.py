@@ -24,6 +24,7 @@ class Workforce:
         # wait message) and a field born in the dispatcher had all three reading it defensively —
         # which reads as "nobody is registered" on any engine the dispatcher has not touched yet.
         self._roster: dict[str, str] = {}
+        self._roster_was: dict | None = None    # the roster last published, None before the first (`publish_roster`)
         #: WHOSE each published instrument is — `{validator id: project or None}`, written by
         #: the dispatcher beside `_roster`. Declared here rather than read defensively, because
         #: a field a reader has to guess at is a field two readers will guess differently.
@@ -36,9 +37,12 @@ class Workforce:
         #: the dispatcher each round (see `bound_validator`).
         self._bound_validators: dict = {}
 
-    def publish_roster(self, kinds: dict) -> None:
-        """The dispatcher's answer to "who of the non-human participants is what" — `{id: kind}`."""
-        self._roster = dict(kinds or {})
+    def publish_roster(self, kinds: dict) -> bool:
+        """The dispatcher's answer to "who of the non-human participants is what" — `{id: kind}`. True when it changes
+        a roster already published — the first publication after a start is no change."""
+        kinds, was = dict(kinds or {}), self._roster_was
+        self._roster, self._roster_was = kinds, kinds
+        return was is not None and was != kinds
 
     def roster(self) -> dict:
         """`{id: kind}` as last published — what `validation.party_kind` reads."""

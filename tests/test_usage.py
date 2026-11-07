@@ -131,3 +131,37 @@ def test_the_money_total_names_its_scope_on_a_multi_project_server(monkeypatch, 
         assert c.get("/api/usage?project=nosuchproject").status_code == 404
     for e in list(reg._engines.values()):
         e.stop()
+
+
+def test_what_a_provider_does_not_report_is_stored_as_not_reported(tmp_path):
+    """A call whose provider said nothing of its tokens or price is stored with them EMPTY, not 0: the page reads a 0
+    as "spent nothing" — a refusal — and a provider that reports less than ours would have its every call filed there."""
+    e = _engine(SqliteStorage(str(tmp_path / "u.db")))
+    e.record_llm_usage("executor", _Provider([{"model": "other", "duration_ms": 900}]), TaskId("root"))
+    e.record_llm_usage("executor", _Provider([{"model": "ours", "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}]),
+                       TaskId("root"))
+    told, said = e.usage_calls()[-2:] if e.usage_calls()[0]["model"] == "other" else e.usage_calls()[:2][::-1]
+    assert [told[k] for k in ("input_tokens", "output_tokens", "cache_input_tokens", "cost_usd")] == [None] * 4
+    assert [said[k] for k in ("input_tokens", "output_tokens", "cost_usd")] == [0, 0, 0.0]
+
+
+def test_a_round_that_handed_over_says_which_note_it_wrote(tmp_path):
+    """A session handed over before its context outgrew the resource is the cost measurement's own column: the round
+    that wrote the n-th note carries n, every other round nothing — dropped, the reopen was indistinguishable from a
+    fresh session and the handover's saving could not be read off the ledger."""
+    e = _engine(SqliteStorage(str(tmp_path / "u.db")))
+    e.record_llm_usage("executor", _Provider([{"cost_usd": 0.1, "ended": "answered"},
+                                              {"cost_usd": 0.1, "ended": "answered", "handover": 2}]), TaskId("root"))
+    assert [c["handover"] for c in e.usage_calls()] == [None, 2]
+    with TestClient(create_app(e)) as c:
+        assert [r["handover"] for r in c.get("/api/usage?detail=true").json()["calls_detail"]] == [None, 2]
+
+
+def test_each_call_is_booked_at_its_own_end_not_at_the_drain(tmp_path):
+    """A run's rounds are drained together after it; booked at the drain's moment they lay on top of each other, and a
+    timeline read them as parallel sessions (ui stream, 2026-10-27). A call says when it ended, and that is its time."""
+    e = _engine(SqliteStorage(str(tmp_path / "u.db")))
+    e.record_llm_usage("executor", _Provider([{"cost_usd": 0.1, "at": 1_800_000_000.0},
+                                              {"cost_usd": 0.1, "at": 1_800_000_300.0}]), TaskId("root"))
+    first, second = (c["ts"] for c in e.usage_calls())
+    assert first < second and first.endswith(":00") and second.endswith(":00"), (first, second)

@@ -13,24 +13,27 @@ import time
 from pathlib import Path
 import uuid
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Union
 
-from gfso.core.types import (
-    TaskId, AgentId, Spec, Criteria, AcceptedRiskItem, CriterionMapping,
+from gfso.core.types import (HOST, 
+    TaskId, AgentId, Spec, Criteria, AcceptedRiskItem, CriterionMapping, DepEdge, seams_apart,
     SignalData, Signal, Predictability, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS, Verdict, State,
     RevisionReason, Register, register_of, settled_positive, passed,
 )
-from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_MEANS, q_T_numerator, q_V_reversed
-from gfso.core.graph.model import root_of
+from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_GRADES, Q_MEANS, alarm, q_T_numerator, q_V_reversed
+from gfso.core.graph.model import door_off_s, on_the_wall, root_of
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent, verdict_word
-from gfso.core.protocol.procedure import (INPUTS_TOKEN, materialize_inputs, probe_id,
+from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
                                           probes_from as _checks_of)
 from gfso.core.protocol.validation import P2P_SIGNALS, Role
 from gfso.config import (data_dir as _data_dir, WAIT_MAX_SECONDS, WAIT_POLL_SECONDS,
                          VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE,
                          agent_id as _config_agent_id)
 from gfso.engine import Engine
+from gfso.engine.frontier import step_role
+from gfso.engine.moves import Move, door_holder, signal_role
+from gfso.engine.verdicts import OUTSIDE_NOTE
 
 
 # The verbs that may bring a PROJECT into existence — everything else answers "no such project"
@@ -43,7 +46,7 @@ PROJECT_CREATING_VERBS = frozenset({"create_task", "auto_decompose", "decompose"
 # name a project made `register_agent` refuse for a project that did not exist yet — while its own
 # help says the roster is server-wide. A newcomer hit that as a chicken-and-egg on their first
 # command (measured 2026-08-21).
-PROJECTLESS_VERBS = frozenset({"register_agent", "unregister_agent", "list_agents"})
+PROJECTLESS_VERBS = frozenset({"register_agent", "unregister_agent", "list_agents", "plan", "refine_plan"})
 
 
 # ── serialization helpers ────────────────────────────────────────────────────
@@ -79,14 +82,14 @@ def _accepted_risks_from(items: list) -> tuple[AcceptedRiskItem, ...]:
 
 
 def _dep_of(c: dict) -> Optional[TaskId]:
-    """The producer this criterion consumes — ONE node, or none.
+    """The producer this criterion consumes — ONE node, or none. On the wire an entry with `depends_on` and no
+    `check` declares that Dep edge, its description the glue, and is no criterion (`seams_apart`); with a check it
+    is a criterion reading the producer's result, and implies the edge (§2.7).
 
-    A Dep is criteria-content (§2): the seam lives on the consumer as a criterion naming its
-    producer, so two producers are two criteria, not one criterion naming two. A list here used to
-    be stored verbatim and surfaced later as a Dep edge whose `from` was a list — which crashed the
-    cycle check (`unhashable type: 'list'`) and took down a run mid-flight, four hours in. An
-    agent's malformed input must be REFUSED at the door with a sentence it can act on, never
-    accepted into the graph to fail somewhere else.
+    One per entry: a list here used to be stored verbatim and surfaced later as a Dep edge whose `from` was a
+    list — which crashed the cycle check (`unhashable type: 'list'`) and took down a run mid-flight, four hours in.
+    An agent's malformed input must be REFUSED at the door with a sentence it can act on, never accepted into the
+    graph to fail somewhere else.
     """
     dep = c.get("depends_on")
     if dep is None or dep == "":
@@ -94,8 +97,8 @@ def _dep_of(c: dict) -> Optional[TaskId]:
     if isinstance(dep, (list, tuple, set)):
         raise ValueError(
             f"criterion '{c.get('name')}': depends_on names {len(dep)} producers "
-            f"({', '.join(map(str, list(dep)[:4]))}) — a Dep is carried by ONE criterion per seam "
-            f"(§2), so declare one `depends_on` criterion for each producer you consume")
+            f"({', '.join(map(str, list(dep)[:4]))}) — a Dep edge has ONE producer (§2.7), so "
+            f"declare one per producer you consume (`add_dependency`, or a child's `deps` in `decompose`)")
     if not isinstance(dep, str):
         raise ValueError(f"criterion '{c.get('name')}': depends_on must be a task id, got "
                          f"{type(dep).__name__}")
@@ -140,7 +143,7 @@ def _spec_from(d: dict) -> Spec:
                 covers_risks=tuple(d.get("covers_risks", ())))
 
 
-def task_out(t, engine: Optional[Engine] = None) -> Optional[dict]:
+def task_out(t, engine: Engine, plan: bool = True) -> Optional[dict]:
     """The node as a reader sees it — THE one shaping of a node, every door's (the HTTP door kept a second one, and the
     two drifted: a criterion's `depends_on` on one side only, the rework count and deadline on the other — D-F16). `plan_verified` is about the node's DECOMPOSITION (its Level-2
     review is current), never about the work — it used to be called `verified`, and on a leaf that
@@ -149,6 +152,7 @@ def task_out(t, engine: Optional[Engine] = None) -> Optional[dict]:
     there rather than false."""
     if t is None:
         return None
+    wall = lambda at: on_the_wall(engine.graph, at).isoformat() if at else None   # outside, every time is the wall's
     out = {
         "id": t.id, "name": t.spec.name, "description": t.spec.description, "state": t.state.name,
         "assignee": t.assignee, "parent_id": t.parent_id,
@@ -167,6 +171,9 @@ def task_out(t, engine: Optional[Engine] = None) -> Optional[dict]:
                       # field the next `edit_criteria` silently drops.
                       "composition": c.composition}
                      for c in t.spec.criteria],
+        # …AND THE PRODUCERS IT WAITS FOR, in the form `decompose` takes them: the edges were read off its criteria
+        # while they rode there, and a read of the node lost them when they became records of their own (§2.7)
+        "deps": [{"from": str(e.from_id), "glue": e.glue} for e in engine.graph.declared_edges(t.id)],
         # THE REGISTER AS RECORDED, not its item texts. `edit_accepted_risks` learned to answer this
         # in full on 2026-08-21 and every OTHER read of a node kept returning bare strings — so a
         # caller who classified a risk STATISTICAL, justified it and named its invalidation
@@ -189,23 +196,23 @@ def task_out(t, engine: Optional[Engine] = None) -> Optional[dict]:
         "covers_risks": list(t.spec.covers_risks),
         "done_reason": t.done_reason.name if t.done_reason else None,
         "iteration": t.iteration, "max_iterations": t.max_iterations, "reopens": t.reopens,
-        "deadline": t.deadline.isoformat() if t.deadline else None,
+        "deadline": wall(t.deadline),
         "created_at": t.created_at.isoformat() if t.created_at else None,
-        "state_entered_at": t.state_entered_at.isoformat() if t.state_entered_at else None,
+        "state_entered_at": wall(t.state_entered_at),
         "was_challenged": t.was_challenged,
         "criterion_mappings": [{"criterion_name": m.criterion_name, "child_id": str(m.child_id)}
                                for m in t.criterion_mappings],
     }
     # a leaf has no plan to verify, so the field is absent there; read without an engine, a node with no mapping holds no
     # split (the polled list served `plan_verified: false` on every leaf — critic O2)
-    if engine.graph.get_active_children(t.id) if engine is not None else t.criterion_mappings:
+    if engine.graph.get_active_children(t.id) if plan else t.criterion_mappings:
         out["plan_verified"] = t.verified
         # …AND WHETHER THAT LETS THE CHILDREN START, which is the question a reader actually has.
         # `plan_verified: true` means the STRUCTURAL levels are current; a caller read it as "the
         # plan is admitted" while `review_decomposition` was answering `execution_admitted: false`
         # about the same node in the same minute, and only that verb's payload carried the
         # disclaimer (measured on the human door 2026-08-22). Two surfaces, one fact.
-        if engine is not None:
+        if plan:
             out["execution_admitted"] = engine.execution_admitted(t.id)
             if _open := engine.open_l2_findings(t.id):
                 out["l2_open"] = _open
@@ -248,6 +255,12 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
     out = task_out(t, engine)
     if (blocked := _blocked_by(engine, t)):
         out["blocked_by"] = blocked
+    # …the validator's findings standing on it — what a ruling (ACCEPT_CHALLENGE `retire_findings`) names by id
+    if (found := engine.regression_probes(TaskId(task_id))):
+        out["regression_probes"] = found
+    # …and what its validators, and its children's, observed outside the written criteria — the holder is its issuer
+    if (seen := engine.outside_the_criteria(t.id)):
+        out["outside_the_criteria"] = {"observations": seen, "judge": OUTSIDE_NOTE}
     return out
 
 
@@ -738,7 +751,14 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
            "ts": (rec or {}).get("ts")}
     # …AND WHAT IT NO LONGER RE-RAN BY ITS ISSUER'S RULING: a PASS read without it reads as wide as one that re-ran all
     if _ret := engine.retired_findings(TaskId(task_id)):
-        out["retired_after_refutation"] = [{k: r.get(k) for k in ("criterion", "id", "by", "why")} for r in _ret]
+        out["retired_after_refutation"] = [{**{k: r.get(k) for k in ("criterion", "id", "by", "why", "command", "expect", "at")},
+                                            "decided_by": "system" if r.get("by_system") else "person"} for r in _ret]
+    # …AND WHAT A VALIDATOR RE-RAN AND DID NOT REPRODUCE: no later PASS re-runs it
+    if _unrep := engine.findings_not_reproduced(TaskId(task_id)):
+        out["findings_not_reproduced"] = _unrep
+    # …AND WHICH PARTS' CHECKS NO LONGER RUN, here or below: a finding retired leaves the check running, this does not
+    if _gone := engine.checks_no_longer_run(TaskId(task_id)):
+        out["checks_no_longer_run"] = _gone
     if criterion:
         out.update(_criterion_in_full(engine, task_id, rec, criterion))
     # …AND SAY IT WHEN THE STATE AND THE RECORD DISAGREE. A node can stand at PASS while this very
@@ -780,7 +800,7 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
                      f"and did not close anything — a later record is evidence about the same "
                      f"delivery, never a replacement for the one that was acted on."),
         }
-    if str(task_id) in engine.refuted_passes():
+    if (engine.closure_of(TaskId(task_id)) or {}).get("refuted"):    # this node's own: the list walks every node
         out["contradicts_state"] = (
             f"{task_id} is {t.state.name} at PASS, and the verdict above — its CURRENT one — is "
             f"FAIL. The state is showing a signature that landed before this verdict did. This is "
@@ -846,6 +866,18 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
     _what_there_is_to_decide_with(engine, task_id, out, _trimmed, _keep)
     _bound_the_read(out, task_id, _trimmed, _keep)
     return out
+
+
+def return_finding(engine: Engine, task_id: str, finding: str, why: str, agent: str = "") -> dict:
+    """Give back a validator's finding a later validator did not reproduce (`get_verdict`'s `findings_not_reproduced`):
+    it is demanded of every later PASS again, and no validator's run takes it off. `why` is recorded."""
+    if not why.strip():
+        return {"error": "a returned finding says why"}
+    if not engine.return_finding(TaskId(task_id), finding, agent or "person", why):
+        return {"error": f"no finding {finding} on {task_id} stands as not reproduced"}
+    t = engine.graph.get_task(TaskId(task_id))
+    return {"returned": finding, **({"note": "demanded of the next PASS: this node has none coming until it is reopened"}
+                                    if t is not None and t.state in (State.DONE, State.ABANDONED) else {})}
 
 
 def dispute_finding(engine: Engine, task_id: str, criterion: Union[str, list], why: str) -> dict:
@@ -1043,7 +1075,15 @@ def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[l
     asides: list[str] = []
     withheld: dict[str, str] = {}
     for a in list(acts):
-        if (r := engine.refusal_for(TaskId(task_id), Signal[a], None if who == "*" else AgentId(who))) is not None                 and r.kind != "role":
+        # the mode first: the door refuses by it before the machine is asked, and the machine's reason, naming the
+        # holder's own way out, is not the asker's to act on
+        if (held := door_holder(engine, "signal", task_id, a)) is not None:
+            acts.remove(a)
+            notes.append(f"{a} is {held}'s under the project's mode ({engine.mode()['mode']}): the door refuses it "
+                         f"from anyone else, whatever name it is signed with")
+            withheld[a] = notes[-1]
+        elif (r := engine.refusal_for(TaskId(task_id), Signal[a], None if who == "*" else AgentId(who))) is not None \
+                and r.kind != "role":
             acts.remove(a)
             notes.append(f"{a} is refused here: {r.why}")
             withheld[a] = notes[-1]
@@ -1111,12 +1151,15 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
     # verifier ≠ executor gate rejects it is the same lie in the other direction: the affordance
     # surface must agree with the machine, in both directions (§10.3).
     acts, gate_note, withheld = _gated_out(engine, t, task_id, who, acts)
-    out = {"task_id": task_id, "state": t.state.name, "actions": acts}
+    # …and WHO performs each: the party the engine takes it from, not one a client infers from `perform` and the act
+    out = {"task_id": task_id, "state": t.state.name, "actions": acts,
+           "performed_by": {a: (door_holder(engine, "signal", task_id, a)
+                                or str(engine.owner_of(task_id, signal_role(a)) or "")) for a in acts}}
     # WHOSE the open acts are, where the state is about that and not about the acts. ESCALATED
     # admits CANCEL and ASSIGN — both the ISSUER's — and a list of two signals does not say so; a
     # reader who does not know they are his reads "the node admits things" and keeps polling.
     if t.state == State.ESCALATED:
-        out["waiting_on"] = "issuer"
+        out["waiting_on"] = engine.mode_holder(task_id, "issuer") or "issuer"
         out["recovery"] = engine.issuer_moves_on(TaskId(task_id))
     if gate_note:
         out["gate"] = gate_note
@@ -1150,10 +1193,12 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
                 # the issuer's waiting state (§12.5) and the moves are his.
                 out["recovery"] = f"'{task_id}' is waiting: {engine.issuer_moves_on(TaskId(task_id))}"
             elif t.state in (State.DONE, State.ABANDONED):
-                out["recovery"] = (
-                    f"'{task_id}' is finished. `reopen` puts it back to OFFERED under its standing "
-                    f"contract (R′, §12.14) unless the graph has CONSUMED it — the refusal says which "
-                    f"gate stopped it; `revise` reopens it WITH a new contract.")
+                out["recovery"] = f"'{task_id}' is finished. " + engine.offer(
+                    Move("reopen", task_id, f"`reopen('{task_id}')` puts it back to OFFERED under its standing "
+                                            f"contract (R′, §12.14) unless the graph has CONSUMED it — the refusal "
+                                            f"says which gate stopped it", unmade=True),
+                    Move("revise", task_id, f"`revise('{task_id}', …)` reopens it WITH a new contract", unmade=True),
+                    sep="; ") + "."
         elif role is None:
             out["why_none"] = (f"{who} holds no role on {task_id}: its executor is "
                                f"{t.assignee or 'nobody'} and its issuer is {issuer}. Each signal "
@@ -1197,9 +1242,8 @@ def _awaiting(engine: Engine, t) -> Optional[str]:
     return None
 
 
-def get_graph(engine: Engine) -> dict:
-    """The whole graph: nodes (id, name, state, parent) + edges (parent-child and dependency). The bird's-eye
-    view — use it to see overall progress / where the frontier is."""
+def graph_read(engine: Engine) -> dict:
+    """The graph with no word on what comes next: what `get_graph` answers, less the frontier the page reads by `next_steps`."""
     tasks = engine.all_tasks()
     nodes = [{"id": str(t.id), "name": t.label(), "state": t.state.name,
               "assignee": t.assignee,        # who holds this node — the graph read answered `null` for
@@ -1228,7 +1272,17 @@ def get_graph(engine: Engine) -> dict:
     # …AND THE MOVE IT WAITS ON, as entering a project and every signal's reply carry it: a SOLO-dispatch holder that
     # entered through this read saw nine nodes OFFERED to it, never heard "ACCEPT; your hands perform it", tried to
     # build them itself without the tools and gave up (GB_coreutils_tmmw26001, 2026-10-09)
-    return {"nodes": nodes, "edges": edges, "mode": engine.mode(), **next_for(engine, _agent_id())}
+    # …and where the accepted result lies, once it has landed: said only in a line of the log, a person who opened the
+    # page on a closed goal could not tell where the work was
+    landed = engine.graph.setting("landed")
+    return {"nodes": nodes, "edges": edges, "mode": engine.mode(), "landed": json.loads(landed) if landed else None,
+            }
+
+
+def get_graph(engine: Engine) -> dict:
+    """The whole graph: nodes (id, name, state, parent) + edges (parent-child and dependency). The bird's-eye
+    view — use it to see overall progress / where the frontier is."""
+    return {**graph_read(engine), **next_for(engine, _agent_id())}
 
 
 def list_holes(engine: Engine, root_id: Optional[str] = None) -> dict:
@@ -1250,8 +1304,9 @@ def list_holes(engine: Engine, root_id: Optional[str] = None) -> dict:
 
 
 def get_dependencies(engine: Engine) -> list[dict]:
-    """All Dep edges (declared = derived from criteria `depends_on`; discovered = BLOCK-surfaced;
-    provisional = discovered edge awaiting RESOLVE_BLOCK adjudication)."""
+    """All Dep edges (declared = written by the act that declared it — a split's admission, `add_dependency`, a
+    criterion whose check reads the producer; discovered = BLOCK-surfaced; provisional = discovered edge awaiting
+    RESOLVE_BLOCK adjudication)."""
     return [{"from": e.from_id, "to": e.to_id,
              # WHICH END IS WHICH, said rather than conventional. `from`/`to` do not carry a
              # direction on their own, and a competent reader took them for "waits on" — the exact
@@ -1353,13 +1408,16 @@ def metrics(engine: Engine) -> dict:
                            "later_found_wrong": reversed_}
     # BOTH doors serve every number with what it is about — `false_fail_share` runs the
     # OPPOSITE way to every q_* (high is bad) and is the one most easily read backwards.
-    return {**out, "means": {k: v for k, v in {**Q_MEANS, **DIAGNOSTIC_MEANS}.items()
-                             if k in out}}
+    # …with how far each can be trusted and which call a person, so no door keeps its own copy of §15.8
+    called = alarm(out)
+    return {**out, "means": {k: v for k, v in {**Q_MEANS, **DIAGNOSTIC_MEANS}.items() if k in out},
+            "grades": {k: g for k, g in Q_GRADES.items() if k in out}, "alarm": called,
+            "calls_person": any(called.values())}
 
 
 # ── AUTHORING (each desugars to the 12-signal FSM — logged, no bypass) ────────
 
-def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str]) -> AgentId:
+def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str], task_id: Optional[str] = None) -> AgentId:
     """Del of a node about to be issued: the one the caller named, checked against the project's mode.
 
     With no mode set it is exactly what it always was — the named party, else the caller. With one,
@@ -1375,11 +1433,13 @@ def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str]) 
     me = _agent_id()
     parent = engine.graph.get_task(TaskId(parent_id)) if parent_id else None
     system_side = str(want) != me
-    if system_side and str(asked) != me and AgentId(asked) in engine.workforce.executor_pool()             and (parent is None or str(asked) != str(parent.assignee)):
+    keepers = [str(a) for a in engine.seam_keepers(parent.assignee if parent else None,
+                                                   TaskId(task_id) if task_id else None)]
+    if system_side and str(asked) != me and str(asked) in keepers:
         return AgentId(asked)
     mode = engine.mode_kind()
     # the lift is the caller's own (§12.16 (ii)), and `reassign` takes a name it cannot leave out (critic round 10)
-    others = [str(a) for a in engine.workforce.executor_pool() if parent is None or str(a) != str(parent.assignee)]
+    others = keepers
     lift = (f"name one of this project's executors ({', '.join(others) or 'none registered'})"
             if system_side else f"keep it with you ({me})")
     raise ValueError(
@@ -1396,6 +1456,16 @@ def _agent_id() -> str:
     explicit name — so an omitted `assignee` can only mean "the agent itself". Works out of the box as
     `agent`; GFSO_AGENT_ID merely RENAMES it (multi-agent future), it is never required."""
     return _config_agent_id()
+
+
+def admission_of(spec: dict) -> list[str]:
+    """What admission would refuse in a contract's criteria, before it is sent — the ladder every ASSIGN runs
+    (`admission_defects`), read; a form gating itself on a copy of its first rungs let a hollow `echo ok`
+    through (2026-10-24). Pure: no engine, no project, no write."""
+    try:
+        return admission_defects(seams_apart(_spec_from(spec or {}), "")[0].criteria)   # a seam is the edge it declares
+    except (ValueError, TypeError, KeyError) as ex:
+        return [str(ex)]
 
 
 def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
@@ -1464,7 +1534,7 @@ def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
                 f"criteria it is responsible for; once that split stands, `create_task(parent_id='{_root.id}', "
                 f"covers=[…], …)` adds one child to it. If it is a different goal, it belongs in a different project: "
                 f"`use_project('<name>')`.")}
-    dl = _deadline(deadline)
+    dl = _deadline(deadline, engine.graph)
     # The SPEC is parsed outside the guard below: a malformed packet is the caller's own shape
     # error, and its message (which word was not a predictability, say) is the answer — the guard is
     # for the engine's ADMISSION refusals, which are about a well-formed packet.
@@ -1473,10 +1543,13 @@ def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
         _del = del_by_mode(engine, parent_id, assignee)
         t = engine.assign_task(tid, _spec, _del,
                                parent_id=TaskId(parent_id) if parent_id else None, deadline=dl,
-                               # a root under a mode keeps its creator as the goal's issuer even
-                               # when the mode hands its execution to the system; with no mode a
-                               # root is self-assigned, as before
-                               issuer=AgentId(_agent_id()) if not parent_id and engine.mode() else None,
+                               # a root keeps its creator as the goal's issuer (§10.1) wherever the system
+                               # executes it — under a mode, or handed to a REGISTERED executor with none:
+                               # recorded only under a mode, such an executor became its own issuer and the
+                               # system answered its dispute in its name (§10.3); a root a person or an agent
+                               # holds is self-assigned, as before
+                               issuer=AgentId(_agent_id()) if not parent_id and (
+                                   engine.mode() or engine.workforce.kind_of(str(_del)) is not None) else None,
                                covers=tuple(covers or ()))
     except ValueError as ex:
         # AN ADMISSION REFUSAL IS AN ANSWER, NOT A CRASH. The engine refuses a packet whose criteria
@@ -1485,11 +1558,12 @@ def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
         # message, and a traceback is the one shape that hides it — the same reading the one-root
         # refusal above already had.
         return {"error": str(ex)}
-    return task_out(t)
+    return task_out(t, engine, plan=False)
 
 
-def _deadline(raw):
-    """An ISO-8601 string into the `datetime` the graph compares, or None.
+def _deadline(raw, graph=None):
+    """An ISO-8601 string into the `datetime` the graph compares, or None — a typed date is the wall's, put on the
+    project's clocks (`project_now`); outside, a deadline always reads as the wall's (`task_out`).
 
     ONE owner, because two verbs feed the same field and only one of them parsed it: `create_task`
     turned the string into a datetime and `decompose` (once it began carrying the field at all)
@@ -1499,7 +1573,9 @@ def _deadline(raw):
     """
     if raw is None or raw == "":
         return None
-    return raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
+    if isinstance(raw, datetime):
+        return raw
+    return datetime.fromisoformat(str(raw)) - timedelta(seconds=door_off_s(graph))
 
 
 #: a spec's keys as `_spec_from` reads them — each the Spec field of the same name
@@ -1529,8 +1605,10 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     A standing child named again keeps every `spec` field left out, and is re-issued only where its contract changes;
     its `spec.accepted_risks` is its packet's pre-fill — `prefilled_accepted_risks` on `get_task`, whose
     `accepted_risks` is the register of the child's own split.
-    Desugars to one ASSIGN per child. children: [{task_id, spec, assignee, covers, deadline?, max_iterations?}]; an
-    omitted assignee = `agent` (you execute it yourself; name someone only to really delegate).
+    Desugars to one ASSIGN per child. children: [{task_id, spec, assignee, covers, deadline?, max_iterations?,
+    deps?}]; an omitted assignee = `agent` (you execute it yourself; name someone only to really delegate).
+    `deps: [{from, glue}]` — the split's declared Dep edges into that child, whole (§15.1): the producers it waits
+    for and what of their result it reads; left out, a standing child keeps the edges it has.
 
     `accepted_risks` (and its STD-3 `risk_components`) is the SPLIT's register, yours as its decomposer (§9.2):
     it rides this admission, no revision of the node; each entry as `edit_accepted_risks` documents it.
@@ -1578,7 +1656,7 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     # deadlines is not thereby defective (`formal/README.md` #6). What changes is that a plan which
     # DECLARES one is no longer quietly stripped of it.
     kids = [(TaskId(c["task_id"]), _named_spec(engine, c),
-             del_by_mode(engine, parent_id, c.get("assignee")), _deadline(c.get("deadline")), c.get("max_iterations"))
+             del_by_mode(engine, parent_id, c.get("assignee")), _deadline(c.get("deadline"), engine.graph), c.get("max_iterations"))
             for c in children]
     declared = [CriterionMapping(name, TaskId(c["task_id"]))
                 for c in children for name in (c.get("covers") or ())]
@@ -1611,9 +1689,22 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     # decomposition — not a property of whichever process happens to be serving.
     register = (Register(_accepted_risks_from(accepted_risks or []), tuple(risk_components or ()))
                 if accepted_risks is not None or risk_components is not None else None)
-    return [task_out(t) for t in engine.decompose_task(TaskId(parent_id), kids, maps, max_iterations,
+    # …each edge names a producer that is a node, or one this act creates; one producer named twice is one edge, its
+    # glue the later statement's — as a re-statement across acts reads (`mutations.declare`)
+    _named = {str(c["task_id"]) for c in children}
+    if _bad := [f"{c['task_id']} ← {x.get('from')!r}" for c in children for x in (c.get("deps") or ())
+                if not isinstance(x, dict) or not x.get("from")
+                or (str(x["from"]) not in _named and engine.graph.get_task(TaskId(str(x["from"]))) is None)]:
+        return {"error": f"`deps` names no producer, or one that is no node of the graph nor of this act: "
+                         f"{', '.join(_bad)} — each edge is {{from: <producer id>, glue: <what is read>}}",
+                "refused": True}
+    deps = {str(c["task_id"]): tuple(DepEdge(TaskId(f), TaskId(str(c["task_id"])), glue=g) for f, g in
+                                     {str(x["from"]): str(x.get("glue") or "") for x in c["deps"] or ()}.items())
+            for c in children if "deps" in c}
+    return [task_out(t, engine, plan=False) for t in engine.decompose_task(TaskId(parent_id), kids, maps, max_iterations,
                                                        register=register,
-                                                       drops=tuple(TaskId(str(d)) for d in (drops or ())))]
+                                                       drops=tuple(TaskId(str(d)) for d in (drops or ())),
+                                                       deps=deps or None)]
 
 
 #: The closed sets a verb's string parameters accept, as DATA — keyed by VERB and parameter, never by
@@ -1749,9 +1840,9 @@ def revise(engine: Engine, task_id: str, spec: Optional[dict] = None, agent: str
     return task_out(engine.revise(TaskId(task_id),
                                    _spec_from(spec) if spec is not None else t.spec,
                                    AgentId(agent),
-                                   reason=_reason_from(reason), deadline=_deadline(deadline),
+                                   reason=_reason_from(reason), deadline=_deadline(deadline, engine.graph),
                                    max_iterations=max_iterations, block_sources=tuple(block_sources or ()),
-                                   block_refuted=block_refuted))
+                                   block_refuted=block_refuted), engine, plan=False)
 
 
 def edit_accepted_risks(engine: Engine, task_id: str, accepted_risks: list,
@@ -1772,7 +1863,7 @@ def edit_accepted_risks(engine: Engine, task_id: str, accepted_risks: list,
     decomposer = (was is not None and str(agent) == str(was.assignee)
                   and bool(engine.graph.get_active_children(TaskId(task_id))))
     out = task_out(engine.admit_register(TaskId(task_id), Register(items, register_of(was).components), AgentId(agent))
-                    if decomposer else engine.edit_accepted_risks(TaskId(task_id), items, AgentId(agent)))
+                    if decomposer else engine.edit_accepted_risks(TaskId(task_id), items, AgentId(agent)), engine, plan=False)
     if isinstance(out, dict):
         # THE REGISTER AS RECORDED, not just the item texts. The node projection carries each risk's
         # `item` alone, so a person who classified one as STATISTICAL with a justification and an
@@ -1814,7 +1905,7 @@ def edit_scope(engine: Engine, task_id: str, scope: list, agent: str = "") -> Op
     out = task_out(engine.revise(
         TaskId(task_id),
         dataclasses.replace(spec, scope=items),
-        AgentId(agent), reason="scope_expansion"))
+        AgentId(agent), reason=_reason_from("scope_expansion")), engine, plan=False)
     if isinstance(out, dict):
         t = engine.graph.get_task(TaskId(task_id))
         out["scope_recorded"] = list(t.spec.scope) if t is not None else []
@@ -1825,7 +1916,8 @@ def edit_scope(engine: Engine, task_id: str, scope: list, agent: str = "") -> Op
 def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str = "",
                   reason: Optional[str] = None, accept_coverage_loss: bool = False,
                   expect_criteria: Optional[list] = None) -> Optional[dict]:
-    """Replace a node's criteria, carry the rest. RMW over revise. (Dep criteria use `depends_on`.)
+    """Replace a node's criteria, carry the rest. RMW over revise. The node's Dep edges are no criteria and stand
+    (`remove_dependency` cuts one); a criterion whose check reads a producer's result names it in `depends_on`.
     `reason` (optional, §15.4): spec_defect = the criteria were WRONG (counts in q_T) |
     scope_expansion = sanctioned growth of the goal (§15.4; never counts) | other.
 
@@ -1868,17 +1960,14 @@ def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str
     # cannot take a new `covers`") read the mapping as the child's contract (critic r15). `accept_coverage_loss` is
     # accepted and no longer needed.
     out = task_out(engine.edit_criteria(TaskId(task_id), crits, AgentId(agent),
-                                         reason=_reason_from(reason)))
+                                         reason=_reason_from(reason)), engine, plan=False)
     # WHAT THIS REPLACED, IN THE REPLY. The verb REPLACES the set — that is its contract — and the
     # answer showed only the new one, so five authored criteria vanished in a call whose reply said
     # nothing about them, with no history verb to recover from: the caller had to invent a contract
     # from the node's description (measured on the human door 2026-08-22). The old set is in the
     # log (Inv-7) and now in the reply, which is where a mistaken call is read.
-    # …AND WHAT SURVIVED IS READ OFF THE RESULT, not off the request. A `dep__*` criterion the new
-    # set does not name is CARRIED OVER by the engine (the edge it holds may not be cut by omission)
-    # — and this list was computed from what the caller sent, so the reply announced a removal that
-    # had not happened, in the same object whose own `criteria` still showed it (CLI door,
-    # 2026-09-02: "I spent a beat believing I had silently severed a dependency edge").
+    # …AND WHAT SURVIVED IS READ OFF THE RESULT, not off the request: computed from what the caller sent, the
+    # reply announced a removal that had not happened (CLI door, 2026-09-02).
     _kept = {c.get("name") for c in (out.get("criteria") or ())} if isinstance(out, dict)         else {c["name"] for c in criteria}
     # …AND WHAT THE EDIT LEFT UNCOVERED, in the same breath. Replacing the set dangles every mapping
     # it does not re-name: a caller who added five criteria to a root found — one paid review round
@@ -1908,7 +1997,7 @@ def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str
                 f"`map_criterion` can re-make them onto the children still in the split, a passed one included.")
         _covered = {m.criterion_name for m in (_after.criterion_mappings or ())}
         if _uncovered := [c.name for c in _after.spec.criteria
-                          if c.name not in _covered and not c.depends_on]:
+                          if c.name not in _covered]:
             if engine.graph.get_active_children(TaskId(task_id)):
                 out["still_uncovered"] = _uncovered
                 out["still_uncovered_note"] = (
@@ -1983,9 +2072,9 @@ def reassign(engine: Engine, task_id: str, assignee: str,
     # itself undoes the mode node by node, with the mode record untouched (measured 2026-09-24: a
     # semi-auto holder took three repair nodes back and edited the program itself)
     if engine.mode() is not None and (t := engine.graph.get_task(TaskId(task_id))) is not None:
-        del_by_mode(engine, str(t.parent_id) if t.parent_id else None, assignee)
+        del_by_mode(engine, str(t.parent_id) if t.parent_id else None, assignee, str(t.id))
     out = task_out(engine.reassign(TaskId(task_id), AgentId(assignee),
-                                    reason=_reason_from(reason)))
+                                    reason=_reason_from(reason)), engine, plan=False)
     # Say what the untyped act COSTS, at the moment of the act. The verb's help has said this since
     # 2026-08-21 and the caller still has to be reading help to see it; measured 2026-09-02 on a live
     # delegated run, whose DEL read 25% in red because three ordinary hand-offs to the run's own
@@ -2057,40 +2146,58 @@ def add_dependency(engine: Engine, from_id: str, to_id: str, glue: str = "",
     """Declare `to_id depends on from_id`'s output — **`from_id` is the PRODUCER, `to_id` the
     CONSUMER**, and the arrow runs producer → consumer: `to_id` is the one that waits.
 
-    Dep is criteria-content (§2): desugars to a re-author of the CONSUMER adding the glue
-    criterion; the edge is derived. Cycle → rejected. `glue` is the anti-mock truth-maker — what
-    the consumer must do with the real output, not "depends on it". `check` optionally PINS the
-    seam's own probe from the consumer's side ([{behaviour, command, expect}]) — the integration
-    implication itself is the PARENT's claim (§6.5), which is why a seam criterion is not required
-    to carry one.
+    The edge is a record of its own, no criterion of the consumer (§2.7): declared by a re-admission of
+    the consumer's parent split, logged with the act; the consumer's contract does not change and it is
+    not re-offered — unless the deadline the engine supplied it must now come after the producer's, which
+    the answer says. Cycle → rejected. `glue` is the anti-mock truth-maker — what the consumer must do
+    with the real output, not "depends on it". `check` optionally adds the consumer's own probe of the
+    producer's result ([{behaviour, command, expect}]) — a criterion of the consumer, by a revision;
+    the integration implication itself is the PARENT's claim (§6.5), which is why the edge needs none.
 
     The direction is worth one sentence because getting it backwards is silent: a person wrote the
     glue "render imports and calls the scan() function delivered by scan", passed them the other way
     round, and made SCAN wait on RENDER — the reply said `ok`, the Level-2 review passed the graph,
     and only `next_steps` (`waits_on`) showed it. So the answer says which way it went."""
+    was = _version(engine, to_id)
     engine.add_dependency(TaskId(from_id), TaskId(to_id), glue=glue,
                           check=_checks_of({"check": check}) if check else ())
     return {"ok": True, "from": from_id, "to": to_id,
             "declared": f"'{to_id}' now WAITS for '{from_id}' to pass — '{from_id}' produces, "
-                        f"'{to_id}' consumes. If that is backwards, `remove_dependency` and swap."}
+                        f"'{to_id}' consumes. If that is backwards, `remove_dependency` and swap.",
+            **_the_dep_act(engine, to_id, was)}
 
 
 def remove_dependency(engine: Engine, from_id: str, to_id: str) -> dict:
-    """Drop a dependency (re-authors the consumer to remove the glue criterion).
-
-    Removing an edge REWRITES the consumer's contract (the glue criterion goes with it), which is a
-    revision — so it stales the plan's Level-2 verdict and the children stop being admitted to
-    execution until the check runs again (§9.1). Both are canon and both were silent: the answer
-    was `{"ok": true}` and the graph then simply did not move (measured on the human door
-    2026-08-22)."""
+    """Drop a dependency: a re-admission of the consumer's parent split without the edge, logged with the act — the
+    consumer's contract untouched, unless a criterion of it reads the producer's result through its check, which goes
+    with the edge (a revision). Either way the plan changed, so its Level-2 verdict is staled and the children stop
+    being admitted to execution until the check runs again (§9.1) — said in the answer: `{"ok": true}` alone left a
+    person watching a graph that did not move (measured on the human door 2026-08-22)."""
+    was = _version(engine, to_id)
     engine.remove_dependency(TaskId(from_id), TaskId(to_id))
-    out = {"ok": True, "removed": f"{from_id} -> {to_id}"}
+    return {"ok": True, "removed": f"{from_id} -> {to_id}", **_the_dep_act(engine, to_id, was)}
+
+
+def _version(engine: Engine, to_id: str) -> Optional[tuple]:
+    t = engine.graph.get_task(TaskId(to_id))
+    return None if t is None else (t.revisions, t.deadline, [c.name for c in t.spec.criteria])
+
+
+def _the_dep_act(engine: Engine, to_id: str, was: Optional[tuple]) -> dict:
+    """What a declaration's act did beside the edge: the consumer re-issued — a new version, for a criterion that reads
+    the producer, or for the deadline the engine supplied it, which had to move along Dep (§2.7) — and the plan's
+    Level-2 verdict staled."""
+    out, now = {}, _version(engine, to_id)
+    if was is not None and now is not None and now[0] != was[0]:
+        wall = lambda at: on_the_wall(engine.graph, at).isoformat(timespec="minutes") if at else "none"
+        why = (f"its criteria are now {now[2]}" if now[2] != was[2] else
+               f"the deadline the engine supplied it had to move along Dep: {wall(was[1])} → {wall(now[1])}")
+        out["consumer_reissued"] = f"'{to_id}' was re-issued — {why}; its executor consents to the new version afresh"
     _parent = engine.graph.get_parent(TaskId(to_id))
     if _parent is not None and not _parent.verified:
         out["plan_verdict_staled"] = (
-            f"this re-authored '{to_id}', which is a revision — the Level-2 verdict on "
-            f"'{_parent.id}'s plan no longer covers it, so its children are not admitted to "
-            f"execution until `review_decomposition('{_parent.id}')` runs again (§9.1).")
+            f"the split of '{_parent.id}' changed with this edge — its Level-2 verdict no longer covers it, so its "
+            f"children are not admitted to execution until `review_decomposition('{_parent.id}')` runs again (§9.1).")
     return out
 
 
@@ -2165,7 +2272,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
            in_flight: Optional[str] = None, blocker_task_id: Optional[str] = None,
            blocker_task_ids: Optional[list] = None,
            external: bool = False, failed_criteria: Optional[list] = None,
-           retire_findings: Optional[list] = None) -> dict:
+           retire_findings: Optional[list] = None, build: Optional[str] = None) -> dict:
     """Send a raw protocol signal (the lifecycle transaction): ACCEPT / DELIVER / PASS / FAIL / BLOCK /
     RESOLVE_BLOCK / CHALLENGE / ACCEPT_CHALLENGE / REJECT_CHALLENGE / CANCEL / CONFIRM_CANCEL. The lower-layer
     primitive. On the AGENT door signals are signed as you automatically (`agent` — the MCP door pins
@@ -2174,7 +2281,9 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
     FSM validates the ROLE: executor signals require the node's
     Del == you, issuer signals require the parent's Del == you — a node delegated to someone else only
     moves on THEIR signals. DELIVER carries `result` (paths + how each criterion is met — the
-    validator's input).
+    validator's input) and `build`: the command that builds the result from its committed files — where DELIVER records a
+    commit, the judge checks a checkout of it, nothing ignored or untracked, and runs this there before any check (`""` =
+    nothing to build; left out: `make` where the tree has a Makefile at its root, else nothing).
     FAIL requires `failed_criteria` (Inv-3). CANCEL opens the two-step abandon handshake (→ CANCELLING);
     the executor settles it with CONFIRM_CANCEL (pass `in_flight` = the state of work at cancellation) →
     ABANDONED. BLOCK on undeclared prerequisites that are EXISTING nodes: pass `blocker_task_ids` with
@@ -2200,7 +2309,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
         # such a node self-verifies, its DELIVER carries the self-check, and the guarantee is carried
         # by the validation of the public result above it. The packet had the field, the schema asked
         # for it, and no door let a caller fill it in.
-        self_validation=_self_check_verdict(self_validation),
+        self_validation=_self_check_verdict(self_validation), build=build,
         justification=justification, action=action,
         in_flight=in_flight,
         blocker_task_id=TaskId(blocker_task_id) if blocker_task_id else None,
@@ -2211,7 +2320,9 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
     ok = bool(entry and not entry.rejected)
     out = {"accepted": ok, "state": st.name if st else None}
     if ok and retire_findings:
-        out["retired_findings"] = list(dict.fromkeys(map(str, retire_findings)))
+        # …as recorded, the full ids it retired (`loop._ruling_as_it_stood`): a bare hash echoed back hid that it landed
+        # under every criterion the finding stood on
+        out["retired_findings"] = list(dict.fromkeys(map(str, entry.retire_findings or retire_findings)))
     if ok:
         _what_an_ACCEPTED_signal_owes_its_sender(engine, task_id, sig, st, source, out)
     else:
@@ -2445,16 +2556,26 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
         # YOURS" about the one decision only he holds. A REVISE that repairs a node's own split stays
         # its executor's (§11.5: the split is authored by the node's executor).
         _t = engine.graph.get_task(TaskId(s["task_id"])) if s.get("task_id") else None
-        if s.get("action") in (Action.VALIDATE, Action.RESOLVE) or (
-                s.get("action") == Action.REVISE and _t is not None
-                and (_t.state.name == "ESCALATED" or engine.parking.is_execution_parked(_t))):
-            # …THE ENGINE'S RULE, ASKED (`issuer_of`), not a second reading of it. This one read the
-            # PARENT alone, so a root — which has none — came back `mine: true` to whoever asked,
-            # and the gate then refused their signal because a root's issuer is its own assignee.
-            issuer = engine.graph.issuer_of(TaskId(s["task_id"])) if s.get("task_id") else None
-            s["mine"] = (issuer == me) or not issuer
+        role = "issuer" if step_role(engine, _t, s.get("action")) == "issuer" else "split"
+        # …THE ENGINE'S RULE, ASKED (`issuer_of`), not a second reading of it. This one read the
+        # PARENT alone, so a root — which has none — came back `mine: true` to whoever asked,
+        # and the gate then refused their signal because a root's issuer is its own assignee.
+        owner = engine.owner_of(s.get("task_id"), role)
+        # …AND THE MODE'S LOCK, the one the door refuses by: under AUTO the root's dispute, the system's to answer, was
+        # `mine` to the customer the root names its issuer, and the door then refused his ruling (UI stream 2026-10-26)
+        held = engine.mode_holder(s.get("task_id"), role, ruling=s.get("action") == Action.RESOLVE)
+        s["performed_by"] = by = held or str(owner or "")
+        s["mine"] = by == me or not by
+        # …AND A RULING THE USER MAY MAKE IS NOT A MOVE THE GRAPH WAITS ON: the system answers that dispute itself
+        if s["mine"] and s.get("action") == Action.RESOLVE and _t is not None and engine.users_dispute(_t.id)                 and not engine.paused():
+            s["optional"] = True
+        if held and not s["mine"] and (owner == me or not owner):
+            s["parallel_ok"] = False
+            s["directive"] = (f"NOT YOURS — the project's mode gives this move to {held}, and the door refuses it "
+                              f"from anyone else; it is made without you. | contract was: " + s.get("directive", ""))
             continue
-        s["mine"] = (a == me) or not a
+        if role == "issuer":
+            continue
         if s["mine"] and s.get("action") in SPAWNABLE_ACTIONS and (hands := engine.hands_of(a)):
             # DISPATCH: consent is the holder's, the work its hands' — told so, or it builds the node in its chat
             s["directive"] = ((f"ACCEPT it (consent is yours); then {hands} performs it in a clean session in the "
@@ -2535,7 +2656,7 @@ def probe_inputs(engine: Engine, task_id: str) -> dict:
     under = [(c.name, c) for c in t.spec.criteria] + [
         (name, pc) for name, pcs in engine.parts_procedure(TaskId(task_id)).items() for pc in pcs]
     try:
-        dirs = materialize_inputs([c for _, c in under], base)
+        dirs = materialize_inputs([c for _, c in under], base, HOST)     # the state directory: this host's
     except ValueError as ex:
         return {"error": str(ex)}
     if not dirs:
@@ -2620,24 +2741,7 @@ def record_verdict(engine: Engine, task_id: str, verdict: str,
                          f"(`edit_criteria`) and validate those.",
                 "criteria": []}
     if verdict == Verdict.PASS and _t is not None:
-        # A GLUE CRITERION IS NOT SOMETHING THE EXECUTOR OBSERVES — its truth is the producer's
-        # passing — so it is excluded from what a PASS must speak to. But a node whose criteria are
-        # ALL glue has nothing of its own left to observe, and the floor then passes over an empty
-        # requirement: the rule that is vacuously true at zero X, which is the rule's absence
-        # wearing its name. Reproduced 2026-09-07: `edit_criteria(B, [])` wiped the contract, the
-        # engine kept the `dep__A` criterion it had authored itself, and a PASS observing nothing
-        # met a floor that asked for nothing. That is a defect of the CONTRACT, not of the verdict,
-        # so it is named as one rather than papered over by demanding evidence for the glue.
-        _need = [c.name for c in _t.spec.criteria if not c.depends_on]
-        if not _need:
-            return {"recorded": False,
-                    "error": f"{task_id} carries no obligation of its own: every criterion it has "
-                             f"is a dependency link the engine authored ("
-                             + ", ".join(c.name for c in _t.spec.criteria) +
-                             f"), so there is nothing a PASS could report having observed. A "
-                             f"verdict cannot repair a contract — give the node criteria of its "
-                             f"own (`edit_criteria`), or remove it if the work belongs elsewhere.",
-                    "criteria": [c.name for c in _t.spec.criteria]}
+        _need = [c.name for c in _t.spec.criteria]
         _said = {k for k, v in (observed or {}).items() if str(v).strip()}
         # …AND AN OBSERVATION THAT RESTATES THE VERDICT IS NOT ONE. Treated as unsaid, so the refusal
         # below names it in the same breath as one that was left out entirely — which is what it is.
@@ -2722,8 +2826,9 @@ def next_step(engine: Engine, root_id: Optional[str] = None, actor: Optional[str
     returns complete=True. It hands you the single next required action for the current frontier node
     (children before parents): accept / execute / deliver / validate / rework / confirm_cancel. You CANNOT stop
     until the root is DONE/PASS — the graph drives, you execute. Returns {complete, task_id, name, state,
-    action, assignee, mine, criteria, directive}; `mine=false` = the node belongs to ANOTHER executor
-    (human/external) — hands off, it waits for them. For PARALLEL delegation use next_steps.
+    action, assignee, mine, performed_by, criteria, directive}; `performed_by` = the party the engine takes
+    the move from ("system" where the mode gives it to no named machine); `mine=false` = that is not you —
+    hands off, it waits for them. For PARALLEL delegation use next_steps.
 
     `actor=<name>` asks the question AS SOMEONE ELSE — the human door, where a person names
     themselves the way the UI always has. Without it the caller is the standing agent identity, and
@@ -2737,8 +2842,8 @@ def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[st
     """The PARALLEL frontier: EVERY currently actionable node at once, priority-ordered. Steps with
     parallel_ok=true are independent execute-leaves (their Dep producers PASSED) — delegate each to its own
     executor subagent CONCURRENTLY. Do the non-parallel steps (accept/validate/rework/resolve/deliver)
-    yourself in the returned order; `mine=false` steps belong to OTHER executors (human/external) — visible
-    but hands-off. Loop until complete=True (root DONE/PASS). Returns {complete, steps}.
+    yourself in the returned order; `mine=false` steps are another party's (`performed_by`) — visible
+    but hands-off. Loop until complete=True (root DONE/PASS). Returns {complete, steps, waiting}.
     `actor=<name>` asks as someone else — for a person driving their own graph from the CLI.
 
     `wait=<seconds>` BLOCKS until the frontier has something to hand back (or the root completes, or
@@ -2752,6 +2857,16 @@ def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[st
     return _out
 
 
+def tech_report(engine: Engine, text: str, task_id: Optional[str] = None, actor: Optional[str] = None) -> dict:
+    """Rarely: report a defect of the SYSTEM itself (not of the task) that leaves you no honest move. Moves nothing."""
+    return {"filed": engine.tech_report(text, "mcp", actor or _agent_id(), task_id)}
+
+
+def tech_reports(engine: Engine) -> dict:
+    """The tech reports filed in this project — {count, reports: [{at, node, role, actor, text}]}, oldest first."""
+    return {"count": len(r := engine.tech_reports()), "reports": r}
+
+
 def _mine_to_do(out: dict) -> bool:
     """Is there anything in this answer for the CALLER to do — or is the graph busy elsewhere?
 
@@ -2759,7 +2874,7 @@ def _mine_to_do(out: dict) -> bool:
     too, precisely so a supervisor can see the graph working. What a waiting caller is waiting for is
     a step of their own.
     """
-    return bool(out.get("complete")) or any(s.get("mine") for s in (out.get("steps") or ()))
+    return bool(out.get("complete")) or any(s.get("mine") and not s.get("optional") for s in (out.get("steps") or ()))
 
 
 def _waited(engine: Engine, root_id: Optional[str], actor: Optional[str], seconds: float) -> dict:
@@ -2770,15 +2885,16 @@ def _waited(engine: Engine, root_id: Optional[str], actor: Optional[str], second
     worse surface than one that returns "nothing yet", and a transport with its own ceiling would
     cut it anyway.
     """
-    deadline = engine.now() + min(float(seconds), WAIT_MAX_SECONDS)
+    began = engine.now()
+    deadline = began + min(float(seconds), WAIT_MAX_SECONDS)
     while engine.now() < deadline:
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - engine.now())))
         out = _mark_mine(engine, engine.next_steps(TaskId(root_id) if root_id else None), actor)
         if _mine_to_do(out):
-            out["waited_seconds"] = round(min(float(seconds), WAIT_MAX_SECONDS), 1)
+            out["waited_seconds"] = round(engine.now() - began, 1)
             return out
     out = _mark_mine(engine, engine.next_steps(TaskId(root_id) if root_id else None), actor)
-    out["waited_seconds"] = round(min(float(seconds), WAIT_MAX_SECONDS), 1)
+    out["waited_seconds"] = round(engine.now() - began, 1)
     out["waited_note"] = ("nothing became actionable in that time — the graph may be working "
                           "(`in_flight`) or waiting on a person (`waiting`). Both are in this answer.")
     return out
@@ -2791,6 +2907,7 @@ TOOLS = {
     "get_task": get_task, "project": project, "get_checks": get_checks, "get_graph": get_graph,
     "list_holes": list_holes, "get_review": get_review, "get_verdict": get_verdict,
     "dispute_finding": dispute_finding,
+    "return_finding": return_finding,
     "available_actions": available_actions, "get_dependencies": get_dependencies, "metrics": metrics,
     "usage": usage,
     "create_task": create_task, "decompose": decompose,
@@ -2801,4 +2918,5 @@ TOOLS = {
     "signal": signal, "record_verdict": record_verdict, "claim_drift": claim_drift,
     "probe_inputs": probe_inputs,
     "next_step": next_step, "next_steps": next_steps,
+    "tech_report": tech_report, "tech_reports": tech_reports,
 }

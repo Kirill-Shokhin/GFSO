@@ -16,9 +16,10 @@ import gfso.tools_llm as _TL
 from gfso import decompose as D, tools_llm as T
 from gfso.core.types import Verdict, TaskId, AgentId, AcceptedRiskItem, SignalData, Signal, State
 from gfso.decompose import decompose_into, decompose_spec, refine, extract_spec
-from gfso.decompose.loop import (SEARCH_PROMPT, FOLD_SCHEMA, _fold_merge, shape,
+from gfso.issuer import issuer_context
+from gfso.decompose.loop import (SEARCH_PROMPT, FOLD_SCHEMA, AGREE_SCHEMA, _fold_merge, shape,
                                  SEARCH_FAST, AUDIT_FAST)
-from tests.support import criterion, make_engine, procedure_under
+from tests.support import criterion, make_engine, pinned, procedure_under
 
 
 class FakeLLM:
@@ -32,6 +33,8 @@ class FakeLLM:
         return self.texts.pop(0) if self.texts else ""
 
     def complete_structured(self, system, user, schema):
+        if schema is AGREE_SCHEMA:
+            return {"contradictions": []}
         kind = "fold" if schema is FOLD_SCHEMA else "repair"
         self.calls.append((kind, user))
         return self.specs.pop(0) if self.specs else {}
@@ -368,7 +371,7 @@ def test_fold_removal_unmaps_and_cancels_the_dropped_child():
 
 
 def test_extract_spec_roundtrips_build():
-    """extract_spec is the exact inverse of build_graph_live (ids de-namespaced, dep__ criteria back
+    """extract_spec is the exact inverse of build_graph_live (ids de-namespaced, declared edges back
     to seams, scope strings verbatim)."""
     fake = FakeLLM(texts=["holes1"], specs=[_init_patch()])
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
@@ -377,12 +380,48 @@ def test_extract_spec_roundtrips_build():
     assert got["name"] == want["name"]
     assert {c["id"] for c in got["subtasks"]} == {"a", "b"}
     a = [c for c in got["subtasks"] if c["id"] == "a"][0]
-    assert a["criteria"] == [criterion("a1", "A ok")]                   # dep__ criteria NOT here
+    assert a["criteria"] == [criterion("a1", "A ok")]                   # a seam is no criterion
     assert got["deps"] == [{"from": "a", "to": "b", "glue": "B reads A's output"}]
     assert sorted((m["criterion"], m["child_id"]) for m in got["mappings"]) == \
         [("rc1", "a"), ("rc2", "b")]
     assert got["accepted_risks"][0]["item"] == "provider outage"
     assert got["accepted_risks"][0]["predictability"] == "STATISTICAL"
+
+
+def test_the_seam_claims_ride_the_graph():
+    """What a part writes, whose code its probes run and what each seam reads come back with the plan, so a refine or a
+    repair is checked as the authoring was (the 2026-10-21 seam check ran on first authoring only: a plan read back had
+    no files and the check said nothing)."""
+    p = _init_patch()
+    p["add_subtasks"] = [dict(k, writes=[f"{k['id']}.c"], runs=["a"] if k["id"] == "b" else []) for k in p["add_subtasks"]]
+    p["add_deps"] = [dict(d, reads=["a.c"]) for d in p["add_deps"]]
+    res = decompose_into(_eng(), "task", root_id="root", llm=FakeLLM(texts=["h"], specs=[p]))
+    got = extract_spec(res.engine, "root")
+    assert {k["id"]: (k["writes"], k["runs"]) for k in got["subtasks"]} == {"a": (["a.c"], []), "b": (["b.c"], ["a"])}
+    assert got["deps"] == [{"from": "a", "to": "b", "glue": "B reads A's output", "reads": ["a.c"]}]
+
+
+def test_a_revised_part_no_longer_claims_what_its_old_probes_ran(monkeypatch):
+    """`runs` speaks of the probes it was written beside; a revision by any door leaves it unsaid, never stale."""
+    monkeypatch.setenv("GFSO_L2_GATE", "0")
+    p = _init_patch()
+    p["add_subtasks"] = [dict(k, runs=["b"] if k["id"] == "a" else []) for k in p["add_subtasks"]]
+    res = decompose_into(_eng(), "task", root_id="root", llm=FakeLLM(texts=["h"], specs=[p]))
+    e, a = res.engine, res.engine.graph.get_task(TaskId("root.a"))
+    assert e.seam_claim(a.id)["runs"] == ["b"]
+    e._revise(a.id, a.spec.__class__(a.spec.description, (a.spec.criteria[0].__class__("a1", "A ok, own driver", check=pinned("a1 own driver")),),
+                                     accepted_risks=a.spec.accepted_risks), AgentId("human"))
+    e.wait_idle()
+    assert "runs" not in e.seam_claim(a.id)
+
+
+def test_the_issuer_repairing_the_split_reads_its_seam_findings():
+    """The check the authoring ran is read again where the split is repaired from contact (the author, 2026-10-22: it
+    must reach the plan's rework, not only its first writing)."""
+    p = _init_patch()
+    p["add_subtasks"] = [dict(k, runs=["b"] if k["id"] == "a" else []) for k in p["add_subtasks"]]
+    res = decompose_into(_eng(), "task", root_id="root", llm=FakeLLM(texts=["h"], specs=[p]))
+    assert "a's probes run the code of b" in issuer_context(res.engine, TaskId("root"), "plan")
 
 
 # === _fold_merge: deterministic, referentially clean, dedup ===
@@ -485,7 +524,7 @@ def test_a_silent_provider_is_reported_as_a_provider_fact(monkeypatch):
         def complete_structured(self, system, user, schema):
             return {}
 
-    monkeypatch.setattr(D, "_default_llm", lambda model: Silent())
+    monkeypatch.setattr(D, "_default_llm", lambda model, **_: Silent())
     e = make_engine(llm=Silent(), validate_signals=True)
     e.start()
     out = T.auto_decompose(e, "ship a hello world script", root_id="r", assignee="human")
@@ -553,7 +592,7 @@ def test_what_the_plan_spent_is_on_the_record_when_the_build_raises(monkeypatch)
     def boom(*a, **k):
         raise ValueError("the build refused the split")
 
-    monkeypatch.setattr(_D, "_default_llm", lambda model: Spent())
+    monkeypatch.setattr(_D, "_default_llm", lambda model, **_: Spent())
     monkeypatch.setattr(_TL, "decompose_into", boom)
     e = make_engine()
     seen = []
@@ -561,3 +600,18 @@ def test_what_the_plan_spent_is_on_the_record_when_the_build_raises(monkeypatch)
     with pytest.raises(ValueError):
         _TL.auto_decompose(e, "goal")
     assert seen == Spent.calls
+
+
+def test_a_fold_naming_the_files_without_their_content_gets_the_content_the_plan_pins():
+    """The fold's door of `procedure.with_named_files`: a new subtask re-homing a root probe names its files under
+    `{inputs}/<name>` with no bodies (the projection never shows the corpus); the plan's own content is carried."""
+    spec = _graph_state()
+    spec["root_criteria"][0] = dict(spec["root_criteria"][0], check=[
+        {"behaviour": "b", "command": "x < {inputs}/a.sql", "expect": "ok", "inputs": {"a.sql": "SELECT 1;\n"}}])
+    name = spec["root_criteria"][0]["name"]
+    patch = {"add_subtasks": [{"id": "integ", "name": "integ", "description": "the whole", "criteria": [
+        {"name": name, "description": "d", "check": [{"behaviour": "b", "command": "x < {inputs}/a.sql || echo F",
+                                                     "expect": "ok", "inputs": {"{inputs}/a.sql": ""}}]}]}]}
+    out, _ = _fold_merge(spec, patch)
+    (p,) = next(k for k in out["subtasks"] if k["id"] == "integ")["criteria"][0]["check"]
+    assert p["inputs"] == {"a.sql": "SELECT 1;\n"}, p["inputs"]
