@@ -21,6 +21,8 @@ export function connectWS(handlers, missing = false, again = false) {
     // 4404: the server knows no such project YET — the header says so; asked again slowly and quietly, since a goal
     // stated in this tab creates it, and a tab that stopped asking heard nothing of its own run (critic). The feed
     // creates no project by asking (test_a_watched_name_is_not_a_project).
-    ws.onclose = e => { if (e.code === 4404) return banner('gfso-conn', ''), setTimeout(() => connectWS(handlers, true), 10000);
+    // …a server of another account closes the feed for good (4403): nothing to reconnect to, the page says why (main.js)
+    ws.onclose = e => { if (e.code === 4403) return;
+                        if (e.code === 4404) return banner('gfso-conn', ''), setTimeout(() => connectWS(handlers, true), 10000);
                         lost(); setTimeout(() => connectWS(handlers, false, true), 2000); };
 }

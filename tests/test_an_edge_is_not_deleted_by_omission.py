@@ -26,11 +26,11 @@ def _a_producer_and_a_consumer(e):
     T.create_task(e, "root", {"description": "parent",
                               "criteria": [criterion("g", "G"),
                                            criterion("p", "P")],
-                              "accepted_risks": _RISKS}, assignee="agent")
+                              "accepted_risks": _RISKS}, assignee="user")
     T.decompose(e, "root", [{"task_id": "root.prod", "spec": {"description": "producer",
-                                   "criteria": [criterion("pp", "PP")]}, "assignee": "agent", "covers": ["p"]},
+                                   "criteria": [criterion("pp", "PP")]}, "assignee": "user", "covers": ["p"]},
         {"task_id": "root.cons", "spec": {"description": "consumer",
-                                   "criteria": [criterion("c", "C")]}, "assignee": "agent", "covers": ["g"]}], accepted_risks=REGISTER)
+                                   "criteria": [criterion("c", "C")]}, "assignee": "user", "covers": ["g"]}], accepted_risks=REGISTER)
     T.add_dependency(e, "root.prod", "root.cons", glue="cons reads prod's output")
     e.wait_idle()
     assert [(d["producer"], d["consumer"]) for d in T.get_dependencies(e)] == [("root.prod", "root.cons")]
@@ -47,7 +47,7 @@ def test_revise_does_not_sever_what_the_node_waits_for():
 
     T.revise(e, "root.cons", {"description": "consumer, revised",
                               "criteria": [criterion("c", "C, tightened")],
-                              "accepted_risks": _RISKS}, "agent")
+                              "accepted_risks": _RISKS}, "user")
     e.wait_idle()
 
     assert _edges(e) == [("root.prod", "root.cons")], "the edge was deleted by omission"
@@ -61,7 +61,7 @@ def test_edit_criteria_still_carries_it_too():
     e.start()
     _a_producer_and_a_consumer(e)
 
-    T.edit_criteria(e, "root.cons", [criterion("c", "C, tightened")], "agent")
+    T.edit_criteria(e, "root.cons", [criterion("c", "C, tightened")], "user")
     e.wait_idle()
 
     assert _edges(e) == [("root.prod", "root.cons")]

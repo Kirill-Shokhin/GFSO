@@ -18,7 +18,7 @@ ROOT = TaskId("root")
 def _graph(tmp_path):
     e = make_engine(storage=SqliteStorage(str(tmp_path / "g.db")), llm=StubLLM(), validate_signals=True, state_timeout=0)
     e.start()
-    e.record_root_issuer(ROOT, AgentId("agent"))
+    e.record_root_issuer(ROOT, AgentId("user"))
     T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G"), criterion("h", "H")]},
                   assignee="exec-1")
     T.decompose(e, "root", [{"task_id": t, "assignee": "exec-2", "covers": [c], "spec": {
@@ -35,7 +35,7 @@ def _deliver(e):
 
 
 def _pass(e):
-    assert "error" not in (o := T.signal(e, "root", "PASS", "agent")), o
+    assert "error" not in (o := T.signal(e, "root", "PASS", "user")), o
     e.wait_idle()
 
 

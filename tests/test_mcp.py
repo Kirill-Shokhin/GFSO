@@ -4,7 +4,7 @@ import inspect
 import pytest
 from gfso.adapters.llm.stub import StubLLM
 from gfso import tools as T
-from gfso import tools_llm as TL, serverctl
+from gfso import config, signin, tools_llm as TL, serverctl
 from gfso.mcp.server import _bind, _with_ui_link
 from gfso.runtime import ProjectRegistry
 from tests.support import REGISTER, criterion, make_engine
@@ -167,22 +167,24 @@ def test_unified_mcp_transport_mounts_and_handshakes():
 
 def test_default_assignee_is_the_calling_agent(monkeypatch):
     """Identity is TRANSPORT-derived, zero config: this tool surface is the AGENT's door, so an omitted
-    assignee = `agent` out of the box (create_task / decompose children); GFSO_AGENT_ID only RENAMES;
+    assignee = `agent` out of the box (create_task / decompose children); a call signed by a token is its name's;
     an explicit assignee = a real delegation and always wins."""
     e = _eng()
-    monkeypatch.delenv("GFSO_AGENT_ID", raising=False)
     t = T.create_task(e, "self1", {"description": "x", "criteria": [criterion("a", "A")]})
-    assert t["assignee"] == "agent"                      # works with NO env at all
+    assert t["assignee"] == "user"                      # works with NO env at all
     kids = T.decompose(e, "self1", [{"task_id": "k1", "spec": {"description": "k", "criteria": [criterion("x", "X")]}}],
                        [{"criterion_name": "a", "child_id": "k1"}], accepted_risks=REGISTER)
-    assert kids[0]["assignee"] == "agent"
+    assert kids[0]["assignee"] == "user"
     # the delegated and the renamed node hang under `self1` — the project's one root
     t2 = T.create_task(e, "other", {"description": "y", "criteria": [criterion("b", "B")]},
                        assignee="bob", parent_id="self1", covers=["a"])
     assert t2["assignee"] == "bob"                       # explicit = real delegation, wins
-    monkeypatch.setenv("GFSO_AGENT_ID", "claude-main")   # optional RENAME, not a requirement
-    t3 = T.create_task(e, "named", {"description": "z", "criteria": [criterion("c", "C")]},
-                       parent_id="self1", covers=["a"])
+    token = config.CALLER.set(signin.by_token(signin.issue("claude-main")[1]))   # a console of its own name
+    try:
+        t3 = T.create_task(e, "named", {"description": "z", "criteria": [criterion("c", "C")]},
+                           parent_id="self1", covers=["a"])
+    finally:
+        config.CALLER.reset(token)
     assert t3["assignee"] == "claude-main"
     e.stop()
 
@@ -217,7 +219,7 @@ def test_a_verb_that_starts_the_work_answers_with_its_projects_link(monkeypatch,
     try:
         for fn in (auto_decompose, TL.TOOLS["start_project"]):
             assert asyncio.run(_bind(reg, fn)())["ui"] == f"{serverctl.BASE}/?project=demo", fn.__name__
-        assert asyncio.run(_bind(reg, fn)(project="other"))["ui"].endswith("?project=other")
+        assert asyncio.run(_bind(reg, auto_decompose)(project="other"))["ui"].endswith("?project=other")
         assert serverctl.BASE.startswith("http")
     finally:
         for e in list(reg._engines.values()):

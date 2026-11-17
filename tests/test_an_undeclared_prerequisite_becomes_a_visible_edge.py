@@ -21,7 +21,7 @@ def _two_leaves_and_no_declared_dependency(e):
                               "criteria": [criterion("g", "G holds"),
                                            criterion("p", "P holds")],
                               "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     T.decompose(e, "root", [{"task_id": "root.cons", "spec": {"description": "consumer",
                                    "criteria": [criterion("c", "C")]}, "assignee": "cons-x", "covers": ["g"]},
         {"task_id": "root.prod", "spec": {"description": "producer",

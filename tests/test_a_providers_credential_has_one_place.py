@@ -232,9 +232,10 @@ def test_the_agent_opens_a_window_that_runs_one_gfso_command_and_returns(monkeyp
     токены». A generated shell script ran a backticked `--remove` under macOS and stopped at an npm `claude.cmd` under
     Windows (critic, 2026-11-08): the window runs one gfso command, and the agent's call returns at once."""
     opened = []
+    monkeypatch.setenv("GFSO_NO_WINDOWS", "0")              # …nothing is started: every start is a fake
     monkeypatch.setattr(doctor.sys, "platform", platform)
-    monkeypatch.setattr(doctor.subprocess, "Popen", lambda argv, **kw: opened.append((argv, kw)))
-    monkeypatch.setattr(doctor.subprocess, "run", lambda argv, **kw: opened.append((argv, kw)) or Ran(0))
+    monkeypatch.setattr(doctor.children.subprocess, "Popen", lambda argv, **kw: opened.append((argv, kw)))
+    monkeypatch.setattr(doctor.children, "run", lambda argv, **kw: opened.append((argv, kw)) or Ran(0))
     monkeypatch.setattr(cli, "console_script", lambda: r"C:\Users\Имя Фамилия\gfso.exe")
     monkeypatch.setattr(sys, "argv", ["gfso", "credential", "claude", "--sign-in"])
     with pytest.raises(SystemExit) as done:
@@ -285,7 +286,7 @@ def test_the_window_keeps_one_paste_and_says_what_it_kept(monkeypatch, capsys):
     token = "sk-ant-oat01-" + "q" * 90 + "Zq9w"
     pastes = iter([token + token, token])
     ran = []
-    monkeypatch.setattr(doctor.subprocess, "run", lambda argv, **kw: ran.append(argv) or Ran(0))
+    monkeypatch.setattr(doctor.children, "run", lambda argv, **kw: ran.append(argv) or Ran(0))
     monkeypatch.setattr(doctor.getpass, "getpass", lambda prompt: next(pastes))
     monkeypatch.setattr("builtins.input", lambda prompt="": "")
     assert doctor.sign_in_here() == 0
@@ -330,7 +331,7 @@ def test_an_empty_paste_is_refused_and_a_held_token_stays(paste):
 
 
 def test_a_sign_in_that_did_not_finish_says_so_and_keeps_nothing(monkeypatch, capsys):
-    monkeypatch.setattr(doctor.subprocess, "run", lambda argv, **kw: Ran(1))
+    monkeypatch.setattr(doctor.children, "run", lambda argv, **kw: Ran(1))
     monkeypatch.setattr(doctor.getpass, "getpass", lambda prompt: pytest.fail("asked a paste of a token never shown"))
     monkeypatch.setattr("builtins.input", lambda prompt="": print(prompt))
     assert doctor.sign_in_here() == 1

@@ -115,6 +115,34 @@ def test_max_reopens_exhaustion_locks_the_node(engine):
     assert engine.graph.get_task(TaskId("n1")).reopens == 1
 
 
+def test_next_steps_offers_a_reopen_only_where_its_gate_admits_it(engine, monkeypatch):
+    """The prose offered `reopen` under "while nothing has been staked and reopens remain" and asked no gate: the
+    reader called it and was refused. Offered where the gate is open; said refused, in the gate's words, where not."""
+    engine.assign_task(TaskId("root"), spec(), AgentId("boss"))
+    engine.wait_idle()
+    _cancel(engine, "root", "boss")
+    open_ = T.next_steps(engine)["directive"]
+    assert "`reopen('root')` (1 of 1 reopens left)" in open_ and "is refused" not in open_, open_
+    monkeypatch.setattr(engine, "place_down", lambda: "its daemon does not answer")
+    shut = T.next_steps(engine)["directive"]
+    assert "a reopen of 'root' is refused: root stays ABANDONED" in shut and "To take the goal up again" not in shut, shut
+
+
+def test_a_finished_goal_offers_no_reopen_its_spent_counter_shuts(engine):
+    _drive_to_done(engine, "root")
+    engine.reopen(TaskId("root"), AgentId("boss"))
+    engine.wait_idle()
+    for sd in (SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=AgentId("boss")),
+               SignalData(signal=Signal.DELIVER, task_id=TaskId("root"), source=AgentId("boss"), result="r2")):
+        engine.send_signal(sd)
+        engine.wait_idle()
+    reviewer_passes(engine, TaskId("root"))
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("root"), source=AgentId("boss")))
+    engine.wait_idle()
+    said = engine.frontier._why_nothing_is_open()
+    assert "If it should not be" not in said and "a reopen of 'root' is refused: root has spent its reopens" in said, said
+
+
 # ── gate (i): the finality-gate of consumption ───────────────────────────────
 
 def _parent_child(e: Engine, deliver_parent=False):

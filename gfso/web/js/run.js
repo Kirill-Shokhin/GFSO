@@ -161,19 +161,49 @@ export const byRole = parts => { const all = Object.values(parts).reduce((s, p) 
     return Object.entries(parts).sort((a, b) => b[1].cost - a[1].cost).map(([k, p]) => [k, p, p.cost / all]); };
 // Something runs here now: a process in flight or a session open — the stall's test and the clock's, one rule
 export const busyNow = (procs, sessions = []) => procs.length > 0 || sessions.some(s => s.open);
-export function runNow(tasks, procs = [], sessions = [], auto = false) {
+// WHO HOLDS A NODE, a person or the system — one rule for every view (the header's calls, what is worked now, whose
+// verdict asks for a look): with no mode, or under SOLO, every node is a person's; under AUTO only the goal; under SEMI
+// the depths above the engine's own boundary (`holds_above`, the graph read's — its default is the plan's middle, which
+// the recorded `boundary` never says: a guess of 1 handed the person's depth-1 nodes to the system, critic 3).
+export const heldByPerson = (mode, depth) => t => mode?.mode === 'auto' ? !depth[t.id]
+    : mode?.mode === 'semi' ? (depth[t.id] ?? 0) < (mode.holds_above ?? mode.boundary ?? 1) : true;
+// A party working a node through its live console is the server's record too (`working`: a move of a live connection on a
+// node in work opens it, the node leaving work or the party's last connection closing ends it) — the people's and in_chat's
+// counterpart of a session in flight. Before it the page guessed a party's last take (the author, 2026-11-14: «иначе как
+// инчат должен быть видим как процесс? Это как раз тот пул активных задач»).
+export function runNow(tasks, procs = [], sessions = [], present = []) {
     const parent = new Set(tasks.map(t => t.parent_id)), open = new Set(sessions.filter(s => s.open).map(s => s.node));
-    const on = new Map(), up = ancestorsIn(tasks);
+    const on = new Map(), up = ancestorsIn(tasks), leaf = id => !parent.has(id);
     for (const w of procs) if (!on.has(w.task_id)) on.set(w.task_id, w);
     // …but a leaf one scope session carries is at work: a process or an open session on an ancestor is its session
     // …a session of execution: an issuer's turn or a consent on the parent marked an idle leaf as worked, and could hide a dead one (critic)
     const carries = new Set([...procs.filter(w => PROC_KIND[w.verb] === 'exec').map(w => w.task_id), ...sessions.filter(s => s.open && s.kind === 'exec').map(s => s.node)]);
     const carried = id => up(id).some(x => carries.has(x));
-    const work = new Set(tasks.filter(t => on.has(t.id) || open.has(t.id)
-        || (working(t.state) && !parent.has(t.id) && (!auto || carried(t.id)))).map(t => t.id));
+    // …a leaf a session of this server carries is at work in every mode (SEMI's lower depths run as AUTO's do); a party's
+    // live console on a node no process runs is its presence
+    const hand = new Map(present.filter(w => w.task_id && !on.has(w.task_id))
+        .map(w => [w.task_id, {id: w.task_id, party: w.principal, at: w.since * 1e3}]));
+    const work = new Set(tasks.filter(t => on.has(t.id) || open.has(t.id) || hand.has(t.id)
+        || (working(t.state) && leaf(t.id) && carried(t.id))).map(t => t.id));
     const carrier = id => { const x = [id, ...up(id)].find(x => on.has(x)); return x ? [x, on.get(x)] : []; };
-    return {procs, work, on: id => on.get(id), carrier};
+    // …and what pulses: a process on it, or its holder's take — one reading for the graph, its folds and the strip
+    return {procs, work, on: id => on.get(id), hand: id => hand.get(id), lit: id => on.has(id) || hand.has(id), carrier};
 }
+// IN WORK is what the log holds, never who is connected: every node in a working state at the deepest level one stands —
+// a part whose own parts are worked is said by them — with its holder and the moment it entered that state. It holds
+// through any restart; whether someone acts on it this minute is the pulse `runNow` gives on top of it (the author, 11-15:
+// «как из ui понимать над чем вообще идет работа? это ложное готово»: 35 held nodes read «Nothing at work»).
+// …and what a process or a console acts on outside a working state (a plan authored over an offered root) is in work too.
+// Lit: acted on now, by its own process or console or by the session that carries its part (one session runs a whole part).
+export function inWork(tasks, audit = [], now = null) {
+    const up = ancestorsIn(tasks), below = new Set(), entered = {};
+    for (const t of tasks) if (working(t.state)) up(t.id).forEach(a => below.add(a));
+    for (const a of audit) if (!a.rejected && a.new_state) entered[a.task_id] = a;          // the log in its order: the last
+    return tasks.filter(t => !below.has(t.id) && (working(t.state) || now?.lit(t.id))).map(t => { const a = entered[t.id];
+        return {t, holder: t.assignee || '', lit: !!now && (now.lit(t.id) || now.carrier(t.id).length > 0),
+                since: a?.new_state === t.state ? a.t : t.state_entered_at ? at(t.state_entered_at) : null}; });
+}
+
 // What holds the most back: following each waiting node's Dep producers up to the ones that wait on
 // nothing themselves — those are the work everything behind them is queued on — and counting, per such
 // producer, the nodes it holds (directly or through others).
@@ -374,10 +404,10 @@ function joinHistory(rows, verdicts) {
     return out;
 }
 
-export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, waiting = null, steps = null, procs = [],
-                          auto = false, now = Date.now()}) {
+export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline = [], verdicts = {}, waiting = null, steps = null, procs = [], present = [],
+                          auto = false, mode = null, now = Date.now()}) {
     // `pos`: a row's place in the project's whole log, which a verdict's `log_at` counts in
-    audit = audit.map((a, pos) => ({...a, pos, t: at(a.timestamp)})).sort((a, b) => a.t - b.t || a.pos - b.pos);
+    audit = audit.map((a, pos) => ({...a, pos: a.pos ?? pos, t: at(a.timestamp)})).sort((a, b) => a.t - b.t || a.pos - b.pos);
     // …each verdict row carries its own per-criterion record from the node's history, so every round read off the log
     // has it — the panel's criterion histories too, not only Progress (critic: the panel drew ⊥ for a criterion kept as pass)
     const per = joinHistory(audit.filter(isVerdict), verdicts);
@@ -390,9 +420,10 @@ export function buildRun({nodes, edges = [], tasks = [], audit, calls, pipeline 
     // a process on no node yet, the goal's plan: it runs the clock though it draws no bar («0s run» under seven minutes of a plan)
     const loose = procs.filter(w => !w.task_id && PROC_KIND[w.verb]).map(w => ({start: w.since * 1e3, end: now}));
     const all = [...ss, ...open], depth = depths(nodes), names = Object.fromEntries(nodes.map(n => [n.id, nameOf(n)]));
+    const waits = waitsOf(nodes, edges, waiting, steps);
     return {
-        name: id => names[id] || id, auto, now: runNow(tasks, procs, all, auto),
-        sessions: all, rounds: rounds(audit), audit, depth, waits: waitsOf(nodes, edges, waiting, steps),
+        name: id => names[id] || id, auto, now: runNow(tasks, procs, all, present),
+        sessions: all, rounds: rounds(audit), audit, depth, waits,
         clock: clock([...all, ...loose], audit.map(a => a.t), open.length || loose.length ? now : null),
         exec: concurrency(all.filter(s => s.kind === 'exec')), val: concurrency(oneValidation(all.filter(s => s.kind === 'val'))),
         criteria: criteria(audit, tasks, verdicts), work: {...work(calls), moved: moved.length},

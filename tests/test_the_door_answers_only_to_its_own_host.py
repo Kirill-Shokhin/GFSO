@@ -22,9 +22,15 @@ def client(monkeypatch, tmp_path):
     return TestClient(create_app(reg.engine(), registry=reg))
 
 
-@pytest.mark.parametrize("host", ["127.0.0.1:8000", "localhost:8000", "[::1]:8000", "testserver"])
+@pytest.mark.parametrize("host", ["127.0.0.1:8000", "testserver"])
 def test_its_own_names_are_answered(client, host):
     assert client.get("/api/tools", headers={"host": host}).status_code == 200
+
+
+@pytest.mark.parametrize("host", ["localhost:8000", "[::1]:8000"])
+def test_a_loopback_name_of_an_address_it_does_not_hold_is_not_answered(client, host):
+    """localhost and ::1 name [::1] too, which another account may bind while this server holds 127.0.0.1 alone."""
+    assert client.get("/api/tools", headers={"host": host}).status_code != 200
 
 
 def test_what_the_door_answers_holds_the_page_s_policy(client):
@@ -52,7 +58,9 @@ def test_a_socket_from_a_foreign_page_is_closed(client):
 @pytest.mark.parametrize("origin", [None, "http://127.0.0.1:8000"])
 def test_a_socket_from_its_own_page_or_no_page_opens(client, origin):
     headers = {"origin": origin} if origin else {}
-    with client.websocket_connect("/ws/events", headers=headers):
+    # …at the page's own name: its origin is exactly the one its request asks (the test client's socket asks
+    # `testserver` unless told)
+    with client.websocket_connect("ws://127.0.0.1:8000/ws/events", headers=headers):
         pass
 
 
@@ -101,6 +109,8 @@ def test_its_own_name_served_over_tls_in_front_may_write_and_a_stranger_may_not(
     """`tailscale serve` hands the page over https under the name the server answers to; the page is its own."""
     monkeypatch.setenv("GFSO_ALLOWED_HOSTS", "kir.tail.ts.net")
     own = {"host": "kir.tail.ts.net", "origin": "https://kir.tail.ts.net"}
-    assert client.post("/api/run/create_task", headers=own, json={"task_id": "x"}).status_code != 403
+    out = client.post("/api/run/create_task", headers=own, json={"task_id": "x"})    # its own page: a move asks a name
+    assert "signed by no one" in out.text, out.text
     stranger = {**own, "origin": "https://stranger.example"}
-    assert client.post("/api/run/create_task", headers=stranger, json={"task_id": "x"}).status_code == 403
+    out = client.post("/api/run/create_task", headers=stranger, json={"task_id": "x"})
+    assert out.status_code == 403 and "signed by no one" not in out.text, out.text   # another site's: refused as such

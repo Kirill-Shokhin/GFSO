@@ -3,19 +3,20 @@
 schema and work tools, its session bounded (`_session_cap`), its report handed to `reports`."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from gfso.config import MODEL_DEFAULT
 from gfso.inflight import _inflight
 from gfso.llm import session_calls
 from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut
-from gfso.adapters.llm.structured import schema_instruction, parse_structured
+from gfso.adapters.llm.structured import schema_instruction, parse_structured, why_unread
 from gfso.core.graph.model import generation_of_task, project_now
 from gfso.core.types import THIS_HOST, PlaceUnavailable, TaskId, Signal, Stage, State, Verdict
 from gfso.engine.events import emit_cb
 from gfso.issuer import signal_ok as _signal
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
-from gfso.workspaces import _enter_workspace, conversation_of, execution_of, performer, project_llm, where_it_runs
+from gfso.workspaces import _enter_workspace, conversation_of, parts_not_there, execution_of, performer, project_llm, where_it_runs
 from gfso.observe import observe_place
 from gfso.adapters import worktrees as W
 from gfso.adapters.execution import ended_past_disk, place_past_disk
@@ -79,6 +80,18 @@ def _too_late(engine, node_id, cap) -> dict | None:
     return {"task_id": str(node_id), "status": "too_late"}
 
 
+def _not_there(engine, agents, node_id, members, cwd, cap, _cb) -> tuple[list, int | None]:
+    """The joined parts whose own change is no longer all in the session's tree (`parts_not_there`), said once per
+    set — and the session's cap less the time it took, in flight while it runs, as the observation's (`_observed`)."""
+    t0 = datetime.now()
+    with _inflight("parts' work", engine, node_id):
+        lost = parts_not_there(engine, agents, members, cwd)
+    if lost and engine.say_once(f"not-there:{node_id}:" + ";".join(f"{x}={','.join(f)}" for x, f, *_ in lost)):
+        _cb(f"{node_id}: before the session, {len(lost)} joined part(s) whose delivered change is no longer all in its "
+            f"tree: " + "; ".join(f"{x} ({', '.join(f[:3])}{' …' if len(f) > 3 else ''})" for x, f, *_ in lost))
+    return lost, None if cap is None else cap - int((datetime.now() - t0).total_seconds())
+
+
 def _observed(engine, node_id, tasks, cwd, cap, _cb) -> tuple[dict, int | None]:
     """What the nodes' pinned checks print on the place before the session (`observe_place`), said in one line — in
     flight while it runs (a server read as idle was restarted under a spawn, see `run_executor`) — and the session's
@@ -92,11 +105,13 @@ def _observed(engine, node_id, tasks, cwd, cap, _cb) -> tuple[dict, int | None]:
     return seen, None if cap is None else cap - int((datetime.now() - t0).total_seconds())
 
 
-def _unread(llm, unparsed: str) -> str:
-    """The headline of a session that left no report: `unparsed` — unless what stops the project (the account's limit,
-    the execution place down) refused its call: then nothing came to be read and no issuer's attention is owed."""
-    return ("no report — the call was refused by what stops the project, nothing was answered"
-            if refused_by_limit(calls_of(llm)) else unparsed)
+def _unread(llm, unparsed: str, text: str, schema: dict) -> str:
+    """The headline of a session that left no report: `unparsed`, with what the parser met in its `text` — unless what
+    stops the project (the account's limit, the execution place down) refused its call: then nothing came to be read
+    and no issuer's attention is owed."""
+    if refused_by_limit(calls_of(llm)):
+        return "no report — the call was refused by what stops the project, nothing was answered"
+    return unparsed + (f" · {why}" if (why := why_unread(text, schema)) else "")
 
 
 def _fresh_disk(engine, agents, cwd) -> None:
@@ -219,6 +234,7 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     if late := _too_late(engine, task_id, cap):
         return late
     cwd, unjoined, ws = _enter_workspace(engine, agents, task, [task])
+    lost, cap = _not_there(engine, agents, task_id, [task], cwd, cap, _cb)
     seen, cap = _observed(engine, task_id, [task], cwd, cap, _cb)
     if late := _too_late(engine, task_id, cap):
         return late
@@ -229,14 +245,20 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     # `claude -p` — and it was the one path that never appeared in `busy`, so a reconcile arriving
     # from another session read the server as idle and restarted it mid-run.
     report, text, stats, llm, _cb = _spawn(engine, task_id, executor_id, cfg, _llm, "executor", "executor.md",
-                                           _executor_packet(engine, task, cwd, unjoined, seen), EXECUTOR_SCHEMA,
+                                           _executor_packet(engine, task, cwd, unjoined, seen, lost), EXECUTOR_SCHEMA,
                                            "delegated_execution", cwd, cap, tasks=(task,))
     if report is None:
         # No signal is forged on a broken report: the node stays where it is; the FSM's own timeout
         # monitor escalates a stuck node (no second clock). Visible in the observation field.
         past, ended = _past_disk(engine, agents, cwd)
-        _cb(f"{task_id}: {_unread(llm, 'executor report DID NOT PARSE — no signals sent; issuer attention needed')} "
-            f"· executor {_stat_line(llm)}" + (f" · ended by the disk's watch: {ended}" if ended else ""))
+        # …WITH WHAT IT SAID: the text went back to the dispatcher only, so a stranger's run (s17b) lost two minutes to
+        # a report nobody could read afterwards (Thm 11: the decision to retry has its record, the text it read included)
+        # …quoted as JSON quotes it: quoted by `repr`, an apostrophe read as the `\'` the model wrote (s17c)
+        _cb(f"{task_id}: " + _unread(llm, "executor report DID NOT PARSE — no signals sent; issuer attention needed",
+                                     text, EXECUTOR_SCHEMA)
+            + f" · executor {_stat_line(llm)}" + (f" · ended by the disk's watch: {ended}" if ended else "")
+            + (f" · its text ends: {json.dumps(text[-400:], ensure_ascii=False)}" if (text or "").strip()
+               else " · it wrote no text"))
         return {"task_id": str(task_id), "status": "unparsed", "report_text": text, "stats": stats,
                 "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm)), "past_disk": past,
                 "disk_ended": ended}
@@ -292,7 +314,7 @@ def run_consent(engine, task_id: TaskId, executor_id: str, agents: "AgentRegistr
                                      CONSENT_SCHEMA, "delegated_consent", here, work=False)
     if answer is None:
         past, ended = _past_disk(engine, agents, here)    # …a revised parent's place still past its bound (critic)
-        _cb(f"{task_id}: " + _unread(_l, f"{executor_id}'s consent DID NOT PARSE — nothing signalled")
+        _cb(f"{task_id}: " + _unread(_l, f"{executor_id}'s consent DID NOT PARSE — nothing signalled", _t, CONSENT_SCHEMA)
             + f" · {_stat_line(_l)}" + (f" · ended by the disk's watch: {ended}" if ended else ""))
         return {"task_id": str(task_id), "status": "unparsed", "limit": refused_by_limit(calls_of(_l)),
                 "past_disk": past}
@@ -342,6 +364,7 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
         return late
     top = engine.graph.get_task(top_id)
     cwd, unjoined, ws = _enter_workspace(engine, agents, top, order)
+    lost, cap = _not_there(engine, agents, top_id, order, cwd, cap, _cb)
     seen, cap = _observed(engine, top_id, todo, cwd, cap, _cb)
     if late := _too_late(engine, top_id, cap):
         return late
@@ -349,11 +372,11 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
     _cb(f"{top_id}: one executor session ({executor_id}) for the scope's open node(s) "
         f"{', '.join(str(t.id) for t in todo)}" + (f", cap {cap}s" if cap else "") + "…")
     report, text, stats, llm, _cb = _spawn(engine, top_id, executor_id, cfg, _llm, "scope-executor",
-                                           "executor_scope.md", _scope_packet(engine, top, order, cwd, unjoined, seen),
+                                           "executor_scope.md", _scope_packet(engine, top, order, cwd, unjoined, seen, lost),
                                            SCOPE_SCHEMA, "delegated_execution", cwd, cap, tasks=tuple(todo))
     if report is None:
         past, ended = _past_disk(engine, agents, cwd)
-        _cb(f"{top_id}: " + _unread(llm, "the scope session's report DID NOT PARSE — no signals sent")
+        _cb(f"{top_id}: " + _unread(llm, "the scope session's report DID NOT PARSE — no signals sent", text, SCOPE_SCHEMA)
             + f" · {_stat_line(llm)}" + (f" · ended by the disk's watch: {ended}" if ended else ""))
         return {"task_id": str(top_id), "status": "unparsed", "report_text": text, "stats": stats,
                 "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm)), "past_disk": past,

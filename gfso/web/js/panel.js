@@ -3,22 +3,24 @@
 // facet per tab, in a slide-over left of the panel. One unit: the reader renders what the panel read and fetches
 // nothing (they were two modules with seven names across the cut). Buttons carry `data-action` (dispatched in main.js);
 // nothing here sends anything.
-import {$, el, esc, data, section, ul, rebuild, tally, due} from './dom.js';
+import {$, el, esc, coded, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
-import {task} from './api.js';
-import {S, hasKids, taskOf, myRole, agentName, moverOf, stateWord} from './state.js';
+import {task, FOCUS} from './api.js';
+import {S, hasKids, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord} from './state.js';
 import {bucketOf, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label, enteredWord} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
 import {glyph, mark} from './draw.js';
 import {when as at_, stamp, trim, plural, spoken} from './fmt.js';
+import {childrenOf} from './tree.js';
+import {isHidden} from './fold.js';
 
 const when = iso => at_(at(iso));
 const link = (facet, label) => `<button class="pn-link" data-action="read" data-facet="${facet}">${label} →</button>`;
 
 // Whose move it is (§12.13), else the Dep producers not passed yet — named beside the owner when both hold.
 function waiting(d) {
-    const w = waitsOf(S.graph.nodes, S.graph.edges, S.waiting, S.steps)[d.id], words = waitWords(w, id => nameOf(taskOf(id)) || id);
+    const w = waitsOf(S.graph.nodes, S.graph.edges, S.waiting, S.steps)[d.id], words = waitWords(w, id => nameOf(taskOf(id)) || id, whoOwes(taskOf(d.id), w?.owes));
     // …its own parts as a count of its own, never «its 1 part» threaded into the words
     // …and several producers as a count too, their names one a row on the line's hover: names carry commas (audit D4)
     const deps = (w?.deps || []).map(id => nameOf(taskOf(id)) || id);
@@ -26,6 +28,9 @@ function waiting(d) {
         : !w?.deps.length && w?.parts.length ? tally(w.parts.length, w.parts.length > 1 ? 'parts' : 'part') : `<b>${esc(words)}</b>`;
     return words === '—' ? ['', ''] : [what, deps.length > 1 ? `Waiting on ${deps.length}:\n${deps.map(n => `– ${n}`).join('\n')}` : ''];
 }
+// The engine's deferral (`split_after`: the parts it names, `waits_on` those not passed yet, `why`) — said while it waits
+const splitAfter = a => { const w = a?.waits_on || [];
+    return w.length ? prop('Split after', `<b>${esc(w.map(id => nameOf(taskOf(id)) || id).join(', '))}</b>`, PANEL.splitAfter(a.why)) : ''; };
 // a meta line is one line, cut at its end: the whole of it on hover
 const meta = (html, text) => `<div class="pn-meta"${PANEL.full(text)}>${html}</div>`;
 
@@ -44,7 +49,15 @@ function head({d, rounds}) {
     return `<div class="sidebar-header"><h2${PANEL.full(name)}>${esc(name)}</h2><button class="sidebar-close" data-action="close"${frame('close')}>&times;</button></div>`
         + `<div class="pn-status">${pill(d, v)}<span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v === 'undef' ? '⊥' : v}</span>`
         + `<span class="pn-id"${PANEL.full(d.id)}>${esc(d.id)}</span></div>`
+        // GOING DOWN into a part, said where the eye lands first: a link inside the panel's table went unseen (the author,
+        // 2026-11-17: «я так и не понял как падать внутрь ноды»); the goal's own view is the whole graph: nothing to go to
+        + (hasKids(d.id) && d.id !== FOCUS && d.parent_id ? `<button class="pn-down" data-action="view" data-id="${esc(d.id)}"${PANEL.openView}>`
+            + `Open its ${childrenOf(S.tasks, d.id).filter(t => t.state !== 'ABANDONED').length} parts ↓</button>` : '')
+        // …and a node chosen where the graph does not draw it (In work, a report): its part one press away, never moved to unasked
+        + (isHidden(d.id) ? `<button class="pn-down" data-action="view" data-id="${esc(d.parent_id || '')}">Show it on the graph →</button>` : '')
         + `<div class="pn-grid">`
+        // …the goal as the person gave it, on the root: a tap on the header's goal opens this panel, never its hover (critic)
+        + prop('As given', !d.parent_id && asGiven(d) ? `<span class="pn-given">${esc(asGiven(d))}</span>` : '')
         + prop('Del', `<code>${esc(d.assignee ? agentName(d.assignee) : '—')}</code>`)
         + prop('Round', n ? `<b class="pn-fig">${n}</b>${inWork ? ' in work' : ''}` : '')
         + prop('Result', !d.parent_id && delivered(d) && S.graph.landed ? `<code${H.landed(S.graph.landed)}>${esc(S.graph.landed.branch || S.graph.landed.path)}</code>` : '')
@@ -52,6 +65,8 @@ function head({d, rounds}) {
         + prop('Deadline', d.deadline && live ? `<code class="${at(d.deadline) < Date.now() ? 'overdue' : ''}">${when(d.deadline)}</code>` : '',
                d.deadline && live ? due(at(d.deadline)) + PANEL.deadline(at(d.deadline)) : '')
         + prop('Waiting on', wait, waitText && PANEL.full(waitText))
+        // a split deferred on named parts: until their results stand, the split itself waits — then its parts show
+        + splitAfter(d.split_after)
         // WHO RAN IT: the model is the node's real executor, its validator another party (author, 2026-10-25)
         + `<div class="pn-by" id="pn-by">${signedBy(S.run, d.id)}</div></div>`
         + (d.state === 'ESCALATED' ? `<div class="pn-note check-skip"${PANEL.escalated}>issuer decides: raise the bound, change the criteria, or cancel</div>` : '')
@@ -161,30 +176,54 @@ const sig = (id, a) => btn(a.cls, a.label, 'signal', {id, sig: a.s, prompt: a.pr
 // are the clean session's, whatever `performed_by` names (outside AUTO it names the holder).
 const DISPATCHED = new Set(['execute', 'rework', 'deliver']);
 function actions({d, acts}) {
-    const s = d.state, id = {id: d.id}, kids = hasKids(d.id), m = S.graph.mode, me = myRole();
-    const by = acts?.performed_by, mineSig = sg => !m?.mode || !by || !by[sg] || by[sg] === me;
-    // the signals the ENGINE admits here for whoever this page signs as (/actions); how each is offered is vocab's
-    const open = (acts?.actions || []).filter(mineSig).map(look).filter(Boolean)
-        .map(a => a.s === 'DELIVER' && s === 'REWORKING' ? {...a, label: 'Re-deliver'} : a).map(a => sig(d.id, a));
-    // the moves that are no signal: refused on the nodes of an AUTO project, the person's own elsewhere
+    const s = d.state, id = {id: d.id}, kids = hasKids(d.id), m = S.graph.mode;
+    // …a browser that signs as no one is offered nothing — each move would be refused — and is told how to sign in
+    if (!signsAs().length) return foot(`<div class="pn-note check-skip">${coded(lift())}</div>`, '');
+    // WHO SIGNS EACH MOVE is the engine's to say — who performs a signal (`performed_by`, the mode's lock read, not copied), who
+    // signs a structural move (`moves`: a split its holder's, an edit its issuer's, §10.1), who a check is signed as (`checks`)
+    // — and the page offers a move only where that name is one it signs as (whoami), under that name, said: the server signs
+    // it so (signin.py), the page sends none. A performer left unnamed is anyone's: the session's own name signs it.
+    const by = acts?.performed_by || {}, mv = acts?.moves || {}, mine = minePerformer, as = n => n || S.me?.name || '';
+    const open = (acts?.actions || []).filter(sg => mine(by[sg])).map(sg => [sg, look(sg, s)]).filter(([, a]) => a)
+        .map(([sg, a]) => [as(by[sg]), sig(d.id, a.s === 'DELIVER' && s === 'REWORKING' ? {...a, label: 'Re-deliver'} : a)]);
+    const may = (...vs) => as(vs.map(v => mv[v]).find(n => n && owns(n)) ?? null);
+    const ownsAny = (...vs) => vs.some(v => owns(mv[v]));
+    // a check is anyone's (§10.2), signed as the name the door gives it (`checks`: a verdict the issuer's, a review the split's
+    // holder's) where that name is yours, else as the session itself
+    const checker = v => owns(acts?.checks?.[v]) ? acts.checks[v] : as(null);
     const moves = m?.mode === 'auto' ? [] : [
-        can(s, 'V') && btn('btn-muted', 'Record verdict', 'verdict', id),
+        can(s, 'V') && [checker('record_verdict'), btn('btn-muted', 'Record verdict', 'verdict', {...id, as: checker('record_verdict')})],
         // ONE AI verb, dispatched by the node's state: undecomposed → author; decomposed → one refine round.
         // AI review is the standalone L2 door — hand-authored graphs never pass decompose's semantic pass.
-        ...can(s, 'D') ? [btn('btn-purple', 'Decompose', 'decompose', id), btn('btn-purple', kids ? 'AI refine' : 'AI decompose', 'ai-decompose', id),
-                          kids && btn('btn-purple', 'AI review', 'ai-review', id)] : [],
-        can(s, 'E') && btn('btn-muted', 'Edit', 'edit', id)].filter(Boolean);
-    const foot = (note, btns) => `<div class="pn-foot">${note}${btns ? `<div class="actions">${btns}</div>` : ''}<div id="inline-form"></div></div>`;
-    if (!m?.mode) { const btns = [...open, ...moves].join(''); return btns ? foot('', btns) : ''; }
-    const steps = (S.mySteps?.get(d.id) || []).filter(x => !x.performed_by || x.performed_by === me);
+        ...can(s, 'D') ? [ownsAny('decompose') && [may('decompose'), btn('btn-purple', 'Decompose', 'decompose', id)],
+                          ownsAny('auto_decompose') && [may('auto_decompose'), btn('btn-purple', kids ? 'AI refine' : 'AI decompose', 'ai-decompose', id)],
+                          kids && [checker('review_decomposition'), btn('btn-purple', 'AI review', 'ai-review', id)]] : [],
+        // the split's own register (edit_accepted_risks) is its holder's, not an Edit
+        // …its register part signed apart (`edit_accepted_risks`: the split's holder's where a person holds the node), told to the form
+        can(s, 'E') && ownsAny('revise', 'edit_criteria', 'reassign') && [may('revise', 'edit_criteria', 'reassign'),
+            btn('btn-muted', 'Edit', 'edit', {...id, risks: owns(mv.edit_accepted_risks) ? mv.edit_accepted_risks : ''})]].filter(Boolean);
+    // …and why a move is not offered, each in the engine's own sentence (`withheld`, and `why_none` when nothing is):
+    // a missing button said nothing (a probe: a Reject Challenge withheld for a Level-2 verdict the page never named);
+    // `gate` also carries asides written for an agent's verbs, which a person's buttons already perform (critic)
+    const why = [...Object.values(acts?.withheld || {}), ...(!open.length && acts?.why_none ? [acts.why_none] : [])];
+    const gate = why.map(w => `<div class="pn-note check-skip">${esc(spoken(w))}</div>`).join('');
+    if (!m?.mode) { const btns = signed([...open, ...moves]); return btns || gate ? foot(gate, btns) : ''; }
+    const steps = (S.mySteps?.get(d.id) || []).filter(x => x.mine);
     if (!steps.length) return '';
-    const said = steps.map(x => `<div class="pn-step"${m.mode === 'auto' ? '' : PANEL.directive(spoken(x.directive || ''))}>${esc(x.action)}`
-        + `${m.mode === 'auto' ? '' : ` — ${esc(trim(spoken(x.directive || ''), 220))}`}</div>`).join('');
+    // …a step's directive is written for whoever asked — the session's own name — so it is said only on that name's steps:
+    // under another of the person's names it read «NOT YOURS» beside the move offered (critic 3)
+    const told = x => m.mode !== 'auto' && (!x.performed_by || x.performed_by === S.me?.name) ? spoken(x.directive || '') : '';
+    const said = steps.map(x => `<div class="pn-step"${told(x) ? PANEL.directive(told(x)) : ''}>${esc(x.action)}`
+        + `${told(x) ? ` — ${esc(trim(told(x), 220))}` : ''}</div>`).join('');
     // outside AUTO the engine's performed_by names the holder even for work its hands do, so the mode's perform still
     // decides that work is the clean session's (critic: Deliver offered beside «PERFORMED BY … WAIT»)
     const waits = m.perform !== 'in_chat' && steps.every(x => DISPATCHED.has(x.action));
-    return foot(said, waits ? '' : [...open, ...moves].join(''));
+    return foot(said, waits ? '' : signed([...open, ...moves]));
 }
+const foot = (note, btns) => `<div class="pn-foot">${note}${btns ? `<div class="actions">${btns}</div>` : ''}<div id="inline-form"></div></div>`;
+// the buttons by the name each is signed as, that name said once before its own — read-only: the credential signs, never a box
+const signed = pairs => [...pairs.reduce((g, [n, b]) => g.set(n, [...(g.get(n) || []), b]), new Map())]
+    .map(([n, bs]) => `<span class="act-as"${PANEL.signedAs(n)}>as <b>${esc(agentName(n))}</b></span>${bs.join('')}`).join('');
 
 // Who ran a node, in one line for its panel: by role, each model with its sessions on it.
 // A node whose own sessions are booked nowhere — run inside a scope's session booked to its top, or done by the
@@ -215,7 +254,7 @@ async function readPanel(id) {
     try {
         const soft = p => p.catch(() => null);
         const [d, vr, cr, acts] = await Promise.all([task(id), soft(task(id, '/verdict')), soft(task(id, '/critique')),
-            soft(task(id, `/actions?role=${encodeURIComponent(myRole() || '*')}`))]);
+            soft(task(id, '/actions?role=*'))]);     // every party's moves with who makes each: the page keeps those it signs
         if (mine !== panelRead) return;                // a read that came late says no more than the later one
         // a round's per-criterion record is the node's verdict history, which the deck's run has joined to the log
         // …else, for the last verdict, the node's current record when it is that verdict's — even after a rework made it
@@ -250,6 +289,7 @@ export const resign = id => { const by = $('pn-by'); if (by) by.innerHTML = sign
     if ($('sidebar').dataset.key === id && +$('sidebar').dataset.per < (S.run?.rounds[id] || []).filter(r => r.per).length) selectTask(id); };
 
 export function closeSidebar() {
+    panelRead++;                                       // a read still out does not open it again when it lands (critic)
     closeReader();
     $('sidebar').classList.add('hidden');
 }
@@ -262,7 +302,10 @@ const txt = x => Array.isArray(x) && x.every(i => typeof i === 'string') ? `<ul 
 
 
 // Who produced a verdict: a hand or an instrument — nothing closes on impression (HTTP door, 2026-09-02).
+// …and a node's own executor's report is no validation (§10.3): said as the record says it (critic: «validated by» stood
+// over a SELF-REPORTED PASS)
 export const signer = vr => vr.by_hand ? byHand(esc(vr.validator || ''))
+    : vr.provenance === 'self' ? `self-reported by ${esc(vr.validator ? agentName(vr.validator) : 'its executor')}, not an independent check`
     : `validated by ${esc(vr.validator ? agentName(vr.validator) : 'an instrument')}${vr.validator_model ? `, ${esc(modelName(vr.validator_model))}` : ''}`;
 export const perCrit = vr => Object.fromEntries((vr?.per_criterion || []).map(c => [c.criterion, c]));
 
@@ -368,7 +411,7 @@ const composition = ({d}) => section('Composition — the parts', `<div class="c
 // The node's audit slice, newest first; what a signal carried is folded under its line.
 const history = ({d}) => section('History — newest first', ul('item-list audit-list', [...d.audit].reverse().map(a => {
     const who = moverOf(a);
-    const line = `${when(a.timestamp)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? enteredWord(a) : 'rej'}${who.word && who.word !== 'clock' ? ' by ' + esc(who.word) : ''}${who.as ? ` (signed as ${esc(who.as)})` : ''}`;
+    const line = `${when(a.timestamp)} ${a.signal} ${a.old_state ? label(a.old_state) : ''}→${a.new_state ? enteredWord(a) : 'rej'}${who.word && who.word !== 'clock' ? ' by ' + esc(who.word) : ''}${who.via ? ` ${who.via}` : ''}${who.as ? ` (signed as ${esc(who.as)})` : ''}`;
     const more = CARRIED.filter(([k]) => a[k] && a[k].length !== 0).map(([k, l]) => `<div class="rd-field"><b>${l}</b>${txt(a[k])}</div>`).join('');
     return `<li class="${a.rejected ? 'check-fail' : ''}">${more ? `<details data-key="${esc(`h|${d.id}|${a.timestamp}|${a.signal}`)}">`
         + `<summary>${line}</summary>${more}</details>` : line}</li>`;

@@ -33,6 +33,7 @@ class Workforce:
         self._validator_projects: dict[str, object] = {}
         self._executor_projects: dict = {}   # the roster's executors and whose each is (`publish_executor_pool`)
         self._executor_sessions: dict = {}   # …and what one session of each is
+        self._on_host: frozenset = frozenset()   # …and those naming no execution: they run on this machine
         #: node id → the instrument bound to it {id, project, workdir}, published by
         #: the dispatcher each round (see `bound_validator`).
         self._bound_validators: dict = {}
@@ -103,13 +104,18 @@ class Workforce:
         """
         self._validator_projects = dict(whose or {})
 
-    def publish_executor_pool(self, whose: dict, sessions: Optional[dict] = None) -> None:
+    def publish_executor_pool(self, whose: dict, sessions: Optional[dict] = None, on_host=()) -> None:
         """The dispatcher's answer to "which executors exist, and whose" — `{executor id: project or
         None}`, published beside the validators' for the same reason: the roster is the layer above's —
         and what one session of each is — its model and turn budget — the fact a decomposer judges one session's
         capacity against."""
         self._executor_projects = dict(whose or {})
         self._executor_sessions = dict(sessions or {})
+        self._on_host = frozenset(on_host)
+
+    def runs_on_host(self) -> bool:
+        """Does this project's work run on this machine, outside Docker — an executor of it naming no execution?"""
+        return any(p and p == self._project() and a in self._on_host for a, p in self._executor_projects.items())
 
     def executor_session(self, agent_id) -> str:
         """One session of a registered executor — its model, and its turn budget where the roster names one — or ''

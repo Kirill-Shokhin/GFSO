@@ -13,7 +13,7 @@ from tests.support import criterion, make_engine, REGISTER
 def test_the_tree_shows_state_and_holder_per_node_and_what_the_frontier_holds(monkeypatch, capsys):
     e = make_engine(check_interval=10_000)
     e.start()
-    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")]}, assignee="agent")
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")]}, assignee="user")
     T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K")]},
                              "assignee": "worker", "covers": ["c"]}], accepted_risks=REGISTER)
     T.signal(e, "kid", "ACCEPT", "worker")

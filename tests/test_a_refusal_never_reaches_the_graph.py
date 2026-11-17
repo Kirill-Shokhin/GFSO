@@ -28,8 +28,8 @@ def _graph():
     e.start()
     T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
                               "accepted_risks": REGISTER},
-                  assignee="agent")
-    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K")]}, "assignee": "agent", "covers": ["c"]}], accepted_risks=REGISTER)
+                  assignee="user")
+    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K")]}, "assignee": "user", "covers": ["c"]}], accepted_risks=REGISTER)
     return e
 
 
@@ -37,7 +37,7 @@ def test_edit_criteria_refuses_a_list_of_producers_at_the_door():
     """The same rule `_spec_from` already enforces — one owner, not one owner and one lookalike."""
     e = _graph()
     out = T.edit_criteria(e, "kid", [{"name": "dep__p", "description": "d",
-                                      "depends_on": ["root", "other"]}], agent="agent")
+                                      "depends_on": ["root", "other"]}], agent="user")
     assert out.get("refused") or out.get("error"), "a list of producers is refused, not stored"
     assert "one criterion" in str(out.get("error", "")).lower() or "§2" in str(out.get("error", ""))
     kept = [c.name for c in e.graph.get_task("kid").spec.criteria]
@@ -56,12 +56,12 @@ def test_the_engine_survives_the_step_that_actually_killed_it():
     with pytest.raises(ValueError) as refusal:
         e.edit_criteria(TaskId("kid"), (Criteria("k1", "K", check=pinned("k1")),
                                          Criteria("dep__p", "d", depends_on=["root"])),
-                        AgentId("agent"))
+                        AgentId("user"))
     # …and the refusal does not blame a rule that was never consulted
     assert "the FSM refused" not in str(refusal.value)
     assert "ONE producer" in str(refusal.value)
 
-    T.signal(e, "kid", "ACCEPT", "agent")            # …the engine is still serving
+    T.signal(e, "kid", "ACCEPT", "user")            # …the engine is still serving
     e.wait_idle()
     assert e.graph.get_task("kid").state.name == "EXECUTING"
     e.stop()
@@ -79,11 +79,11 @@ def test_taking_a_node_says_what_it_still_waits_for():
     e = make_engine(check_interval=10_000)
     e.start()
     T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")], "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     T.decompose(e, "root", [{"task_id": k, "spec": {"description": k, "criteria": [criterion(k, k.upper())]},
-                             "assignee": "agent", "covers": ["c"]} for k in ("prod", "kid")], accepted_risks=REGISTER)
+                             "assignee": "user", "covers": ["c"]} for k in ("prod", "kid")], accepted_risks=REGISTER)
     T.add_dependency(e, "prod", "kid", glue="kid reads what prod writes")
-    out = T.signal(e, "kid", "ACCEPT", "agent")
+    out = T.signal(e, "kid", "ACCEPT", "user")
     assert out["accepted"] and out["state"] == "EXECUTING"      # taking it is allowed
     assert out["cannot_start_yet"] == ["prod"]
     assert "BLOCK" in out["cannot_start_note"]

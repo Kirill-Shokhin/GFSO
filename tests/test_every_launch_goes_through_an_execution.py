@@ -16,16 +16,11 @@ STARTS = {"Popen", "run", "call", "check_output", "check_call"}
 #: file -> why a direct start or a host temp there is the host's, not a project's
 HOSTS_OWN = {
     "adapters/children.py": "the funnel every child goes through: adopted, in its own group, ended with the server",
-    "adapters/resources.py": "Docker's own event and stats streams the server reads, through the children funnel",
     "adapters/lfs.py": "the LFS filter git runs inside a project's container, asking its own git where its store is",
     "adapters/shell.py": "the listener of a session's commands, run inside their own container: it starts them there",
-    "adapters/execution.py": "LocalExecution, the host's own start, and the docker client every container call rides",
-    "adapters/verifiers/subprocess_verifier.py": "an embedder's verifier adapter, run where the host that wires it is",
-    "adapters/verifiers/unittest_verifier.py": "an embedder's verifier adapter, run where the host that wires it is",
-    "doctor.py": "the install check of this machine: the CLI and git on its PATH",
+    "adapters/execution.py": "the host's temp of LocalExecution, and the import's and landing's host-side trees",
+    "adapters/verifiers/subprocess_verifier.py": "an embedder's verifier adapter, its program in a temp of the host that wires it",
     "examples/__init__.py": "an example a person runs on their own machine",
-    "mcp/connect.py": "starts the server itself",
-    "serverctl.py": "manages the server's own process on this host",
 }
 
 

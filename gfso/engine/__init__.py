@@ -10,15 +10,15 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from gfso.core.types import (
-    Signal, State, SignalData, SignalOutcome, Refusal,
+    Signal, State, SignalData, SignalOutcome, Refusal, VOLUME,
     TaskId, AgentId, Verdict, passed, settled_positive,
     Spec, Criteria, Probe, AcceptedRiskItem, Register, register_of, Task, CheckResult, CriterionMapping, DepEdge, seams_apart,
     LLMProviderPort, AgentPort, StoragePort,
     ClockPort, SystemClock, RunnerPort, ThreadRunner,
-    TERMINAL_STATES, DoneReason, DEFAULT_MAX_ITERATIONS, Mode, RevisionReason,
+    TERMINAL_STATES, DoneReason, Mode, RevisionReason,
 )
 from gfso.core.graph import Graph
-from gfso.core.graph.model import (GENERATION, cycle_children, dep_order_refutations, dep_scope, generation_of_task,
+from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
                                    start_waits,
                                    non_leaf_ids, PAUSE_KEY, TECH_KEY, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s,
@@ -39,14 +39,14 @@ from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_n
 
 from gfso.config import (
                          PIPELINE_PAGE, USAGE_PAGE, LIMIT_RETRY_S,
-                         MODEL_DEFAULT, agent_id as _config_agent_id,
+                         MODEL_DEFAULT, agent_id as _config_agent_id, caller_via,
                          state_timeout as _config_state_timeout)
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
                     resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
                        OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations, answer_outside)
-from .findings import (disputed_findings, ever_pinned, keep_files, lay_files, not_reproduced, record_not_reproduced, released,
-                       return_finding as _return_finding,
+from .findings import (disputed_findings, ever_pinned, keep_files, keep_unrun, lay_files, not_reproduced, record_not_reproduced,
+                       released, return_finding as _return_finding, ruled, unrun,
                        regression as standing_regression, round_stands, standing_rulings)
 from .frontier import Frontier
 from .claims import Claims
@@ -63,6 +63,8 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here,
                          session_fit as _session_fit, scope_top as _scope_top,
                          scope_members as _scope_members, split_owed as _split_owed,
+                         deferral_refused as _deferral_refused, split_waits_on as _split_waits_on,
+                         split_after as _split_after,
                          checks_no_longer_run as _checks_no_longer_run,
                          parts_procedure as _parts_procedure, plans_own_findings as _plans_own_findings,
                          settled_procedure as _settled_procedure,
@@ -72,16 +74,19 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          hole_kind, project_mode as _project_mode, depth_of as _depth_of,
                          holder_boundary as _holder_boundary, held_plan_node_refusal, hands_of as _hands_of)
 from .events import EventBus, PlanWatch, TransitionCallback, ErrorCallback, RejectCallback
-from .loop import _guard_context, event_loop, refresh_checks, timeout_monitor
+from .loop import _guard_context, event_loop, record_refusal, refresh_checks, timeout_monitor
 
 log = logging.getLogger(__name__)
 
 #: what a project sets for itself (`set_mode`): the system's model, the Level-2 gate, the switch on the way out, the
-#: deadline nobody typed, the place's observation — each in the settings table alone (`Engine.settings`)
-SETTINGS = ("system_model", "planner_model", "l2_gate", "network", "deadline_s", "observe")
+#: deadline nobody typed, the place's observation, the states' own bounds, the rework bound nobody typed — each in the
+#: settings table alone (`Engine.settings`)
+SETTINGS = ("system_model", "planner_model", "l2_gate", "network", "deadline_s", "observe", "bounds", "max_iterations")
 
 #: How long after the account's limit says it lifts the system starts the project it stopped: a clock or two apart.
 LIFT_MARGIN_S = 30
+#: How long what the place probe said stands for R′'s gate (`place_down`): each asking is a container of its own.
+PLACE_SEEN_S = 60
 
 
 # live token ticks ("<stage>: N tokens · Ss") update in place — WS-only, never persisted
@@ -109,6 +114,16 @@ def _typed_cause(reason):
     if reason is not None and not isinstance(reason, RevisionReason):
         raise TypeError(f"a revision's reason is a RevisionReason, not {type(reason).__name__} {reason!r}")
     return reason
+
+
+def _via() -> dict:
+    """The credential the act came through, as the log keeps it beside a signer (`config.caller_via`) — none in process."""
+    return {"via": v} if (v := caller_via()) else {}
+
+
+def _via_said() -> str:
+    """…and as an event line says it: a page's stop told from a console's."""
+    return f" via {v}" if (v := caller_via()) else ""
 
 
 class Engine:
@@ -141,6 +156,7 @@ class Engine:
         self._storage = storage           # the port this engine was given — its own, not reached for under the graph
         self._stop_lock = threading.Lock()  # a person's stop and the system's start of its own stop never cross
         self._place_probe = None            # where the project runs, asked while it is down (`probe_the_place_with`)
+        self._place_seen = None             # when the place probe last said it answers (`place_down`)
         self._tech_lock = threading.Lock()  # one writer of the tech-report list (read-modify-write of one setting)
         self._agents = agents
         self._llm = llm
@@ -240,7 +256,15 @@ class Engine:
 
     def send_signal(self, signal_data: SignalData) -> None:
         """Send a signal into the engine. Primary entry point."""
+        self._refuse_before_the_queue(signal_data)
         self._queue.put(signal_data)
+
+    def _refuse_before_the_queue(self, sd: SignalData) -> None:
+        """What a signal is refused before the queue, in its sender's thread: an ASSIGN on a settled node — R′'s edge,
+        whatever door sent it — while the place cannot work it (`reopen_place_refusal`, a probe the loop never runs)."""
+        t = self._graph.get_task(sd.task_id) if sd.signal == Signal.ASSIGN else None
+        if t is not None and (why := self.reopen_place_refusal(t)):
+            raise ValueError(why)
 
     def assign_task(
         self,
@@ -268,7 +292,7 @@ class Engine:
         loop cannot retry all night unnoticed — it is a convenience, not a bound on the project.
         """
         if max_iterations is None:
-            max_iterations = DEFAULT_MAX_ITERATIONS
+            max_iterations = project_max_iterations(self._graph)
         spec, seams = self._wire_seams(spec, task_id)       # the wire's bare `depends_on` entries: declared edges
         # ONE ROOT PER PROJECT. A parentless node is not a free-standing task, it is THE goal: V(root)
         # is the project's verdict, and the canon's one composition rule (V(parent)=AND(children))
@@ -515,7 +539,8 @@ class Engine:
     def settings(self) -> dict:
         """What the project sets for itself (`set_mode`'s settings) as it stands; unset ones are the server's."""
         # …typed as `set_mode` gave them: the page reads a number of seconds, not its text (critic, header.js)
-        return {k: float(v) if k == "deadline_s" else v for k in SETTINGS if (v := self._storage.get_setting(k))}
+        typed = {"deadline_s": float, "max_iterations": int, "bounds": json.loads}
+        return {k: typed.get(k, str)(v) for k in SETTINGS if (v := self._storage.get_setting(k))}
 
     def system_model(self) -> str:
         """The model the system's own roles run on in this project — its issuer, its plan's author and reviewer: the
@@ -597,9 +622,9 @@ class Engine:
                 return was
             rec = {**{k: v for k, v in (was or {"at": datetime.now().isoformat(timespec="seconds"),
                                                 "off_s": clock_off_s(self._graph)}).items() if k not in held},
-                   "by": str(by), "why": str(why or ""), **lifts}
+                   "by": str(by), "why": str(why or ""), **lifts, **_via()}
             self._storage.store_setting(PAUSE_KEY, json.dumps(rec))
-        self.emit_info("pause", f"STOPPED by {by}" + (f": {why}" if why else "") + " — nothing new starts")
+        self.emit_info("pause", f"STOPPED by {by}{_via_said()}" + (f": {why}" if why else "") + " — nothing new starts")
         return rec
 
     def resume(self, by: str) -> Optional[dict]:
@@ -609,7 +634,7 @@ class Engine:
             was = self.paused()
             self._storage.store_setting(PAUSE_KEY, "")
         if was:
-            self.emit_info("pause", f"STARTED again by {by} (stopped since {was.get('at')})")
+            self.emit_info("pause", f"STARTED again by {by}{_via_said()} (stopped since {was.get('at')})")
         return was
 
     def stop_for_the_limit(self, role: str, lifts_at: Optional[float]) -> dict:
@@ -641,6 +666,34 @@ class Engine:
         answer a call, or None — the execution's (`ExecutionPort.unavailable`), or a model server's address
         (`chat.answers`) — from the layer that knows the places, as `joins.set_join_owed` is handed."""
         self._place_probe = probe
+
+    def reopen_place_refusal(self, t: Task) -> Optional[str]:
+        """Why a settled node may not cross R′'s edge now: the place its project runs in does not answer, so the
+        reopened node could not be worked and the reopen would be spent for nothing — or None. §12.16 (ii): it names
+        the requirement and the person's lift. Read by R′'s gate (`reopen_refusal`), which every door that reopens asks
+        — `reopen`, a re-admission re-issuing a settled child, `refusal_for` — and by `_revise`, the FSM's own door."""
+        # …and not where the edge is shut for good: a place brought back would not lift that, its own gate says why
+        if t.state not in TERMINAL_STATES or issuing_condition(self._graph.get_parent(t.id), t.id) \
+                or self._graph.is_consumed(t) or t.reopens >= t.max_reopens or not (down := self.place_down()):
+            return None
+        return (f"{t.id} stays {t.state.name}: the place its project runs in does not answer ({down}), so a reopened "
+                f"node could not be worked and the reopen would be spent for nothing. Bring the place back and reopen; "
+                f"where its volume is gone, what of the work landed is on the branch `gfso/<project>/accepted` of your "
+                f"repository, and the goal is taken up again as a new goal from there (§12.14).")
+
+    def place_down(self) -> Optional[str]:
+        """Why the volumes this project's places are recorded in cannot answer a call now (its daemon, its storage, a
+        volume gone), or None — None too where none is recorded (a host's place is never down: its probe answers whether
+        unattended work may run there, which a person's own work does not ask) or no layer handed a probe."""
+        if self._place_probe is None or not self.graph.setting(VOLUME + "places"):
+            return None
+        # …one answer a minute: the R′ gate reads it on every surface that lists a reopen, each a probe container
+        # …"answers" kept; "down" asked again each time, so the person's fix is read at once
+        if self._place_seen is not None and time.monotonic() - self._place_seen <= PLACE_SEEN_S:
+            return None
+        if (down := self._probe_says("")) is None:
+            self._place_seen = time.monotonic()
+        return down
 
     def _probe_says(self, place: str) -> Optional[str]:
         """The place probe's answer; one that raises did not answer — raised here, it killed the monitor's thread, and
@@ -836,9 +889,10 @@ class Engine:
             except Exception:
                 pass  # observation is presentation — never break the pipeline
 
-    def pipeline_log(self, limit: int = PIPELINE_PAGE) -> list[dict]:
-        """The persisted observation history, oldest-first: [{ts, source, message}]."""
-        return self._storage.get_pipeline(limit)
+    def pipeline_log(self, limit: int = PIPELINE_PAGE, about: str = "") -> list[dict]:
+        """The persisted observation history, oldest-first: [{ts, source, message}] — only the lines beginning with
+        `about` (a node's own: `"<id>: "`), the page counted over them."""
+        return self._storage.get_pipeline(limit, about)
 
     # === What the graph COST (the model calls it took) ===
 
@@ -899,7 +953,14 @@ class Engine:
             # …THE ONE PLACE EVERY ROLE'S CALL PASSES: a call the account's limit refused, or one its execution place
             # could not start, stops the project — on the provider's own reading of how it ended (`headless._ended`,
             # `PlaceUnavailable`): the engine reads no transport's words
-            if c.get("ended") == "limit":
+            if c.get("ended") in ("limit", "unavailable", "unauthorized") and not self.system_carries_work():
+                # …only where the system's roles carry its work: the stop keeps their calls from burning the clocks
+                # while nobody can answer. A graph people hold spends nothing by itself, so a stop there froze the
+                # people's clocks for one person's AI review (ui's human-door probe, 2026-11-14); the asker has the
+                # refusal in the verb's own answer
+                self.emit_info("account", f"{c.get('stage') or stage}'s call ended {c.get('ended')} — nothing of the "
+                                          f"system's runs here, so the project goes on: {str(c.get('error'))[:200]}")
+            elif c.get("ended") == "limit":
                 self.stop_for_the_limit(str(c.get("stage") or stage), c.get("limit_resets_at"))
             elif c.get("ended") == "unavailable":
                 self.stop_for_the_place(str(c.get("place")), str(c.get("error")))
@@ -1239,6 +1300,35 @@ class Engine:
         t = self._graph.get_task(task_id)
         return t is not None and _return_finding(self._storage, t, finding, by, why)
 
+    def unrun_findings(self, task_id: TaskId) -> list[dict]:
+        """The standing findings the refused report on the delivery in VALIDATING could not run (`findings.unrun`)."""
+        t = self._graph.get_task(task_id)
+        if t is None or t.state != State.VALIDATING or not stamped_with(rec := self.rejected_report(task_id),
+                                                                        generation_of_task(t)):
+            return []
+        return unrun(self._storage, self._audit.get_entries(task_id), t, rec)
+
+    def rule_unrun(self, task_id: TaskId, ids, by: str, why: str, retire: bool) -> str:
+        """The issuer's ruling on findings a validator could not run, '' where it lands, else why not: retired, each is
+        demanded no more, recorded as not reproduced with the validator's reason (`findings_not_reproduced`, which a person
+        may give back); kept, it stays demanded and is not asked again while its criterion reads as now."""
+        rows = {r["id"]: r for r in self.unrun_findings(task_id)}
+        named, unknown = ruled(ids, rows)
+        if unknown or not named:
+            return (f"name the findings the validator could not run by their ids: {', '.join(rows) or 'none'}"
+                    + (f" — {', '.join(unknown)} is none of them" if unknown else ""))
+        if not why:
+            return "a ruling says why"
+        t = self._graph.get_task(task_id)
+        if not retire:
+            keep_unrun(self._storage, t, named, by, why)
+        else:
+            record_not_reproduced(self._storage, t, [(rows[i]["criterion"], i, {
+                "why": f"not run by its validator ({rows[i]['why']}); ruled out by {by}: {why}",
+                "printed": f"not run: {rows[i]['why']}"}) for i in named], by,
+                datetime.now().isoformat(timespec="seconds"), {})
+        return ""
+
     def _refiled_rulings(self, task_id: TaskId, per_criterion: list, dirs) -> dict:
         """{criterion: why} for each FAIL of this report resting only on findings its issuer ruled outside the criterion.
         A retired finding filed again is that ruling's subject, not a fresh observation — counted as a FAIL, it
@@ -1434,6 +1524,16 @@ class Engine:
             task_id, verdict, list(failed_criteria or ()), str(reviewer),
             per_criterion=[_entry(k, v) for k, v in (observed or {}).items()] or None,
             by_hand=True)
+
+    def record_refused_move(self, task_id: TaskId, signal: Signal, source: str, why: str) -> None:
+        """A move refused before it reached the signal — its sender's answer the system's own rule turned back — on the
+        log with its reason, as every refusal at the signal already is (Thm 11), so the sender's next turn reads it
+        (`issuer.refused_on_this_version`). Unrecorded, an issuer's twelve answers to one dispute each started blind and
+        repeated the refused move for 20 min until a wrong one landed (stranger run s16b, 2026-11-16)."""
+        t = self._graph.get_task(task_id)
+        if t is not None:
+            record_refusal(SignalData(signal=signal, task_id=task_id, source=AgentId(source)), t.state, why, self._audit,
+                     self._events)
 
     def record_rejected_report(self, task_id: TaskId, defects: str,
                                per_criterion: Optional[list] = None,
@@ -1761,10 +1861,10 @@ class Engine:
         task = self._graph.get_task(task_id)
         return standing_regression(self._storage, self._audit.get_entries(task_id), task) if task is not None else {}
 
-    def lay_probe_files(self, command: str, at, execution) -> str:
+    def lay_probe_files(self, command: str, at, execution, judged=None) -> str:
         """A standing finding's `command` as its re-run runs under `at`, a judge's own round or batch, over the files
-        the system's record holds of each round it names (`findings.lay_files`)."""
-        return lay_files(self._graph, self._storage, command, at, execution)
+        the system's record holds of each round it names, and over `judged`, the copy it judges (`findings.lay_files`)."""
+        return lay_files(self._graph, self._storage, command, at, execution, judged)
 
     def retired_findings(self, task_id: TaskId) -> list[dict]:
         """The rulings in force on this node — each finding its issuer's ACCEPT_CHALLENGE retired, while its criterion
@@ -2115,8 +2215,8 @@ class Engine:
         (ASSIGN is an issuer signal → FSM-validated). Returns the revised node (back in OFFERED —
         the executor must re-ACCEPT)."""
         old = self._graph.get_task(task_id)
-        if old is None:
-            raise ValueError(f"task {task_id} not found")
+        if why := f"task {task_id} not found" if old is None else self.reopen_place_refusal(old):
+            raise ValueError(why)
         # …its cause typed at the call: a string from a door dropped the re-ASSIGN in the loop, unrefused (edit_scope)
         reason = _typed_cause(reason)
         # …A ROOT HANDED ON KEEPS ITS ISSUER: a self-assigned root's issuer is its holder (§10.1), read off its Del
@@ -2293,7 +2393,7 @@ class Engine:
         """Did contact refute the ORDER of this node's split — a discovery on a cycle of waits that is confirmed,
         or held to after an answer (§15.5)? The split's issuer's: re-decomposition is the one repair. A block
         answered by nobody yet is its own node's issuer's (`order_refuted_by`)."""
-        return "; ".join(self._refutation_line(e) + " — the plan's order is refuted by contact; reshape the split"
+        return "; ".join(self._refutation_line(e) + " — the plan's order is refuted by contact; re-decompose the split"
                          for e in self._split_refutations(task_id)) or None
 
     def _split_refutations(self, task_id: TaskId) -> list:
@@ -2304,6 +2404,11 @@ class Engine:
     def dep_order_cycle_children(self, task_id: TaskId) -> list[list[str]]:
         """The children of this node each of its split's refuted cycles runs through (`cycle_children`)."""
         return cycle_children(self._graph, task_id, self._split_refutations(task_id))
+
+    def dep_order_stands_without(self, task_id: TaskId, gone: set, through: set) -> bool:
+        """Would this node's split's refuted order still stand through `through` with the `gone` waits taken out
+        (`cycle_stands_without`)?"""
+        return cycle_stands_without(self._graph, self._split_refutations(task_id), gone, through)
 
     def block_clears_itself(self, t: Task) -> bool:
         """Will this BLOCK end with no issuer move — the dispatcher confirming it once its producers pass? Only
@@ -2359,7 +2464,13 @@ class Engine:
         deps = self._graph.dep_edges()
         checks = self.get_checks(node_id)  # one on-demand path (no stale store)
         # Build the typed NodeProjection, then render it at the LLM/API str boundary.
-        return render_projection(build_projection(node, children, deps, checks))
+        # …with each part whose split waits on a producer, so the review reads every deferral and its ground (a plan may
+        # defer too much: a deferral whose producer's result could not change the split is the plan's defect)
+        later = [(c, a) for c in children if (a := (_session_fit(self._graph, c.id) or {}).get("after"))]
+        return render_projection(build_projection(node, children, deps, checks)) + (
+            "\n\n## Splits deferred until a producer delivers (FM-6's remedy, §8.6)\n" + "\n".join(
+                f"- {c.id}: split after {', '.join(a.get('producers') or ())} — {a.get('why', '')}" for c, a in later)
+            if later else "")
 
     # === Actions API (per-role affordances, §11.2) ===
 
@@ -2603,6 +2714,15 @@ class Engine:
         passed parent over an open child is a claim that no longer holds)."""
         return [str(t.id) for t in self._within(root_id) if t.state not in TERMINAL_STATES]
 
+    def nothing_left(self) -> bool:
+        """The goal's end as the engine reads it: there is work, and none of it is still under way — every node settled,
+        no verdict or review running, no pass its own record refutes, every passed root's result landed. Vacuous on no
+        work, which is a goal not yet stated, never one ended. Read where the mode's hold on the project lapses."""
+        tasks = self.all_tasks()
+        return (bool(tasks) and not self.open_nodes() and not self.refuted_passes() and not self.joins.joining_nodes()
+                and not any(self.claims.validation_in_flight(t.id) or self.claims.review_in_flight(t.id) for t in tasks)
+                and all(self.joins.root_landed(t) for t in tasks if t.parent_id is None and t.state == State.DONE))
+
     def questions_left_standing(self, root_id: Optional[TaskId] = None) -> list[str]:
         """What validators observed outside the criteria and no issuer answered, over nodes now settled: asked of no one any
         more (`issuer.open_questions` stops at a settled node), so said where a person reads the end."""
@@ -2661,6 +2781,17 @@ class Engine:
         return sum(1 for x in self.audit_log(task_id) if not x.rejected)
 
 
+    def system_carries_work(self) -> bool:
+        """Do the system's own roles carry this project's work — a mode set, or a live node held or issued by a party
+        the system moves for (`party_kind` machine or legacy)? Where none does, people hold everything and nothing of
+        the system's would run into a refusal."""
+        if self.mode_kind() is not None:
+            return True
+        roster = self.workforce.roster()
+        return any(party_kind(self._graph, str(p), roster) in ("machine", "legacy")
+                   for t in self.all_tasks() if t.state not in TERMINAL_STATES
+                   for p in (t.assignee, self._graph.issuer_of(t.id)) if p)
+
     def issuer_kind(self, task_id: TaskId, registered=None) -> str:
         """`validation.party_kind` of this node's issuer — who makes its issuer moves (holder / machine / legacy /
         person), over the dispatcher's registry when given, else the roster it published."""
@@ -2693,10 +2824,15 @@ class Engine:
         """THE ONE WAY A SENTENCE OFFERS A MOVE: the words of each move the door takes (after `lead`), and for those the
         mode holds, whose they are and that they are made without the asker (`moves.door_holder`, the doors' own
         lock). Prose that named its moves by hand offered the customer refused ones three times over (critics over
-        9853468 and 25faf94). A move the system never makes (`Move.unmade`) is not said to be made: it has no mover there."""
-        free, held = [], {}
+        9853468 and 25faf94). A move the system never makes (`Move.unmade`) is not said to be made: it has no mover there.
+        A reopen R′'s gate shuts is said refused, with the gate's own words (`reopen_refusal`): offered under "if it is
+        not consumed", it sent the reader to a reopen the verb then refused."""
+        free, held, shut = [], {}, []
         for m in moves:
-            if (h := door_holder(self, m.verb, m.node, m.signal)) is None:
+            if m.verb == "reopen" and self._graph.get_task(TaskId(m.node)) is not None \
+                    and (why := self.reopen_refusal(TaskId(m.node))):
+                shut.append(f"a reopen of '{m.node}' is refused: {why.rstrip('.')}")
+            elif (h := door_holder(self, m.verb, m.node, m.signal)) is None:
                 free.append(m.say)
             else:
                 held.setdefault((h, m.unmade), {}).setdefault(f"{m.signal or m.verb} on '{m.node}'", None)
@@ -2705,7 +2841,7 @@ class Engine:
                  + (f"and nothing in the system makes {'it' if len(v) == 1 else 'them'}: no party holds this move while "
                     f"the mode stands" if unmade else
                     f"so {'it is' if len(v) == 1 else 'they are'} made without you") for (h, unmade), v in held.items()]
-        return "; ".join(([lead + sep.join(free)] if free else []) + notes)
+        return "; ".join(([lead + sep.join(free)] if free else []) + notes + shut)
 
     def holder_signs(self, task_id: TaskId) -> bool:
         """Is this node's verdict its HOLDER's to sign on the observation? Under SOLO or SEMI the user's
@@ -2731,11 +2867,25 @@ class Engine:
         return issuer == _config_agent_id() or self.workforce.kind_of(issuer) is not None
 
 
-    def record_session_fit(self, task_id: TaskId, volume: str, fits: Optional[bool]) -> None:
+    def record_session_fit(self, task_id: TaskId, volume: str, fits: Optional[bool],
+                           after: Optional[dict] = None) -> None:
         """The decomposer's count of a node's work and its judgement that one executor session builds and
-        checks it — kept beside the contract, not in it: a changed estimate is not a revision (Inv-1)."""
-        self._storage.store_setting(f"session_fit:{task_id}",
-                                           json.dumps({"volume": volume, "fits": fits}))
+        checks it — kept beside the contract, not in it: a changed estimate is not a revision (Inv-1). `after`
+        ({producers, why}) defers its split until those parts' results stand (FM-6's remedy, §8.6): a node whose split
+        waits is not a leaf, so its split is owed. Refused unless every producer it names is a ground the split can
+        wait on (`deferral_refused`), its lift naming one or splitting now (§12.16 (ii)); a record already standing
+        on the same producers is the same fixing read back (its reason re-worded by a fold), not a new one."""
+        if after and ((self.session_fit(task_id) or {}).get("after") or {}).get("producers") != after.get("producers") and (
+                why := _deferral_refused(self._graph, task_id, after)):
+            raise ValueError(why)
+        self._storage.store_setting(f"session_fit:{task_id}", json.dumps(
+            {"volume": volume, "fits": False if after else fits} | ({"after": after} if after else {})))
+
+    def split_waits_on(self, task_id: TaskId, *, standing: bool = False) -> list[str]:
+        """The parts this node's deferred split waits on whose results do not yet stand (`validation.split_waits_on`);
+        `standing`: every part it names, the results in or not (`validation.split_after`)."""
+        t = self._graph.get_task(task_id)
+        return [] if t is None else _split_after(self._graph, t) if standing else _split_waits_on(self._graph, t)
 
     def record_seam_claim(self, task_id: TaskId, claim: dict) -> None:
         """The decomposer's claim of what a part's work touches — the files it `writes`, the parts whose code its probes
@@ -2971,6 +3121,8 @@ class Engine:
                 return Refusal(kind="rule", why=str(ex))
         if why := rule_refusal(sd, self._graph, self._audit):
             return Refusal(kind="rule", why=why)
+        if terminal and signal == Signal.ASSIGN and (why := self.reopen_place_refusal(t)):
+            return Refusal(kind="rule", why=why)
         if transition(t.state, sd, _guard_context(self._graph, self._audit, task_id, t.state)) is None:
             return Refusal(kind="guard", why=(self.reopen_refusal(task_id) if terminal and signal == Signal.ASSIGN
                                               else None) or not_admissible_here(signal, t.state))
@@ -2995,7 +3147,7 @@ class Engine:
         if why := no_live_deadline(self._graph, t):
             return (f"reopening {task_id} under its standing contract: {why} — `reopen` carries none; "
                     f"`revise('{task_id}', …, deadline=…)` reopens it with one")
-        return None
+        return self.reopen_place_refusal(t)          # …last: the one gate that asks Docker
 
     def available_actions(self, task_id: TaskId, agent_id: Optional[AgentId] = None) -> list[Signal]:
         """Signals valid in this task's current state, filtered by the agent's role.
@@ -3065,6 +3217,11 @@ class Engine:
             return None
         gen = generation_of_task(task)
         return rec if stamped_with(rec, gen) else None
+
+    def refusals_on_this_delivery(self, task_id: TaskId) -> int:
+        """How many reports on the CURRENT delivery were refused as ⊥ — 0 where none was: a count from before a rework
+        or a revision is about a delivery nobody is validating now."""
+        return int((self.refused_report_for_this_delivery(task_id) or {}).get("refusals", 0))
 
     def reusable_from_refused(self, task_id: TaskId) -> list:
         """The entries of the refused report on THIS delivery that decide their criterion
@@ -3149,10 +3306,18 @@ class Engine:
     def accepted_delivery(self, task_id: TaskId) -> tuple:
         """(tree, commit) of the delivery the node's standing PASS accepted (§11.3: the result as it stood at DELIVER) —
         (None, None) where no PASS stands under this version; the commit None where the delivery predates its record."""
-        handed, accepted = (None, None), (None, None)
+        return (e.artifact, e.commit) if (e := self._accepted_deliver(task_id)) else (None, None)
+
+    def accepted_repository(self, task_id: TaskId) -> Optional[str]:
+        """The repository a chat's DELIVER recorded the commit of `accepted_delivery` in — None for a place of the
+        system's, and for a delivery recorded before the log kept it."""
+        return e.repository if (e := self._accepted_deliver(task_id)) else None
+
+    def _accepted_deliver(self, task_id: TaskId):
+        handed, accepted = None, None
         for e in on_current_version(self._audit.get_entries(task_id)):
             if e.signal == Signal.DELIVER:
-                handed = (e.artifact, e.commit)
+                handed = e
             elif e.signal == Signal.PASS:
                 accepted = handed
         return accepted
@@ -3401,6 +3566,7 @@ class Engine:
                     result.append(entries[-1])
                 done_event.set()
 
+        self._refuse_before_the_queue(signal_data)
         self._events.on_transition(_capture)
         self._events.on_reject(_capture_reject)
         self._queue.put(signal_data)

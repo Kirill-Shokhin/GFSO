@@ -15,13 +15,16 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import json
 import subprocess
 import tarfile
+import threading
 import time
 from pathlib import Path
 from typing import Optional
 
 import gfso.adapters.execution as E
+from gfso import issuer
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm import credentials
 from gfso.adapters.storage.memory import MemoryStorage
@@ -91,6 +94,32 @@ def hold_a_credential(monkeypatch, root: Path) -> None:
     no call runs (`headless._in_force`), so a test of what a call does gives it one — never in the suite's shared home."""
     monkeypatch.setenv("GFSO_DATA_DIR", str(root / "data"))
     credentials.put("claude", "token", "t-held", name="held")
+
+
+def issuer_sweep(*args, **kw) -> list:
+    """`answer_open_questions` with every issuer turn it started waited out. A turn cut at a 5 s bound left its ledger
+    unwritten under a loaded suite: the next sweep asked the same question again and the counts went off (51 of 72)."""
+    before = set(threading.enumerate())
+    started = issuer.answer_open_questions(*args, **kw)
+    for th in set(threading.enumerate()) - before:
+        if th.name.endswith("(_run)"):          # the turn's own thread; another test's leftovers are not ours to wait
+            th.join(120)
+            assert not th.is_alive(), "an issuer turn did not end"
+    return started
+
+
+def written(verb, *a, **kw) -> dict:
+    """A plan verb's written answer: it answers `{writing}` at once, and its same call again the plan once written."""
+    while "writing" in (out := verb(*a, **kw)):
+        time.sleep(0.01)
+    return out
+
+
+def carried_by_the_system(engine: Engine) -> Engine:
+    """The engine under AUTO, as the user's path sets one before `plan`: a project the system's roles carry, where a
+    refused account, a limit or a dead place stops it (a graph people hold alone is not stopped)."""
+    engine._graph._storage.store_setting("mode", json.dumps({"mode": "auto"}))
+    return engine
 
 
 def make_engine(

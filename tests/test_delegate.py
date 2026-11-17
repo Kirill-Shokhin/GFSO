@@ -192,10 +192,10 @@ def test_selfexecuted_delivery_also_autovalidated(tmp_path):
     """The guinea-pig regime: the agent executes ITSELF (no executor registration) — with a registered
     llm-validator the dispatcher still auto-validates its delivery and auto-signals the verdict."""
     e = _eng()
-    _node(e, "s1", assignee="agent")
+    _node(e, "s1", assignee="user")
     agents = _agents(tmp_path, ("val-1", "llm-validator"))   # validator only
-    T.signal(e, "s1", "ACCEPT", "agent")
-    T.signal(e, "s1", "DELIVER", "agent", result="did it myself; see files")
+    T.signal(e, "s1", "ACCEPT", "user")
+    T.signal(e, "s1", "DELIVER", "user", result="did it myself; see files")
     started, _ = _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "checked", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}]}], "failed_criteria": []})
     assert "validate:s1" in started
@@ -270,7 +270,7 @@ def test_per_executor_validator_override(tmp_path):
     a.register("exec-y", "llm-executor", workdir=str(tmp_path))
     assert a.validator_for("exec-x") == "val-special"    # per-executor instrument override
     assert a.validator_for("exec-y") == "val-default"    # falls back to the first registered validator
-    assert a.validator_for("agent") == "val-default"     # self-executed nodes get the default too
+    assert a.validator_for("user") == "val-default"     # self-executed nodes get the default too
 
 
 def _children(e, *tids, parent="par", assignee="exec-1", crit="c"):
@@ -290,11 +290,11 @@ def _drive_done(e, tid, assignee="exec-1"):
     # …NAMING THE PINNED RUN. A criterion now carries the procedure that decides it (A1/§2), so a
     # PASS that does not say it ran that procedure is demoted to ⊥ — nothing is decided by a probe
     # invented at validation time, the scaffolding included.
-    T.record_verdict(e, tid, "PASS", reviewer="agent",
+    T.record_verdict(e, tid, "PASS", reviewer="user",
                      observed={c.name: {"note": f"ran {tid} and read its output",
                                         "ran": [p.command for p in (c.check or ())]}
                                for c in t.spec.criteria})
-    T.signal(e, tid, "PASS", "agent")
+    T.signal(e, tid, "PASS", "user")
 
 
 def test_accept_spawn_gated_on_dependency_producers(tmp_path):
@@ -303,7 +303,7 @@ def test_accept_spawn_gated_on_dependency_producers(tmp_path):
     instant the producer reaches DONE, and only then does the consumer spawn."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     _children(e, "prod", "cons")
     T.add_dependency(e, "prod", "cons")                       # cons consumes prod's delivery: an edge, no criterion
     d = Dispatcher(e, agents, runner=lambda *a: None)
@@ -312,7 +312,6 @@ def test_accept_spawn_gated_on_dependency_producers(tmp_path):
     _drive_done(e, "prod")
     assert e.graph.get_state(TaskId("prod")).name == "DONE"
     assert "cons" in d.dispatch_once()                        # dependency satisfied → consumer spawns
-    e.stop()
 
 
 def test_resolved_block_auto_clears_and_respawns_executor(tmp_path):
@@ -322,7 +321,7 @@ def test_resolved_block_auto_clears_and_respawns_executor(tmp_path):
     wait on and correctly STAYS BLOCKED for a human — the auto-resolver never touches producer-less blocks."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     _children(e, "prod", "blk", "ph")
     _drive_done(e, "prod")
     # blk works far enough to find it needs prod, then BLOCKs on it (records the provisional prod→blk Dep)
@@ -349,7 +348,7 @@ def test_a_block_that_named_nothing_is_not_resolved_by_a_producer_already_done(t
     finishes AFTER a bare block is still what resumes it."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     _children(e, "prod", "cons")
     T.add_dependency(e, "prod", "cons", glue="cons reads prod's output")
     _drive_done(e, "prod")
@@ -367,7 +366,7 @@ def test_multi_blocker_report_records_all_edges_and_gates_on_every_producer(tmp_
     q_Dep starved, auto-resolve blind). The node then auto-resolves only when ALL producers are DONE."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     _children(e, "p1", "p2", "cli")
     llm = _AgentLLM(_fenced({"status": "blocked", "summary": "stopped at imports",
                              "reason": "need p1 and p2 outputs",
@@ -397,7 +396,7 @@ def test_mixed_phantom_auto_resolve_drops_only_the_bogus_edge(tmp_path):
     sources, so only the bogus edge goes."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     _children(e, "prod", "blk")
     _drive_done(e, "prod")
     T.signal(e, "blk", "ACCEPT", "exec-1")
@@ -421,7 +420,7 @@ def test_dep_gate_holds_on_not_yet_created_producer(tmp_path):
     (the old `prod is not None and …` skipped the edge → the consumer spawned into a doomed run)."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     _split(e, "par", ("cons", {"description": "consumer", "criteria": [
         criterion("c", "C"),
         criterion("dep__prod", "reads prod's output", depends_on="prod")]}, "exec-1"))
@@ -431,7 +430,6 @@ def test_dep_gate_holds_on_not_yet_created_producer(tmp_path):
     assert "cons" not in d.dispatch_once()            # exists but not DONE → still gated
     _drive_done(e, "prod")
     assert "cons" in d.dispatch_once()                # producer PASSed → the gate opens
-    e.stop()
 
 
 def test_dispatch_quiesced_while_build_bursts(tmp_path):
@@ -578,8 +576,9 @@ def test_inflight_validator_lock_suppresses_concurrent_duplicates(tmp_path):
     assert fast.packets == []                                 # no duplicate agent spawned
 
     release.set()
-    t.join(5)
-    assert first["verdict"] == "PASS"                         # the holder finished normally
+    t.join(60)
+    # …said whole when it does not: one KeyError in 25+ suites (44465d1) left no trace of what the holder answered
+    assert not t.is_alive() and first.get("verdict") == "PASS", (t.is_alive(), first)   # the holder finished normally
     assert not e.claims._val_inflight                                # lock released after the run
     e.stop()
 
@@ -640,7 +639,6 @@ def test_a_reassigned_node_is_not_run_as_its_old_executor(tmp_path):
     assert ran == [], "a run as the old executor makes signals the FSM refuses"
     assert d._round_key(e.graph.get_task(TaskId("t1"))) not in d._seen, "the round is freed with the slot"
     assert "t1" in d.dispatch_once()                  # …and the next pass sends it to exec-2
-    e.stop()
 
 
 def test_revision_resets_spawn_key(tmp_path):
@@ -659,6 +657,7 @@ def test_revision_resets_spawn_key(tmp_path):
              AgentId("exec-1"))                       # issuer of a root = its own assignee
     d._on_bus(TaskId("r1"), None, None, Signal.ASSIGN)   # what the transition bus delivers
     assert "r1" in d.dispatch_once()                  # stale key dropped → the revised node re-runs
+    round_over(d, "r1", lambda: ran)                  # …and that run ends on a running engine, not on a stopped one
     e.stop()
 
 
@@ -670,7 +669,7 @@ def test_autoverdict_accepted_on_child_nodes_and_human_issuer_skipped(tmp_path):
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     # child under an agent-issued parent → auto-validated, validator verdict ACCEPTED by the FSM
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     _children(e, "kid", crit="k")
     T.signal(e, "kid", "ACCEPT", "exec-1")
     T.signal(e, "kid", "DELIVER", "exec-1", result="done; see files")
@@ -920,7 +919,7 @@ def test_a_node_the_plan_gate_holds_back_is_said_out_loud(tmp_path, monkeypatch)
     monkeypatch.setenv("GFSO_L2_GATE", "1")
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     _children(e, "kid")
     said = []
     e.on_info(lambda src, msg: said.append(msg))
@@ -978,11 +977,11 @@ def test_a_dispute_met_in_the_work_travels_as_the_signal_that_answers_it(tmp_pat
     ACCEPT_CHALLENGE, whose new contract returns it to OFFERED for a fresh consent."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     _children(e, "kid")
     T.signal(e, "kid", "ACCEPT", "exec-1")
     T.signal(e, "kid", "DELIVER", "exec-1", result="first try")
-    T.signal(e, "kid", "FAIL", "agent", failed_criteria=["c"])
+    T.signal(e, "kid", "FAIL", "user", failed_criteria=["c"])
     assert e.graph.get_state(TaskId("kid")).name == "REWORKING"
 
     llm = _AgentLLM(_fenced({"status": "challenge", "summary": "cannot be done as written",
@@ -995,7 +994,7 @@ def test_a_dispute_met_in_the_work_travels_as_the_signal_that_answers_it(tmp_pat
     assert "contradicts the parent's own scope" in step["directive"]
 
     T.revise(e, "kid", {"description": "kid", "criteria": [criterion("c", "C, fixed")]},
-             agent="agent")
+             agent="user")
     e.wait_idle()
     assert e.graph.get_state(TaskId("kid")).name == "OFFERED"          # the new contract is re-consented
     e.stop()
@@ -1069,7 +1068,7 @@ def test_the_executor_can_name_the_sibling_it_is_blocked_on(tmp_path):
     packaging node needed a `__main__.py` another child was writing. Both were real edges the plan
     never declared."""
     e = _eng()
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     _children(e, "core", "readme", crit="k")
     packet = run_executor.__globals__["_executor_packet"](e, e.graph.get_task(TaskId("readme")), str(tmp_path))
     assert "`core`" in packet and "blocker_task_ids" in packet
@@ -1396,6 +1395,23 @@ def test_a_validator_that_belongs_to_no_project_says_so(tmp_path, monkeypatch):
     e.stop()
 
 
+def test_what_registering_says_of_validation_stays_inside_the_project(tmp_path, monkeypatch):
+    """Two projects over one directory: a role of the second was told it "inherits" the first project's validator and
+    its own validator was told it "validates nothing yet", while its own did the validating (live, otf-smoke-4). The
+    answers ask the binding the dispatcher makes: within the project."""
+    reg = AgentRegistry(path=str(tmp_path / "agents.json"))
+    monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
+    a, b, wd = _eng(), _eng(), workdir_(tmp_path, "work")
+    monkeypatch.setattr(a, "project_name", "pa", raising=False)
+    monkeypatch.setattr(b, "project_name", "pb", raising=False)
+    TL.register_agent(a, "a-exec", "llm-executor", workdir=wd)
+    TL.register_agent(a, "a-val", "llm-validator", workdir=wd)
+    first = TL.register_agent(b, "b-exec", "llm-executor", workdir=wd)
+    assert "nobody YET" in str(first["will_be_validated_by"]) and "note" not in first
+    assert TL.register_agent(b, "b-val", "llm-validator", workdir=wd)["will_validate"] == ["b-exec"]
+    assert TL.list_agents(b, match="exec", limit=0)["agents"]["b-exec"]["validated_by"] == "b-val"
+
+
 def test_registering_a_validator_says_what_it_will_validate(tmp_path, monkeypatch):
     """Registering the EXECUTOR first answers "nobody yet — register one here and it binds, in either
     order". Registering the validator second answered nothing at all, so the promised binding was
@@ -1454,7 +1470,7 @@ def test_a_parked_executor_is_said_to_its_issuer_and_a_revision_restarts_it(tmp_
         return {"task_id": str(tid), "status": "unparsed", "report_text": "…"}
 
     d = Dispatcher(e, agents, poll=30, runner=runner)
-    _goal(e, assignee="agent")
+    _goal(e, assignee="user")
     _node(e, "n1", assignee="exec-1", parent="goal")
     for want in (1, 2):
         d.dispatch_once()
@@ -1463,13 +1479,13 @@ def test_a_parked_executor_is_said_to_its_issuer_and_a_revision_restarts_it(tmp_
     # THROUGH THE DOOR THE ISSUER READS: the step is his (`mine`), not a wait on the executor, and a
     # waiting call returns on it instead of sitting out the run's ceiling.
     t0 = time.time()
-    out = T.next_steps(e, actor="agent", wait=5)
+    out = TL.wait_for_the_customer(e, actor="user", seconds=5)
     assert time.time() - t0 < 4, "a waiting issuer must be handed the parked node, not left to wait"
     step = next(s for s in out["steps"] if s["task_id"] == "n1")
-    assert step["mine"] and step["signed_by"] == "agent" and "STOPPED WITHOUT A SIGNAL" in step["directive"]
+    assert step["mine"] and step["signed_by"] == "user" and "STOPPED WITHOUT A SIGNAL" in step["directive"]
     assert "n1" not in {n["task_id"] for n in e.in_flight_nodes()}
 
-    T.revise(e, "n1", agent="agent", max_iterations=5)
+    T.revise(e, "n1", agent="user", max_iterations=5)
     # …read at the revision: the fresh run below fails as the first did and parks the node again once its own retry is in
     assert "n1" not in e.parking.parked_executions(), "the issuer's revision must lift the park"
     for _ in range(300):
@@ -1516,17 +1532,17 @@ def test_an_escalated_delegated_node_is_its_issuers_decision_at_the_door():
     door that marked it by Del told the issuer of a delegated leaf "NOT YOURS" about the one decision
     only he holds."""
     e = _eng()
-    _goal(e, assignee="agent")
+    _goal(e, assignee="user")
     _node(e, "n1", assignee="exec-1", parent="goal")
-    T.revise(e, "n1", agent="agent", max_iterations=1)       # one attempt: a FAIL exhausts it
+    T.revise(e, "n1", agent="user", max_iterations=1)       # one attempt: a FAIL exhausts it
     T.signal(e, "n1", "ACCEPT", "exec-1")
     for _ in range(3):                                           # until the rework bound is spent
         if e.graph.get_state(TaskId("n1")).name == "ESCALATED":
             break
         T.signal(e, "n1", "DELIVER", "exec-1", result="done", self_validation="PASS")
-        T.signal(e, "n1", "FAIL", "agent", failed_criteria=["flush"])
+        T.signal(e, "n1", "FAIL", "user", failed_criteria=["flush"])
     assert e.graph.get_state(TaskId("n1")).name == "ESCALATED"
-    step = next(s for s in T.next_steps(e, actor="agent")["steps"] if s["task_id"] == "n1")
+    step = next(s for s in T.next_steps(e, actor="user")["steps"] if s["task_id"] == "n1")
     assert step["mine"] and step["action"] == "revise"
     e.stop()
 
@@ -1539,14 +1555,14 @@ def test_a_park_ends_with_the_visit_it_described(tmp_path):
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
     tries = []
     d = Dispatcher(e, agents, poll=30, runner=lambda en, tid, ex, ag: tries.append(str(tid)))
-    _goal(e, assignee="agent")
+    _goal(e, assignee="user")
     _node(e, "n1", assignee="exec-1", parent="goal")
     for want in (1, 2):
         d.dispatch_once()
         round_over(d, "n1", lambda: len(tries) >= want)
     assert "n1" in e.parking.parked_executions()
     T.signal(e, "n1", "BLOCK", "exec-1", reason="an outside fault")
-    T.signal(e, "n1", "RESOLVE_BLOCK", "agent", external=True)
+    T.signal(e, "n1", "RESOLVE_BLOCK", "user", external=True)
     assert e.graph.get_state(TaskId("n1")).name == "EXECUTING"
     assert "n1" not in e.parking.parked_executions()
     e.stop()
@@ -1558,14 +1574,14 @@ def test_a_round_during_which_the_node_moved_is_not_counted_as_empty(tmp_path):
     had moved nothing (it raced the hand-resolved-block test under load)."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
-    _goal(e, assignee="agent")
+    _goal(e, assignee="user")
     _node(e, "n1", assignee="exec-1", parent="goal")
     tries = []
 
     def runner(en, tid, ex, ag):
         tries.append(str(tid))
         T.signal(en, str(tid), "BLOCK", "exec-1", reason="an outside fault")
-        T.signal(en, str(tid), "RESOLVE_BLOCK", "agent", external=True)
+        T.signal(en, str(tid), "RESOLVE_BLOCK", "user", external=True)
         return {"task_id": str(tid), "status": "delivered"}
 
     d = Dispatcher(e, agents, poll=30, runner=runner)
@@ -1593,7 +1609,7 @@ def test_under_auto_the_system_validates_its_own_executors_delivery(tmp_path):
     e.project_name = "p"
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
     T.signal(e, "goal", "ACCEPT", "exec-1")      # consented already: no consent round to run here
-    e.set_mode(Mode.AUTO, None, AgentId("agent"))
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.signal(e, "kid", "ACCEPT", "exec-2")
     T.signal(e, "kid", "DELIVER", "exec-2", result="nail hammered")
     e.wait_idle()

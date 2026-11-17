@@ -19,6 +19,6 @@ def test_an_authoring_with_no_criteria_leaves_the_roots_contract_standing():
     T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")],
                               "accepted_risks": REGISTER})
     e.wait_idle()
-    build_graph_live({}, "the goal", e, root_id="root", assignee="agent")
+    build_graph_live({}, "the goal", e, root_id="root", assignee="user")
     e.wait_idle()
     assert [c.name for c in e.graph.get_task(TaskId("root")).spec.criteria] == ["g"]

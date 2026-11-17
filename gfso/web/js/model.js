@@ -1,8 +1,8 @@
 // THE PAGE'S MODEL, READ: the graph and its tasks, the frontier the engine names, and the run built from the log and
 // the ledger. Each read writes S (state.js) and draws nothing; the views render what S holds, and main.js orders the
 // reads and the drawings.
-import {S, procs, myRole, begun} from './state.js';
-import {api, getJSON, post, bounded} from './api.js';
+import {S, procs, presence, minePerformer, begun, inView, viewNodes, viewTree} from './state.js';
+import {api, getJSON, post, bounded, FOCUS} from './api.js';
 import {buildRun, busyNow} from './run.js';
 import {contested, isVerdict, terminal} from './vocab.js';
 
@@ -30,6 +30,9 @@ async function readGraph() {
     S.tasks = tasks;
     S.graph = g;
     S.missing = '';
+    // THE PLAN WRITTEN FOR THIS PROJECT, read while it has no goal yet (`GET /api/plan`, {} when none): before the go the
+    // person read it only in the client's words, and a dropped criterion went unsaid (INSTRUCTION_AUDIT row 1)
+    S.plan = tasks.length ? {} : await getJSON('/api/plan').catch(() => ({}));
     // HOW THE DONES REST: an instrument's proof and a signature are not one kind of green (§15.7)
     S.closures = g.nodes.filter(n => n.closure && (n.closure.by_hand || contested(n.closure))).map(n => ({id: n.id, ...n.closure}));
     return true;
@@ -46,16 +49,19 @@ export async function loadReports() {
 }
 export async function loadMetrics() { try { S.metrics = await getJSON('/api/metrics'); } catch (e) { /* the last numbers stand */ } }
 
-// WHAT THE ENGINE SAYS IS OWED, asked AS WHOEVER THIS PAGE IS: `mine` is computed for `actor`, the box that signs. The
+// WHAT THE ENGINE SAYS IS OWED: each step names who performs it (`performed_by`), and a step is this page's where that is a
+// name it signs as (whoami) — one read for every name the person owns, none of them sent as the asker. The
 // answer is S.frontier, null when it was not asked or did not answer — the chips from the graph still stand then.
 export async function loadFrontier() {
     const mySteps = new Map();       // node → the steps next_steps names as this person's, with their directives
     // the last answer stands while this one is out: a header drawn in the gap read the system's move as a person's (critic)
     if (!begun()) S.frontier = null;
     else try {
-        const r = await post('/api/run/next_steps', myRole() ? {actor: myRole()} : {}, bounded());
+        const r = await post('/api/run/next_steps', {}, bounded());
         if (!r.ok) throw r.status;
         const f = await r.json();
+        // …anyone's step (no performer named) is the page's only where it signs as someone at all
+        for (const x of f.steps || []) x.mine = minePerformer(x.performed_by);
         // the nodes where the move is this page's person's, with the move: their panel keeps that move under a mode (panel.js)
         (f.steps || []).filter(x => x.mine).forEach(x => mySteps.set(x.task_id, [...(mySteps.get(x.task_id) || []), x]));
         S.runState = f.run;
@@ -88,8 +94,20 @@ export async function loadRun() {
         rebuildRun();
     } catch (e) { /* the last read stands: without it the strip told what runs from the states alone, «at work» beside Stopped */ }
 }
-export const rebuildRun = () => { if (read) S.run = buildRun({nodes: S.graph.nodes, edges: S.graph.edges, tasks: S.tasks, ...read,
-    pipeline: S.pipeline, verdicts, waiting: S.waiting, steps: S.steps, procs: procs(), auto: S.graph.mode?.mode === 'auto'}); };
+// TWO RUNS, two jobs. `S.run` is the PROJECT's — its log, its waits across any border, its stall, its depths: the facts
+// every view states (a run built over a part lost past rounds' records, outside waits, the stall and the holders' depths
+// — critic, f3dda06). `S.viewRun` is the PART's, in a view of one part: its own tree, log and sessions, for the figures
+// the deck's tabs and sum give (spend, models, progress, timeline) — its log keeps the whole log's positions, which a
+// verdict's history counts in.
+export const rebuildRun = () => { if (!read) return;
+    const common = {pipeline: S.pipeline, verdicts, waiting: S.waiting, steps: S.steps, present: presence(),
+                    auto: S.graph.mode?.mode === 'auto', mode: S.graph.mode};
+    S.run = buildRun({nodes: S.graph.nodes, edges: S.graph.edges, tasks: S.tasks, ...read, procs: procs(), ...common});
+    const mine = id => inView(id);
+    S.viewRun = !FOCUS ? S.run : buildRun({nodes: viewNodes(), edges: S.graph.edges.filter(e => mine(e.target)),   // …a part's node keeps what it waits on beyond the part
+        tasks: viewTree(), audit: read.audit.map((a, pos) => ({...a, pos})).filter(a => mine(a.task_id)),
+        calls: read.calls.filter(c => c.node_id && mine(c.node_id)), procs: procs().filter(w => w.task_id && mine(w.task_id)), ...common});
+    if (S.viewRun !== S.run) S.viewRun.name = S.run.name; };   // …a node beyond the part is named as the project names it
 // something runs, so the run's ages and open bars grow with time alone
 export const runIsOpen = () => !!read && busyNow(procs(), S.run?.sessions);
 

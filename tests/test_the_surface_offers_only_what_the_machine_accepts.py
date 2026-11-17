@@ -109,13 +109,13 @@ def _send(e, task_id, act, who):
         return {"error": str(ex), "refused": True}
 
 
-def _root_only(e, *, assignee="agent"):
+def _root_only(e, *, assignee="user"):
     T.create_task(e, "root", {"description": "a goal",
                               "criteria": [criterion("g", "G holds")]},
                   assignee=assignee)
 
 
-def _with_children(e, *, kid_assignee="agent"):
+def _with_children(e, *, kid_assignee="user"):
     _root_only(e)
     T.decompose(e, "root", [{"task_id": kid, "spec": {"description": f"work {kid}",
                                                       "criteria": [criterion(kid, f"{kid} holds")]},
@@ -126,12 +126,12 @@ def _with_children(e, *, kid_assignee="agent"):
 def _settle_children(e):
     """Drive both children to DONE/PASS, so the parent's conjunction is satisfied."""
     for kid in ("a", "b"):
-        T.signal(e, kid, "ACCEPT", "agent")
-        T.signal(e, kid, "DELIVER", "agent", result=f"{kid} is done")
+        T.signal(e, kid, "ACCEPT", "user")
+        T.signal(e, kid, "DELIVER", "user", result=f"{kid} is done")
         T.record_verdict(e, kid, "PASS", reviewer="rev",
                          observed={kid: {"note": f"ran the check for {kid}; it holds",
                                          "ran": [p.command for p in e.graph.get_task(kid).spec.criteria[0].check]}})
-        T.signal(e, kid, "PASS", "agent")
+        T.signal(e, kid, "PASS", "user")
 
 
 def _deliver_root(e):
@@ -156,7 +156,7 @@ SHAPES = {
         lambda e: (_with_children(e), _deliver_root(e),
                    T.record_verdict(e, "root", "PASS", reviewer="rev",
                                     observed={"g": "read the children's output; it holds"})),
-        "root", "agent", False),
+        "root", "user", False),
     "delivered seam, no verdict, asked by the roster": (
         lambda e: (_root_only(e, assignee="worker"),
                    e._graph.authorized_validators.add("val-1"), _deliver_root(e)),
@@ -172,17 +172,17 @@ SHAPES = {
                    T.record_verdict(e, "root", "PASS", reviewer="rev",
                                     observed={"g": "read the children's output; it holds",
                                               "g2": "read it; it holds too"})),
-        "root", "agent", False),
+        "root", "user", False),
     # …and the ones already patched, which this sweep now holds from one place.
     "delivered seam, no verdict, asked by a stranger": (
         lambda e: (_root_only(e, assignee="worker"), _deliver_root(e)),
         "root", "someone", False),
     "parent still executing, children open": (
-        lambda e: (_with_children(e), T.signal(e, "root", "ACCEPT", "agent")),
-        "root", "agent", False),
+        lambda e: (_with_children(e), T.signal(e, "root", "ACCEPT", "user")),
+        "root", "user", False),
     "child under a plan with no Level-2 verdict": (
         lambda e: _with_children(e),
-        "a", "agent", True),
+        "a", "user", True),
     # …the INTERNAL node, asked by the roster. The sweep had a seam-asked-by-the-roster shape and
     # not this one, so when the engine's internal guard stopped keying on the signer's name and the
     # surface's copy did not, nothing here could see it: `['PASS','FAIL']` offered with `gate: None`
@@ -191,8 +191,8 @@ SHAPES = {
     "internal node, no record, asked by the roster": (
         lambda e: (_with_children(e),
                    e._graph.authorized_validators.add("val-1"),
-                   T.signal(e, "a", "ACCEPT", "agent"),
-                   T.signal(e, "a", "DELIVER", "agent", result="I wrote nothing at all")),
+                   T.signal(e, "a", "ACCEPT", "user"),
+                   T.signal(e, "a", "DELIVER", "user", result="I wrote nothing at all")),
         "a", "val-1", False),
     # …the node with NO Del, which is where both role rules go falsy. `validation.py` guards each
     # role as `if <holder> and source != <holder>`, so an unassigned node accepts issuer AND
@@ -213,23 +213,23 @@ SHAPES = {
         lambda e: (_root_only(e), _deliver_root(e),
                    T.record_verdict(e, "root", "PASS", reviewer="rev",
                                     observed={"g": "ran the check; it holds"})),
-        "root", "agent", False),
+        "root", "user", False),
     # …the healthy controls: if the sweep cannot go green on a node that really can move, it is
     # measuring its own strictness rather than the product.
-    "a fresh root nobody has taken": (_root_only, "root", "agent", False),
+    "a fresh root nobody has taken": (_root_only, "root", "user", False),
     "a leaf taken and executing": (
-        lambda e: (_root_only(e), T.signal(e, "root", "ACCEPT", "agent")),
-        "root", "agent", False),
+        lambda e: (_root_only(e), T.signal(e, "root", "ACCEPT", "user")),
+        "root", "user", False),
     # …and the 2026-08-21 patch the docstring credits: ASSIGN on a CONSUMED terminal, which the
     # finality gate refuses (§12.14). It had no shape here at all until the control showed the file
     # was holding two of the five cases it claimed.
     "a consumed terminal offering ASSIGN": (
-        lambda e: (_root_only(e), T.signal(e, "root", "ACCEPT", "agent"),
-                   T.signal(e, "root", "DELIVER", "agent", result="done"),
+        lambda e: (_root_only(e), T.signal(e, "root", "ACCEPT", "user"),
+                   T.signal(e, "root", "DELIVER", "user", result="done"),
                    T.record_verdict(e, "root", "PASS", reviewer="rev",
                                     observed={"g": "ran the check; it holds"}),
-                   T.signal(e, "root", "PASS", "agent")),
-        "root", "agent", False),
+                   T.signal(e, "root", "PASS", "user")),
+        "root", "user", False),
 }
 
 

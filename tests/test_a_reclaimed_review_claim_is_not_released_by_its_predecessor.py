@@ -39,7 +39,7 @@ def _engine():
     e.start()
     T.create_task(e, "root", {"description": "the whole",
                               "criteria": [{"name": "c1", "description": "C1"}],
-                              "accepted_risks": _RISKS}, assignee="agent")
+                              "accepted_risks": _RISKS}, assignee="user")
     e.wait_idle()
     return e, clock
 

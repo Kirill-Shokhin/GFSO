@@ -13,6 +13,7 @@ takes the canon's own EXPLORE branch (§9.9) and turns the gate off, exactly as 
 without a checker would. `tests/test_l2_gate.py` turns it back ON and owns that behavior end to end.
 """
 import atexit
+import faulthandler
 import os
 import shutil
 import subprocess
@@ -67,7 +68,13 @@ def _no_thread_writes_through_the_interpreters_end():
 atexit.register(_no_thread_writes_through_the_interpreters_end)
 
 from gfso.adapters import execution as E  # noqa: E402
+from gfso.config import agents_path  # noqa: E402
+from gfso.decompose import kept as _kept_store  # noqa: E402
 from gfso.adapters.llm import chat as _chat  # noqa: E402
+from gfso.delegate import _DISPATCHERS, Dispatcher  # noqa: E402
+from gfso.engine import Engine  # noqa: E402
+from gfso import signin  # noqa: E402
+from starlette.testclient import TestClient  # noqa: E402
 
 
 #: older than this, a suite's home is a run that was cut short: a whole suite takes under an hour
@@ -111,14 +118,235 @@ def _own_state_home():
     E.CEILING_GROUP = "gfso/suite"                      # its live containers under the machine's ceiling, never its limit
     os.environ["GFSO_LOCAL_AGENTS"] = "allow"           # the suite's sessions are fakes on this host, by its own word
     os.environ["GFSO_NETWORK_RECORD"] = "off"           # …a listener for each worker's live tests; its own file asks for it
+    os.environ["GFSO_NO_UPDATE_CHECK"] = "1"            # …nor PyPI asked by a doctor or a use_project under test
+    os.environ["GFSO_OPEN_PAGE"] = "0"                  # …nor a browser opened by a go under test
+    # …nor the person's own Claude state: a host session's state dir is `claude_config_dir()`, and tests wrote their
+    # sessions' files into ~/.claude/gfso-sessions (2026-11-15); a test that sets its own keeps it
+    prior_cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+    os.environ["CLAUDE_CONFIG_DIR"] = str(Path(mine) / "claude")
     E._DISK_WATCH.set()                                 # …nor a watch beside each worker's: a test runs its own
     E._WATCH.set()
     yield
     _sweep(Path(mine))
-    if prior is None:
-        os.environ.pop("GFSO_HOME", None)
-    else:
-        os.environ["GFSO_HOME"] = prior
+    for name, was in (("GFSO_HOME", prior), ("CLAUDE_CONFIG_DIR", prior_cfg)):
+        if was is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = was
+
+
+#: the names the suite's person signs as on the page, beside the standing agent: the parties its HTTP tests act as
+SUITE_NAMES = ("dev", "alice", "engineering", "d", "d1", "pm")
+#: where a suite's client asks by default: a local client that is no browser, as the person's own scripts are
+LOCAL_CLIENT = "http://127.0.0.1:8000"
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _the_suites_person(_own_state_home):
+    """THE SUITE'S PAGE IS SIGNED IN, as a person's is: its person is issued its names and a page session the way `gfso
+    agent` and `gfso ui` issue them (`signin.issue`, `signin.code` → `redeem`), and every test client carries that
+    session — a door no test bypasses — asking a loopback name, as a local script does: where a test moves the state
+    home the session is not held there, and its calls are the standing agent's. A test of what a call with no session
+    gets clears the cookie (`client.cookies.clear()`); one of another host names it (`base_url`)."""
+    for name in SUITE_NAMES:
+        signin.issue(name)
+    session, made = signin.redeem(signin.code()), TestClient.__init__
+
+    def signed_in(self, app, *a, **k):
+        made(self, app, *a, **({} if a or "base_url" in k else {"base_url": LOCAL_CLIENT}), **k)
+        self.cookies.set(signin.COOKIE, session)
+    TestClient.__init__ = signed_in
+    yield session
+    TestClient.__init__ = made
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _the_suites_peer_is_its_own_user():
+    """THE SUITE'S CALLS COME FROM ITS OWN OS USER, as a local client's do: a test client has no socket for the OS to
+    name an owner of (`peer.ours`), so the door asks this answer; a test of another user's call makes it answer no
+    (`monkeypatch.setattr(signin, "peer_is_ours", ...)`), and the OS's own answer is tested on a real socket."""
+    asked = signin.peer_is_ours
+    signin.peer_is_ours = lambda peer, server: True
+    yield
+    signin.peer_is_ours = asked
+
+
+#: engines started and dispatchers made since the current test's setup began — stopped when its body ends
+_STARTED: list = []
+_start, _made = Engine.start, Dispatcher.__init__
+
+
+def _recorded_start(self):
+    _STARTED.append(self)
+    return _start(self)
+
+
+def _recorded_dispatcher(self, *a, **k):
+    _STARTED.append(self)
+    return _made(self, *a, **k)
+
+
+# for the life of the process, as `_no_live_model`'s Popen: what a test starts is known, a dispatcher it made directly too
+Engine.start, Dispatcher.__init__ = _recorded_start, _recorded_dispatcher
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_setup(item):
+    _STARTED.clear()
+    item.stash[_BEFORE] = (set(_DISPATCHERS), set(threading.enumerate()))
+    return (yield)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item):
+    """An engine a test started, and the dispatcher attached to it, outlived the test: a validation they queued ran on
+    during the next test and its container start was charged to that test (an LFS test failed on the in_chat test's
+    validation thread). Whatever the test started is stopped when its body ends — before its fixtures' teardown, so
+    while its fakes still stand — and what they had in flight ends there. A thread of its still at gfso's work a minute later fails
+    the test that left it: carried on, it is the next test's defect."""
+    try:
+        out = yield
+    except BaseException:
+        _stopped(*item.stash[_BEFORE])
+        raise
+    left = _stopped(*item.stash[_BEFORE])
+    assert not left, f"threads this test started are still at gfso's work {_BOUND_S} s after it stopped them: {left}"
+    return out
+
+
+_BEFORE = pytest.StashKey[tuple]()
+
+
+def _stopped(dispatchers: set, threads: set) -> list:
+    """No new work (its dispatchers stopped), the work in flight finished on engines still running, then the engines:
+    stopped first, an engine left a run in flight waiting on it for its whole timeout."""
+    for key in set(_DISPATCHERS) - dispatchers:
+        _DISPATCHERS.pop(key).stop()
+    for d in [x for x in _STARTED if isinstance(x, Dispatcher)]:
+        d.stop()
+    end, left = time.monotonic() + _BOUND_S, []
+    _joined(threads, end, left, but=_ENGINES_OWN)
+    for e in [x for x in _STARTED if not isinstance(x, Dispatcher)]:
+        e.stop()
+    _STARTED.clear()
+    _joined(threads, end, left, but=("gfso-timeout-monitor",))
+    return left
+
+
+#: an engine's own loops end with the engine; its timeout monitor is not waited at all — stopped, it does nothing more,
+#: and its tick is a sleep no stop wakes (10 s a test, measured by a critic)
+#: how long a test's work in flight is waited out — generous: it costs only where work is in flight, and a tight one
+#: was itself a flake (a demo's validation deleting its tree past 10 s in a loaded suite)
+_BOUND_S = 60
+_ENGINES_OWN = ("gfso-event-loop", "gfso-timeout-monitor")
+
+
+def _joined(threads: set, end: float, left: list, but: tuple) -> None:
+    """Join the threads started since `threads` that are at gfso's work, by `end`; each still at it on the last pass is
+    named in `left` with where it stands. A library's idle pool thread (a test client's AnyIO workers and portal) is
+    not the product's work carried into the next test; a thread only starting cannot be joined."""
+    last = but == ("gfso-timeout-monitor",)
+    for th in set(threading.enumerate()) - threads:
+        if th.ident is None or th.name in but or not _at_gfso(th):
+            continue
+        th.join(max(0.0, end - time.monotonic()))
+        if last and th.is_alive() and _at_gfso(th):
+            left.append(f"{th.name} at {' < '.join(_stack(th)[:6])}")
+
+
+_GFSO = os.path.dirname(sys.modules["gfso"].__file__)   # the package, wherever it is installed
+
+
+def _stack(th) -> list:
+    f, at = sys._current_frames().get(th.ident), []
+    while f is not None:
+        at.append(f"{Path(f.f_code.co_filename).name}:{f.f_lineno} {f.f_code.co_name}")
+        f = f.f_back
+    return at
+
+
+def _at_gfso(th) -> bool:
+    """At gfso's work: a gfso frame on its stack, or gfso's code still to run — a timer that has not fired stands in
+    the library with no gfso frame (a critic's mutation: the dispatcher's timers outlived it under a green suite)."""
+    fn = getattr(th, "function", None) or getattr(th, "_target", None)
+    code = getattr(getattr(fn, "__func__", fn), "__code__", None)
+    if code is not None and code.co_filename.startswith(_GFSO):
+        return True
+    f = sys._current_frames().get(th.ident)
+    while f is not None:
+        if f.f_code.co_filename.startswith(_GFSO):
+            return True
+        f = f.f_back
+    return False
+
+
+#: a test past this has hung: every thread's stack goes to `.tmp/hung-<pid>.txt` — two hangs in 40 suites left no trace,
+#: a worker's stderr being lost under xdist (bb36595; 2026-11-14, validate_result spinning on CPU for 10 min)
+HUNG_S = 240
+
+
+@pytest.fixture(autouse=True)
+def _a_hang_leaves_its_stacks(request):
+    at = _TMP / f"hung-{os.getpid()}.txt"
+    out = open(at, "w", encoding="utf-8")
+    out.write(request.node.nodeid + "\n")
+    out.flush()
+    faulthandler.dump_traceback_later(HUNG_S, file=out)
+    real = shutil.copytree
+
+    def _noted(src, dst, *a, **kw):
+        """Each directory a copy enters, before it is copied: the one hang caught so far spun 13 levels deep in a
+        validation snapshot's copytree, and its stacks could not say what was being copied where."""
+        if not out.closed:
+            out.write(f"copytree {src} -> {dst}\n")
+            out.flush()
+        return real(src, dst, *a, **kw)
+    shutil.copytree = _noted
+    try:
+        yield
+    finally:
+        shutil.copytree = real
+        faulthandler.cancel_dump_traceback_later()
+        out.close()
+        at.unlink(missing_ok=True)     # …kept only by a test that never came back
+
+
+@pytest.fixture(autouse=True)
+def _the_screen_is_the_tests_own(monkeypatch):
+    """No test's outcome reads the shell it ran from: its screen is closed (`GFSO_NO_WINDOWS=1`) and opens no person's
+    browser (`BROWSER`, `GFSO_OPEN_PAGE` unset) whatever was exported. Closed, not unset: a test that forgot to fake a
+    start puts nothing on the screen of the person running the suite; a test of opening sets "0" and fakes the start."""
+    monkeypatch.setenv("GFSO_NO_WINDOWS", "1")
+    for k in ("BROWSER", "GFSO_OPEN_PAGE"):
+        monkeypatch.delenv(k, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_role_outlives_its_test():
+    """What a test registers on the suite's roster goes with it. Shared by a worker's session, a validator one test
+    registered at `.` stood first for every later test's executor — the next validation's place was the repository
+    itself, its scratch beside the repository, and a snapshot copied the whole tree for minutes: the suite's one hang
+    (2026-11-14, `test_a_connection_signs_as_its_principal` before `test_validate_result`, 33,944 directories entered).
+    The file is emptied, not moved: a test that reads which roster an environment names keeps reading the default."""
+    roster = agents_path()
+    roster.unlink(missing_ok=True)
+    yield
+    roster.unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def _no_plan_outlives_its_test():
+    """A written plan is kept on disk (`decompose.kept`) under its handle, the hash of its call's arguments: kept from one
+    test, the same request in the next would be answered by it, never written. Its own directory per worker: xdist's
+    workers share the suite's state directory."""
+    root = _TMP / f"kept-{os.getpid()}"
+    real, _kept_store.data_dir = _kept_store.data_dir, lambda: root
+    shutil.rmtree(root, ignore_errors=True)
+    try:
+        yield
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        _kept_store.data_dir = real
 
 
 @pytest.fixture(autouse=True)
@@ -202,7 +430,8 @@ class _NoLiveModel(subprocess.Popen):          # a subclass: callers subscript i
 #: THE LIVE TESTS, BY WHAT THEY CHECK: each file in one group, a group run alone by `--live-group <name>[,<name>]`, the
 #: group what the change is about, under the one lock. The whole of them, `--live`, is CI's at a push
 LIVE_GROUPS = {
-    "judge": ("a_judge_judges_what_was_delivered", "a_judges_pinned_inputs_are_the_systems", "the_runs_of_a_validation_do_not_share_a_tree"),
+    "judge": ("a_judge_judges_what_was_delivered", "a_judges_pinned_inputs_are_the_systems", "the_runs_of_a_validation_do_not_share_a_tree",
+              "a_pin_that_cannot_run_is_repaired_before_the_go"),
     "places": ("a_projects_places_stand_in_its_volume", "a_session_holds_only_its_own_place", "a_part_starts_with_no_siblings_work_but_by_an_edge"),
     "landing": ("the_base_is_imported_and_its_result_lands_as_a_branch", "lfs_files_come_in_whole_and_leave_as_pointers",
                 "what_is_refused_before_it_is_touched"),

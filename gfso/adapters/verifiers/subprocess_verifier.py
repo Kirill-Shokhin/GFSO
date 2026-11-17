@@ -34,6 +34,7 @@ Two ways this passes WITHOUT measuring, both of them real:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -45,8 +46,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 
-from gfso.adapters.children import adopt, kill_tree, release, spawn_kw
-from gfso.config import subprocess_env
+from gfso.adapters import children
 from gfso.core.types import TaskId, Spec, Criteria, CheckResult, StoragePort, VerifierPort
 
 log = logging.getLogger(__name__)
@@ -61,58 +61,43 @@ class ExecutionResult:
     timed_out: bool
 
 
+@contextlib.contextmanager
+def temp_py(code: str):
+    """`code` in a temporary `.py` file for the time of the block, its path given; removed after, if the OS lets go of it
+    — the results are read by then, and a file still held must not fail the run that produced them."""
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
+        f.write(code)
+    try:
+        yield f.name
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(f.name)
+
+
+def finish(storage: StoragePort, task_id: TaskId, results: list[CheckResult]) -> list[CheckResult]:
+    """`results` stored for `task_id`, their count said."""
+    storage.store_check_results(task_id, results)
+    log.info(f"RESULT: {sum(r.passed for r in results)}/{len(results)} passed")
+    return results
+
+
 def run_code(code: str, stdin_input: str, timeout: float = 10.0) -> ExecutionResult:
     """Run the delivered code in a subprocess and return what it printed — the deterministic half
     of validation, where a suite decides instead of a model."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
-        f.write(code)
-        tmp = f.name
-    # All I/O via files to avoid ANY pipe deadlock
-    out_file = tmp + ".out"
-    err_file = tmp + ".err"
-    in_file = tmp + ".in"
-    try:
-        with open(in_file, "w", encoding="utf-8") as f:
-            f.write(stdin_input)
+    with temp_py(code) as path:
         t0 = time.time()
-        with open(in_file, "r", encoding="utf-8") as fin, \
-             open(out_file, "w", encoding="utf-8") as fout, \
-             open(err_file, "w", encoding="utf-8") as ferr:
-            proc = adopt(subprocess.Popen(
-                [sys.executable, tmp],
-                stdin=fin, stdout=fout, stderr=ferr, env=subprocess_env(),
-                # Windows: don't pop a console window (same class as the headless adapter)
-                **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
-                **spawn_kw(),
-            ))
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                kill_tree(proc)
-                proc.wait()
-                elapsed = time.time() - t0
-                log.info(f"TIMEOUT after {elapsed:.2f}s")
-                return ExecutionResult("", "TIMEOUT", -1, elapsed, True)
-            finally:
-                kill_tree(proc)          # what the code under test left running goes with it
-                release(proc)
-        elapsed = time.time() - t0
-        with open(out_file, "r", encoding="utf-8", errors="replace") as f:
-            stdout = f.read()
-        with open(err_file, "r", encoding="utf-8", errors="replace") as f:
-            stderr = f.read()
-        log.info(f"rc={proc.returncode} elapsed={elapsed:.2f}s stdout={stdout.rstrip()[:500]}")
-        if stderr:
-            log.info(f"stderr:\n{stderr.rstrip()[:500]}")
-        return ExecutionResult(stdout, stderr, proc.returncode, elapsed, False)
-    finally:
-        for f in [tmp, out_file, err_file, in_file]:
-            try:
-                os.unlink(f)
-            # the result is already read and returned above; a temp file the OS still holds cannot
-            # be allowed to fail the verification that produced it
-            except OSError:
-                pass
+        try:
+            r = children.run([sys.executable, path], timeout=timeout, input=stdin_input, text=True, encoding="utf-8",
+                             errors="replace")
+        except subprocess.TimeoutExpired:
+            elapsed = time.time() - t0
+            log.info(f"TIMEOUT after {elapsed:.2f}s")
+            return ExecutionResult("", "TIMEOUT", -1, elapsed, True)
+    elapsed = time.time() - t0
+    log.info(f"rc={r.returncode} elapsed={elapsed:.2f}s stdout={r.stdout.rstrip()[:500]}")
+    if r.stderr:
+        log.info(f"stderr:\n{r.stderr.rstrip()[:500]}")
+    return ExecutionResult(r.stdout, r.stderr, r.returncode, elapsed, False)
 
 
 class SubprocessVerifier(VerifierPort):
@@ -135,11 +120,7 @@ class SubprocessVerifier(VerifierPort):
 
     def verify(self, task_id: TaskId, deliverable: str, spec: Spec) -> list[CheckResult]:
         log.info(f"=== VERIFICATION {task_id} ({len(spec.criteria)} criteria) ===")
-        results = [self._run(deliverable, c) for c in spec.criteria]
-        self._storage.store_check_results(task_id, results)
-        passed = sum(1 for r in results if r.passed)
-        log.info(f"RESULT: {passed}/{len(results)} passed")
-        return results
+        return finish(self._storage, task_id, [self._run(deliverable, c) for c in spec.criteria])
 
     def _run(self, code: str, crit: Criteria) -> CheckResult:
         if crit.input is not None and crit.expected is not None:

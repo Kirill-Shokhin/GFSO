@@ -96,7 +96,7 @@ jobs:
       fail-fast: false
       matrix:                       # the same cells as tests.yml — a release gate narrower than
         os: [ubuntu-latest, windows-latest]   # the PR gate publishes what the PR gate would catch
-        python-version: ['3.11', '3.13']
+        python-version: ['3.11', '3.14']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

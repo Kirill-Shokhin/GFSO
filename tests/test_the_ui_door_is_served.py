@@ -138,7 +138,7 @@ def test_the_http_door_takes_project_where_every_other_argument_goes():
             "spec": {"name": "root", "description": "a goal",
                      "criteria": [criterion("c1", "the thing")],
                      "accepted_risks": [{"item": "fixture", "predictability": "extraordinary", "justification": "accepted", "invalidation_condition": "never", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]},
-            "assignee": "agent"})
+            "assignee": "user"})
         assert made.status_code == 200, made.text
         assert made.json()["id"] == "root"
         # …and it landed in THAT project, not in the active one
@@ -162,7 +162,7 @@ def test_a_refusal_over_http_keeps_its_status_and_its_shape():
         made = c.post("/api/run/create_task", json={"task_id": "a", "spec": {"description": "x", "criteria": [criterion("c", "C")]},
                                                     "assignee": "dev"})
         assert made.status_code == 200 and made.json()["id"] == "a", made.text
-        r = c.post("/api/run/add_dependency", json={"from_id": "a", "to_id": "a"})
+        r = c.post("/api/run/add_dependency", json={"from_id": "a", "to_id": "a", "agent": "dev"})
         assert r.status_code == 422                       # a cycle: the verb could not act
         body = r.json()
         assert isinstance(body, dict) and "cycle" in body["error"]   # the dict, not a quoted string
@@ -262,12 +262,19 @@ def test_the_page_says_so_when_its_graph_library_does_not_load(client):
     assert "gfso status" in page, "…and it names the door that needs no browser at all"
 
 
-def test_the_page_offers_the_callers_real_identity(client):
-    """It shipped a box reading `pm` — an id registered nowhere — so a person's first Pass/Fail was
-    signed as a stranger and refused, correctly and uselessly."""
-    assert "agent_id" in client.get("/api/runtime").json()
+def test_the_page_is_who_its_credential_says(client):
+    """It shipped a box reading `pm` — an id registered nowhere — and then a box any name could be typed in, which signed
+    every move: «логининг определяет имя а не запись в интерфейсе» (the author, 2026-11-15). The page reads who it is from
+    `/api/whoami` and sends no signer: the server signs as the holder of the role among the names the credential carries."""
+    me = client.get("/api/whoami").json()
+    assert {"name", "kind", "how", "signs_as"} <= set(me)
     page = _ui(client)
-    assert "rt.agent_id" in page and "box.value === 'pm'" in page
+    assert "/api/whoami" in page and "signs_as" in page
+    assert 'id="current-role"' not in page and "rv-reviewer" not in page, "no box and no field names a signer"
+    for sent in ("agent: myRole", "author: myRole", "{agent: me}", "{author: me}", "reviewer, observed"):
+        assert sent not in page, f"…and no request carries one: {sent}"
+    assert "'/actions?role=*'" in page and "performed_by" in page, (
+        "a move is offered by the engine's word on who makes it, read against the names the page signs as")
 
 
 def test_working_does_not_look_like_dead(client):
@@ -427,8 +434,9 @@ def test_a_call_the_verb_cannot_take_creates_nothing(tmp_path, monkeypatch):
             ok = c.post("/api/run/create_task", json={
                 "project": "zz_good_call", "task_id": "root",
                 "spec": {"description": "g", "accepted_risks": ["r"],
-                         "criteria": [{"name": "c", "description": "c", "check": "c"}]}})
-            assert ok.status_code == 200, ok.text
+                         "criteria": [{"name": "c", "description": "c", "check": [
+                             {"behaviour": "c", "command": "python -m pytest tests/test_c.py", "expect": "exit 0"}]}]}})
+            assert ok.status_code == 200 and "error" not in ok.json(), ok.text
             assert c.get("/api/graph?project=zz_good_call").status_code == 200
     finally:
         for eng in list(reg._engines.values()):
@@ -533,24 +541,24 @@ def test_complete_is_a_claim_about_the_whole_tree_not_the_first_node_that_closes
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("g"), spec("the goal", "c1", "c2"), AgentId("agent"))
-        e.decompose_task(TaskId("g"), [(TaskId("a"), spec("first branch", "c1"), AgentId("agent")),
-                                       (TaskId("b"), spec("second branch", "c1"), AgentId("agent"))],
+        e.assign_task(TaskId("g"), spec("the goal", "c1", "c2"), AgentId("user"))
+        e.decompose_task(TaskId("g"), [(TaskId("a"), spec("first branch", "c1"), AgentId("user")),
+                                       (TaskId("b"), spec("second branch", "c1"), AgentId("user"))],
                          [CriterionMapping("c1", TaskId("a")), CriterionMapping("c2", TaskId("b"))],
                          register=REGISTER_SPLIT)   # §11.5: the split is admitted whole
         e.wait_idle()
 
         # THE SECOND ROOT IS REFUSED, which is where the measured forest came from.
         with pytest.raises(InvariantViolation, match="already has its root"):
-            e.assign_task(TaskId("other"), spec("a second goal", "c1"), AgentId("agent"))
+            e.assign_task(TaskId("other"), spec("a second goal", "c1"), AgentId("user"))
 
         # Close branch 'a' for real — accepted, delivered, validated by somebody who is not its
         # executor, then signed. Anything less leaves it in VALIDATING, where NEITHER reading of the
         # rule calls the graph complete and the test passes without touching what it is about.
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("a"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("a"),
-                                      source=AgentId("agent"),
+                                      source=AgentId("user"),
                                       result="ran the check for a, it printed OK",
                                       self_validation=Verdict.PASS))
         e.wait_idle()
@@ -560,7 +568,7 @@ def test_complete_is_a_claim_about_the_whole_tree_not_the_first_node_that_closes
                                               "evidence": "ran it",
                                               "probe": [{"command": "check c1", "expect": "it holds"}]}])
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("a"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.wait_idle()
         assert passed(e.graph.get_task(TaskId("a"))), "the first branch did not actually close"
         assert not passed(e.graph.get_task(TaskId("b"))), "the second branch must still owe its work"
@@ -627,12 +635,12 @@ def test_an_observation_that_restates_the_verdict_records_nothing():
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("p"), spec("probe", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("p"), spec("probe", "c1"), AgentId("user"))
         e.wait_idle()
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("p"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("p"),
-                                      source=AgentId("agent"), result="I did it. Trust me."))
+                                      source=AgentId("user"), result="I did it. Trust me."))
         e.wait_idle()
 
         refused = record_verdict(e, "p", "PASS", reviewer="dave-from-accounting",
@@ -667,11 +675,11 @@ def test_a_dependency_read_says_which_end_produces():
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("user"))
         e.wait_idle()
         e.decompose_task(TaskId("root"),
-                         [(TaskId("root.core"), spec("core", "k1"), AgentId("agent")),
-                          (TaskId("root.tests"), spec("tests", "k2"), AgentId("agent"))],
+                         [(TaskId("root.core"), spec("core", "k1"), AgentId("user")),
+                          (TaskId("root.tests"), spec("tests", "k2"), AgentId("user"))],
                          criterion_mappings=[CriterionMapping("c1", TaskId("root.core")),
                                              CriterionMapping("c1", TaskId("root.tests"))], register=REGISTER_SPLIT)
         e.wait_idle()
@@ -709,12 +717,12 @@ def test_q_V_says_what_a_reopen_does_to_it():
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("a"), spec("goal", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("a"), spec("goal", "c1"), AgentId("user"))
         e.wait_idle()
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("a"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("a"),
-                                      source=AgentId("agent"), result="r"))
+                                      source=AgentId("user"), result="r"))
         e.wait_idle()
         e.record_exec_verdict(TaskId("a"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("validator"),
@@ -722,11 +730,11 @@ def test_q_V_says_what_a_reopen_does_to_it():
                                               "evidence": "ran it",
                                               "probe": [{"command": "check c1", "expect": "it holds"}]}])
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("a"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.wait_idle()
         assert e.metrics()["q_V"] == 1.0, "a standing, uncontradicted pass should read 1.0"
 
-        e.reopen(TaskId("a"), AgentId("agent"))
+        e.reopen(TaskId("a"), AgentId("user"))
         e.wait_idle()
         assert e.metrics()["q_V"] == 1.0, (
             "a reopen retires the verdict, not the record: the node stays in the population, uncontradicted")
@@ -754,12 +762,12 @@ def test_a_refused_report_is_said_at_completion_without_withholding_it():
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("a"), spec("goal", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("a"), spec("goal", "c1"), AgentId("user"))
         e.wait_idle()
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("a"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("a"),
-                                      source=AgentId("agent"), result="r"))
+                                      source=AgentId("user"), result="r"))
         e.wait_idle()
         e.record_exec_verdict(TaskId("a"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("validator"),
@@ -767,7 +775,7 @@ def test_a_refused_report_is_said_at_completion_without_withholding_it():
                                               "evidence": "ran it",
                                               "probe": [{"command": "check c1", "expect": "it holds"}]}])
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("a"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.wait_idle()
         assert e.frontier._frontier().get("complete") is True, "the node closed; this should read complete"
         assert not e.nodes_with_a_refused_report(), "nothing has been refused yet"
@@ -906,12 +914,12 @@ def test_the_verdict_a_node_closed_on_is_not_overwritten_by_a_later_one():
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("n"), spec("goal", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("n"), spec("goal", "c1"), AgentId("user"))
         e.wait_idle()
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("n"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("n"),
-                                      source=AgentId("agent"), result="r"))
+                                      source=AgentId("user"), result="r"))
         e.wait_idle()
         e.record_exec_verdict(TaskId("n"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("bob-who-ran-nothing"), by_hand=True,
@@ -919,7 +927,7 @@ def test_the_verdict_a_node_closed_on_is_not_overwritten_by_a_later_one():
                                               "evidence": "I ran it and it printed 27 passed",
                                               "probe": [{"command": "check c1", "expect": "it holds"}]}])
         e.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("n"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.wait_idle()
         assert e.closing_verdict(TaskId("n")) is None, "nothing has overwritten it yet"
 
@@ -956,12 +964,12 @@ def test_a_hand_verdict_is_refused_while_an_instrument_is_mid_validation():
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("n"), spec("goal", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("n"), spec("goal", "c1"), AgentId("user"))
         e.wait_idle()
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("n"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("n"),
-                                      source=AgentId("agent"), result="r"))
+                                      source=AgentId("user"), result="r"))
         e.wait_idle()
         assert not e.claims.validation_in_flight(TaskId("n")), "nothing is validating it yet"
 
@@ -998,10 +1006,10 @@ def test_the_review_summary_says_how_its_findings_were_closed():
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("agent"))
+        e.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("user"))
         e.wait_idle()
         e.decompose_task(TaskId("root"),
-                         [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent"))],
+                         [(TaskId("root.kid"), spec("kid", "k1"), AgentId("user"))],
                          criterion_mappings=[CriterionMapping("c1", TaskId("root.kid")),
                                              CriterionMapping("c2", TaskId("root.kid"))], register=REGISTER_SPLIT)
         e.wait_idle()
@@ -1010,8 +1018,8 @@ def test_the_review_summary_says_how_its_findings_were_closed():
 
         e._graph._storage.store_critique(TaskId("root"), json.dumps({
             "semantic_findings": ["c1 is not entailed"],
-            "disputes": {"c1": {"why": "k1's contract entails it", "by": "agent", "ts": "t"},
-                         "c2": {"why": "the register puts it out of scope", "by": "agent",
+            "disputes": {"c1": {"why": "k1's contract entails it", "by": "user", "ts": "t"},
+                         "c2": {"why": "the register puts it out of scope", "by": "user",
                                 "ts": "t"}}}))
         out = get_review(e, "root")
         assert out["discharged_by_dispute"] == ["c1", "c2"], (
@@ -1033,11 +1041,11 @@ def test_binding_coverage_is_not_logged_as_revising_a_contract():
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("agent"))
+        e.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("user"))
         e.wait_idle()
         e.decompose_task(TaskId("root"),
-                         [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent")),
-                          (TaskId("root.two"), spec("two", "k2"), AgentId("agent"))],
+                         [(TaskId("root.kid"), spec("kid", "k1"), AgentId("user")),
+                          (TaskId("root.two"), spec("two", "k2"), AgentId("user"))],
                          criterion_mappings=[CriterionMapping("c1", TaskId("root.kid")),
                                              CriterionMapping("c2", TaskId("root.two"))], register=REGISTER_SPLIT)
         e.wait_idle()
@@ -1069,12 +1077,12 @@ def test_recording_a_verdict_and_arguing_away_a_finding_leave_a_trace():
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("n"), spec("goal", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("n"), spec("goal", "c1"), AgentId("user"))
         e.wait_idle()
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("n"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("n"),
-                                      source=AgentId("agent"), result="r"))
+                                      source=AgentId("user"), result="r"))
         e.wait_idle()
 
         record_verdict(e, "n", "PASS", reviewer="bob",
@@ -1103,25 +1111,25 @@ def test_the_affordance_surface_knows_a_validator_is_running(monkeypatch):
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("user"))
         e.wait_idle()
         e.decompose_task(TaskId("root"),
-                         [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent"))],
+                         [(TaskId("root.kid"), spec("kid", "k1"), AgentId("user"))],
                          criterion_mappings=[CriterionMapping("c1", TaskId("root.kid"))], register=REGISTER_SPLIT)
         e.wait_idle()
         e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root.kid"),
-                                      source=AgentId("agent")))
+                                      source=AgentId("user")))
         e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("root.kid"),
-                                      source=AgentId("agent"), result="r"))
+                                      source=AgentId("user"), result="r"))
         e.wait_idle()
         assert e.graph.get_task(TaskId("root.kid")).state.name == "VALIDATING"
 
-        assert "RIGHT NOW" not in str(available_actions(e, "root.kid", "agent")), (
+        assert "RIGHT NOW" not in str(available_actions(e, "root.kid", "user")), (
             "the surface announces a run when none is in flight")
 
         claim = e.claims.begin_validation(TaskId("root.kid"))
         try:
-            said = str(available_actions(e, "root.kid", "agent"))
+            said = str(available_actions(e, "root.kid", "user"))
             assert "RIGHT NOW" in said, "the surface still invites a signature over a running validator"
             assert "refuted_passes" in said, (
                 "it does not name what will report the contradiction if they sign anyway")
@@ -1150,10 +1158,10 @@ def test_replacing_criteria_says_what_coverage_it_destroyed(monkeypatch):
     e = make_engine()
     e.start()
     try:
-        e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("user"))
         e.wait_idle()
         e.decompose_task(TaskId("root"),
-                         [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent"))],
+                         [(TaskId("root.kid"), spec("kid", "k1"), AgentId("user"))],
                          criterion_mappings=[CriterionMapping("c1", TaskId("root.kid"))], register=REGISTER_SPLIT)
         e.wait_idle()
 
@@ -1167,19 +1175,19 @@ def test_replacing_criteria_says_what_coverage_it_destroyed(monkeypatch):
     e2 = make_engine()
     e2.start()
     try:
-        e2.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("agent"))
+        e2.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("user"))
         e2.wait_idle()
         e2.decompose_task(TaskId("root"),
-                          [(TaskId("root.kid"), spec("kid", "k1"), AgentId("agent"))],
+                          [(TaskId("root.kid"), spec("kid", "k1"), AgentId("user"))],
                           criterion_mappings=[CriterionMapping("c1", TaskId("root.kid"))], register=REGISTER_SPLIT)
         e2.wait_idle()
         for sig, extra in ((Signal.ACCEPT, {}), (Signal.DELIVER, {"result": "ran the kid check, it printed OK",
                                                                   "self_validation": Verdict.PASS})):
             e2.send_signal_sync(SignalData(signal=sig, task_id=TaskId("root.kid"),
-                                           source=AgentId("agent"), **extra))
+                                           source=AgentId("user"), **extra))
         e2.wait_idle()
         e2.send_signal_sync(SignalData(signal=Signal.PASS, task_id=TaskId("root.kid"),
-                                       source=AgentId("agent")))
+                                       source=AgentId("user")))
         e2.wait_idle()
         assert e2.graph.get_task(TaskId("root.kid")).state.name == "DONE"
 
@@ -1204,11 +1212,18 @@ def test_the_page_draws_how_a_node_closed(client):
         "…and the header must not print one number for two different kinds of green")
 
 
-def test_the_identity_the_page_signs_with_survives_a_reload(client):
-    """The box SIGNS every signal this page sends, and it reset to the server's id on refresh."""
+def test_a_server_of_another_account_is_one_state(client):
+    """A server run by another OS account refuses every read (`refused`, its sentence) and closes the feed with 4403: the
+    page is that one state — nothing else drawn, no sign-in offered (it cannot help there), no reconnecting."""
     page = _ui(client)
-    assert "rememberedRole" in page and "localStorage" in page
-    assert "rememberRole(myRole())" in page, "…and it is written down when it is typed"
+    assert "S.me?.refused" in page and "refusedPage(" in page and "classList.add('refused')" in page
+    assert "e.code === 4403" in page, "…and the feed it closed is not asked again"
+
+
+def test_mine_is_a_view_remembered_per_project(client):
+    """«Mine» dims what none of the page's names holds, or only the one chosen — a view kept per project, signing nothing."""
+    page = _ui(client)
+    assert "gfso.mine:" in page and "localStorage" in page and "mineNames" in page
 
 
 def test_one_edit_is_one_revision(client):

@@ -4,7 +4,7 @@
 import {$, esc} from './dom.js';
 import {cap} from './fmt.js';
 import {GOAL, getJSON, post, refusal} from './api.js';
-import {S, myRole, begun} from './state.js';
+import {S, begun, signsAs, mineNames} from './state.js';
 import {notice, askInPage, act, askProjectName, NO_ANSWER} from './overlays.js';
 import {PLAN_COST, MODES} from './vocab.js';
 import {critRow, readCrits, pairRow, listRow, readPairs, readList, iso, suggest} from './forms.js';
@@ -18,7 +18,9 @@ const mode = () => S.graph.mode?.mode || '';
 // one goal is one project (one root): the button poses a project's goal while it has none; with one posed, a new project
 // is the projects list's own «+ new project» — a second one here was a duplicate on the main page (the author, 2026-10-27)
 // …and a link to a project not there yet offers no paid plan: stating a goal in a new project is the `goal` address's (critic)
-export const labelGoalButton = () => { $('btn-goal').hidden = begun() || (!!S.missing && !GOAL); };
+// …a move like any other: not offered to a browser that signs as no one (critic)
+// …nor beside a written plan waiting on its go: a second goal posed here would compete with it (critic)
+export const labelGoalButton = () => { $('btn-goal').hidden = begun() || !!S.plan?.goal || (!!S.missing && !GOAL) || !signsAs().length; };
 
 // ONE PROJECT HOLDS ONE GOAL: with a root here, a new goal means a new project — the tab goes there first,
 // so the form always states the goal of the project it stands in.
@@ -27,8 +29,11 @@ export async function openGoal() {
         notice('This project holds its goal, and a project holds one: name a new project — its goal is stated there.');
         return askProjectName({goal: 1});
     }
-    $('gp-project').innerHTML = `<p class="gp-note">The goal of <b>${esc(S.project || 'the active project')}</b>.</p>`;
-    $('gp-assignee').value ||= myRole();
+    // …stated as the session's own name: a goal names no node whose role would pick another (signin.py)
+    $('gp-project').innerHTML = `<p class="gp-note">The goal of <b>${esc(S.project || 'the active project')}</b>, stated as <b>${esc(S.me?.name || '')}</b>.</p>`;
+    // the one name «Mine» shows — the page's own where it signs as one (local-peer: «agent») — a view, never the signer;
+    // left empty there, the hidden field refused «Create it as written» on a new project (critic)
+    $('gp-assignee').value ||= mineNames().length === 1 ? mineNames()[0] : '';
     panel().hidden = false;
     $('gp-title').focus();
     await whoHolds();
@@ -112,6 +117,7 @@ async function submit(plan) {
     if (v.error) { say(v.error[1]); return $(v.error[0]).focus(); }
     if (plan && !(await askInPage('Create the goal and let the system plan it (search↔audit → verified subtree)? ' + PLAN_COST))) return;
     say('');
+    // the goal's issuer is who states it (§15.2): the page's session, as the door signs it — no name sent
     const who = v.assignee ? {assignee: v.assignee} : {}, done = () => { closeGoal(); S.reload(); };
     if (!plan) {
         return act(post('/api/run/create_task', {spec: {name: v.name, description: v.description,

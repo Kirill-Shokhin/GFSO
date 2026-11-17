@@ -37,9 +37,9 @@ _RISK = {"item": "a flaky network", "predictability": "STATISTICAL",
 
 def _with_a_risk(e):
     """The register where §9.2 puts it: on the split, written by its decomposer with it."""
-    T.create_task(e, "n", {"description": "goal", "criteria": [criterion("c", "C")]}, assignee="agent")
+    T.create_task(e, "n", {"description": "goal", "criteria": [criterion("c", "C")]}, assignee="user")
     T.decompose(e, "n", [{"task_id": "k", "spec": {"description": "part", "criteria": [criterion("k", "K")]},
-                          "assignee": "agent", "covers": ["c"]}], accepted_risks=[_RISK, DENIAL_ENTRY])
+                          "assignee": "user", "covers": ["c"]}], accepted_risks=[_RISK, DENIAL_ENTRY])
 
 
 def test_the_verb_that_creates_it_reads_it_back_whole():
@@ -48,7 +48,7 @@ def test_the_verb_that_creates_it_reads_it_back_whole():
     e.start()
 
     out = T.create_task(e, "n", {"description": "goal", "criteria": [criterion("c", "C")],
-                                 "accepted_risks": [_RISK]}, assignee="agent")
+                                 "accepted_risks": [_RISK]}, assignee="user")
 
     assert out.get("prefilled_accepted_risks", [None])[0] == _RISK, out
     assert out["accepted_risks_recorded"] == [], "a pre-fill read back as the split's register"

@@ -140,7 +140,7 @@ def test_the_first_move_the_product_names_actually_exists():
         t.state, t.done_reason = State.ESCALATED, DoneReason.FAIL
         e._graph.save_task(t)
         e.wait_idle()
-        out = T.revise(e, "root", agent="agent", max_iterations=20, reason="other")
+        out = T.revise(e, "root", agent="user", max_iterations=20, reason="other")
         assert not out.get("refused"), out
         assert e.graph.get_task(TaskId("root")).max_iterations == 20
         assert e.graph.get_state(TaskId("root")) == State.OFFERED   # re-consent, Inv-1

@@ -24,10 +24,9 @@ from typing import Optional
 from gfso import tools_llm as T
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.engine.validation import whole_waits_for_its_parts
-from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, agents_path, max_sessions, provider, validator_retry_model
+from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, agent_id as _config_agent_id, agents_path, max_sessions, provider, validator_retry_model
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask
-from gfso.tools import _agent_id
 from gfso.inflight import _inflight, being_rewritten, in_flight
 from gfso.adapters.verifiers import evaluate_unittest
 from gfso.core.graph.model import generation_of_task
@@ -42,7 +41,7 @@ from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among, what
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.adapters.execution import release_rounds
 from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace, clear_workspaces, execution_of,
-                             join_whole, land_accepted, made, node_workspace, root_created,
+                             join_whole, land_accepted, left_to_merge, made, node_workspace, results_a_split_waits_on, root_created,
                              session_scope, stands, where_it_runs)
 from gfso.packets import _EXECUTOR_STATES, _scope_order
 from gfso.sessions import unattended_here, run_consent, run_executor, run_scope_executor
@@ -115,8 +114,10 @@ def _in_flight_as(name: str, fn):
 
 ISSUER_VERBS = Verbs(llm=llm_factory, busy=_inflight, review=_in_flight_as("review_decomposition", T.review_decomposition),
                      # the split is its node's EXECUTOR's move: authored by him, it re-authors no contract (Inv-1)
+                     # …a deferred one with the results it waited on in hand (`results_a_split_waits_on`)
                      refine=lambda engine, node: T.SYSTEM_TOOLS["auto_decompose"](
-                         engine, root_id=node, depth=1, author=str(engine.graph.get_task(node).assignee)),
+                         engine, root_id=node, depth=1, author=str(engine.graph.get_task(node).assignee),
+                         _contact=results_a_split_waits_on(engine, default_agents(), node)),
                      place=lambda engine, agents, node: _contact_place(engine, agents, node),
                      execution=lambda engine: execution_of(engine, default_agents()))
 
@@ -137,7 +138,9 @@ def publish_the_workforce(engine, roster: dict) -> None:
                                        + (f", up to {cfg['max_turns']} turns" if cfg.get("max_turns") else "")
                                        + (f", context budget {cfg['context_budget']} tokens"
                                           if cfg.get("context_budget") else "")
-                                  for aid, cfg in roster.items() if cfg.get("kind") == "llm-executor"})
+                                  for aid, cfg in roster.items() if cfg.get("kind") == "llm-executor"},
+                                 {aid for aid, cfg in roster.items()
+                                  if cfg.get("kind") == "llm-executor" and not cfg.get("execution")})
 
 
 def confirm_system_cancellations(engine, agents: "AgentRegistry", in_flight=lambda t: False) -> None:
@@ -748,6 +751,7 @@ class Dispatcher:
         #: a second validation (see the branch in the validate pass).
         self._torn: dict[str, int] = {}
         self._stop = threading.Event()
+        self._timers: list = []   # rounds given back later: cancelled by `stop`
         self._dirty = threading.Event()   # set by every transition → the loop re-evaluates the frontier
         self._rejoined_once = False       # the start-up sweep of passed roots the base does not hold (`_rejoin`)
         self._retry_at: dict[str, tuple[float, float]] = {}   # a refused root join: (next try, its delay)
@@ -755,6 +759,7 @@ class Dispatcher:
         # a root that has a place owes a join, and is complete only once it landed (`Joins.root_landed`)
         self._engine.joins.set_join_owed(lambda t: (w := _place_of(self._engine, self._agents, t)) is not None
                                    and made(self._engine, w[1]))
+        self._engine.joins.set_left(lambda whole: left_to_merge(self._engine, self._agents, whole))
         # …and the place the project runs in, probed while it is down (`Engine.lift_the_system_stop`)
         self._engine.probe_the_place_with(lambda place: (answers(place) if is_address(place)
                                                          else execution_of(self._engine, self._agents).unavailable(
@@ -848,7 +853,7 @@ class Dispatcher:
         Naming yourself (`source=<your name>`, and an `assignee` of your own) is what makes you a
         person here."""
         issuer = str(self._engine.graph.issuer_of(task_id))
-        return issuer == _agent_id() or self._agents.get(issuer) is not None
+        return issuer == _config_agent_id() or self._agents.get(issuer) is not None   # the standing agent
 
     def _resolves_blocks_for(self, task_id: TaskId) -> bool:
         """Is resolving this node's dependency-ready block the SYSTEM's move? It is mechanical (every
@@ -1426,7 +1431,10 @@ class Dispatcher:
                                                                  f"record: {'; '.join(standing)}")
             self._rest()
             return []      # the user's STOP: nothing new starts; running sessions finish and their signals land
-        self._rested = False
+        if self._landing_left():
+            self._rest()   # …between its tries, each of which starts what it needs again (a root that never landed held them)
+        else:
+            self._rested = False
         self._rejoin()     # a root's result that did not land is tried again (cheap: roots only)
         self._resolve_ready_blocks()
         answer_open_questions(self._engine, self._agents, self._claim, self._release_after_answer,
@@ -1707,10 +1715,20 @@ class Dispatcher:
             self._seen.discard(key)
             self._dirty.set()
         if delay:
-            (timer := threading.Timer(delay, again)).daemon = True
-            timer.start()
+            self._later(delay, again)
         else:
             again()
+
+    def _later(self, delay: float, fn, *args) -> None:
+        """`fn` after `delay` seconds on a daemon timer this dispatcher holds: its `stop` cancels what has not fired, so a
+        stopped dispatcher leaves no thread waiting behind it, nor starts one: a run in flight at the stop gives back
+        nothing."""
+        if self._stop.is_set():
+            return
+        timer = threading.Timer(delay, lambda: (timer in self._timers and self._timers.remove(timer), fn(*args)))
+        timer.daemon = True
+        self._timers.append(timer)
+        timer.start()
 
     def _wait_out_limit(self, task_id: TaskId, key: str, whose: str) -> None:
         """The account's limit refused the call: nothing was answered, so neither the node's retry nor a redial is
@@ -1753,7 +1771,7 @@ class Dispatcher:
                 # FIVE refusals. Spending the cheap tier again on a node that has already refused
                 # once buys the same refusal; where the installation names a retry tier, a node
                 # with a refusal behind it starts there (none by default — see validator_retry_model).
-                if _mo is None and (self._engine.rejected_report(task_id) or {}).get("refusals", 0):
+                if _mo is None and self._engine.rejected_report(task_id):   # …any delivery's: the node's history
                     _mo = validator_retry_model()
                 ret = self._validate(self._engine, task_id, self._agents, **({"model_override": _mo} if _mo else {}),
                                      **({"sign": sign} if not sign else {}))
@@ -1880,9 +1898,7 @@ class Dispatcher:
         self._engine.emit_info("delegate", f"{task_id}: validator produced no verdict twice (⊥ is not "
                                            f"pass, §2.3) — asked again in {wait:.0f} s, "
                                            f"until VALIDATING's bound hands it to its issuer (§16.14)")
-        timer = threading.Timer(wait, self._seen.discard, (key,))
-        timer.daemon = True                      # like every thread here: never holds a process open
-        timer.start()
+        self._later(wait, self._seen.discard, key)
         return True
 
     def _on_bus(self, tid=None, old=None, new=None, signal=None) -> None:
@@ -1918,8 +1934,11 @@ class Dispatcher:
             # order of this thread and that session decides nothing. A node whose place was made is marked joining
             # HERE, before the thread starts, so no reader sees it DONE with its join neither running nor done — and
             # asked without git (a place exists only in a git base), which the signal path never waits on
+            # …or, its holder's own work with no place, whose whole's place was made: it joins there all the same
             t = self._engine.graph.get_task(tid)
-            if (w := _place_of(self._engine, self._agents, t)) is not None and made(self._engine, w[1]):
+            w = _place_of(self._engine, self._agents, t)
+            if (w := w or (None if t is None or (p := self._engine.graph.get_parent(t.id)) is None
+                           else _place_of(self._engine, self._agents, p))) is not None and made(self._engine, w[1]):
                 self._engine.joins.mark_joining(tid, True)
             threading.Thread(target=self._join, args=(tid,), daemon=True).start()
         if new == State.ABANDONED and tid is not None:
@@ -2029,9 +2048,16 @@ class Dispatcher:
                 # …a DONE readable before its join is marked: `root_landed` reads that as being joined
                 and all(joins.root_landed(t) for t in tasks if t.state == State.DONE and graph.get_parent(t.id) is None))
 
+    def _landing_left(self) -> bool:
+        """Every node settled, nothing joining, and a root's result that did not land the one thing left: tried again by
+        `_rejoin`, backing off — for as long as the cause stands (the person's branch checked out), maybe for ever."""
+        joins = self._engine.joins
+        return (self._rejoined_once and not joins.joining_nodes() and bool(joins.unjoined_roots())
+                and not self._engine.open_nodes())
+
     def _rest(self) -> None:
         """The containers of a project that nothing of will run ended once, when nothing of it runs any more — stopped
-        (`run_state`'s `stopped`) or its goal over (`_over`), else they stood idle on the person's machine for as long as
+        (`run_state`'s `stopped`), its goal over (`_over`) or only its landing left (`_landing_left`), else they stood idle on the person's machine for as long as
         it was left: its work stands in its volumes, and its next start makes them again over them (`ExecutionPort.stop`)."""
         # …asked again after what runs now, which may start one (a verb that moves no node), and after a stop that failed
         if any(w.get("project") == (self._engine.project_name or DEFAULT_PROJECT) for w in in_flight()):
@@ -2080,6 +2106,9 @@ class Dispatcher:
         """Stop the loop and wait briefly for it to settle. Idempotent."""
         self._stop.set()
         self._dirty.set()                              # wake the loop so it exits promptly
+        for timer in list(self._timers):
+            timer.cancel()
+        self._timers.clear()
 
 
 _DISPATCHERS: dict[int, Dispatcher] = {}

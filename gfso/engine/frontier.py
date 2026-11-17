@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Optional
 
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
-from gfso.config import agent_id as _config_agent_id
+from gfso.config import agent_id as _config_agent_id, how_it_is_waited
 from gfso.core.graph.model import root_of
 from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, Task, TaskId, Verdict, Wait,
                              settled_positive)
@@ -513,7 +513,7 @@ class NodeSteps:
         whoever comes back to a node that has been sitting in VALIDATING. Scoped to the current
         generation, because a count carried across a rework is advice about a delivery nobody made.
         """
-        return int((self.engine.refused_report_for_this_delivery(task.id) or {}).get("refusals", 0))
+        return self.engine.refusals_on_this_delivery(task.id)
 
     def _aggregate_or_repair(self, t, nm: str, crits) -> tuple:
         """The step for a parent whose children have all passed: integrate them, or repair the plan.
@@ -756,9 +756,8 @@ class Frontier:
                         "Nothing to take right now — the graph is working: "
                         + "; ".join(f"'{w['task_id']}' {w['why']}" for w in _running)
                         + ". Those arrive by themselves; a second instrument on the same "
-                          "delivery would validate it twice. Wait for them here: call `next_steps` with "
-                          "`wait` (seconds) — it returns as soon as something is yours. Do not end your work "
-                          "on this: what lands may be yours to sign.")}
+                          "delivery would validate it twice; what lands may be yours to sign. "
+                        + how_it_is_waited(self.engine.project_name, "one is yours"))}
         where = "; ".join(f"'{t.id}' ({t.spec.name or t.id}) is {t.state.name}"
                           for t in stranded)
         _held_up = [t for t in tasks if t.state in (State.OFFERED, State.EXECUTING, State.REWORKING)
@@ -1218,8 +1217,8 @@ class Frontier:
                                  f"edited file it would overwrite), or merge the named branch by hand; the join is "
                                  f"tried again, less often each time it is refused."}
         return {"complete": False, "stuck": False, "steps": [], "in_flight": self.engine.in_flight_nodes(),
-                "directive": f"The root '{root.id}' has passed; its result is being joined into the base. Poll "
-                             f"again — complete follows the join."}
+                "directive": f"The root '{root.id}' has passed; its result is being joined into the base: complete "
+                             f"follows the join."}
 
     def _blocking_stranded_nodes(self) -> list:
         """The stranded nodes that can actually stop the graph — every one except a tombstone.

@@ -41,12 +41,11 @@ from gfso.core.types import AgentId, CriterionMapping, Signal, SignalData, State
 
 
 @pytest.fixture(autouse=True)
-def _gate_on():
-    """This module owns the gate-ON behavior (the suite default is OFF — see conftest)."""
-    prior = os.environ.get("GFSO_L2_GATE")
-    os.environ["GFSO_L2_GATE"] = "1"
-    yield
-    os.environ["GFSO_L2_GATE"] = prior if prior is not None else "0"
+def _gate_on(monkeypatch):
+    """This module owns the gate-ON behavior (the suite default is OFF — see conftest). Through `monkeypatch`, on the
+    one undo stack its tests use too: a raw write here, undone before a test's own `setenv` was, left the gate ON for
+    every later test of the worker once a conftest fixture took `monkeypatch` first (measured 2026-11-17)."""
+    monkeypatch.setenv("GFSO_L2_GATE", "1")
 
 
 @pytest.fixture
@@ -57,12 +56,12 @@ def engine():
     e.stop()
 
 
-_KID = [(TaskId("kid"), spec("part", "k1"), AgentId("agent"))]
+_KID = [(TaskId("kid"), spec("part", "k1"), AgentId("user"))]
 _BOTH = [CriterionMapping("c1", TaskId("kid")), CriterionMapping("c2", TaskId("kid"))]
 
 
 def _root(e):
-    e.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("agent"))
+    e.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("user"))
     e.wait_idle()
 
 
@@ -86,7 +85,7 @@ def _review(e, node="root", covered=True, verdicts=(), conflicts=()):
 
 
 def _accept(e, tid="kid"):
-    e.send_signal(SignalData(signal=Signal.ACCEPT, task_id=TaskId(tid), source=AgentId("agent")))
+    e.send_signal(SignalData(signal=Signal.ACCEPT, task_id=TaskId(tid), source=AgentId("user")))
     e.wait_idle()
     return e.graph.get_task(TaskId(tid)).state
 
@@ -129,9 +128,9 @@ def test_no_verdict_is_never_read_as_clean(engine):
     assert _accept(engine) == State.OFFERED
 
 
-def test_gate_off_is_the_explore_branch(engine):
+def test_gate_off_is_the_explore_branch(engine, monkeypatch):
     _plan(engine)
-    os.environ["GFSO_L2_GATE"] = "0"
+    monkeypatch.setenv("GFSO_L2_GATE", "0")
     assert _accept(engine) == State.EXECUTING
 
 
@@ -143,7 +142,7 @@ def test_a_leaf_executes_freely_the_shape_is_the_executors_call(engine):
     root seam still validates the whole result against the issuer's criteria. (Removed: an earlier gate
     made a leaf justify being atomic — that set the subtask count from outside and deadlocked
     auto_decompose's own builder.)"""
-    engine.assign_task(TaskId("solo"), spec("goal", "c1", "c2"), AgentId("agent"))
+    engine.assign_task(TaskId("solo"), spec("goal", "c1", "c2"), AgentId("user"))
     engine.wait_idle()
     step = tools.next_step(engine, "solo")          # before taking it, the frontier leaves the shape open
     assert step["action"] == "accept" and "YOUR call" in step["directive"]
@@ -173,7 +172,7 @@ def test_dispute_discharges_its_own_finding_only(engine):
     assert _accept(engine) == State.EXECUTING
 
     stored = engine.get_critique(TaskId("root"))["disputes"]
-    assert set(stored) == {"c1", "c2"} and stored["c1"]["by"] == "agent"  # provenance, §19.3
+    assert set(stored) == {"c1", "c2"} and stored["c1"]["by"] == "user"  # provenance, §19.3
 
 
 def test_dispute_needs_a_current_verdict_naming_that_finding(engine):
@@ -199,7 +198,7 @@ def test_editing_the_plan_stales_the_review_and_its_disputes(engine):
     assert _accept(engine) == State.EXECUTING
 
     tools.edit_criteria(engine, "kid", [criterion("k1", "changed"),
-                                        criterion("k2", "added")], agent="agent")
+                                        criterion("k2", "added")], agent="user")
     engine.wait_idle()
     assert engine.graph.get_task(TaskId("root")).verified is False    # review staled by the edit
     with pytest.raises(ValueError, match="no current Level-2 verdict"):
@@ -211,16 +210,16 @@ def test_a_child_leaving_the_plan_stales_the_review_as_its_revision_does(engine)
     revision of the child's contract, so the verdict is no longer current; while it is only CANCELLING it is still
     active and the verdict stands (critic r12)."""
     _root(engine)
-    kids = [(TaskId("a"), spec("part a", "ka"), AgentId("agent")), (TaskId("b"), spec("part b", "kb"), AgentId("agent"))]
+    kids = [(TaskId("a"), spec("part a", "ka"), AgentId("user")), (TaskId("b"), spec("part b", "kb"), AgentId("user"))]
     maps = [CriterionMapping("c1", TaskId("a")), CriterionMapping("c2", TaskId("a")),
             CriterionMapping("c1", TaskId("b"))]
     engine.decompose_task(TaskId("root"), kids, maps, register=REGISTER_SPLIT)
     engine.wait_idle()
     _review(engine)
-    engine.send_signal(SignalData(signal=Signal.CANCEL, task_id=TaskId("b"), source=AgentId("agent"), reason="not needed"))
+    engine.send_signal(SignalData(signal=Signal.CANCEL, task_id=TaskId("b"), source=AgentId("user"), reason="not needed"))
     engine.wait_idle()
     assert engine.graph.get_task(TaskId("root")).verified is True            # still active while CANCELLING
-    engine.send_signal(SignalData(signal=Signal.CONFIRM_CANCEL, task_id=TaskId("b"), source=AgentId("agent")))
+    engine.send_signal(SignalData(signal=Signal.CONFIRM_CANCEL, task_id=TaskId("b"), source=AgentId("user")))
     engine.wait_idle()
     assert engine.graph.get_task(TaskId("b")).state == State.ABANDONED
     assert engine.graph.get_task(TaskId("root")).verified is False           # the plan it read is gone
@@ -232,7 +231,7 @@ def test_a_child_leaving_the_plan_stales_the_review_as_its_revision_does(engine)
 def _drive(e):
     """Bring the plan to the shape where children are waiting to start: root accepted, kid in OFFERED."""
     _plan(e)
-    e.send_signal(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=AgentId("agent")))
+    e.send_signal(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=AgentId("user")))
     e.wait_idle()
 
 
@@ -281,7 +280,7 @@ def test_an_empty_register_is_an_incomplete_plan_and_the_engine_says_which_hole(
     assert engine.graph.get_task(TaskId("kid")) is None         # execution refused: nothing was issued
     engine.decompose_task(TaskId("root"), _KID, _BOTH, register=REGISTER_SPLIT)
     with pytest.raises(AdmissionRefused, match="CHECK-4"):     # its decomposer empties it: refused, not a flag
-        engine.admit_register(TaskId("root"), Register(), AgentId("agent"))
+        engine.admit_register(TaskId("root"), Register(), AgentId("user"))
     assert engine.graph.get_task(TaskId("root")).register.items == REGISTER_SPLIT.items
     t = engine._graph.get_task(TaskId("root"))
     t.register = Register()                                     # behind the gate: an older build's row
@@ -293,7 +292,7 @@ def test_an_empty_register_is_an_incomplete_plan_and_the_engine_says_which_hole(
     assert not crit.gate_passed and any("CHECK-4" in f for f in crit.l0l1_failures)
     assert any("CHECK-4" in h["check"] for h in tools.list_holes(engine, "root")["holes"])   # named, not opaque
 
-    tools.edit_accepted_risks(engine, "root", REGISTER, agent="agent")
+    tools.edit_accepted_risks(engine, "root", REGISTER, agent="user")
     engine.wait_idle()
     assert not [c for c in engine.get_checks(TaskId("root"))
                 if c.check_name.startswith("CHECK-4") and not c.passed]   # the step, taken
@@ -309,7 +308,7 @@ def test_l0_is_checked_before_l2(engine):
         engine.decompose_task(TaskId("root"), _KID, _BOTH[:1], register=REGISTER_SPLIT)
     assert engine.graph.get_task(TaskId("kid")) is None
     engine.decompose_task(TaskId("root"), _KID, _BOTH, register=REGISTER_SPLIT)
-    tools.edit_criteria(engine, "root", [criterion("c1"), criterion("c2"), criterion("c3")], agent="agent")
+    tools.edit_criteria(engine, "root", [criterion("c1"), criterion("c2"), criterion("c3")], agent="user")
     holes = [h["check"] for h in tools.list_holes(engine, "root")["holes"]]
     assert any("CHECK-1" in h for h in holes)
     crit = critique_node(engine, TaskId("root"))
@@ -350,7 +349,7 @@ def test_a_goal_whose_own_criteria_decide_nothing_does_not_reach_execution(engin
 
     out = e.dispute_review_finding(TaskId("root"), "undecided: the engine must actually match patterns",
                                    "the matching obligation is carried by the child's criteria",
-                                   AgentId("agent"))
+                                   AgentId("user"))
     assert out["open_findings"] == []
     assert _l2_undischarged(e._graph, e.graph.get_task(TaskId("root"))) == []
 
@@ -367,7 +366,7 @@ def test_a_current_pass_means_the_same_thing_everywhere(engine):
     revision the third, because a validator still running on a voided delivery lands its verdict
     afterwards carrying the same first two."""
     e = engine
-    e.assign_task(TaskId("n"), spec("goal", "c"), AgentId("agent"))
+    e.assign_task(TaskId("n"), spec("goal", "c"), AgentId("user"))
     e.wait_idle()
     t = e.graph.get_task(TaskId("n"))
 
@@ -501,9 +500,9 @@ def test_the_review_answers_with_one_number_and_what_changed(engine, monkeypatch
     monkeypatch.setenv("GFSO_L2_GATE", "1")
     e = engine
     tools.create_task(e, "root", {"name": "root", "description": "a goal",
-                                  "criteria": [criterion("c1", "the thing")]}, "agent")
+                                  "criteria": [criterion("c1", "the thing")]}, "user")
     tools.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "child", "criteria": [criterion("k", "K")]},
-                                 "assignee": "agent", "covers": ["c1"]}],
+                                 "assignee": "user", "covers": ["c1"]}],
                     accepted_risks=[{"item": "fixture", "predictability": "extraordinary", "justification": "accepted", "invalidation_condition": "never", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY])
     e._graph._storage.store_critique(TaskId("root"), json.dumps({
         "node_id": "root", "gate_passed": True, "semantic_covered": False,
@@ -525,7 +524,7 @@ def test_a_goal_that_has_not_moved_is_not_mined_again(engine):
     and nothing new can be invented."""
     e = engine
     tools.create_task(e, "root", {"name": "root", "description": "build the thing",
-                                  "criteria": [criterion("c1", "the thing")]}, "agent")
+                                  "criteria": [criterion("c1", "the thing")]}, "user")
     task = e.graph.get_task(TaskId("root"))
     assert _goal_changed(None, task)                              # never reviewed → read the goal
     prior = {"goal_text": "build the thing", "goal_read": True,
@@ -557,7 +556,7 @@ def test_a_count_that_was_not_measured_is_not_zero(engine, monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "1")
     e = engine
     _plan(e)
-    tools.edit_criteria(e, "root", [criterion("c1"), criterion("c2"), criterion("c3")], agent="agent")  # c3: CHECK-1
+    tools.edit_criteria(e, "root", [criterion("c1"), criterion("c2"), criterion("c3")], agent="user")  # c3: CHECK-1
     out = TL.review_decomposition(e, "root")
     assert out["gate_passed"] is False
     assert out["open_count"] is None and "not measured" in out["open_count_note"]
@@ -576,9 +575,9 @@ def test_the_checker_reads_the_plan_several_times_on_its_first_pass(engine, monk
     e = engine
     tools.create_task(e, "root", {"name": "root", "description": "a goal",
                                   "criteria": [criterion("c1", "one"),
-                                               criterion("c2", "two")]}, "agent")
+                                               criterion("c2", "two")]}, "user")
     tools.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "child", "criteria": [criterion("k", "K")]},
-                                 "assignee": "agent", "covers": ["c1", "c2"]}],
+                                 "assignee": "user", "covers": ["c1", "c2"]}],
                     accepted_risks=[{"item": "fixture", "predictability": "extraordinary", "justification": "a", "invalidation_condition": "n", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY])
 
     rounds = [
@@ -670,7 +669,7 @@ def test_the_checker_does_not_relitigate_a_plan_it_already_checked(engine, monke
     # …and a plan that changed is checked whole: a new criterion moves the stamp
     T.edit_criteria(engine, "root", [criterion("c1", "one"),
                                      criterion("c2", "two"),
-                                     criterion("c3", "three")], agent="agent")
+                                     criterion("c3", "three")], agent="user")
     assert _already_decided(prior, engine.graph.get_task(TaskId("root"))) == {}
 
 
@@ -694,7 +693,7 @@ def test_a_criterion_untouched_by_an_edit_elsewhere_is_not_re_litigated(engine):
     T.edit_criteria(engine, "root", [criterion("c1", "c1 description"),
                                      criterion("c2", "c2 description"),
                                      criterion("c3", "the new obligation")],
-                    agent="agent")
+                    agent="user")
     after = engine.graph.get_task(TaskId("root"))
     assert _already_decided(prior, after) == {}, "the OLD whole-plan rule threw both away — the control"
     assert sorted(_already_decided(prior, after, engine)) == ["c1", "c2"]
@@ -702,7 +701,7 @@ def test_a_criterion_untouched_by_an_edit_elsewhere_is_not_re_litigated(engine):
     # …but a criterion whose OWN text changed is a different question, and is asked again
     T.edit_criteria(engine, "root", [criterion("c1", "something else entirely"),
                                      criterion("c2", "c2 description")],
-                    agent="agent")
+                    agent="user")
     assert sorted(_already_decided(prior, engine.graph.get_task(TaskId("root")), engine)) == ["c2"]
 
 
@@ -882,7 +881,7 @@ def test_a_split_one_session_carries_still_answers_to_the_syntactic_level(engine
     _plan(e)
     e.record_session_fit(TaskId("root"), "small", True)
     e.record_session_fit(TaskId("kid"), "small", True)
-    e.revise(TaskId("root"), spec("goal", "c1", "c2", "c3"), AgentId("agent"))   # c3: no child covers it (CHECK-1)
+    e.revise(TaskId("root"), spec("goal", "c1", "c2", "c3"), AgentId("user"))   # c3: no child covers it (CHECK-1)
     e.wait_idle()
     if not _l0_holes(e._graph, e.graph.get_task(TaskId("root"))):
         pytest.skip("the revision left no Level-0 hole on this fixture")

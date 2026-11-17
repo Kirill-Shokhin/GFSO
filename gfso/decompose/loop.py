@@ -138,6 +138,12 @@ _RUNS = ("the OTHER subtasks (ids) whose code this subtask's probes execute — 
          "every part the program is built from; a driver of the subtask's own over the base's interfaces runs only "
          "the base. Empty when its probes run only its own code and the base it builds on. Each one named must be a "
          "producer this subtask waits on: it is checked in a place holding only what it waits on")
+_SPLIT_AFTER = ("ONLY for a subtask whose own split cannot be defined yet because it depends on what another subtask "
+                "will deliver (its interface, its format, what it turns out to support): `after` names those producer "
+                "ids — each must also be a `deps` producer of this subtask — and `why` says what of their result the "
+                "split needs. The subtask then keeps its criteria and is split once those results are delivered and "
+                "accepted, with them in hand. Omit it whenever the split can be defined now: split it now, or leave it "
+                "a leaf; to take back a deferral a part carries, give it with `after: []`")
 _WHOLE_FITS = ("the same question for the WHOLE node being split — every subtask together with the "
                "integration: could one session of the named executor build and check all of it? The node is "
                "split for the plan either way; this decides whether its pieces are validated each on its "
@@ -164,7 +170,10 @@ AUDIT_SCHEMA = {
                 "volume": {"type": "string", "description": _VOLUME},
                 "fits_one_session": {"type": "boolean", "description": _FITS},
                 "writes": {"type": "array", "items": {"type": "string"}, "description": _WRITES},
-                "runs": {"type": "array", "items": {"type": "string"}, "description": _RUNS}},
+                "runs": {"type": "array", "items": {"type": "string"}, "description": _RUNS},
+                "split_after": {"type": "object", "description": _SPLIT_AFTER, "properties": {
+                    "after": {"type": "array", "items": {"type": "string"}}, "why": {"type": "string"}},
+                    "required": ["after", "why"]}},
                 "required": ["id", "name", "description", "criteria", "volume", "fits_one_session", "writes",
                              "runs"]}},
         "mappings": {"type": "array", "description":
@@ -293,7 +302,7 @@ def _stage(llm, label: str) -> None:
     staged(label)
 
 
-def _search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False) -> str:
+def _search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False, ground: str = "") -> str:
     if prev_md:
         # The sentinel is an I/O-FORMAT convention only: the frozen prompt already mandates "say so
         # explicitly rather than manufacturing holes" — this fixes the wording so the loop can detect it.
@@ -303,9 +312,16 @@ def _search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False
                 f"requirement space is already covered, begin your reply with the single line {_COVERED}.")
     else:
         user = f"# TASK\n{request}\n\nFirst pass: no decomposition is provided — produce the exhaustive enumeration."
+    user += _ground(ground)
     if fast:
         user += "\n\n" + SEARCH_FAST
     return llm.complete(user, SEARCH_PROMPT)
+
+
+def _ground(ground: str) -> str:
+    """What the split stands on that is neither the task nor a decomposition of it — the results its producers delivered,
+    where the split waited for them (`results_a_split_waits_on`) — or '' with none."""
+    return "\n\n" + ground if ground else ""
 
 
 def executor_line(executor: str) -> str:
@@ -322,7 +338,7 @@ def executor_line(executor: str) -> str:
 
 
 def _audit_fold(llm: LLMProviderPort, request: str, state_md: str, holes: str,
-                fast: bool = False, executor: str = "") -> dict:
+                fast: bool = False, executor: str = "", ground: str = "") -> dict:
     """THE audit call — every round is the same operation (state, findings) → fold-patch; round 1 is
     just the empty-state case (the whole enumeration reduces to the canonical basis as adds). The
     orchestrator carries the full state and merges deterministically — the audit emits ONLY what
@@ -337,7 +353,7 @@ def _audit_fold(llm: LLMProviderPort, request: str, state_md: str, holes: str,
             "fold-patch — omitted content is kept verbatim by the orchestrator. Keep the state "
             "well-formed: an added root criterion or subtask carries its coverage (add_mappings); an "
             "added seam names existing subtask ids. If nothing new carries a distinct falsifier, emit "
-            "an empty patch.") + executor_line(executor)
+            "an empty patch.") + _ground(ground) + executor_line(executor)
     if fast:
         user += "\n\n" + AUDIT_FAST
     patch = llm.complete_structured(AUDIT_PROMPT, user, FOLD_SCHEMA)
@@ -390,6 +406,12 @@ def _apply_removals(s: dict, patch: dict, ops: list) -> None:
 
 
 
+def _no_empty_deferral(part: dict) -> dict:
+    """The part without a deferral that names no producer — the author's way of saying its split is made now."""
+    return {k: v for k, v in part.items() if k != "split_after"} if (
+        "split_after" in part and not (part["split_after"] or {}).get("after")) else part
+
+
 def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
     """Deterministic merge of a fold-patch into the carried spec: removals → updates → adds (deduped).
     Removing a subtask cleans its mappings and seams (referential integrity by construction). Returns
@@ -414,7 +436,12 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
            for c in patch.get("update_subtasks", [])}
     changed = [str(c.get("id")) for c in s["subtasks"] if str(c.get("id")) in upd and upd[str(c.get("id"))] != c]
     if changed:
-        s["subtasks"] = [upd.get(str(c.get("id")), c) for c in s["subtasks"]]
+        # …a part's deferral (`split_after`) carried over an update that does not mention it, as its pinned inputs are: a
+        # fold sharpening the part's criteria erased the deferral without a word and the part was split blind (critic)
+        # …and taken back only by saying so, `after: []` (a customer's refine: "split it now")
+        s["subtasks"] = [_no_empty_deferral(({"split_after": c["split_after"]} if c.get("split_after") else {})
+                                            | upd[str(c.get("id"))]) if str(c.get("id")) in upd else c
+                         for c in s["subtasks"]]
         ops.append(f"~D {', '.join(changed)}")
     unknown_upd = [c for cid, c in upd.items() if cid not in {str(c.get("id")) for c in s["subtasks"]}]
 
@@ -522,7 +549,7 @@ def _obligations_first(llm, request: str) -> str:
 
 def decompose_spec(request: str, model: str = MODEL_DEFAULT,
                    llm: LLMProviderPort | None = None, progress=None,
-                   fast: bool = False, label: str = "1/1", executor: str = "") -> dict:
+                   fast: bool = False, label: str = "1/1", executor: str = "", ground: str = "") -> dict:
     """THE INIT ROUND — one search + one fold over the EMPTY state: the exhaustive enumeration reduces
     to the canonical basis (spec form). This is the single spec-space operation; every further
     refinement is the SAME operation applied to the BUILT GRAPH as the state (`refine` in
@@ -545,7 +572,10 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
     _stage(llm, f"{label} searcher")
     # …the search gives the split its structure (components, seams, failure modes), the goal's obligations its coverage:
     # the obligations alone, in place of the search, lost structure on every E2 task (0.33–0.59 vs 0.50–0.84, 2026-10-31)
-    found = _search(llm, request, "", fast=fast)
+    # …and over what the split stands on (`ground`): for a split deferred until its producers delivered, what they
+    # delivered (`results_a_split_waits_on`) — a section of its own, never the task: the goal's obligations below read
+    # the request alone, so none is mined from a producer's source (critic, twice)
+    found = _search(llm, request, "", fast=fast, ground=ground)
     tag_stage(llm, Stage.SEARCH)
     # …the gate's own question asked of the goal only where the authoring answers it at all: the measurement arm's
     # switch exists so a plan the gate has NOT pre-repaired can still be authored (critic over the first fold)
@@ -556,7 +586,7 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
     _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
     _progress(f"{label} auditor (fold, first round)…", progress)
     _stage(llm, f"{label} auditor")
-    patch = _audit_fold(llm, request, "", holes, fast=fast, executor=executor) or {}
+    patch = _audit_fold(llm, request, "", holes, fast=fast, executor=executor, ground=ground) or {}
     tag_stage(llm, Stage.AUDIT_FOLD)
     spec, ops = _fold_merge({}, patch)
     if not ops:

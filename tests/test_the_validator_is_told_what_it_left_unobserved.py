@@ -34,10 +34,10 @@ def _delivered(e, tid="leaf"):
     T.create_task(e, tid, {"description": "a leaf",
                            "criteria": [criterion("c", "C")],
                            "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     e.wait_idle()
-    T.signal(e, tid, "ACCEPT", "agent")
-    T.signal(e, tid, "DELIVER", tid and "agent", result="built it")
+    T.signal(e, tid, "ACCEPT", "user")
+    T.signal(e, tid, "DELIVER", tid and "user", result="built it")
     e.wait_idle()
 
 
@@ -79,8 +79,8 @@ def test_the_gap_does_not_survive_a_rework():
     e.record_rejected_report(TaskId("leaf"), _REFUSAL, None)
     T.record_verdict(e, "leaf", "FAIL", reviewer="validator", failed_criteria=["c"],
                      observed={"c": "ran the check, it printed NOT-OK"})
-    T.signal(e, "leaf", "FAIL", "agent", failed_criteria=["c"])
-    T.signal(e, "leaf", "DELIVER", "agent", result="fixed it")
+    T.signal(e, "leaf", "FAIL", "user", failed_criteria=["c"])
+    T.signal(e, "leaf", "DELIVER", "user", result="fixed it")
     e.wait_idle()
 
     assert e.refused_report_for_this_delivery(TaskId("leaf")) is None

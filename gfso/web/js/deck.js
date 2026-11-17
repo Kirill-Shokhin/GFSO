@@ -1,9 +1,10 @@
+import {FOCUS} from './api.js';
 // The run deck under the graph: a strip that always says what is running now and what it has cost,
 // and four views of the run read from one model — its course in time, its progress by criteria, its
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
 import {$, esc, tally, since, lasting, phone} from './dom.js';
 import {frame, frameText, TAB, STRIP, doing} from './hints.js';
-import {S, nowOf, kept, keep} from './state.js';
+import {S, nowOf, kept, keep, owedVerdict, whoOwes, inWorkOf, viewTasks, inView, stateWord, viewNodes, viewTree, viewProcs} from './state.js';
 import {nameOf, label} from './vocab.js';
 import {point, release, forgetBrought} from './store.js';
 import {firstTap} from './tip.js';
@@ -16,13 +17,16 @@ import * as cost from './cost.js';
 import * as work from './work.js';
 import * as events from './events.js';
 import * as resources from './resources.js';
+import * as inwork from './inwork.js';
 
 // Each tab is named by the question it answers, so two views that both show money are not read as one:
 // `spend` is where the money and time went (by node, level, role), `models` is who did the work.
-const VIEWS = {timeline, progress, spend: cost, models: work, events, resources}, KEY = 'gfso.deck';
+const SESSIONS = new Set(['spend', 'models', 'resources']);
+const VIEWS = {'in work': inwork, timeline, progress, spend: cost, models: work, events, resources}, KEY = 'gfso.deck';
 const isTick = m => / tokens · \d+s$/.test(m);         // live token ticks: shown in place, never persisted
 const pref = kept(KEY, JSON.parse) || {}, save = () => keep(KEY, JSON.stringify(pref));
-let view = VIEWS[pref.view] ? pref.view : 'timeline';
+// …a first look opens on what is in work: on a graph people hold the timeline was all but empty (critic)
+let view = VIEWS[pref.view] ? pref.view : 'in work';
 const ticks = new Map();                               // `source|node` → {node, source, msg, t}
 
 // The strip: the nodes in consented work or awaiting a verdict now — by their state, since an executor
@@ -33,18 +37,27 @@ const ticks = new Map();                               // `source|node` → {nod
 // What runs now is the run's one reading (run.js `runNow`); before the run is read, the same rule over the registry.
 const doingOf = w => doing(w.verb, PROC_KIND[w.verb]);
 function strip() {
-    const run = S.run, at = nowOf(), mine = at.procs;
+    const run = S.run, at = nowOf(), mine = viewProcs();
     // …with no run read at all, only the server's processes say what runs: states alone said «at work» beside Stopped (critic)
-    const work = run ? at.work : new Set(mine.map(w => w.task_id)), name = t => trim(nameOf(t), 26), runs = t => !!at.on(t.id);
-    // what a process runs on first: a session hidden under "+2" behind the leaves it carries told nothing (critic)
-    const busy = S.tasks.filter(t => work.has(t.id)).sort((a, b) => runs(b) - runs(a));
-    // waiting on the issuer's decision — a verdict being validated is work, not a wait, so VALIDATING is left out
-    const issuer = S.tasks.filter(t => run?.waits[t.id]?.decides === 'issuer' && !runs(t));
+    const work = run ? at.work : new Set(mine.map(w => w.task_id)), name = t => trim(nameOf(t), 26), runs = t => at.lit(t.id);
+    // waiting on the issuer's decision — a verdict being validated is work, not a wait, so VALIDATING is left out…
+    // …unless no process validates it and its issuer is a person: then the delivery waits on that person's verdict
+    // (§12.1: "one wait on the issuer"), and outside both lists it vanished from the strip (critic)
+    const owed = t => owedVerdict(t, at);
+    // IN WORK by the log (run.js `inWork`), what a process or a console acts on besides; acted on first — a session hidden
+    // under "+2" behind the leaves it carries told nothing (critic) — then the latest taken
+    // …one reading with the list the count opens (inwork.js): the count and the list say the same nodes (critic)
+    const held = Object.fromEntries((run ? inWorkOf(viewTasks()) : []).map(h => [h.t.id, h]));
+    const busy = viewTasks().filter(t => (run ? held[t.id] : work.has(t.id)) && !owed(t))
+        .sort((a, b) => (held[b.id]?.lit ?? runs(b)) - (held[a.id]?.lit ?? runs(a)) || (held[b.id]?.since ?? 0) - (held[a.id]?.since ?? 0));
+    const issuer = viewTasks().filter(t => (run?.waits[t.id]?.decides === 'issuer' || owed(t)) && !runs(t));
     const live = busy.map(t => {
-        const w = at.on(t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : at.carrier(t.id);
-        const what = w ? doingOf(w) : doing(t.state);
-        return `<button class="dk-live${w ? ' on' : ''}" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(clockAt(w.since * 1e3), PROC_KIND[w.verb], what) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), doingOf(by)) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
-            + `<span>${what}${w ? `<b class="dk-age">${since(w.since * 1e3)}</b>` : ''}</span></button>`;
+        const w = at.on(t.id), h = !w && at.hand?.(t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : at.carrier(t.id);
+        // …a running session's age and a live console's both are how long the work has gone on
+        // a console's work: the node's own word; a node held with no one acting on it: who holds it, since when
+        const k = !w && !h && !by && held[t.id], what = w ? doingOf(w) : h ? stateWord(t).toLowerCase() : k ? esc(k.holder || stateWord(t).toLowerCase()) : doing(t.state);
+        return `<button class="dk-live${w || h ? ' on' : ''}" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(clockAt(w.since * 1e3), PROC_KIND[w.verb], what) : h ? STRIP.hand(h.party, clockAt(h.at)) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), doingOf(by)) : k ? STRIP.held(k.holder, stateWord(t), k.since && clockAt(k.since)) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
+            + `<span>${what}${w ? `<b class="dk-age">${since(w.since * 1e3)}</b>` : h ? `<b class="dk-age">${since(h.at)}</b>` : k?.since ? `<b class="dk-age">${since(k.since)}</b>` : ''}</span></button>`;
     });
     // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too
     const drawn = new Set(S.tasks.map(t => t.id));
@@ -55,12 +68,16 @@ function strip() {
     const more = '<span class="dk-more"></span>';
     // the sessions are said only where they are not one per node at work (one carrying a whole part, a node worked
     // elsewhere): «1 at work · 1 session» read as the line repeating itself (the author, 2026-10-27)
-    const now_ = live.length ? `<span class="dk-now${live.length === 1 && mine.length <= 1 ? ' dk-one' : ''}">${tally(live.length, 'at work')}${mine.length && mine.length !== live.length ? tally(mine.length, mine.length > 1 ? 'sessions' : 'session') : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
-        : '<span class="dk-now dk-idle">Nothing at work</span>';
+    // …the count opens the whole list, by stream (inwork.js)
+    const now_ = live.length ? `<span class="dk-now${live.length === 1 && mine.length <= 1 ? ' dk-one' : ''}" data-open="in work"${STRIP.list}>${tally(live.length, 'in work')}${mine.length && mine.length !== live.length ? tally(mine.length, mine.length > 1 ? 'sessions' : 'session') : ''}</span><span class="dk-chips">${live.join('')}${more}</span>`
+        // …and before the log is read a graph held by people has no process to tell by: «Nothing in work» stood there for
+        // seconds over 34 in work on a phone through a tailnet (critic, 2026-11-17) — it says it is reading instead
+        : !run && viewTasks().length ? '<span class="dk-now dk-idle">reading what is in work…</span>'
+        : '<span class="dk-now dk-idle">Nothing in work</span>';
     // sent back NOW: the last round failed and the node is neither closed nor escalated (the issuer's wait says that one) —
     // the red rounds badge's rule; a count of every FAIL ever never went away on a green run (critic)
     const state = id => S.tasks.find(t => t.id === id)?.state;
-    const back = run ? Object.entries(run.rounds).filter(([id, rs]) => failingNow(rs, state(id)))
+    const back = run ? Object.entries(run.rounds).filter(([id, rs]) => inView(id) && failingNow(rs, state(id)))
         .map(([id, rs]) => [id, rs.filter(r => r.verdict === 'FAIL').length]).sort((x, y) => y[1] - x[1]) : [];
     // what is sent back now: its marks sit in the timeline below the fold (a newcomer reading the page mid-run could not
     // tell anything had failed, 2026-10-26); the hover counts each one's FAILs so far
@@ -70,9 +87,9 @@ function strip() {
     return red + now_
         // …its tip names each whole under its state's word, never cut to a chip's width nor a raw state by a dash (audit B9)
         + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.length, [...new Set(issuer.map(t => label(t.state)))]
-            .flatMap(word => [`${word}:`, ...issuer.filter(t => label(t.state) === word).map(t => `– ${nameOf(t)}`)]))}>${tally(issuer.length, 'on the issuer')}</span>` : '')
+            .flatMap(word => [`${word}:`, ...issuer.filter(t => label(t.state) === word).map(t => `– ${nameOf(t)}${whoOwes(t, 'issuer') ? ` (${whoOwes(t, 'issuer')})` : ''}`)]))}>${tally(issuer.length, 'on the issuer')}</span>` : '')
         // what holds the most back: the producer most nodes wait on, the count beside it
-        + (run ? blockers(run.waits).slice(0, 2).map(([id, held]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
+        + (run ? blockers(run.waits).map(([id, held]) => [id, held.filter(inView)]).filter(([, held]) => held.length).slice(0, 2).map(([id, held]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
             // the count is every node held, so the tip lists every one: the direct users first, the rest through them
             const direct = held.filter(u => run.waits[u].deps.includes(id)), through = held.filter(u => !direct.includes(u));
             return `<button class="dk-block" data-node="${esc(id)}" data-k="wait|${esc(id)}"${STRIP.block(held.length, run.name(id), direct.map(run.name), through.map(run.name))}>${tally(held.length, 'wait on')}<b>${esc(trim(run.name(id), 24))}</b>`
@@ -81,12 +98,13 @@ function strip() {
 // THE RUN'S SUM, in a place of its own at the head's right — never laid over the line, which scrolls beside it. A session's
 // cost is booked when it ENDS: the running ones are said on its hover, not as «+N running» beside «N at work», which
 // counted the same sessions twice (the author, 2026-10-30)
-const sum = () => { const run = S.run; if (!run) return '';
+const sum = () => { const run = S.viewRun || S.run; if (!run) return '';   // the part's own figures in a part's view
     const booked = Object.values(run.cost.byKind).reduce((n, p) => n + p.procs, 0);
-    return `<span${STRIP.spend(byRole(run.cost.byKind), nowOf().procs.filter(w => PROC_KIND[w.verb]).length)}>`
+    return `<span${STRIP.spend(byRole(run.cost.byKind), viewProcs().filter(w => PROC_KIND[w.verb]).length)}>`
         // …nothing booked yet is no sum: «$0.00 spent» stood under seven minutes of a plan being authored
         + (booked ? tally(money(run.cost.total, booked, run.cost.unpriced), 'spent') : '')
-        + (run.clock.t0 ? tally(lasting(run.clock.workedFrom, run.clock.worked), 'run') : '') + '</span>'; };
+        // …and a run's time only where sessions ran: over a graph people hold it summed their moves' gaps (critic: «2.9h run»)
+        + (run.clock.t0 && run.sessions.length ? tally(lasting(run.clock.workedFrom, run.clock.worked), 'run') : '') + '</span>'; };
 
 // THE LINE SCROLLS IN ITS OWN PLACE, its bar hidden: a soft fade at the edge where more of it lies says there is more, and
 // a mouse's wheel moves it sideways (the author, 2026-10-30: «подписи … даже не все влезают и не понятно что там дальше»)
@@ -128,8 +146,14 @@ export function paint() {
     // the fold's tip says what a press does now (audit B13)
     d.querySelector('.dk-fold').dataset.tip = frameText(pref.closed ? 'unfold' : 'fold');
     drawStrip();
+    // A TAB ABOUT SESSIONS STANDS ONCE A SESSION HAS RUN: spend, models and resources tell of sessions — their money, their
+    // models, their containers — and on a graph people hold, where none ran, they were three empty tabs. The difference is
+    // the operation (a session ran here), not the mode (the author, 11-14: «отличие операциональное а не выдуманное»)
+    const ran = !!(S.run?.sessions.length || viewProcs().length);
+    d.querySelectorAll('.dk-tab').forEach(b => { b.hidden = SESSIONS.has(b.dataset.view) && !ran; });
+    if (!ran && SESSIONS.has(view)) view = 'in work';
     d.querySelectorAll('.dk-tab').forEach(b => b.classList.toggle('on', b.dataset.view === view));
-    const run = S.run, el = d.querySelector('.dk-view'), drawn = pref.closed || !run ? null : view;
+    const run = S.viewRun || S.run, el = d.querySelector('.dk-view'), drawn = pref.closed || !run ? null : view;
     release(el);
     const opened = el._drawn !== drawn;
     if (opened) forgetBrought(el), el._drawn = drawn;   // a view opened brings the selection again
@@ -137,7 +161,8 @@ export function paint() {
     el.dataset.view = drawn || '';
     // a view opened starts at its top: Events opened 99 px down, its filters and the why-head above the fold (audit D11)
     if (opened) { const box = el.closest('.dk-body'); box.scrollTop = 0; box.scrollLeft = 0; }
-    if (!pref.closed && run) VIEWS[view].render(el, run, S.graph.nodes, S.tasks, S.pipeline);
+    // …over the view's own tree: the run is built over it too (model.js), so a part's tabs are the part's
+    if (!pref.closed && run) VIEWS[view].render(el, run, viewNodes(), viewTree(), S.pipeline);
     // a view on the run's time opened on a phone shows its latest first, the legend with it — at its start, a run of hours
     // showed the empty first minutes (audit B11)
     // …the time axis's end at the box's right, not the view's (Progress keeps its coverage table past it)
@@ -189,7 +214,9 @@ export function mountDeck() {
     };
     d.querySelector('.dk-fold').onclick = () => { pref.closed = !pref.closed; save(); paint(); };
     const line = d.querySelector('.dk-strip');
-    line.onclick = e => { const n = e.target.closest('[data-node]')?.dataset.node; if (n && !firstTap(e)) point('select', n); };
+    line.onclick = e => { const o = e.target.closest('[data-open]')?.dataset.open;
+        if (o && !firstTap(e)) { pref.closed = false; view = pref.view = o; save(); return paint(); }
+        const n = e.target.closest('[data-node]')?.dataset.node; if (n && !firstTap(e)) point('select', n); };
     // …and so does the head around it, short of room beside a node's panel: the wheel moves the line while it can move, then
     // the head — the run's sum and the fold lay past a 1024 px edge with no way to them by a mouse (critic 5)
     const head = d.querySelector('.dk-head');
@@ -203,9 +230,13 @@ export function mountDeck() {
     // …by a pointer of any kind: a finger on a phone drags it as a mouse does on a desk (it took a mouse only)
     d.querySelector('.dk-grip').onpointerdown = e => {
         const y0 = e.clientY, h0 = d.offsetHeight;
+        // …over a canvas already as tall as the lowest deck leaves it (graph.js, gfso.css): nothing under the deck waits to be drawn
+        const cv = document.getElementById('cy');
+        cv.style.height = `${d.parentElement.clientHeight - 120}px`; document.body.classList.add('deck-drag');
         const move = m => { d.style.height = `${Math.max(120, Math.min(innerHeight * 0.8, h0 + y0 - m.clientY))}px`; };
-        const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); pref.h = d.offsetHeight; save(); paint(); };
-        addEventListener('pointermove', move); addEventListener('pointerup', up);
+        const up = () => { document.body.classList.remove('deck-drag'); cv.style.height = ''; removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); pref.h = d.offsetHeight; save(); paint(); };
+        // …a touch the system takes back ends the drag too: it left the deck following the next finger anywhere (critic)
+        addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
     };
     let w = 0;
     new ResizeObserver(([e]) => { if (Math.abs(e.contentRect.width - w) > 4) { w = e.contentRect.width; if (S.run) paint(); } }).observe(d);

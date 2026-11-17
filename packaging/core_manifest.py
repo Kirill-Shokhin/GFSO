@@ -37,6 +37,7 @@ CORE_FILES = (
     "gfso/adapters/storage/__init__.py",
     "gfso/adapters/storage/memory.py",
     "gfso/adapters/storage/sqlite.py",
+    "gfso/adapters/storage/person.py",
     "gfso/adapters/agents/__init__.py",
     "gfso/adapters/agents/human.py",
     "gfso/adapters/llm/__init__.py",

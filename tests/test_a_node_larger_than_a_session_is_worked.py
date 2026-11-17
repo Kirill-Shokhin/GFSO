@@ -59,7 +59,7 @@ def _ring(tmp_path, cycle=False):
     for a, kind in (("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(a, kind, workdir=str(base), project="p")
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
-    e.set_mode(Mode.AUTO, None, AgentId("agent"))
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.TOOLS["create_task"](e, "root", {"description": "the compiler", "criteria": [
         criterion("g", "G"), criterion("h", "H"), criterion("i", "I")]})
     T.TOOLS["decompose"](e, "root", [{"task_id": f"root.{n}", "covers": [c], "spec": {
@@ -70,7 +70,7 @@ def _ring(tmp_path, cycle=False):
     if cycle:
         e.add_dependency(TaskId("root.cg"), TaskId("root.pp"), discovered=True, glue="its check runs through the binary")
     e.wait_idle()
-    e.set_settings({"l2_gate": "1"}, AgentId("agent"), "the gate as it stands by default; the suite's conftest has it off")
+    e.set_settings({"l2_gate": "1"}, AgentId("user"), "the gate as it stands by default; the suite's conftest has it off")
     return e, agents, base
 
 

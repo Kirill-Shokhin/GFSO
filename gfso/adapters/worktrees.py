@@ -18,8 +18,10 @@ import contextlib
 import functools
 import inspect
 import os
+import posixpath
 import re
 import shutil
+import tempfile
 import threading
 import uuid
 from pathlib import Path
@@ -27,7 +29,7 @@ from pathlib import Path
 from gfso.adapters import children, lfs
 from gfso.config import subprocess_env
 from gfso.adapters.execution import NODES, READ_REF, ContainerExecution, LocalExecution, fetched_on_host, stored_on_host
-from gfso.core.types import base_named
+from gfso.core.types import base_of_nodes
 
 #: the largest bundle `_carry` moves through the server's memory
 BUNDLE_CAP = 512 * 2 ** 20
@@ -38,7 +40,7 @@ def base_of(place: str | None) -> str | None:
     p = Path(place) if place else None
     if p is None or len(p.parents) < 3 or not p.parent.parent.name.startswith(NODES):
         return None
-    return str(p.parent.parent.parent / base_named(p.parent.parent.name))
+    return str(base_of_nodes(p.parent.parent))
 
 
 _LOCKS: dict[str, threading.RLock] = {}
@@ -147,10 +149,18 @@ def is_clone(place, execution=None) -> bool:
 
 
 def relative_alternates(objects: Path, base_objects: Path, execution=None) -> None:
-    """A clone borrows the base's objects by a path relative to its own `objects/`: the same files read the same from
-    the host and from a container that mounts them elsewhere (an absolute path is one side's only)."""
-    _fs(execution).files.write_bytes(str(objects / "info" / "alternates"),   # …LF alone: a CR is read as part of the path
-                                     (Path(os.path.relpath(base_objects, objects)).as_posix() + "\n").encode())
+    """A clone borrows the base's objects by a path relative to its own `objects/`, as the side that reads it lays them
+    out: in a container both stand under one root while on the host the places stand in the installation's own state,
+    away from the base — a path relative on the host led nowhere inside (an absolute path is one side's only)."""
+    ex = _fs(execution)
+    if isinstance(ex, ContainerExecution):
+        rel = posixpath.relpath(ex.to_inside(str(base_objects)), ex.to_inside(str(objects)))
+    else:       # …the host alone reads it; a base on another drive than the places has no relative path (critic)
+        try:
+            rel = Path(os.path.relpath(base_objects, objects)).as_posix()
+        except ValueError:
+            rel = Path(os.path.abspath(base_objects)).as_posix()
+    ex.files.write_bytes(str(objects / "info" / "alternates"), (rel + "\n").encode())   # …LF alone: a CR is read as the path's
 
 
 @_writes_into("place")
@@ -342,6 +352,23 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
         return git(place, "rev-parse", "HEAD^{tree}", execution=execution).stdout.strip()
 
 
+def record_head(place, ref: str) -> tuple[str, str, list]:
+    """(tree, commit, left out) of the user's repository at `place` as their chat committed it — its HEAD, kept under
+    `ref` so no move of theirs loses it —; left out: what `git status` names that the commit does not hold, no part of
+    the delivery. Only what is committed is delivered, as only what is committed enters a project (`_carried_in`): a
+    tree staged whole took their uncommitted notes and local files into the volume every later session reads (critic)."""
+    commit = git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()
+    if not commit:
+        raise OSError(f"{place} has no commit to deliver")
+    if (r := git(place, "update-ref", ref, commit)).returncode:
+        raise OSError(f"the delivery could not be kept in {place}: {r.stderr.strip()}")
+    # …read by their own git: under the system's flags (`APART`) their CRLF checkout read as changed (README, live)
+    seen = children.run(["git", "-C", str(place), "status", "--porcelain", "-z"], timeout=_SLOW, text=True,
+                        encoding="utf-8", errors="replace").stdout
+    left = [line[3:] for line in seen.split("\0") if line[3:]]
+    return git(place, "rev-parse", f"{commit}^{{tree}}").stdout.strip(), commit, left
+
+
 class NotCarried(OSError):
     """A delivery its executor can lift the cause of, a size past what a carry holds: told it, as what `NotStaged` says."""
 
@@ -374,9 +401,16 @@ def _links(repo, rev: str, execution) -> list[str]:
 
 
 def users_links(place, execution) -> list[str]:
-    """What the user's imported commit records of gitlinks, for the node's `place`."""
-    root = base_of(str(place))
-    return _links(root, "HEAD", execution) if root else []
+    """What the user's imported commit records of gitlinks, for the node's `place` — or, for a place that is no node's on
+    this host, the user's own repository where their chat works, the submodules its HEAD declares in `.gitmodules`: a
+    repository the chat committed as a bare gitlink is its stray, which no checkout holds (critic)."""
+    if root := base_of(str(place)):
+        return _links(root, "HEAD", execution)
+    if execution is not None and not isinstance(execution, LocalExecution):
+        return []
+    said = git(place, "config", "--blob", "HEAD:.gitmodules", "--get-regexp", r"\.path$").stdout.split("\n")
+    declared = {line.split(" ", 1)[1] for line in said if " " in line}
+    return [link for link in _links(place, "HEAD", execution) if link.split(" ", 1)[1] in declared]
 
 
 def nested_cause(paths: list) -> str:
@@ -580,20 +614,26 @@ def _bundled(src, rev: str, nots: list, execution) -> bytes:
             ex.files.remove_matching(str(a.parent), [name])
 
 
-def land(base, ref: str, execution, since: str | None, tree: str | None = None) -> str:
-    """The HEAD of the base in the project's volume, as `ref` of the user's repository on the host — which the system
+def checked_out(base, ref: str) -> bool:
+    """Is `ref` checked out in a worktree of the user's repository at `base`? The system lands only on a branch nobody
+    works on: moved under their working tree, the files stay, and their next commit undoes what landed."""
+    return f"branch {ref}" in git(base, "worktree", "list", "--porcelain").stdout.splitlines()
+
+
+def land(base, ref: str, execution, since: str | None, tree: str | None = None, rev: str = "HEAD") -> str:
+    """The HEAD of the base in the project's volume (or its `rev`), as `ref` of the user's repository on the host — which the system
     names by the same path —; the commit's id. Bundled in the base's own container of what `since` (the commit the base
     was imported from) lacks — whole where the user's repository lacks that too —, carried out through the port, and
     taken there by the user's own git: `fetch` from the bundle and `update-ref` of `ref` alone — no config nor hook of
     the place, never their working tree nor any branch of theirs; `ref` checked out in any worktree of theirs is
     refused. `ref` standing is moved to the new commit (its reflog keeps where it stood)."""
-    sha = git(base, "rev-parse", "--verify", "--quiet", "HEAD^{commit}", execution=execution).stdout.strip()
+    sha = git(base, "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}", execution=execution).stdout.strip()
     # …no replace refs: an object they stand in for is not the one a checkout without them reads (critic, run)
     host = lambda *a: children.run(["git", "-C", str(base), *a], timeout=_SLOW, text=True, encoding="utf-8",
                                    errors="replace", env=subprocess_env(extra={"GIT_NO_REPLACE_OBJECTS": "1"}))
     if not sha:
         raise OSError("the base names no commit")
-    if f"branch {ref}" in host("worktree", "list", "--porcelain").stdout.splitlines():
+    if checked_out(base, ref):
         raise OSError(f"`{ref}` is checked out there (in a worktree of it), and the system lands only on a branch "
                       f"nobody works on: check out another branch")
     # …WHOLE, not merely there: a fetch that failed leaves the commit and its tree behind without their blobs, and a
@@ -605,7 +645,7 @@ def land(base, ref: str, execution, since: str | None, tree: str | None = None) 
     for nots in ([since] if since and since != sha else [], []):
         if whole():
             break
-        if not (why := fetched_on_host(base, _bundled(base, "HEAD", nots, execution))):
+        if not (why := fetched_on_host(base, _bundled(base, rev, nots, execution))):
             break
     # …a fetch that said an error is no landing, whatever it took in: it went past the bundle (a submodule's remote)
     if why or not whole():
@@ -661,6 +701,51 @@ def merge(base, into, branch: str, message: str, execution=None) -> str | None:
         return " ".join((r.stdout + " " + r.stderr).split())[:400] or f"git merge exited {r.returncode}"
 
 
+#: one form of every diff read here, whatever the repository's own config says: a prefix, colour or rename detection
+#: of its choosing turned a lost line into a silent pass (critic)
+_PLAIN = ("--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/", "-U0")
+_HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def change_not_there(place, base: str, sha: str, execution=None) -> list[str]:
+    """The files where a line `sha` added over `base` is gone or changed in the COMMITTED tree at `place` (HEAD): a
+    line of `base..sha`'s additions that `sha..HEAD` deletes — both read in `sha`'s own line numbers. A line others
+    insert beside or inside the part's lines deletes none of them; a file the part created is the case where every
+    line is its own. Read-only. Not seen: a line the part REMOVED coming back, a binary file's content."""
+    if not (re.fullmatch(r"[0-9a-f]{7,64}", base or "") and re.fullmatch(r"[0-9a-f]{7,64}", sha or "")):
+        return []
+    q = ("-c", "core.quotePath=true")          # …one quoting, whatever the repository's own config says (critic)
+    added = _lines(git(place, *q, "diff", *_PLAIN, base, sha, execution=execution).stdout, new=True)
+    if not added:
+        return []
+    gone = _lines(git(place, *q, "diff", *_PLAIN, sha, "HEAD", execution=execution).stdout, new=False)
+    return sorted(p for p, ls in added.items() if ls & gone.get(p, set()))
+
+
+def _lines(patch: str, new: bool) -> dict:
+    """{path: line numbers} a -U0 patch adds (`new`, numbered in its new side) or deletes (numbered in its old side)."""
+    out, path, head = {}, None, False
+    for ln in patch.splitlines():
+        if ln.startswith("diff --git "):
+            path, head = None, True             # …a file's headers stand only before its first hunk: a deleted
+        elif head and ln.startswith("+++ " if new else "--- "):    # content line "-- …" is no header (critic)
+            path = _path_of(ln[4:], "b/" if new else "a/")
+        elif path and (m := _HUNK.match(ln)):
+            head = False
+            at, n = (m.group(3), m.group(4)) if new else (m.group(1), m.group(2))
+            out.setdefault(path, set()).update(range(int(at), int(at) + int(1 if n is None else n)))
+    return out
+
+
+def _path_of(said: str, prefix: str) -> str | None:
+    """A diff header's path: None for /dev/null, a C-quoted name (tab, newline, quote, backslash, raw bytes) unquoted."""
+    said = said.rstrip("\t")                   # …git ends a header naming a path with a space by a TAB
+    if said.startswith('"'):
+        said = said[1:-1].encode("latin-1", "backslashreplace").decode("unicode_escape").encode("latin-1").decode(
+            "utf-8", "replace")
+    return said[len(prefix):] if said.startswith(prefix) else None
+
+
 def accepted_commit(base, branch: str, tree: str, execution=None) -> str | None:
     """The newest commit of `branch` whose tree is `tree` — the delivery a verdict accepted, wherever the branch has
     moved since — or None when the branch carries no such commit."""
@@ -694,22 +779,23 @@ def _by_registration(base, args: list, execution):
     return r
 
 
-def settled(base, place, branch: str, execution=None) -> bool:
-    """Is all the place holds already in the base's tree? A worktree: its branch is joined. A node's own repository:
-    its HEAD — delivered or not — is an ancestor of the base's HEAD; a commit never taken back is in no branch of the
-    base, and a place holding one is kept."""
-    if not is_clone(place, execution):
-        return contains(base, base, branch, execution=execution)
-    sha = head(place, execution=execution)
+def settled(base, place, branch: str, execution=None, onto: str = "HEAD") -> bool:
+    """Is all the place holds already in `onto` of the base — its HEAD, or the branch the root's result landed on? A
+    worktree: its branch is joined. A node's own repository: its HEAD — delivered or not — is an ancestor; a commit never
+    taken back is in no branch of the base, and a place holding one is kept."""
+    sha = head(place, execution=execution) if is_clone(place, execution) else _commit_in(base, branch, execution)
     with _lock(base):
-        return bool(sha) and git(base, "merge-base", "--is-ancestor", sha, "HEAD",
+        return bool(sha) and git(base, "merge-base", "--is-ancestor", sha, onto,
                                  execution=execution).returncode == 0
 
 
-def remove(base, place, branch: str, execution=None) -> bool:
+def remove(base, place, branch: str, execution=None, onto: str = "HEAD") -> bool:
     """Take a joined node's worktree and branch away (twice forced: the place is locked). False when git refused (a
-    file held open, a branch not joined — `branch -d` refuses to lose commits)."""
+    file held open) or the branch is not all in `onto` (`settled`'s: `branch -d` read only the base's HEAD)."""
     with _lock(base):
+        if git(base, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", execution=execution).returncode == 0 \
+                and git(base, "merge-base", "--is-ancestor", f"refs/heads/{branch}", onto, execution=execution).returncode:
+            return False
         if is_clone(place, execution):
             _fs(execution).remove_tree(str(place))
             ok = not _fs(execution).files.exists(str(place))
@@ -719,10 +805,10 @@ def remove(base, place, branch: str, execution=None) -> bool:
         else:
             ok = _by_registration(base, ["worktree", "remove", "--force", "--force", str(place)],
                                   execution).returncode == 0
-        r = git(base, "branch", "-d", branch, execution=execution)
+        r = git(base, "branch", "-D", branch, execution=execution)
         if r.returncode and "used by worktree" in (r.stderr or "") and not _fs(execution).files.exists(str(place)):
             # …a worktree registration this path had before it was a repository of its own still claims the branch
             _by_registration(base, ["worktree", "remove", "--force", "--force", str(place)], execution)
-            r = git(base, "branch", "-d", branch, execution=execution)
+            r = git(base, "branch", "-D", branch, execution=execution)
         return r.returncode == 0 and ok
 

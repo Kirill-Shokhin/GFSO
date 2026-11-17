@@ -119,6 +119,12 @@ def _tool_use(ev: dict) -> dict | None:
     return None
 
 
+def _tool_uses(ev: dict) -> list:
+    """Every whole tool call a message carries, parallel ones included — the message's own blocks, never a delta's."""
+    content = _obj(ev.get("message")).get("content")
+    return [b for b in (content if isinstance(content, list) else []) if _obj(b).get("type") == "tool_use"]
+
+
 def _tool_results(ev: dict) -> list:
     """The tool results a stream event carries back to the model."""
     content = _obj(ev.get("message")).get("content")
@@ -578,7 +584,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         named = msg.get("model")
         if isinstance(named, str) and named and not named.startswith("<"):   # `<synthetic>`: the CLI's own refusal
             self.last_model = named
-        self.note_tools(_tool_use(ev), _tool_results(ev))
+        self.note_tools(_tool_use(ev), _tool_results(ev), _tool_uses(ev), _obj(ev.get("tool_use_result")))
 
     def _note_turn(self, msg: dict, inner: dict) -> None:
         """A turn's own usage, by message id. What it was read over arrives with the message; its output arrives

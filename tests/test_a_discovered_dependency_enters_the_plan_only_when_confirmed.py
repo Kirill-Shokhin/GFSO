@@ -19,7 +19,7 @@ def _plan():
     """root -> {a, b, c}; b consumes a (declared)."""
     e = make_engine()
     e.start()
-    T.create_task(e, "root", {"description": "root", "criteria": [criterion("g", "G")]}, assignee="agent")
+    T.create_task(e, "root", {"description": "root", "criteria": [criterion("g", "G")]}, assignee="user")
     T.decompose(e, "root", [{"task_id": k, "spec": {"description": k, "criteria": [criterion("k" + k, k.upper())]},
                              "assignee": "worker", "covers": ["g"]} for k in ("a", "b", "c")],
                 accepted_risks=REGISTER)       # the split admitted whole, its register its decomposer's (§11.5, §9.2)
@@ -228,9 +228,9 @@ def test_a_root_blocked_on_itself_stays_its_issuers_question_after_an_answer():
     """No split sits above a root: once one block of its contract was answered, the next one went to a split that
     does not exist and was asked of nobody (critic, 2026-09-27)."""
     e = _plan()
-    T.signal(e, "root", "ACCEPT", "agent")
+    T.signal(e, "root", "ACCEPT", "user")
     for _ in range(2):
-        T.signal(e, "root", "BLOCK", "agent", reason="the goal needs itself", blocker_task_ids=["root"])
+        T.signal(e, "root", "BLOCK", "user", reason="the goal needs itself", blocker_task_ids=["root"])
         e.wait_idle()
         assert (TaskId("root"), "external") in I.open_questions(e)
         T.signal(e, "root", "RESOLVE_BLOCK", str(e.graph.issuer_of(TaskId("root"))), external=True)

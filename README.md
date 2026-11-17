@@ -7,9 +7,9 @@
 [![PyPI](https://img.shields.io/pypi/v/gfso)](https://pypi.org/project/gfso/)
 [![tests](https://github.com/Kirill-Shokhin/GFSO/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Kirill-Shokhin/GFSO/actions/workflows/tests.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Python](https://img.shields.io/badge/python-3.11%20%E2%80%93%203.13-blue)
+![Python](https://img.shields.io/badge/python-3.11%20%E2%80%93%203.14-blue)
 
-[Results][results] · [Usage][using] · [Security][security] · [Theory][theory] · [Documents][docs]
+[Results][results] · [Usage][using] · [Why it is built so][decisions] · [Security][security] · [Theory][theory] · [Documents][docs]
 
 <img src="https://raw.githubusercontent.com/Kirill-Shokhin/GFSO/main/docs/hero.gif" alt="A recorded run replayed in the web UI: parts of the plan run in parallel, each session on the timeline, a part and then the whole sent back and reworked, the goal delivered" width="860">
 <br>
@@ -62,18 +62,18 @@ Where the guarantee stops: none of this proves your plan is the right plan. It p
 
 ## Install
 
-You need Python 3.11–3.13, [pipx](https://pipx.pypa.io), [Claude Code][cc] and [Docker](https://docs.docker.com/get-docker/). Without Docker nothing unattended runs. Tested on Windows and Linux; on macOS only installation is tested. Claude is the model provider in live use; the provider layer accepts others (`ollama/…` and the like), so far tested only against a stand-in.
+You need Python 3.11–3.14, [pipx](https://pipx.pypa.io), [Claude Code][cc] and [Docker](https://docs.docker.com/get-docker/). Without Docker nothing unattended runs. Tested on Windows and Linux; on macOS only installation is tested. Claude is the model provider in live use; the provider layer accepts others (`ollama/…` and the like), so far tested only against a stand-in.
 
-1. `pipx install gfso`, then `gfso setup`. It registers the tools with Claude Code, starts Docker Desktop if it is installed, and tells you what remains. `gfso demo human_only` needs no model: one person signs off her own work, the engine refuses, a second signs, and the `PASS` is recorded.
+1. `pipx run gfso setup` (or `uvx gfso setup`): one command installs gfso and sets it up. It registers the tools with Claude Code, starts Docker Desktop if it is installed, and tells you what remains. `gfso demo human_only` needs no model: one person signs off her own work, the engine refuses, a second signs, and the `PASS` is recorded.
 2. `gfso credential claude --sign-in`. A window opens where you sign in and paste a token (on Linux it prints the two commands instead). gfso's agents run separately from your Claude Code login, on their own token; they spend your subscription's usage, as Claude Code does.
 3. Restart Claude Code, which loads the tools at its start: inside a session `/exit`, then `claude -c`, and the conversation resumes; otherwise just `claude`.
 4. Describe the task and say "use gfso". Your agent reads the plan the system writes, gives the go-ahead, and hands you a link to watch. The verdict and the branch come back in the chat.
 
 Or let your agent do it:
 
-> Install gfso: `pipx install gfso`, then `gfso setup`, then `gfso credential claude --sign-in` (I will sign in in the window it opens). Do it all without asking me. Then tell me to restart with `/exit` and `claude -c`.
+> Install gfso: `pipx run gfso setup`, then `gfso credential claude --sign-in` (I will sign in in the window it opens). Do it all without asking me. Then tell me to restart with `/exit` and `claude -c`.
 
-A first small task takes about 10–27 minutes, much of it spent on the plan, and costs about $0.1 for the system and $0.3–0.6 for your own Claude Code session. If something is wrong later, `gfso doctor` tells you what.
+A first small task takes about 10–27 minutes, much of it spent on the plan, and costs about $0.1 for the system and $0.3–0.6 for your own Claude Code session. If something is wrong later, `gfso doctor` tells you what. To upgrade, `pipx upgrade gfso`, then `gfso setup`, which says when the running server is older and how to restart it.
 
 ## Security
 
@@ -115,6 +115,7 @@ MIT
 [theory]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/THEORY.md
 [results]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/RESULTS.md
 [using]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/USING_GFSO.md
+[decisions]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/DECISIONS.md
 [security]: https://github.com/Kirill-Shokhin/GFSO/blob/main/SECURITY.md
 [docs]: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/README.md
 [cc]: https://claude.com/claude-code

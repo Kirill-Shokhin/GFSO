@@ -31,11 +31,11 @@ def _checks(e, tid="root"):
 def _uncovered_bounded(e):
     """A clean split, then the bounded criterion added to its parent: no child covers it yet."""
     base = criterion("base", "the base holds")
-    T.create_task(e, "root", {"description": "goal", "criteria": [base]}, assignee="agent")
+    T.create_task(e, "root", {"description": "goal", "criteria": [base]}, assignee="user")
     T.decompose(e, "root", [{"task_id": "root.kid", "spec": {"description": "a child that covers nothing yet",
                                                              "criteria": [criterion("k", "K holds")]},
-                             "assignee": "agent", "covers": ["base"]}], accepted_risks=REGISTER)
-    T.edit_criteria(e, "root", [base, _BOUNDED], "agent")
+                             "assignee": "user", "covers": ["base"]}], accepted_risks=REGISTER)
+    T.edit_criteria(e, "root", [base, _BOUNDED], "user")
     e.wait_idle()
 
 
@@ -75,10 +75,10 @@ def test_a_covered_bounded_criterion_is_still_summed():
                               "criteria": [criterion("throughput",
                                                      "handles >= 100 requests per second")],
                               "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     T.decompose(e, "root", [{"task_id": "root.kid", "spec": {"description": "the only child",
                                   "criteria": [criterion("k",
-                                                         "handles >= 10 requests per second")]}, "assignee": "agent", "covers": ["throughput"]}], accepted_risks=REGISTER)
+                                                         "handles >= 10 requests per second")]}, "assignee": "user", "covers": ["throughput"]}], accepted_risks=REGISTER)
     e.wait_idle()
 
     seven = _checks(e).get("CHECK-7:sufficiency")

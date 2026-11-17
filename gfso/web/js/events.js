@@ -6,7 +6,7 @@ import {bindFocus, focus, watch, point} from './store.js';
 import {glyph} from './draw.js';
 import {hm, day, unref} from './fmt.js';
 import {S, kept, keep, moverOf, stateWord} from './state.js';
-import {PROJECT} from './api.js';
+import {PROJECT, FOCUS} from './api.js';
 import {at, said, failedOf, failingNow} from './run.js';
 import {failedWords, TIP} from './hints.js';
 import {CARRIED, label, delivered, enteredWord} from './vocab.js';
@@ -43,7 +43,7 @@ function row(r) {
     return `<li class="ev ev-${r.kind}${a.rejected ? ' ev-rejected' : ''}"><time>${hm(r.t)}</time>
         <span class="ev-sig">${sig}${a.signal}${a.rejected ? ' · refused' : ''}</span>
         <span class="ev-move">${a.old_state && a.new_state ? `${label(a.old_state)} → ${enteredWord(a)}` : a.rejected ? 'nothing changed' : esc(a.error || '')}</span>
-        <span class="ev-src"${who.as ? TIP.cell(`Signed as ${who.as}`) : ''}>${esc(who.word)}</span>
+        <span class="ev-src"${who.as ? TIP.cell(`Signed as ${who.as}`) : ''}>${esc(who.word)}${who.via ? `<em class="ev-via">${who.via}</em>` : ''}</span>
         ${a.failed_criteria?.length ? `<span class="ev-failed">${a.failed_criteria.map(c => `<em>${esc(c)}</em>`).join('')}</span>` : ''}
         ${prose.length ? `<details data-key="${esc(`r|${a.task_id}|${a.timestamp}|${a.signal}`)}"${opened.has(`r|${a.task_id}|${a.timestamp}|${a.signal}`) ? ' open' : ''}><summary>${prose.map(p => p[0]).join(' · ')}</summary>${prose.map(([k, v]) => `<p><b>${k}</b> ${esc(v)}</p>`).join('')}</details>` : ''}</li>`;
 }
@@ -77,7 +77,8 @@ const on = new Set(saved.on || Object.keys(KINDS).filter(k => k !== 'narration')
 let query = saved.query || '', shown = null;
 
 export function render(el, run, nodes, tasks, pipeline = []) {
-    const name = run.name, by = streams(run, nodes, pipeline), ids = [...nodes.map(n => n.id), RUN];
+    const name = run.name, by = streams(run, nodes, pipeline), ids = [...nodes.map(n => n.id), ...FOCUS ? [] : [RUN]];
+    if (FOCUS) delete by[RUN];                     // a view of one part: the run's own lines are the whole project's, not the part's
     // a kind's count over what is in view: the whole run, or the one node chosen
     const count = (k, sel) => (sel ? [by[sel] || []] : Object.values(by)).reduce((n, rs) => n + rs.filter(r => r.kind === k).length, 0);
     // …a redraw under the reader's typing keeps the box and the caret: each burst of narration took the search away (critic)

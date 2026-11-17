@@ -264,4 +264,4 @@ def test_a_refuted_split_that_waits_on_its_review_is_the_plans_question(engine, 
     assert I.settle(engine, None, TaskId("root"), "plan", "pm", verbs)["kind"] == "review"
     assert engine.open_l2_findings(TaskId("root")) and "dispute_finding(" in engine.decomposition_refuted(TaskId("root"))
     assert dict(I.open_questions(engine)).get(TaskId("root")) == "plan", "a finding left open is answered by fix or dispute"
-    assert "dispute" in I.moves_for(engine, TaskId("root"), "plan")
+    assert "dispute" in I.moves_for(engine, engine.graph.get_task(TaskId("root")), "plan")

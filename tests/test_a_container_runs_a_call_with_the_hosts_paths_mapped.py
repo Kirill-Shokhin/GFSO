@@ -2,7 +2,7 @@
 
 One server runs every project's work isolated by EXECUTION, never by a second server (the author, 2026-10-25: «разве не
 должно быть так что сервер один а исполнение все равно изолировано?»). The container holds the base and the project's
-own system directories beside it at `/gfso-place`, from any absolute parent — a Windows drive's or a POSIX one; a path crossing the boundary is mapped both ways, a place outside them is
+own system directories (kept under the installation's places, `nodes_root`) side by side at `/gfso-place`, from any absolute parent — a Windows drive's or a POSIX one; a path crossing the boundary is mapped both ways, a place outside them is
 refused, the host's network is shut (Docker Desktop forwards 192.168.65.254 to the host's loopback, :8000 included), and a
 call is ended inside, its own group and whatever left it — killing the `docker exec` client leaves them running (probes
 P1, P8: docs/notes/ONE_SERVER_PROBES.md).
@@ -33,11 +33,18 @@ def _ex(base, tmp_path, env_file="envf"):
     return ContainerExecution("e3-linux", IMAGE, str(env_file), str(tmp_path / "state"), str(base), "GB proj")
 
 
+def _flavour(monkeypatch, real, places):
+    """Another platform's paths: the base's as `real` spells them, the places as that platform's installation keeps them
+    — a pure path, so nothing is written on this host's disk."""
+    monkeypatch.setattr(E, "_real", real)
+    monkeypatch.setattr(E, "_places", lambda b: type(real(b))(places))
+
+
 def _windows(tmp_path, monkeypatch):
     """A Windows parent on whatever host runs the test. Its spellings are a Windows path's: under a POSIX parent a
     backslash is a character of a file's name and another case another directory, so they are not that parent
     (`test_a_posix_parent_maps_paths_both_ways`)."""
-    monkeypatch.setattr(E, "_real", PureWindowsPath)
+    _flavour(monkeypatch, PureWindowsPath, r"C:\Users\u\.gfso\data\places\h")
     p = "C:\\Users\\u\\work"
     return ContainerExecution("e3-linux", IMAGE, None, str(tmp_path / "state"), p + "\\base", "p"), p
 
@@ -64,8 +71,11 @@ def test_a_path_is_mapped_both_ways_in_any_spelling(tmp_path, monkeypatch):
 
 def test_a_place_outside_its_mounts_is_refused(place, tmp_path):
     x = _ex(place, tmp_path)
-    assert x._inside_cwd(str(place.parent / ".gfso-nodes-base" / "GB_proj" / "k")) == "/gfso-place/.gfso-nodes-base/GB_proj/k"
-    for outside in (place.parent / "other", tmp_path, place.parent, place.parent / ".gfso-nodes-base" / "other" / "k",
+    assert [d.name for d in place.parent.iterdir()] == ["base"], "nothing of the system's beside the user's repository"
+    assert x._inside_cwd(str(x.own / "k")) == "/gfso-place/.gfso-nodes-base/GB_proj/k"
+    # …the project's directory where it stood before, beside the base: no longer mounted, nothing there is reached
+    for outside in (place.parent / "other", tmp_path, place.parent, place.parent / ".gfso-nodes-base" / "GB_proj" / "k",
+                    x.nparent / ".gfso-nodes-base" / "other" / "k", x.nparent,
                     place.parent / ".gfso-scratch-base" / "r", place.parent / ".gfso-tmp-base"):
         with pytest.raises(ValueError):
             x._inside_cwd(str(outside))
@@ -73,15 +83,18 @@ def test_a_place_outside_its_mounts_is_refused(place, tmp_path):
 
 def test_a_posix_parent_maps_paths_both_ways(tmp_path, monkeypatch):
     """Linux and macOS have no drive letter: the mapping holds from any absolute parent, a POSIX one spelled exactly."""
-    monkeypatch.setattr(E, "_real", PurePosixPath)
+    _flavour(monkeypatch, PurePosixPath, "/home/u/.gfso/data/places/h")
     x = ContainerExecution("e3-linux", IMAGE, None, str(tmp_path / "state"), "/home/u/work/base", "p")
+    assert x.own == PurePosixPath("/home/u/.gfso/data/places/h/.gfso-nodes-base/p")
     assert x.to_inside("see /home/u/work/base/a/b.c now") == "see /gfso-place/base/a/b.c now"
-    assert x.to_inside('{"cwd": "/home/u/work/.gfso-nodes-base/p/k"}') == '{"cwd": "/gfso-place/.gfso-nodes-base/p/k"}'
+    assert x.to_inside('{"cwd": "/home/u/.gfso/data/places/h/.gfso-nodes-base/p/k"}') == \
+        '{"cwd": "/gfso-place/.gfso-nodes-base/p/k"}'
+    assert x.to_outside("cd /gfso-place/.gfso-nodes-base/p/k") == "cd /home/u/.gfso/data/places/h/.gfso-nodes-base/p/k"
     for other in ("/home/u/workX/y", "/mnt/home/u/work/base", "/home/U/work/base"):
         assert x.to_inside(other) == other, "a sibling, a longer path, another case: not the parent"
     assert x.to_outside("cd /gfso-place/base && ls") == "cd /home/u/work/base && ls"
-    assert x._inside_cwd("/home/u/work/.gfso-nodes-base/p/k/src") == "/gfso-place/.gfso-nodes-base/p/k/src"
-    w, nodes = PurePosixPath("/home/u/work"), PurePosixPath("/home/u/work/.gfso-nodes-base/p")
+    assert x._inside_cwd("/home/u/.gfso/data/places/h/.gfso-nodes-base/p/k/src") == "/gfso-place/.gfso-nodes-base/p/k/src"
+    w, nodes = PurePosixPath("/home/u/work"), x.own
     assert _writable_root(w / "base" / "src", x) == w / "base"
     assert _writable_root(nodes / "k" / "src", x) == nodes / "k"
     assert _writable_root(nodes / ".gfso-scratch-k" / "k_1" / "run", x) == nodes / ".gfso-scratch-k" / "k_1"
@@ -90,6 +103,8 @@ def test_a_posix_parent_maps_paths_both_ways(tmp_path, monkeypatch):
     assert _writable_root(nodes / ".gfso-tmp" / "node-1" / "f", x) == nodes / ".gfso-tmp" / "node-1"
     with pytest.raises(ValueError):
         x._inside_cwd("/home/u/other")
+    with pytest.raises(ValueError):
+        x._inside_cwd("/home/u/work/.gfso-nodes-base/p/k")      # …where it stood before, beside the base
     assert x.to_inside("PYTHONPATH=/home/u/work/base/src:/home/u/work/base/lib") == \
         "PYTHONPATH=/gfso-place/base/src:/gfso-place/base/lib", "each entry of a list, not the first swallowing the rest"
     for said, inside in (("cd /home/u/work/base;make", "cd /gfso-place/base;make"),
@@ -112,7 +127,7 @@ def test_a_root_or_a_drive_as_the_parent_maps_only_what_is_mounted(tmp_path, mon
                                                                   inside, back):
     """Mapped from the parent alone, a root's matched the empty string everywhere — `echo hi /gfso-place`, every
     `/usr/bin/…` sent into the container's mount (critic over d80e311)."""
-    monkeypatch.setattr(E, "_real", flavour)
+    _flavour(monkeypatch, flavour, "/home/u/.gfso/data/places/h" if flavour is PurePosixPath else r"D:\gfso\places\h")
     x = ContainerExecution("e3-linux", IMAGE, None, str(tmp_path / "state"), base, "p")
     for text in outside:
         assert x.to_inside(text) == text
@@ -123,7 +138,7 @@ def test_a_root_or_a_drive_as_the_parent_maps_only_what_is_mounted(tmp_path, mon
 def test_a_parent_through_a_link_is_mapped_as_given_and_as_resolved(tmp_path, monkeypatch):
     """The roster names a place the way the workdir was given; the parent is resolved — a link in it left every place
     spelled as given unmapped (critic, run on Linux)."""
-    monkeypatch.setattr(E, "_real", lambda p: PurePosixPath(str(p).replace("/tmp/link", "/tmp/w", 1)))
+    _flavour(monkeypatch, lambda p: PurePosixPath(str(p).replace("/tmp/link", "/tmp/w", 1)), "/home/u/.gfso/data/places/h")
     x = ContainerExecution("e3-linux", IMAGE, None, str(tmp_path / "state"), "/tmp/link/base", "p")
     assert x.to_inside("/tmp/link/base/src/a /tmp/w/base/src/a") == "/gfso-place/base/src/a /gfso-place/base/src/a"
 

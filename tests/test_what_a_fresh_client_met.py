@@ -6,12 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from gfso import cli as C
-from gfso import tools as T
-from gfso.adapters import execution as E
+from gfso import cli as C, config, serverctl, tools_llm as TL
+from gfso.adapters import children as CH, execution as E
 from gfso.adapters.llm.stats import is_limit, is_unauthorized
 from gfso.adapters.records import hold_the_home
 from gfso.decompose.loop import FOLD_SCHEMA, _audit_fold
+import gfso.mcp.server as MS
 from gfso.mcp.server import _with_ui_link
 
 
@@ -44,27 +44,19 @@ def test_a_fold_with_named_parts_costs_one_call():
 def test_a_ruling_the_person_may_make_does_not_end_a_wait():
     """Told "nothing moves until you close it", a client stopped the run to ask what the system closed a minute later."""
     step = {"mine": True, "optional": True}
-    assert not T._mine_to_do({"steps": [step]})
-    assert T._mine_to_do({"steps": [{**step, "optional": False}]})
-    assert T._mine_to_do({"steps": [step], "complete": True})
+    assert not TL.needs_its_customer({"steps": [step]})
+    assert TL.needs_its_customer({"steps": [{**step, "optional": False}]})
+    assert TL.needs_its_customer({"steps": [step], "complete": True})
 
 
-def test_a_wait_reports_what_it_waited():
+def test_a_wait_reports_what_it_waited(monkeypatch):
     """Every wait read 600 s, whatever it was."""
-    clock = iter([100.0, 100.0, 101.0, 101.0, 101.0, 107.5, 107.5, 107.5])
-    engine = SimpleNamespace(now=lambda: next(clock), next_steps=lambda root: {"steps": []})
-    real = T._mark_mine, T.time.sleep
-    calls = {"n": 0}
-
-    def marked(_engine, out, _actor):
-        calls["n"] += 1
-        return {"complete": True} if calls["n"] == 2 else out
-    T._mark_mine, T.time.sleep = marked, lambda s: None
-    try:
-        out = T._waited(engine, None, "agent", 600)
-    finally:
-        T._mark_mine, T.time.sleep = real
-    assert out["waited_seconds"] < 600
+    clock = iter([100.0, 100.0, 101.0, 101.0, 107.5, 107.5])
+    answers = iter([{"steps": []}, {"steps": []}, {"complete": True}])
+    monkeypatch.setattr(TL, "next_steps", lambda *a: next(answers))
+    monkeypatch.setattr(TL.time, "sleep", lambda s: None)
+    out = TL.wait_for_the_customer(SimpleNamespace(now=lambda: next(clock), project_name="p"), None, "user", 600)
+    assert out["waited_seconds"] == 7.5 and out["needs_you"] == "the root is settled"
 
 
 def _engine(landed=None, mode="auto", not_rerun=()):
@@ -91,10 +83,32 @@ def test_the_end_shows_the_program_working_after_it_is_read():
         assert "do not run it" in said
 
 
-def test_the_go_says_its_two_lines_before_the_wait():
-    """A client went from the go straight to `next_steps`, the link unsaid (e2e1, 2026-11-09)."""
-    said = _with_ui_link("auto_decompose", {"root_id": "root"}, "p", _engine())["say"]
-    assert said.index("BEFORE any other call") < said.index("next_steps")
+@pytest.mark.parametrize("kind", ["code", "chat"])
+def test_the_go_says_its_two_lines_before_the_wait_and_a_wake_only_to_a_client_that_has_one(kind):
+    """A client went from the go straight to `next_steps`, the link unsaid (e2e1, 2026-11-09). A chat client has no
+    background command: nothing it is told waits, and nothing tells it how to wait (the author, 2026-11-15)."""
+    token = config.CLIENT.set(kind)
+    try:
+        said = _with_ui_link("auto_decompose", {"root_id": "root"}, "p", _engine())["say"]
+    finally:
+        config.CLIENT.reset(token)
+    assert ("gfso wait project=no-record-here" in said) is (kind == "code"), said
+    assert said.index("BEFORE any other call") < (said.index("gfso wait") if kind == "code" else len(said))
+    assert ("Hand the turn back to the person now" in said) is (kind == "chat"), said
+    assert not any(w in said for w in ("next_steps", "never waiting", "stay free")), said
+
+
+@pytest.mark.parametrize("kind", ["code", "chat", None])
+def test_what_works_without_the_caller_says_how_it_learns_a_move_is_its(kind):
+    """solo and semi lost their way of waiting with the held call: the frontier at work, a dispatched node, the go and a
+    plan being written say it by the client's kind — a wake for code (and a person at the CLI), the turn handed back
+    for chat, whose polling in its own turn is the one free move no mechanism holds."""
+    token = config.CLIENT.set(kind)
+    try:
+        said = config.how_it_is_waited("p", "one is yours")
+    finally:
+        config.CLIENT.reset(token)
+    assert said == ("Hand the turn back to the person now: read the run again when they ask." if kind == "chat" else "`gfso wait project=p` in the background exits when one is yours.")
 
 
 def test_the_end_says_what_the_pass_did_not_re_run_only_where_it_did_not():
@@ -180,3 +194,37 @@ def test_a_second_serve_ends_nothing_of_the_one_that_stands(monkeypatch):
     with pytest.raises(SystemExit) as out:
         C._serve(SimpleNamespace(log_level="info", host="127.0.0.1", port=8000))
     assert "already served" in str(out.value)
+
+
+def test_the_go_opens_the_project_s_page_where_the_server_is_the_person_s(monkeypatch):
+    """Told twice in one run to write the project's link in text, at `use_project` and at the go, the fresh client
+    wrote neither and said it only at the end (s16a, 2026-11-16) — and the person was to «просто тыкнул … и сразу начал
+    смотреть». A loopback server is on the person's machine: the go opens the page itself, once, the link kept in text."""
+    opened = []
+    monkeypatch.setattr(serverctl, "open_outside", opened.append)
+    monkeypatch.setattr(serverctl, "_OPENED", set())
+    monkeypatch.setenv("GFSO_OPEN_PAGE", "1")
+    monkeypatch.delenv("GFSO_NO_WINDOWS", raising=False)
+    out = _with_ui_link("auto_decompose", {"root_id": "root"}, "p", _engine())
+    assert opened == [out["ui"]] and out["page_opened"] is True and "open in their browser" in out["say"]
+    _with_ui_link("auto_decompose", {"root_id": "root", "error": "no answer"}, "p", _engine())
+    _with_ui_link("auto_decompose", {"root_id": "root"}, "p", _engine(mode="solo"))
+    assert len(opened) == 1, "only a go that started unattended work opens it"
+    monkeypatch.setenv("GFSO_BIND", "0.0.0.0")
+    assert "page_opened" not in _with_ui_link("auto_decompose", {"root_id": "root"}, "p", _engine()), \
+        "a server past loopback is not on the person's machine"
+    monkeypatch.delenv("GFSO_BIND")
+    monkeypatch.setenv("GFSO_OPEN_PAGE", "0")
+    assert "page_opened" not in _with_ui_link("auto_decompose", {"root_id": "root"}, "p", _engine())
+
+
+def test_the_page_opened_at_the_go_goes_through_the_persons_browser(monkeypatch):
+    """The go opens the project's page; it went through `start`, past the `BROWSER` the person had set, onto a screen
+    whose owner had said where links go (2026-11-16). CONTROL: drop the `BROWSER` branch of `open_outside` and it is red."""
+    ran = []
+    monkeypatch.setenv("GFSO_NO_WINDOWS", "0")              # …nothing is opened: every start is a fake
+    monkeypatch.setenv("BROWSER", "my-browser")
+    monkeypatch.setattr(CH.subprocess, "Popen", lambda args, **k: ran.append(list(args)))
+    monkeypatch.setattr(CH.webbrowser, "open", lambda url: ran.append(["webbrowser", url]))
+    CH.open_outside("http://127.0.0.1:8000/?project=p")
+    assert ran == [["webbrowser", "http://127.0.0.1:8000/?project=p"]], ran

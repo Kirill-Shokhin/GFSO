@@ -14,7 +14,7 @@ import gfso.decompose as DEC
 from gfso.decompose import decompose_into
 from gfso.roster import AgentRegistry
 from gfso.issuer import open_questions, system_splits
-from gfso.mcp.server import _PINNED_ACTOR
+from gfso.engine.moves import SIGNERS
 from tests.support import REGISTER, criterion, make_engine
 
 _PLAN = {"name": "g", "root_criteria": [criterion("g", "G holds"), criterion("z", "a goal the author made up")],
@@ -33,9 +33,9 @@ def _goal(tmp_path=None):
         agents = AgentRegistry(path=str(tmp_path / "agents.json"))
         agents.register("exec-1", "llm-executor", workdir=str(tmp_path), project="p")
         D.publish_the_workforce(e, agents.list())
-        e.set_mode(Mode.AUTO, None, AgentId("agent"))
+        e.set_mode(Mode.AUTO, None, AgentId("user"))
     else:
-        e.record_root_issuer(TaskId("root"), AgentId("agent"))
+        e.record_root_issuer(TaskId("root"), AgentId("user"))
     T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]}, "exec-1")
     e.wait_idle()
     return e
@@ -59,7 +59,7 @@ def test_a_split_authored_by_the_executor_maps_onto_the_issued_contract():
 
 def test_the_issuer_authoring_the_split_still_writes_the_contract():
     e = _goal()
-    decompose_into(e, "", root_id="root", assignee="exec-1", spec=dict(_PLAN), llm=object(), author="agent")
+    decompose_into(e, "", root_id="root", assignee="exec-1", spec=dict(_PLAN), llm=object(), author="user")
     e.wait_idle()
     assert [c.name for c in e.graph.get_task(TaskId("root")).spec.criteria] == ["g", "z"]
     e.stop()
@@ -97,10 +97,10 @@ def test_a_held_split_of_a_consumer_covers_its_criteria_and_owes_its_dep_edge_no
     e.stop()
 
 
-def test_the_mcp_door_names_the_author_itself():
+def test_every_door_names_the_author_itself():
     """Who authors a split decides whether a contract may be re-authored — a name the caller chose would let any agent
     claim to be any node's issuer (critic r5)."""
-    assert "author" in _PINNED_ACTOR["auto_decompose"]
+    assert "author" in SIGNERS["auto_decompose"]
 
 
 def test_a_held_refine_round_spends_no_repair_on_the_contract_it_does_not_author(monkeypatch):

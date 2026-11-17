@@ -17,7 +17,7 @@ import re
 import tomllib
 
 FORMAT = "gfso-plan/1"
-_FIT = ("volume", "fits_one_session")
+_FIT = ("volume", "fits_one_session", "split_after")
 _BARE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 

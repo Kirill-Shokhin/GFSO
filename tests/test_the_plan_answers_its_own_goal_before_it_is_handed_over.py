@@ -44,7 +44,7 @@ def test_named_obligations_are_folded_in_and_the_residue_is_measured(monkeypatch
         def get_task(self, _):
             return object()
 
-    spec, holes, residue = D._close_the_goals_obligations(_Eng(), "sort a file", "root", "agent",
+    spec, holes, residue = D._close_the_goals_obligations(_Eng(), "sort a file", "root", "user",
                                                           None, {"before": True}, ["a hole"], None)
     assert spec == {"after": True} and holes == []
     assert "it must actually sort" in calls[0], "the obligation reaches the verb that repairs plans, as its findings"
@@ -68,7 +68,7 @@ def test_what_the_repair_did_not_close_is_named(monkeypatch):
         def get_task(self, _):
             return object()
 
-    _, _, residue = D._close_the_goals_obligations(_Eng(), "g", "root", "agent", None, {}, [], None)
+    _, _, residue = D._close_the_goals_obligations(_Eng(), "g", "root", "user", None, {}, [], None)
     assert residue == ("it must handle a missing column",)
 
 
@@ -87,7 +87,7 @@ def test_a_check_that_names_nothing_changes_nothing(monkeypatch):
         def get_task(self, _):
             return object()
 
-    assert D._close_the_goals_obligations(_Eng(), "g", "root", "agent", None, {"s": 1}, ["h"],
+    assert D._close_the_goals_obligations(_Eng(), "g", "root", "user", None, {"s": 1}, ["h"],
                                           None) == ({"s": 1}, ["h"], ())
 
 
@@ -117,7 +117,7 @@ def test_what_the_parts_left_reaches_the_round_that_repairs_seams(monkeypatch):
         def get_task(self, _):
             return object()
 
-    _, _, residue = D._close_the_goals_obligations(_Eng(), "g", "root", "agent", None, {}, [], None)
+    _, _, residue = D._close_the_goals_obligations(_Eng(), "g", "root", "user", None, {}, [], None)
     assert parts == [1] and len(seams) == 1, "the parts first, then the seams' round"
     assert "two units link into one program" in seams[0]
     assert residue == ()
@@ -149,7 +149,7 @@ def test_root_criteria_the_children_do_not_entail_reach_a_repair(monkeypatch):
         def get_task(self, _):
             return object()
 
-    D._close_the_goals_obligations(_Eng(), "g", "root", "agent", None, {}, [], None)
+    D._close_the_goals_obligations(_Eng(), "g", "root", "user", None, {}, [], None)
     assert len(seams) == 1 and "root criterion links is not entailed" in seams[0]
 
 
@@ -167,7 +167,7 @@ def test_a_part_answer_of_the_wrong_shape_or_a_name_twice_loses_nothing_else(mon
     monkeypatch.setattr(D, "fan", lambda llm, items, fn, stage: [fn(i) for i in items])
     built = []
     monkeypatch.setattr(D, "_build_verified", lambda new, *a, **k: built.append(new) or (None, new, []))
-    changed, out, _ = D._pin_by_part(None, "g", "root", "agent", _LLM(), [{"obligation": "o"}], None, "", None)
+    changed, out, _ = D._pin_by_part(None, "g", "root", "user", _LLM(), [{"obligation": "o"}], None, "", None)
     (a,) = [p for p in out["subtasks"] if p["id"] == "a"]
     assert changed and [c["name"] for c in a["criteria"]] == ["n"]
 

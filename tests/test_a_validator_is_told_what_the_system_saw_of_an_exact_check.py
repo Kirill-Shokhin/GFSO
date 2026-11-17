@@ -5,7 +5,7 @@ Told only "must show: a ok", a validator read the pin as a substring of `a` and 
 root.preprocessor.pp-rest six rounds the system's own runs had matched 39 of 39 (gf-cc, 2026-11-06). And the finding
 that FAIL left — the pin's own command over its laid inputs, citing the pin — is the pin's run, not a second demand.
 
-CONTROLS: `_exact_said` → "" — both packet tests; drop `observed` from the `_validator_texts` call — the matched and
+CONTROLS: `_judged_as` → "" — both packet tests; drop `observed` from the `_validator_texts` call — the matched and
 mismatch tests (the comparator line stays, the observation goes)."""
 from __future__ import annotations
 

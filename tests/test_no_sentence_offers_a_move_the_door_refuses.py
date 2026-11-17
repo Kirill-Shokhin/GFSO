@@ -27,7 +27,7 @@ from tests.support import criterion
 from tests.test_a_ruling_is_part_of_the_acceptance import _challenged_with_a_finding
 from tests.test_the_mode_decides_who_holds_what import _RISK, _admit, _engine, _kid
 
-ME = "agent"
+ME = "user"
 _SIGNALS = set(Signal.__members__)
 _NODE_PARAMS = ("task_id", "parent_id", "root_id", "to_id")
 

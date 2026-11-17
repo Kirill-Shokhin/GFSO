@@ -140,8 +140,8 @@ CHALLENGE_WHEN = ("\n## When the contract itself is wrong — CHALLENGE\n"
 
 
 def observed_lines(rows: list) -> str:
-    """One line per observed check, by its criterion and command (the criteria above carry the rest): printed exactly
-    what it must show, or how it ended and the tail of what it printed, or why it gave nothing — and ONE line where none
+    """One line per observed check, by its criterion and command (the criteria above carry the rest): printed what it
+    must show, or how it ended and the tail of what it printed, or why it gave nothing — and ONE line where none
     passed and every one ended the same way, the shape of a place with nothing built yet (every turn re-reads them)."""
     if len(rows) > 1 and not any(r.get("matched") for r in rows) and len(
             {(r.get("note"), r.get("rc"), r.get("out")) for r in rows}) == 1:
@@ -153,7 +153,7 @@ def observed_lines(rows: list) -> str:
         head = f"- **{r['criterion']}** `{r['command']}` → "
         if r.get("note"):
             return head + r["note"]
-        return head + ("printed exactly what it must show" if r.get("matched") else
+        return head + ("printed what it must show" if r.get("matched") else
                        f"exit {r.get('rc')}, printed «{_flat(r.get('out'))}»"
                        + (" — the system's own run of this EXACT check does not match its pin" if r.get("exact") else ""))
     return "".join(_one(r) + "\n" for r in rows)
@@ -171,14 +171,18 @@ def must_show(p, seen: Optional[dict] = None) -> str:
     check is judged by two rules. Shown only "must show", a validator read an exact pin as a substring and failed what the
     system had matched (gf-cc pp-rest, six rounds), and its executor, told no comparator either, disputed the FAIL eight
     times against an issuer who ruled by it (same node, the next build)."""
-    return f"must show: {as_shown(p.expect)}" + _exact_said(p, seen)
+    return f"must show: {as_shown(p.expect)}" + _judged_as(p, seen)
 
 
-def _exact_said(p, seen: Optional[dict]) -> str:
-    """Of an EXACT pinned check: that it is one, how its output is compared (`EXACT_READ`), and — to its validator —
-    what the system's own run of it on this delivery observed (`tools_llm._observe_exact`)."""
+def _judged_as(p, seen: Optional[dict]) -> str:
+    """Of an EXACT pinned check: that it is one, how its output is compared (`EXACT_READ`); of any — to its validator —
+    what the system's own run of it on this delivery observed (`tools_llm._observe_pins`)."""
     if not p.exact:
-        return ""
+        return ("" if not (seen or {}).get("printed") else
+                "\n      (The system ran it on this delivery: its output shows that.)" if seen.get("matched") else
+                f"\n      (The system ran it on this delivery: it printed «{_flat(seen.get('out'))}», which does not "
+                f"show that word for word. Judge it over that output; a pass holds only where the `expect` you cite "
+                f"for it is a part of what that run printed.)")
     ran = ("" if not seen else " The system ran it on this delivery: it MATCHED — decided, it holds"
            if seen.get("matched") is True else
            f" The system ran it on this delivery: it printed «{_flat(seen.get('out'))}», not that — it does not hold"
@@ -194,7 +198,8 @@ def _observed_section(rows: list, heading: str = "##") -> str:
     return f"\n{heading} Your place as the system found it\n{_OBSERVED}{observed_lines(rows)}" if rows else ""
 
 
-def _executor_packet(engine, task, workdir: str | None, unjoined: list = (), seen: dict | None = None) -> str:
+def _executor_packet(engine, task, workdir: str | None, unjoined: list = (), seen: dict | None = None,
+                     lost: list = ()) -> str:
     """The executor's self-contained contract (it has no graph access): spec + criteria + upstream
     inputs (the REAL delivered outputs it consumes) + ACCEPTED_RISKS + rework feedback if any + what its pinned checks
     printed on its place before the session (`seen`, `observe.observe_place`)."""
@@ -227,8 +232,22 @@ def _executor_packet(engine, task, workdir: str | None, unjoined: list = (), see
             f"does not exist yet, report `status: \"blocked\"` and NAME it in `blocker_task_ids`. That "
             f"is a real dependency the plan did not declare, and naming it is what records it.\n"
             f"{chr(10).join(sibs) or '- none'}\n{CHALLENGE_WHEN}{rework}{answered_challenges(engine, task)}"
-            f"{_observed_section((seen or {}).get(tid, []))}{_unjoined_text(unjoined)}{_last_delivery_text(engine, [task])}\n"
+            f"{_observed_section((seen or {}).get(tid, []))}{_unjoined_text(unjoined)}{_not_there_text(lost)}{_last_delivery_text(engine, [task])}\n"
             + _working_directory(workdir))
+
+
+def _not_there_text(lost: list) -> str:
+    """The joined parts whose own change is no longer all there in this session's tree (`parts_not_there`)."""
+    if not lost:
+        return ""
+    return ("\n## Parts whose work is no longer all in your tree\n"
+            "Each part below joined your tree, and some lines its delivered change added are gone or changed in your "
+            "committed tree. The commit that last changed each file is named: a later part's or your own deliberate "
+            "edit, or a merge that lost them. Check which before you deliver; the part's own change is shown by the "
+            "command beside it.\n"
+            + "".join(f"- `{x}` — `git diff {a[:12]} {b[:12]}`: "
+                      + "; ".join(f"`{f}` (last changed by {by.get(f) or 'a commit not found'})" for f in files) + "\n"
+                      for x, files, a, b, by in lost))
 
 
 def _rework_section(engine, task) -> str:
@@ -436,7 +455,8 @@ def _last_delivery_text(engine, nodes: list) -> str:
     return out
 
 
-def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list = (), seen: dict | None = None) -> str:
+def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list = (), seen: dict | None = None,
+                  lost: list = ()) -> str:
     """The scope session's contract: every node of the scope in build order, each with its criteria as the
     checklist its validation runs, its inputs from outside the scope and its rework feedback — and the plan's
     nodes outside the scope, to name when blocked on one."""
@@ -452,7 +472,7 @@ def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list 
             + "\n".join(_scope_node_block(engine, i, t, top, inside, seen) for i, t in enumerate(order, 1))
             + f"\n## The other nodes of this plan — NOT your work, and you must not do it\n"
             f"If you cannot proceed because something one of them owns does not exist yet, report that node "
-            f"`status: \"blocked\"` and NAME it in `blocker_task_ids`.\n{others}\n{CHALLENGE_WHEN}{_unjoined_text(unjoined)}{_last_delivery_text(engine, order)}\n"
+            f"`status: \"blocked\"` and NAME it in `blocker_task_ids`.\n{others}\n{CHALLENGE_WHEN}{_unjoined_text(unjoined)}{_not_there_text(lost)}{_last_delivery_text(engine, order)}\n"
             + _working_directory(workdir))
 
 
@@ -460,7 +480,8 @@ def _regression_line(p: dict, dirs: dict, workdir: Optional[str], engine, at: Op
     """One once-refuting probe, shown over this round's inputs directories and asked for under its id — over the files
     of its own round the system laid under `at`, the judge's own round or batch, from its record (`lay_probe_files`)."""
     cmd = laid(p.get("as_run") or p.get("command", ""), dirs)
-    shown = engine.lay_probe_files(cmd, at, execution_of(engine)) if at else cmd     # …kept first: then asked
+    # …over the copy its judge works in, which `tools_llm._run` makes at `<at>/delivery`; kept first: then asked
+    shown = engine.lay_probe_files(cmd, at, execution_of(engine), Path(at) / "delivery") if at else cmd
     why = unrerunnable(p, dirs, workdir, standing=round_stands(engine.graph))
     cmd = cmd if why else shown
     orphan = f"({why} — shown, not demanded) " if why else ""
@@ -527,7 +548,7 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
 
     `carry`: {probe id: the criterion it is written under} for the probes THIS run carries, when one validation is
     split between runs by what it owes (`tools_llm._scope_batches`); None = everything `owed_probes` lists.
-    `seen`: {(node, probe id): the system's own run of that exact probe on this delivery} (`tools_llm._observe_exact`)."""
+    `seen`: {(node, probe id): the system's own run of that pinned probe on this delivery} (`tools_llm._observe_pins`)."""
     tid = str(task.id)
     # THE PROCEDURE EACH CRITERION PINS, handed over as part of the contract. It is not advice: a
     # PASS that skips a pinned probe is refused at the record, so the validator has to see them — and

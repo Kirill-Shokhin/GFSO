@@ -11,10 +11,10 @@ them. The two that spawn models cost real tokens and are never run by the test s
 import atexit
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 
+from gfso.adapters.children import run
 from gfso.adapters.execution import LocalExecution
 from gfso.config import DEFAULT_EXECUTION, executions, local_agents, use_agents_path
 
@@ -51,7 +51,7 @@ def delegation(prefix: str) -> tuple:
     if execution:
         for args in (["init", "-q"], ["-c", "user.name=gfso-demo", "-c", "user.email=demo@gfso.local", "commit", "-q",
                                       "--allow-empty", "-m", "start"]):
-            subprocess.run(["git", "-C", work, *args], check=True, capture_output=True)
+            run(["git", "-C", work, *args], timeout=60).check_returncode()
     use_agents_path(scratch("agents.json"))
     return work, execution
 

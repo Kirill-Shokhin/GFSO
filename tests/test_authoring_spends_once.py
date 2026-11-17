@@ -20,13 +20,13 @@ def test_given_findings_skip_the_search(monkeypatch):
     e = make_engine(llm=None, check_interval=10_000)
     e.start()
     try:
-        e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("agent"))
+        e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("user"))
         e.wait_idle()
         searched, folded = [], []
         monkeypatch.setattr(D, "_search", lambda *a, **k: searched.append(1) or "found")
         monkeypatch.setattr(D, "_audit_fold", lambda llm, req, state, holes, **k: folded.append(holes) or {})
-        D._refine_round(e, "goal", "root", "agent", object(), findings="the listed obligations")
-        D._refine_round(e, "goal", "root", "agent", object())
+        D._refine_round(e, "goal", "root", "user", object(), findings="the listed obligations")
+        D._refine_round(e, "goal", "root", "user", object())
     finally:
         e.stop()
     assert searched == [1], "only the round with no findings searched"
@@ -80,12 +80,16 @@ def test_independent_readings_run_at_once_and_each_call_carries_its_stage():
 
         def __init__(self):
             self.calls, self.live, self.peak, self._l = [], 0, 0, threading.Lock()
+            self.meet = threading.Barrier(3, timeout=30)    # …all three inside at once, however late a thread starts
 
         def complete(self, prompt, context=None):
             with self._l:
                 self.live += 1
                 self.peak = max(self.peak, self.live)
-            _t.sleep(0.05)
+            if self.parallel_safe:
+                self.meet.wait()
+            else:
+                _t.sleep(0.05)
             with self._l:
                 self.live -= 1
                 self.calls.append({"stage": None})

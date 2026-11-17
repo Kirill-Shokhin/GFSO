@@ -13,6 +13,10 @@ import urllib.request as _ur
 
 import contextlib
 
+import anyio
+from mcp.shared.message import SessionMessage
+from mcp.types import JSONRPCMessage, JSONRPCRequest
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -110,7 +114,7 @@ def test_the_server_is_spawned_with_a_hidden_console_not_without_one(monkeypatch
             seen["flags"] = kw.get("creationflags")
             seen["si"] = kw.get("startupinfo")
 
-    monkeypatch.setattr(C.subprocess, "Popen", _P)
+    monkeypatch.setattr(subprocess, "Popen", _P)
     monkeypatch.setattr(C, "_port_open", lambda h, p: False)
     # …and into a temp HOME: `ensure_server` opens the installation's `data/server.log` for append,
     # and a unit test has no business writing into the user's live state.
@@ -165,7 +169,8 @@ def test_a_dropped_bridge_is_rebuilt_while_the_server_answers(monkeypatch):
     # fix for a teardown deadlock (2026-09-03) and it puts an unreadable pytest stdin in the path.
     @contextlib.asynccontextmanager
     async def fake_stdio():
-        yield (object(), object())
+        write, read = anyio.create_memory_object_stream(1)
+        yield (read, write)
 
     monkeypatch.setattr(C, "stdio_server", fake_stdio)
     monkeypatch.setattr(C, "_relay", flaky_relay)
@@ -183,22 +188,33 @@ def test_a_dropped_bridge_is_rebuilt_while_the_server_answers(monkeypatch):
     assert calls["slept"] >= 2, "it retried without waiting between attempts"
 
 
-def test_a_bridge_whose_server_is_gone_stops_and_says_so(monkeypatch, capsys):
-    """The other direction: when the server really is gone, retrying is pointless — stop, and say
-    what to do instead of naming an exception class."""
+def test_a_bridge_whose_server_is_gone_answers_each_call_and_ends_with_its_client(monkeypatch, capsys):
+    """The other direction: when the server really is gone, the bridge does not leave the client's stdio — leaving it
+    deadlocked against a client still holding the pipe, every later call unanswered (2026-11-14) — it answers each
+    call with what to do, and ends when the client ends the session."""
     async def dead_relay(*_a, **_k):
         raise ConnectionError("Session terminated")
+    replies = []
 
+    @contextlib.asynccontextmanager
+    async def fake_stdio():
+        to_bridge, read = anyio.create_memory_object_stream(5)
+        write, from_bridge = anyio.create_memory_object_stream(5)
+        await to_bridge.send(SessionMessage(JSONRPCMessage(JSONRPCRequest(jsonrpc="2.0", id=9, method="tools/list"))))
+        await to_bridge.aclose()                                               # …and the client ends its session
+        yield (read, write)
+        replies.extend(from_bridge.receive_nowait() for _ in range(1))
+
+    monkeypatch.setattr(C, "stdio_server", fake_stdio)
     monkeypatch.setattr(C, "_relay", dead_relay)
-    monkeypatch.setattr(C.time, "sleep", lambda s: None)
     monkeypatch.setattr(C, "_heartbeat", lambda *a, **k: None)
     monkeypatch.setattr(C, "ensure_correct", lambda **k: {"action": "already-correct", "drift": [], "code_version": "x"})
     monkeypatch.setattr(C, "foreign_holder", lambda *a: False)
     monkeypatch.setattr(serverctl, "runtime", lambda: None)                    # the server is NOT answering
 
     C.main()
-    err = capsys.readouterr().err
-    assert "gfso up" in err, f"the exit line does not say what to do: {err}"
+    assert [r.message.root.id for r in replies] == [9] and "gfso up" in replies[0].message.root.error.message
+    assert "not answering" in capsys.readouterr().err
 
 
 def test_a_reply_saying_the_session_is_gone_counts_as_a_break():

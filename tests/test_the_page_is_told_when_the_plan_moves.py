@@ -9,6 +9,7 @@ import dataclasses
 
 from gfso.core.types import DepEdge, Signal, SignalData, TaskId
 from gfso.delegate import publish_the_workforce
+import gfso.tools_llm as TL
 from tests.support import make_engine
 from tests.test_every_verb_answers import _seeded
 
@@ -69,3 +70,16 @@ def test_a_role_on_or_off_the_roster_is_told_and_the_first_publication_is_not():
     assert lines == [], lines
     publish_the_workforce(e, {"exec-1": {"kind": "llm-executor"}, "val-1": {"kind": "llm-validator"}})
     assert lines == ["the roster changed"], lines
+
+
+def test_a_role_taken_off_the_roster_is_told_as_one_put_on_is():
+    """`register_agent` published the roster and `unregister_agent` did not: a role taken off reached an open page only
+    with the dispatcher's next round, and never in a project no round serves (ui stream, 2026-11-13)."""
+    e, lines = _watched()
+    TL.TOOLS["register_agent"](e, "told-exec-1", "external")
+    TL.TOOLS["register_agent"](e, "told-exec-2", "external")
+    lines.clear()
+    assert TL.TOOLS["unregister_agent"](e, "told-exec-2").get("unregistered")
+    assert lines == ["the roster changed"], lines
+    TL.TOOLS["unregister_agent"](e, "told-exec-1")
+    e.stop()

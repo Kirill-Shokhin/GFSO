@@ -5,7 +5,7 @@ server with a paired control, because the tester's own diagnosis of it was wrong
 was "the seam gate checks that a verdict EXISTS, not that it says PASS". What actually happened:
 earlier in the same session they had called
 
-    register_agent(agent_id="agent", kind="llm-validator", workdir=..., project="w23atk5")
+    register_agent(agent_id="user", kind="llm-validator", workdir=..., project="w23atk5")
 
 — an ordinary, documented call — and `agent` is the standing identity every door hands a caller who
 does not name themselves. The gate opens for a registered instrument's signature, because such a
@@ -49,7 +49,7 @@ def _engine():
     return e
 
 
-def _leaf(e, tid="leaf", assignee="agent"):
+def _leaf(e, tid="leaf", assignee="user"):
     T.create_task(e, tid, {"description": "a leaf that never does the work",
                            "criteria": [criterion("file_exists", "NEVER.txt exists")],
                            "accepted_risks": REGISTER},
@@ -64,10 +64,10 @@ def _leaf(e, tid="leaf", assignee="agent"):
 def test_a_registered_instrument_cannot_open_the_seam_on_its_OWN_node():
     """The executor of a node is not independent of it, whatever the roster says about the id."""
     e = _engine()
-    e._graph.authorized_validators = {"agent"}      # what `register_agent(agent, llm-validator)` publishes
-    _leaf(e, "leaf", assignee="agent")
+    e._graph.authorized_validators = {"user"}      # what `register_agent(agent, llm-validator)` publishes
+    _leaf(e, "leaf", assignee="user")
 
-    out = T.signal(e, "leaf", "PASS", "agent")
+    out = T.signal(e, "leaf", "PASS", "user")
 
     assert out["accepted"] is False, (
         "the node's own executor signed its own PASS with NO verdict on record, because the id had "
@@ -115,10 +115,10 @@ def test_the_refusal_names_the_registration_rather_than_only_the_rule():
     difference between a wall and an answer.
     """
     e = _engine()
-    e._graph.authorized_validators = {"agent"}
-    _leaf(e, "leaf", assignee="agent")
+    e._graph.authorized_validators = {"user"}
+    _leaf(e, "leaf", assignee="user")
 
-    err = (T.signal(e, "leaf", "PASS", "agent").get("error") or "")
+    err = (T.signal(e, "leaf", "PASS", "user").get("error") or "")
 
     assert "roster" in err and "independent of itself" in err, err
     assert "validate your own work" in err, err

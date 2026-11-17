@@ -77,7 +77,7 @@ def test_the_builder_keeps_one_denial_and_the_extract_hands_it_back_under_its_ow
          "mappings": [{"criterion": "g", "child_id": "a"}], "deps": [],
          "accepted_risks": [UNMODELLED_FAULT.to_dict(), DENIAL_ENTRY],
          "denial": {"p": 0.25, "justification": "the fold's own estimate"}}
-    build_graph_live(d, "the goal", e, root_id="root", assignee="agent")
+    build_graph_live(d, "the goal", e, root_id="root", assignee="user")
     e.wait_idle()
     reg = register_of(e.graph.get_task(TaskId("root"))).items
     assert [n.p for n in reg if n.denial] == [0.25], "the schema's denial wins, the listed one goes"

@@ -29,7 +29,7 @@ _SPEC = {"description": "a goal", "accepted_risks": _RISK,
 
 
 def _with_a_deadline(e, days):
-    T.create_task(e, "root", dict(_SPEC), assignee="agent",
+    T.create_task(e, "root", dict(_SPEC), assignee="user",
                   deadline=(datetime.now() + timedelta(days=days)).isoformat())
     return e.graph.get_task("root").deadline
 
@@ -40,7 +40,7 @@ def test_a_revision_moves_the_deadline_it_carries():
     first = _with_a_deadline(e, 5)
     later = (datetime.now() + timedelta(days=14)).isoformat()
 
-    out = T.revise(e, "root", dict(_SPEC), agent="agent", deadline=later)
+    out = T.revise(e, "root", dict(_SPEC), agent="user", deadline=later)
     assert out and "error" not in out and out["state"] == "OFFERED", \
         f"the revision itself must still be a revision — re-consent, no cascade: {out}"
     moved = e.graph.get_task("root").deadline
@@ -56,7 +56,7 @@ def test_a_revision_that_says_nothing_about_it_keeps_it():
     e.start()
     first = _with_a_deadline(e, 5)
     T.revise(e, "root", {**_SPEC, "criteria": [criterion("c1", "C1 holds, sharpened")]},
-             agent="agent")
+             agent="user")
     assert e.graph.get_task("root").deadline == first, "a revision silently cleared the deadline"
     e.stop()
 
@@ -68,7 +68,7 @@ def test_a_spec_dict_cannot_smuggle_one():
     e.start()
     _with_a_deadline(e, 5)
     try:
-        T.revise(e, "root", {**_SPEC, "deadline": "2026-12-01"}, agent="agent")
+        T.revise(e, "root", {**_SPEC, "deadline": "2026-12-01"}, agent="user")
     except ValueError as ex:
         assert "`deadline`" in str(ex) and "revise(..., deadline=" in str(ex), \
             f"the refusal must name the carrier, not merely reject: {ex}"

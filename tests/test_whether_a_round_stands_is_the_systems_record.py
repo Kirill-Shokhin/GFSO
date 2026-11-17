@@ -31,7 +31,7 @@ def test_the_findings_over_rounds_are_read_with_no_container_asked(tmp_path, mon
                         subprocess.CompletedProcess(a, 0, b"\x7fELF", b""))
     hold_places(ex.files)
     try:
-        scratch, graph = tmp_path / "work" / ".gfso-nodes-ws" / "p" / ".gfso-scratch-a", _graph()
+        scratch, graph = ex.own / ".gfso-scratch-a", _graph()
         kept, pruned = scratch / "a_1700000001", scratch / "a_1700000002"
         record_round(graph, str(kept), True)
         record_round(graph, str(pruned), True)

@@ -28,7 +28,7 @@ import gfso.issuer as I
 from gfso.core.types import LAID, TaskId, laid_beside
 from gfso.issuer import CONTACT_ROUND, _contact_place
 from gfso.observe import _run
-from gfso.tools_llm import _observe_exact
+from gfso.tools_llm import _observe_pins
 from tests.test_the_mode_decides_who_holds_what import _auto_goal
 
 IMAGE = os.environ.get("GFSO_TEST_IMAGE", "e3-linux-agent:2")   # CI: the product's own image
@@ -67,26 +67,25 @@ def lay(ex, files: dict) -> None:
 
 
 def test_a_session_writes_its_place_and_reads_the_base(project):
-    work = project.parent
-    a = project.session(str(work / ".gfso-nodes-ws/p/a"))
-    assert isinstance(a, PlaceContainer) and a.rw == work / ".gfso-nodes-ws/p/a"
-    assert a._mounts() == [(project.base, True), (work / ".gfso-nodes-ws/p/a", False),
-                           (work / ".gfso-nodes-ws/p/.gfso-scratch-a", True), (Path(a.temp_root()), False)],         "its validations' rounds read-only: they hold the probes its standing findings re-run"
-    assert project.session(str(work / ".gfso-nodes-ws/p/a/src")) is a, "one container per place"
-    assert project.session(str(work / ".gfso-nodes-ws/p/b")) is not a
+    a = project.session(str(project.own / "a"))
+    assert isinstance(a, PlaceContainer) and a.rw == project.own / "a"
+    assert a._mounts() == [(project.base, True), (project.own / "a", False),
+                           (project.own / ".gfso-scratch-a", True), (Path(a.temp_root()), False)],         "its validations' rounds read-only: they hold the probes its standing findings re-run"
+    assert project.session(str(project.own / "a/src")) is a, "one container per place"
+    assert project.session(str(project.own / "b")) is not a
     with pytest.raises(ValueError):
-        a._inside_cwd(str(work / ".gfso-nodes-ws/p/b"))
+        a._inside_cwd(str(project.own / "b"))
     root = project.session(str(project.base))
-    assert root._mounts() == [(project.base, False), (work / ".gfso-nodes-ws/p/.gfso-scratch-.ws", True), (Path(root.temp_root()), False)], \
+    assert root._mounts() == [(project.base, False), (project.own / ".gfso-scratch-.ws", True), (Path(root.temp_root()), False)], \
         "a root's validations' rounds read-only to its executor too: no judge works in the base"
 
 
-@pytest.mark.parametrize("scratch", [".gfso-nodes-ws/p/.gfso-scratch-.ws", ".gfso-nodes-ws/p/.gfso-scratch-a"])
+@pytest.mark.parametrize("scratch", [".gfso-scratch-.ws", ".gfso-scratch-a"])
 def test_a_validation_writes_its_round_and_reads_only_what_was_laid_for_it(project, scratch):
-    """The scratch stands beside the place validated — the base's, or a node clone's (`tools_llm`). A judge mounts its
+    """The scratch stands among the project's places, by the place validated — the base's, or a node clone's (`tools_llm`). A judge mounts its
     round or batch, what the system laid for it read-only beside it, and its temp: no earlier round — the delivered
     code run there rewrote a probe a standing finding re-ran (critic over the judged tree)."""
-    scratch = project.parent / scratch
+    scratch = project.own / scratch
     v = project.session(str(scratch / "root_1700000000" / "run" / "delivery"))
     assert v.rw == scratch / "root_1700000000"
     assert v._mounts() == [(v.rw, False), (scratch / ("root_1700000000" + LAID), True), (Path(v.temp_root()), False)]
@@ -110,8 +109,8 @@ def test_what_the_system_lays_for_a_judge_lies_outside_what_its_run_writes(proje
 
 
 def test_the_systems_commands_stay_in_the_projects_container(project):
-    assert project.session(str(project.parent / ".gfso-nodes-ws/p/a")).container != project.container
-    assert project._mounts() == [(project.parent / m, False) for m in project.mounts]
+    assert project.session(str(project.own / "a")).container != project.container
+    assert project._mounts() == [(project.base, False), (project.own, False)]
 
 
 def test_a_place_going_takes_its_session_with_it(project, monkeypatch):
@@ -119,9 +118,9 @@ def test_a_place_going_takes_its_session_with_it(project, monkeypatch):
     monkeypatch.setattr(E, "run", lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
     monkeypatch.setattr(ContainerExecution, "run", lambda self, args, **kw: subprocess.CompletedProcess(args, 0, "", ""))
     monkeypatch.setattr(E.ContainerFiles, "_run", lambda self, at, cwd, op, *a, **kw: subprocess.CompletedProcess(a, 0, b"", b""))
-    a = project.session(str(project.parent / ".gfso-nodes-ws/p/a"))
-    b = project.session(str(project.parent / ".gfso-nodes-ws/p/b"))
-    project.remove_tree(str(project.parent / ".gfso-nodes-ws/p/a"))
+    a = project.session(str(project.own / "a"))
+    b = project.session(str(project.own / "b"))
+    project.remove_tree(str(project.own / "a"))
     assert ["docker", "rm", "-f", a.container] in ran and ["docker", "rm", "-f", b.container] not in ran
     project.stop()
     assert ["docker", "rm", "-f", b.container] in ran and E._SESSIONS == {}
@@ -139,26 +138,25 @@ def _git(cwd, *args):
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_a_session_sees_its_place_alone(project):
-    work = project.parent
     _git(project.base, "init", "-q")
     (project.base / "b.txt").write_text("base\n")
     _git(project.base, "add", "b.txt")
     _git(project.base, "commit", "-qm", "base")
     for n in ("a", "b"):                                          # …as the engine makes a place: inside, in the volume
-        assert W.ensure(project.base, work / ".gfso-nodes-ws/p" / n, f"gfso/p/{n}", project.base, execution=project)
+        assert W.ensure(project.base, project.own / n, f"gfso/p/{n}", project.base, execution=project)
     lay(project, {"b/secret.txt": "b's work\n"})
-    a = project.session(str(work / ".gfso-nodes-ws/p/a"))
+    a = project.session(str(project.own / "a"))
     probe = ("echo x > a.c && git add a.c && git -c user.name=t -c user.email=t@t commit -qm work && echo COMMITTED; "
              "ls /gfso-place/.gfso-nodes-ws/p/b/secret.txt 2>/dev/null && echo SAW-B; "
              "touch /gfso-place/ws/x 2>/dev/null && echo WROTE-BASE; "
              "git -C /gfso-place/ws update-ref refs/heads/x HEAD 2>/dev/null && echo MOVED-A-BASE-REF; "
              "cat /gfso-place/ws/b.txt; true")
     try:
-        got = a.run(["bash", "-c", probe], cwd=str(work / ".gfso-nodes-ws/p/a"), timeout=120).stdout.split()
+        got = a.run(["bash", "-c", probe], cwd=str(project.own / "a"), timeout=120).stdout.split()
         assert got == ["COMMITTED", "base"], got
-        assert project.files.exists(str(work / ".gfso-nodes-ws/p/a/a.c")), "the session's work stands in its place"
+        assert project.files.exists(str(project.own / "a/a.c")), "the session's work stands in its place"
         assert not project.own.exists(), "…in the volume: nothing of it on the host"
-        sys_view = project.run(["ls", str(work / ".gfso-nodes-ws/p/b")], cwd=str(project.base), timeout=60).stdout
+        sys_view = project.run(["ls", str(project.own / "b")], cwd=str(project.base), timeout=60).stdout
         assert "secret.txt" in sys_view, "the system's own commands still see every place"
     finally:
         project.stop()
@@ -166,7 +164,7 @@ def test_live_a_session_sees_its_place_alone(project):
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_a_validation_writes_its_round_alone_and_its_call_ends_where_it_runs(project):
-    scratch = project.parent / ".gfso-nodes-ws/p/.gfso-scratch-.ws"
+    scratch = project.own / ".gfso-scratch-.ws"
     lay(project, {".gfso-scratch-.ws/root_1/run/probe.sh": "echo earlier\n"})
     made(project, ".gfso-scratch-.ws/root_2/run/delivery")
     v = project.session(str(scratch / "root_2/run/delivery"))
@@ -192,9 +190,9 @@ def test_the_systems_own_checks_stand_where_no_session_reaches(project):
     """The system's exact checks and observations: in the temp every session holds, a session could change what a
     check runs on (critic over the session slice)."""
     with project.scratch("gfso-exact-", system=True) as d:
-        assert Path(d).parent == project.parent / ".gfso-nodes-ws/p/.gfso-sys"
-        a = project.session(str(project.parent / ".gfso-nodes-ws/p/a"))
-        assert not any(src.is_relative_to(project.parent / ".gfso-nodes-ws/p/.gfso-sys") for src, _ in a._mounts())
+        assert Path(d).parent == project.own / ".gfso-sys"
+        a = project.session(str(project.own / "a"))
+        assert not any(src.is_relative_to(project.own / ".gfso-sys") for src, _ in a._mounts())
 
 
 @pytest.mark.live
@@ -202,7 +200,7 @@ def test_an_issuers_contact_is_a_round_of_the_nodes_own_scratch(project):
     """It writes only its own round and reads the probes the node's standing findings name as the system laid them
     beside it — a root's as a node's (critic 2 over the session slice: moved to the system's scratch, a root's contact
     could not read its inputs nor a node's run its findings); no earlier round (critic over the judged tree)."""
-    node = project.parent / ".gfso-nodes-ws/p/a"
+    node = project.own / "a"
     with _contact_place(str(node), project) as d:
         assert Path(d).parent == node.parent / ".gfso-scratch-a"
         c = project.session(d + "/place")
@@ -210,7 +208,7 @@ def test_an_issuers_contact_is_a_round_of_the_nodes_own_scratch(project):
         assert (node.parent / ".gfso-scratch-a", True) not in c._mounts(), "an earlier round mounted"
         assert not any(s in (node, project.base) for s, _ in c._mounts()), "nothing of the place or the base"
     with _contact_place(str(project.base), project, "p") as d:    # a root's too: in the base it ran in its executor's container
-        assert Path(d).parent == project.parent / ".gfso-nodes-ws/p/.gfso-scratch-.ws"
+        assert Path(d).parent == project.own / ".gfso-scratch-.ws"
         c = project.session(d + "/place")
         assert c.rw == Path(d) and c is not project.session(str(project.base))
 
@@ -225,9 +223,9 @@ def test_a_session_whose_directory_is_gone_is_stopped_and_one_started_by_its_pro
     monkeypatch.setattr(E, "_STARTED", {})
     with project.scratch("gfso-noplace-") as d:
         gone = project.session(d)
-    project.session(str(project.parent / ".gfso-nodes-ws/p/a"))
+    project.session(str(project.own / "a"))
     assert ["docker", "rm", "-f", gone.container] in ran and gone.container not in {s.container for s in E._SESSIONS.values()}
-    b = project.session(str(project.parent / ".gfso-nodes-ws/p/b"))
+    b = project.session(str(project.own / "b"))
     b.start()                                            # its project's container starts first, stopping its sessions
     assert E._SESSIONS[(project.container, os.path.normcase(b.rw))] is b
 
@@ -246,12 +244,12 @@ def test_the_systems_own_copies_and_checks_take_the_systems_scratch():
             assert f'.scratch("{p}", system=True)' in text and f'.scratch("{p}")' not in text, (f, p)
     # …and the exact checks are handed no validation round to run in: there the delivery's own scripts shared the
     # container a judge's copy followed into, and planted or rewrote its tree (critic 3 over the judges slice)
-    assert "scratch" not in inspect.signature(_observe_exact).parameters
+    assert "scratch" not in inspect.signature(_observe_pins).parameters
 
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_an_issuers_contact_reads_its_inputs_and_no_earlier_round(project):
-    node = project.parent / ".gfso-nodes-ws/p/a"
+    node = project.own / "a"
     made(project, "a")
     lay(project, {".gfso-scratch-a/a_1/run/probe.sh": "echo probed\n"})
     try:
@@ -275,7 +273,7 @@ def test_live_an_issuers_contact_reads_its_inputs_and_no_earlier_round(project):
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_an_executor_reads_its_findings_probes_and_cannot_rewrite_them(project):
-    node = project.parent / ".gfso-nodes-ws/p/a"
+    node = project.own / "a"
     made(project, "a")
     lay(project, {".gfso-scratch-a/a_1/probe.sh": "echo probed\n"})
     probe =("bash /gfso-place/.gfso-nodes-ws/p/.gfso-scratch-a/a_1/probe.sh; "
@@ -290,14 +288,13 @@ def test_live_an_executor_reads_its_findings_probes_and_cannot_rewrite_them(proj
 def test_each_node_holds_its_own_temp_and_its_validations_share_it(project):
     """What the system lays for a node's sessions — inputs, long lists — stands where only that node's sessions reach
     (critic 3 over the session slice: the temp every session held carried every node's, read and written)."""
-    work = project.parent
-    a, b = project.session(str(work / ".gfso-nodes-ws/p/a")), project.session(str(work / ".gfso-nodes-ws/p/b"))
-    assert a.temp_root() != b.temp_root() and Path(a.temp_root()).parent == work / ".gfso-nodes-ws/p/.gfso-tmp"
-    assert not any(Path(b.temp_root()).is_relative_to(src) or src == work / ".gfso-nodes-ws/p/.gfso-tmp" for src, _ in a._mounts())
-    round_of_a = project.session(str(work / ".gfso-nodes-ws/p/.gfso-scratch-a/a_1/run/delivery"))
+    a, b = project.session(str(project.own / "a")), project.session(str(project.own / "b"))
+    assert a.temp_root() != b.temp_root() and Path(a.temp_root()).parent == project.own / ".gfso-tmp"
+    assert not any(Path(b.temp_root()).is_relative_to(src) or src == project.own / ".gfso-tmp" for src, _ in a._mounts())
+    round_of_a = project.session(str(project.own / ".gfso-scratch-a/a_1/run/delivery"))
     # …and its judges hold one of their own: a delivered link into the node's temp read what its executor wrote there
     # after DELIVER (critic over the judged tree)
-    assert a.temp_root() == project.temp_of(str(work / ".gfso-nodes-ws/p/a")) != round_of_a.temp_root()
+    assert a.temp_root() == project.temp_of(str(project.own / "a")) != round_of_a.temp_root()
     assert not any(Path(a.temp_root()) == src for src, _ in round_of_a._mounts())
 
 
@@ -310,16 +307,15 @@ def test_what_the_system_lays_for_a_session_goes_to_its_nodes_temp():
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_a_node_reads_its_own_temp_and_not_its_neighbours(project):
-    work = project.parent
-    a, b = project.session(str(work / ".gfso-nodes-ws/p/a")), project.session(str(work / ".gfso-nodes-ws/p/b"))
+    a, b = project.session(str(project.own / "a")), project.session(str(project.own / "b"))
     made(project, "a", "b")
     project.files.write_bytes(str(Path(a.temp_root()) / "mine.md"), b"a-list\n")
     project.files.write_bytes(str(Path(b.temp_root()) / "theirs.md"), b"b-list\n")
     probe =(f"cat {a.to_inside(str(Path(a.temp_root()) / 'mine.md'))}; "
              f"cat {a.to_inside(str(Path(b.temp_root()) / 'theirs.md'))} 2>/dev/null && echo SAW-B; "
-             f"ls {a.to_inside(str(work / '.gfso-nodes-ws/p/.gfso-tmp'))} 2>/dev/null | grep -c node- ; true")
+             f"ls {a.to_inside(str(project.own / '.gfso-tmp'))} 2>/dev/null | grep -c node- ; true")
     try:
-        got = a.run(["bash", "-c", probe], cwd=str(work / ".gfso-nodes-ws/p/a"), timeout=120).stdout.split()
+        got = a.run(["bash", "-c", probe], cwd=str(project.own / "a"), timeout=120).stdout.split()
         assert got[:1] == ["a-list"] and "SAW-B" not in got, got
         assert got[1:] in ([], ["0"], ["1"]), f"the temp's other nodes are listed: {got}"
     finally:
@@ -330,7 +326,7 @@ def test_live_a_node_reads_its_own_temp_and_not_its_neighbours(project):
 def test_the_temp_laid_for_a_node_is_the_one_its_session_holds_now(project, monkeypatch):
     """A parent's consent runs before its executor made its place, in the roster's workdir: what is laid for it goes
     to the temp that session holds, and once the place stands, to the place's (critic over the node temps)."""
-    place = project.parent / ".gfso-nodes-ws/p/a"
+    place = project.own / "a"
     task = SimpleNamespace(id="a", assignee="exec")
     monkeypatch.setattr(WS, "execution_of", lambda engine, agents=None: project)
     monkeypatch.setattr(WS, "performer", lambda engine, agents, who: (who, {"workdir": str(project.base)}))
@@ -348,7 +344,7 @@ def test_the_rounds_rotation_leaves_a_running_contact_alone(project):
     """A contact runs among the node's validation rounds; the rotation that keeps the newest twenty must not take it
     from under its session (critic over the S4 seam)."""
 
-    with _contact_place(str(project.parent / ".gfso-nodes-ws/p/a"), project) as d:
+    with _contact_place(str(project.own / "a"), project) as d:
         assert Path(d).name.startswith(CONTACT_ROUND)
     rotation = (Path(__file__).resolve().parents[1] / "gfso/tools_llm.py").read_text(encoding="utf-8")
     assert "if not d.startswith(_CONTACT)" in rotation
@@ -358,8 +354,7 @@ def test_a_sessions_cli_state_is_its_places_and_the_system_finds_it(project):
     """Each place keeps its CLI's state — conversations, the system's notes on them, the CLI's memory — under its
     project's, in its volume, named by its place: a session reaches its own alone, the system every one (critic over
     the session slice: the state was the project's, read and written by every session)."""
-    work = project.parent
-    a, b = project.session(str(work / ".gfso-nodes-ws/p/a")), project.session(str(work / ".gfso-nodes-ws/p/b"))
+    a, b = project.session(str(project.own / "a")), project.session(str(project.own / "b"))
     assert a.state_dir() == project.state / "+a" and b.state_dir() == project.state / "+b"
     assert project.session(str(project.base)).state_dir() == project.state / "+"
     v = project.volume.state
@@ -369,17 +364,16 @@ def test_a_sessions_cli_state_is_its_places_and_the_system_finds_it(project):
     assert not [m for m in a.run_args() if v in m], "the place's own container, where the system runs, mounts none"
     assert not [m for m in project.run_args() if v in m], "the project's container mounts no CLI state"
     llm = H.ClaudeCodeProvider(execution=project)
-    llm.hooks.place("sid-a", str(work / ".gfso-nodes-ws/p/a"))
+    llm.hooks.place("sid-a", str(project.own / "a"))
     assert H.kept(llm.hooks.where("sid-a"), "sid-a", "hook").is_relative_to(a.state_dir())
     assert E._served(project.state / "+a", project) == a.rw and E._served(project.state / "+", project) == project.base
 
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_the_system_reads_and_forgets_a_conversation_where_its_session_keeps_it(project):
-    work = project.parent
     made(project, "a", "b")
     llm = H.ClaudeCodeProvider(execution=project)
-    llm.hooks.place("sid-a", str(work / ".gfso-nodes-ws/p/a"))
+    llm.hooks.place("sid-a", str(project.own / "a"))
     try:
         llm.hooks.arm("sid-a", {"budget": 7})
         assert llm.hooks.state("sid-a") == {"budget": 7} and not llm._transcripts("sid-a")
@@ -407,13 +401,12 @@ def test_on_this_host_forgetting_walks_two_levels_never_the_whole_cli_home(tmp_p
 
 @pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 def test_live_a_session_holds_its_places_cli_state_alone(project):
-    work = project.parent
-    a, b = project.session(str(work / ".gfso-nodes-ws/p/a")), project.session(str(work / ".gfso-nodes-ws/p/b"))
+    a, b = project.session(str(project.own / "a")), project.session(str(project.own / "b"))
     made(project, "a", "b")
     lay(project, {".gfso-state/+b/theirs.jsonl": "b's conversation"})
     try:
         got = a.client().run(["bash", "-c", "cat /home/agent/.claude/theirs.jsonl 2>/dev/null && echo SAW-B; "
-                                   "touch /home/agent/.claude/mine && echo OWN"], cwd=str(work / ".gfso-nodes-ws/p/a"),
+                                   "touch /home/agent/.claude/mine && echo OWN"], cwd=str(project.own / "a"),
                     timeout=120).stdout.split()
         assert got == ["OWN"] and project.files.exists(str(a.state / "mine")), got
         seen = project.run(["bash", "-c", "ls /home/agent/.claude/places 2>/dev/null && echo SAW-PLACES; true"],
@@ -442,7 +435,6 @@ def test_live_a_gone_directorys_cli_state_goes_with_its_container(project):
 def test_live_a_check_the_system_runs_over_a_delivery_reaches_its_copy_alone(project):
     """The system's checks run what the agents wrote — the plan's probes, the delivery's scripts: in the project's
     container they would reach every node's place (critic over SECURITY.md); they run in the copy's own."""
-    work = project.parent
     lay(project, {"b/theirs.txt": "b's work\n"})
     made(project, "a")
     try:
@@ -451,7 +443,7 @@ def test_live_a_check_the_system_runs_over_a_delivery_reaches_its_copy_alone(pro
             got = _run(project, "bash", "echo ok > mine.txt && echo WROTE-OWN; "
                                         "cat /gfso-place/.gfso-nodes-ws/p/b/theirs.txt 2>/dev/null && echo SAW-B; "
                                         "touch /gfso-place/.gfso-nodes-ws/p/b/x 2>/dev/null && echo WROTE-B; true",
-                       str(Path(d) / "place"), 120, str(work / ".gfso-nodes-ws/p/a"))
+                       str(Path(d) / "place"), 120, str(project.own / "a"))
             assert "WROTE-OWN" in str(got) and "SAW-B" not in str(got) and "WROTE-B" not in str(got), got
     finally:
         project.stop()

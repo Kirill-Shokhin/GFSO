@@ -1,6 +1,6 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc, tally} from './dom.js';
-import {S, taskOf, myRole, nowOf, stateWord} from './state.js';
+import {S, taskOf, whoOwes, mineNames, keep, nowOf, stateWord, handAsks, hasKids, goTo, goUp} from './state.js';
 import {bucketOf, contested, cancelled, nameOf, criteriaOf, delivered, closedByFail} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip, TOUCH} from './tip.js';
@@ -9,7 +9,8 @@ import {failingNow, failedOf} from './run.js';
 import {card, TIP, waitWords, failedWords} from './hints.js';
 import {css, beat} from './draw.js';
 import {childrenOf, ancestorsIn} from './tree.js';
-import {planChanged, decide, decidedBefore, foldInto, isHidden, unfold, refold, refoldOne, openHere, foldOf, asking} from './fold.js';
+import {planChanged, decide, decidedBefore, foldInto, isHidden, foldOf, asking, viewed} from './fold.js';
+import {FOCUS} from './api.js';
 
 // Leaf tokens are hex literals (draw.js css).
 const [INK, SOFT, FAINT, PAPER, BG, ACC, TOMB, TOMB_LINE] = ['--ink', '--ink-soft', '--ink-faint', '--paper', '--bg', '--acc', '--ui-tomb', '--ui-tomb-line'].map(css);
@@ -28,9 +29,9 @@ const NODE_STYLE = {
 const styleOf = s => NODE_STYLE[bucketOf(s)];
 // The drawing carries what the record carries (§15.7): contradicted → the accent, ringed (owed an
 // answer); asserted by hand → dotted in paper (closed, on somebody's word).
-const closureStyle = (st, cl) => !cl ? st
+const closureStyle = (st, cl, n) => !cl ? st
     : contested(cl) ? {...st, bw: 3, bc: ACC, bs: 'solid', bo: 1}
-    : cl.by_hand    ? {...st, bw: 2, bc: PAPER, bs: 'dotted', bo: 1}
+    : cl.by_hand && handAsks(n) ? {...st, bw: 2, bc: PAPER, bs: 'dotted', bo: 1}
     : st;
 
 // A NAME CUT MID-WORD IS A NAME YOU HAVE TO GUESS AT: cut at the last word that fits and say so.
@@ -64,7 +65,8 @@ function home() {
     fitCapped();
     if (cy.zoom() >= FLOOR) return;
     const asks = askingOf(cy.nodes());
-    atFloor(asks.length ? asks : cy.nodes().filter(n => !taskOf(n.id()).parent_id));
+    // …the view's own top in a view of one part, whose nodes all have parents (critic 4)
+    atFloor(asks.length ? asks : FOCUS && cy.getElementById(FOCUS).length ? cy.getElementById(FOCUS) : cy.nodes().filter(n => !taskOf(n.id()).parent_id));
     // …and no side stands blank while the plan runs off the other (the goal centred: half a canvas empty above a plan cut
     // below); never further than the plan's own edge, so what was centred stays in sight
     const b = cy.elements().renderedBoundingBox(BODY), m = 24;
@@ -101,11 +103,15 @@ export async function initGraph() {
             {selector: `node.focus[bg = "${BG}"]`, style: {'background-color': PAPER, 'background-opacity': 1, 'color': 'data(fg)'}},
             // no grey press overlay: the selection border is the one mark a tap leaves
             {selector: 'node:active', style: {'overlay-opacity': 0}},
+            // …nor on an arrow: a finger panning across the graph lit every arrow it crossed (the author's phone, 2026-11-17)
+            {selector: 'edge:active', style: {'overlay-opacity': 0}},
             {selector: 'core', style: {'active-bg-opacity': 0}},
             // ABANDONED tombstone: kept for provenance but visibly NOT an active node.
             {selector: 'node.cancelled', style: {'opacity': 0.4, 'background-color': TOMB, 'border-color': TOMB_LINE,
                                                   'border-style': 'dashed', 'text-opacity': 0.6}},
             {selector: 'node.dimmed', style: {'opacity': 0.22}},
+            // a node outside a view of one part, drawn only for the Dep edge that crosses into it
+            {selector: 'node.outside', style: {'opacity': 0.5, 'border-style': 'dashed'}},
             {selector: 'edge.dimmed', style: {'opacity': 0.15}},
             {selector: 'edge[type="dependency"].fromCancelled', style: {'opacity': 0.2, 'line-style': 'dotted'}},
         ],
@@ -131,6 +137,11 @@ export async function initGraph() {
     // a node is clicked to select it: the pointer says so, as on every row the deck lets one pick a node by
     cy.on('mouseover', 'node', evt => { own = true; point('hover', evt.target.id()); $('cy').style.cursor = 'pointer'; });
     cy.on('mouseout', 'node', () => { own = false; point('hover', null); untip(); $('cy').style.cursor = ''; });
+    const edgeTip = evt => { const d = evt.target.data(); tip(TIP.edge(d.type, nameOf(taskOf(d.source)), nameOf(taskOf(d.target)), d.inner), evt.originalEvent); };
+    cy.on('mouseover mousemove', 'edge', edgeTip);
+    cy.on('mouseout', 'edge', () => untip());
+    // …a finger's tap on a fold's tag passes to the canvas (an arrow under it said its meaning over the move): not an arrow's
+    cy.on('tap', 'edge', evt => TOUCH.matches && !pressed?.id && edgeTip(evt));
     cy.on('mouseover mousemove', 'node', evt => {
         const t = taskOf(evt.target.id());
         if (t.id) tip(nodeTip(t), evt.originalEvent);
@@ -140,16 +151,19 @@ export async function initGraph() {
         cy.nodes().removeClass('focus');
         if (st.hover && !own) cy.getElementById(st.hover).addClass('focus');
         cy.nodes(':selected').filter(n => n.id() !== st.select).unselect();
-        // a node chosen in another view, folded here, unfolds the path to it
-        if ((key === 'select' || key === 'bring') && st.select && isHidden(st.select)) { unfold(ancestorsIn(S.tasks)(st.select));
-            redraw().then(() => { fresh = false; inSight(cy.getElementById(st.select)); }); return; }
+        // a node chosen in another view, folded here, is gone to: the part it stands in is opened, and it is chosen there
+        // …a node chosen elsewhere opens its panel and moves no view: In work moved the page into the node's part while the
+        // graph's own tap did not — two logics (the author, 2026-11-17). Its part is gone to on a second press (`bring`) or
+        // the panel's «Show it on the graph»
+        if (key === 'bring' && st.select && isHidden(st.select)) { goTo(taskOf(st.select).parent_id); return; }
         if (st.select) cy.getElementById(st.select).select();
         if ((key === 'select' || key === 'bring') && st.select) { fresh = false; inSight(cy.getElementById(st.select)); }
     });
     // the marks ride the canvas: moved in the very frame it draws, redrawn only when what they say changes (the author, 11-04: a tag redrawn a frame
     // behind on every render «пересовывается рывками»). A render with the view unchanged is news about the nodes.
     let seen = '';
-    cy.on('render', () => { const v = `${cy.zoom()}|${cy.pan().x}|${cy.pan().y}`, moved = v !== seen; seen = v; moved ? ride() : placeBadges(); });
+    // …and none placed while a drawing is under way: its nodes stand at the origin until the layout has run
+    cy.on('render', () => { const v = `${cy.zoom()}|${cy.pan().x}|${cy.pan().y}`, moved = v !== seen; seen = v; moved ? ride() : drawing || placeBadges(); });
     // The canvas changes size when the panel opens or the deck folds or is dragged. The VIEW IS THE READER'S: the
     // canvas is told its new size and the graph stays where it was — a fit here made the graph jump each time a
     // click opened or closed the panel (author, 2026-10-25: «нажатие на некоторые ноды тригерит новую центровку»).
@@ -160,6 +174,18 @@ export async function initGraph() {
     // down, and a resize then left the press stuck — the next move dragged the whole graph (author, 2026-10-24)
     let held = false, want = null;
     cy.on('tapstart', () => { held = true; });
+    // A DRAG BEGUN ON A NODE PANS, as one begun on the background does: nodes are not moved here (autoungrabify), and the
+    // library left such a drag doing nothing — on a phone a graph is mostly nodes (the author, 2026-11-17: «если от ноды
+    // просто не двигается»). A press without a drag stays a tap.
+    // …and a drag is no press: the graph follows the finger, so the node stays under it and the library took the release
+    // for a tap and opened the node (the author, 2026-11-17: «по отпускании все равно она будет открыта»). Past a few
+    // pixels from where it began, the gesture selects nothing.
+    let from = null, start = null, dragging = false;
+    cy.on('tapstart', 'node', e => { from = {...e.renderedPosition}; start = {...from}; dragging = false; });
+    cy.on('tapdrag', e => { if (!from || fingers > 1) return; const p = e.renderedPosition;
+        if (!dragging && Math.hypot(p.x - start.x, p.y - start.y) > 8) { dragging = true; cy.autounselectify(true); untip(); }
+        cy.panBy({x: p.x - from.x, y: p.y - from.y}); from = {...p}; });
+    cy.on('tapend', () => { from = null; if (dragging) { dragging = false; setTimeout(() => cy.autounselectify(false)); } });
     // the reader's first press or wheel ANYWHERE ends the untouched view; a `?task=` link presses nothing
     addEventListener('pointerdown', () => { fresh = false; }, true);
     addEventListener('wheel', () => { fresh = false; }, true);
@@ -167,42 +193,66 @@ export async function initGraph() {
     // a double-click's own first click opens or closes the panel, and the frame is redone for the canvas it leaves
     const reseat = () => held ? (frame = setTimeout(reseat, 120))
         : (cy.resize(), want ? framed() : fresh ? home() : inSight(cy.nodes(':selected')));
-    new ResizeObserver(() => { clearTimeout(frame); frame = setTimeout(reseat, 120); }).observe($('cy'));
+    // WHILE THE DECK IS DRAGGED the canvas already spans what the deck can uncover and the deck slides over it (deck.js): one
+    // resize at the drag's start, none under it, the view kept — a canvas resized after the drag left the uncovered strip
+    // blank for a while (the author, 2026-11-17: «с задержкой в секунду перерисовывается то что под ней было»), resized on
+    // every step it rippled
+    new ResizeObserver(() => { clearTimeout(frame);
+        // …drawn in the same frame: a resize clears the canvas and the library redraws a frame later — the graph blinked (critic);
+        // forceRender only asks for that later frame, the renderer's own render draws now (cytoscape pinned at 3.28.1)
+        if (document.body.classList.contains('deck-drag')) { cy.resize(); cy.renderer().render(); } else frame = setTimeout(reseat, 120); }).observe($('cy'));
     // a double-click's own first click opens or closes the panel: the frame waits for that resize and is drawn ONCE —
     // drawn at once and again after it, a node was zoomed twice (author, 2026-10-25)
     let wantT;
-    const framed = () => { clearTimeout(wantT); if (want) { const z = cy.zoom(), p = {...cy.pan()}; fitCapped(want, 40);
+    // …set at once, not animated: the library's animated frames are heavier than a hand's pan and stuttered beside it (the
+    // author, 2026-11-17: «автоматический перенос как то по другому работает и кривее ручного»)
+    const framed = () => { clearTimeout(wantT); if (want) { fitCapped(want, 40);
         // short of room, the opened subtree is centred at the floor (the author, 11-04: «не центруется открытое поддерево»)
-        if (cy.zoom() < FLOOR) { cy.zoom(FLOOR); cy.center(want); }
-        const to = {zoom: cy.zoom(), pan: {...cy.pan()}}; cy.viewport({zoom: z, pan: p}); cy.animate({...to, duration: 200}); } want = null; };
-    const framing = eles => { want = eles; clearTimeout(wantT); wantT = setTimeout(framed, 450); };
-    // a double-click on a node frames what is drawn of it; seeing a node is not unfolding it (the author, 11-04)
-    const opening = id => framing(subtree(cy.getElementById(id)));
-    // ONLY THE TAG folds and unfolds, and its press opens no panel: under a finger the same tap also reached the node beneath
-    const toggled = async id => { const opens = foldOf(id).n > 0; if (opens) unfold([id]); else refoldOne(id); await redraw(); fresh = false;
-        if (opens) framing(subtree(cy.getElementById(id))); else cy.animate({center: {eles: cy.getElementById(id)}, duration: 200}); };
+        if (cy.zoom() < FLOOR) { cy.zoom(FLOOR); cy.center(want); } } want = null; };
+    // …and waiting for the panel's resize only where a first click opens a panel — a mouse; a finger's double tap frames at once
+    const framing = eles => { want = eles; clearTimeout(wantT); wantT = setTimeout(framed, TOUCH.matches ? 0 : 450); };
+    // A DOUBLE-CLICK GOES DOWN into a node that has parts, and up from the part's own top; a leaf is framed. The graph is read
+    // by going down and up, never unfolded in place: an unfolding re-laid every node and kept every edge as noise (the author,
+    // 11-15: «при разворачивании помимо того что остается шум так еще и ноды все перестраиваются по расположению»)
+    // …a move lets go of the node its first click chose: a panel stood open on the new top, or on the part left behind (critic)
+    // …after the canvas has finished its own double-click: a drawing removed under it threw inside cytoscape, and its second
+    // tap chose the node again
+    const moving = go => setTimeout(() => { point('select', null); go(); });
+    // …with a mouse: under a finger the first tap opens the node's panel over the screen, so a double-tap would have to beat
+    // the panel to move (the author, 11-15: «надо обходить другую функцию скоростью»); a finger goes down by the fold's tag
+    // or the panel's own «From this part down»
+    const opening = id => TOUCH.matches ? framing(subtree(cy.getElementById(id))) : id === FOCUS ? moving(goUp) : hasKids(id) && taskOf(id).parent_id ? moving(() => goTo(id)) : framing(subtree(cy.getElementById(id)));
+    // THE TAG GOES DOWN, and its press opens no panel: under a finger the same tap also reached the node beneath
+    const goDown = goTo;
     // the press's hold on selection ends with it, however it ends; a second finger makes it a pinch, no press (critic: a stuck hold left no node selectable)
     let fingers = 0;
-    const release = () => { cy.autounselectify(false); pressed = null; const s = focus().select; if (s) cy.getElementById(s).select(); };
+    const release = () => { cy.autounselectify(false); pressed?.el?.classList.remove('pressing'); pressed = null; const s = focus().select; if (s) cy.getElementById(s).select(); };
     addEventListener('pointerdown', () => { if (++fingers > 1 && pressed?.id) release(); }, true);
+    // …a press that turns into a pan is no press on the tag: its dark goes as the finger leaves (the author, 2026-11-17:
+    // «партс подсвечивается при любом касании хотя и не срабатывает»)
+    addEventListener('pointermove', e => { if (pressed?.el && Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) >= 8) pressed.el.classList.remove('pressing'); }, true);
     const ended = e => { fingers = Math.max(0, fingers - 1); const p = pressed; if (!p?.id) return;
-        if (e.type === 'pointerup' && !p.held && Math.hypot(e.clientX - p.x, e.clientY - p.y) < 8) toggled(p.id);
+        if (e.type === 'pointerup' && !p.held && Math.hypot(e.clientX - p.x, e.clientY - p.y) < 8) goDown(p.id);
         setTimeout(release, 400); };
     addEventListener('pointerup', ended, true); addEventListener('pointercancel', ended, true);
     cy.on('dbltap', 'node', evt => opening(evt.target.id()));
     // a press and release in place on the tag: a pan begun on it moves the graph and unfolds nothing (critic 7). Found by where
     // it stands, not by the event's target: under a finger the tag lets every gesture through to the canvas (gfso.css), or a
     // tag across a phone's width could not be panned from (critic 8)
-    const tagAt = e => [...$('cy').querySelectorAll('.cy-fold')].find(t => { const r = t.getBoundingClientRect();
-        return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; });
+    // …and under a finger with room around it: a tag a few pixels tall had to be aimed at (the author, 2026-11-17: «в неё
+    // ещё попасть надо»)
+    // …never above it, where its node stands: a margin there took a tap on a node zoomed out for a press on its tag (critic)
+    const at = sel => e => { const m = TOUCH.matches ? 12 : 0; return [...$('cy').querySelectorAll(sel)].find(t => { const r = t.getBoundingClientRect();
+        return e.clientX >= r.left - m && e.clientX <= r.right + m && e.clientY >= r.top && e.clientY <= r.bottom + m; }); };
+    const tagAt = at('.cy-fold');
     // …a finger's long press reads its tip the same way: the tag lets it through to the canvas too
     $('cy').addEventListener('contextmenu', e => { const t = TOUCH.matches && tagAt(e);
         if (t?.dataset.tip) { e.preventDefault(); if (pressed) pressed.held = true; const [head, ...rows] = t.dataset.tip.split('\n'); tip(card(head, rows), e); } });
-    $('cy').addEventListener('pointerdown', e => { if (fingers > 1) return; pressed = {x: e.clientX, y: e.clientY, id: tagAt(e)?.dataset.node};
-        if (pressed.id) cy.autounselectify(true); }, true);
+    // …and the tag answers the press at once, before the view changes: it «не реагирует никак» (the author)
+    $('cy').addEventListener('pointerdown', e => { if (fingers > 1) return; const t = tagAt(e); pressed = {x: e.clientX, y: e.clientY, id: t?.dataset.node, el: t};
+        if (pressed.id) { cy.autounselectify(true); t.classList.add('pressing'); } }, true);
     // …the background's: the plan as first drawn, its parts folded again
     cy.on('dbltap', async evt => { if (evt.target !== cy) return;
-        if (refold()) await redraw();
         framing(cy.elements()); });
     // A node under the strip the panel opens over: the first click opens the panel there and the second lands on it,
     // so the canvas never saw a double-click — and the click could press a button of the panel (critics 7, 9). A press
@@ -212,13 +262,16 @@ export async function initGraph() {
     // background, which unselected the node and framed the whole graph.
     let last = null, swallow = false;
     const moved = () => { const p = last.n.renderedPosition(); return Math.hypot(p.x - last.p.x, p.y - last.p.y) > 4; };
-    cy.on('tap', 'node', evt => { const o = evt.originalEvent, p = evt.target.renderedPosition();
+    // …a finger's tap is a TouchEvent: its point is its changed touch
+    cy.on('tap', 'node', evt => { const o = evt.originalEvent?.changedTouches?.[0] ?? evt.originalEvent, p = evt.target.renderedPosition();
         last = o && {n: evt.target, x: o.clientX, y: o.clientY, t: Date.now(), p: {x: p.x, y: p.y}}; });
     addEventListener('pointerdown', e => {
         const hit = last && Date.now() - last.t < DBL && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 8
             && (e.target.closest?.('#sidebar') || (e.target.closest?.('#cy') && moved()));
         if (!hit) return;
-        e.preventDefault(); e.stopPropagation(); opening(last.n.id()); last = null;
+        // …a finger's: swallowed only — a double-tap is no gesture under a finger, and its second tap pressed what the panel
+        // just opened had under it (critic)
+        e.preventDefault(); e.stopPropagation(); if (!TOUCH.matches) opening(last.n.id()); last = null;
         swallow = true; setTimeout(() => { swallow = false; }, DBL);   // its own click only, never a later one
     }, true);
     addEventListener('click', e => { if (swallow) { swallow = false; e.preventDefault(); e.stopPropagation(); } }, true);
@@ -256,7 +309,7 @@ const READABLE = 8;
 function nodeTip(t) {
     // what it waits on: its producers one a row — names carry commas, so joined by commas they could not be counted (D4)
     const rs = S.run?.rounds[t.id] || [], w = S.run?.waits[t.id], last = rs.at(-1);
-    const words = w?.deps.length ? w.deps.map(d => nameOf(taskOf(d)) || d) : w && waitWords(w, d => d);
+    const words = w?.deps.length ? w.deps.map(d => nameOf(taskOf(d)) || d) : w && waitWords(w, d => d, whoOwes(t, w.owes));
     const shown = readableLabel(nameOf(t)) === nameOf(t) && cy.zoom() * 11 >= READABLE;
     return TIP.node(t, !shown && nameOf(t), `<span class="tt-status state-badge b-${bucketOf(t.state)}">${stateWord(t)}</span>`,
         words !== '—' && words, rs, criteriaOf(t).length,
@@ -277,15 +330,18 @@ function placeBadges() {
     // at work by the run's one rule; the pulse in the accent when this server has a process on it
     // (the graph may draw before the run is read: the same rule over the registry then)
     const now = nowOf(), work = now.work;
+    // a narrow tag keeps its word in a smaller type: a bare «404» on the largest node read as an error's code (critic)
+    const count = (w, n, word) => { const need = 22 + 6 * String(n).length + 6 * word.length;
+        return tally(n, word, w < need ? ` style="font-size:${Math.max(7, 10 * w / need).toFixed(1)}px"` : ''); };
     const html = cy.nodes().map(n => {
         // the count wears the accent only while the node is failing now: a history of FAILs behind a PASS asks for nothing
         const id = n.id(), rs = S.run?.rounds[id] || [], failing = failingNow(rs, n.data('state') ?? taskOf(id).state);
-        const b = n.boundingBox(BODY), f = foldOf(id), hang = `left:${b.x1 + TAG_IN}px;top:${b.y2 - 1}px;width:${b.x2 - b.x1 - 2 * TAG_IN}px`;
+        const b = n.boundingBox(BODY), f = foldOf(id), w = b.x2 - b.x1 - 2 * TAG_IN, hang = `left:${b.x1 + TAG_IN}px;top:${b.y2 - 1}px;width:${w}px`;
         // the folded parts hang under the node: their count, and those failing now in the accent
         // …each a count as every count on the page (`tally`: the figure at its line's size — critic 5); a click on it unfolds
-        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="${hang}"${TIP.fold([f.work.length && `${f.work.length} at work`, f.decide.length && `${f.decide.length} waiting on a decision`, f.shut.length && `${f.shut.length} closed by FAIL`,
-                f.byHand.length && `${f.byHand.length} closed by hand`, f.contested.length && `${f.contested.length} contested`, f.failing.length && `${f.failing.length} sent back`])}>${tally(f.n, f.n > 1 ? 'parts' : 'part')}`
-            + (f.work.length ? `<i class="cy-live${f.work.some(x => now.on(x)) ? ' on' : ''}"${beat()}></i>` : '') + '</div>' : openHere(id) ? `<div class="cy-fold open" data-node="${esc(id)}" style="${hang}"${TIP.foldBack}>${tally(openHere(id), 'parts')}</div>` : '';
+        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="${hang}"${TIP.fold([f.held.length && `${f.held.length} in work`, f.work.length && `${f.work.length} acted on now`, f.decide.length && `${f.decide.length} waiting on a decision`, f.shut.length && `${f.shut.length} closed by FAIL`,
+                f.contested.length && `${f.contested.length} contested`, f.failing.length && `${f.failing.length} sent back`])}>${count(w, f.n, f.n > 1 ? 'parts' : 'part')}`
+            + (f.work.length ? `<i class="cy-live${f.work.some(now.lit) ? ' on' : ''}"${beat()}></i>` : '') + '</div>' : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
         const shut = closedByFail(taskOf(id));
@@ -293,13 +349,13 @@ function placeBadges() {
         if (!work.has(id) && rs.length < 2 && !failing) return cross + tag;
         return cross + `<div class="cy-badge" style="left:${b.x2}px;top:${b.y1}px">`
             // the pulse keeps the page's one clock: a badge redrawn on every render restarted it mid-beat
-            + (work.has(id) ? `<i class="cy-live${now.on(id) ? ' on' : ''}"${beat()}></i>` : '')
+            + (work.has(id) ? `<i class="cy-live${now.lit(id) ? ' on' : ''}"${beat()}></i>` : '')
             + (rs.length > 1 || failing ? `<span${failing ? ' class="cy-fails"' : ''}>${rs.length}</span>` : '') + '</div>' + tag;
     }).join('');
     if (html !== shown) plane.innerHTML = shown = html;
     ride();
 }
-let shown = '';
+let shown = '', drawing = false;
 // the run is read after the first drawing: an untouched view is framed again on what asks now
 export const annotate = () => { if (cy?.nodes().length && fresh) home(); placeBadges(); };
 // The canvas height the drawn graph needs for its labels to read (zoom ≈ 0.8), framing included.
@@ -311,8 +367,8 @@ function place(g) {
     cy.elements().remove();
     const tomb = new Set(g.nodes.filter(cancelled).map(n => n.id));
     for (const n of g.nodes.filter(n => rep[n.id] === n.id))
-        cy.add({data: {id: n.id, label: readableLabel(nameOf(n)), state: n.state, ...closureStyle(styleOf(n.state), n.closure)},
-                classes: tomb.has(n.id) ? 'cancelled' : undefined});
+        cy.add({data: {id: n.id, label: readableLabel(nameOf(n)), state: n.state, ...closureStyle(styleOf(n.state), n.closure, n)},
+                classes: [tomb.has(n.id) && 'cancelled', n.outside && 'outside'].filter(Boolean).join(' ') || undefined});
     // ONE BAD EDGE MUST NOT COST THE WHOLE PICTURE: a dangling edge threw before the layout ran and
     // left fifteen nodes stacked at the origin (2026-09-06). Draw what can be drawn, SAY what cannot.
     // an edge into a folded part is drawn to the node it is folded into — once, and never inside one fold
@@ -322,23 +378,45 @@ function place(g) {
         const source = rep[e.source], target = rep[e.target], k = `${source}>${target}>${e.type}`;
         if (source === target || seen.has(k)) continue;
         seen.add(k);
-        cy.add({data: {source, target, type: e.type}, classes: tomb.has(e.source) ? 'fromCancelled' : undefined});
+        // an arrow is not chosen by a click — a lit arrow said nothing (the author, 11-15: «функционально не дает ничего, только
+        // шум»); its hover says what it means instead
+        cy.add({data: {source, target, type: e.type, inner: source !== e.source || target !== e.target}, selectable: false,
+                classes: tomb.has(e.source) ? 'fromCancelled' : undefined});
     }
     return undrawable;
 }
 const laid = animate => new Promise(done => { const lay = cy.layout({...LAYOUT, animate, animationDuration: 200});
     lay.one('layoutstop', done); lay.run(); });
 
+// THE PATH OVER A VIEW OF ONE PART: where it stands in the whole, each step a way up — the context a cut would lose
+let pathEl;
+function drawPath() {
+    const t = FOCUS && taskOf(FOCUS);
+    pathEl ??= $('cy').parentElement.insertBefore(Object.assign(document.createElement('nav'), {className: 'cy-path'}), $('cy'));
+    pathEl.hidden = !t?.id;
+    if (!t?.id) return;
+    const up = ancestorsIn(S.tasks)(t.id).reverse().slice(1);   // the goal is the whole graph: named once, first
+    pathEl.innerHTML = `<button data-focus=""${TIP.pathWhole}>The whole graph</button>`
+        + up.map(id => `<span>›</span><button data-focus="${esc(id)}">${esc(nameOf(taskOf(id)) || id)}</button>`).join('')
+        + `<span>›</span><b>${esc(nameOf(t) || t.id)}</b>`;
+    pathEl.onclick = e => { const b = e.target.closest('[data-focus]'); if (b) goTo(b.dataset.focus, true); };   // the path goes up
+}
+
 // The graph as last read (model.js loadGraph); `found` false: the project does not exist (yet), and nothing is drawn.
 const redraw = () => drawGraph(true);
-export async function drawGraph(found) {
+// `anew`: a move to another part — its drawing is framed as a first one
+export async function drawGraph(found, anew = false) {
         if (!found) {
             // a project not on disk yet: nothing of a run to show nor a move to sign, only the wait for it (a goal stated here)
             document.body.classList.add('project-missing');
             cy.elements().remove();
             return;
         }
-        const g = S.graph;
+        const g = viewed(S.graph);
+        drawing = true;
+        // a move to another part: the last part's marks go with it, not left over the new drawing while it is laid (critic)
+        if (anew && plane) plane.innerHTML = shown = '';
+        drawPath();
         // a project with a mode is moved by agents and the system; the person's own moves, and the name they sign
         // them with, belong to a project without one, where a node is held by whoever it names (author, 2026-10-26)
         document.body.classList.toggle('manual', !g.mode?.mode);
@@ -357,34 +435,42 @@ export async function drawGraph(found) {
         // the same nodes drawn again keep the view; so does a plan that changed under a view the reader has touched (the view
         // is theirs: a push moved it, critic 7); an untouched one, or another project, is framed anew
         const key = cy.nodes().map(n => n.id()).sort().join('|');
-        const kept = sameProject && (key === drawn || !fresh);
+        const kept = !anew && sameProject && (key === drawn || !fresh);
         drawn = key; drawnIn = S.project;
         if (cy.nodes().length) {
             // framed once the layout knows where things are — and the read resolves only then, so a caller
             // measuring the drawing measures the finished one
-            await laid(!kept);
+            // …a move to another part is drawn in place, never flown in from the last part's positions: a part flew in from the
+            // side, another opened centred (the author, 2026-11-17: «то прилетает сбоку граф то сразу по центру»)
+            await laid(!kept && !anew);
             if (kept) cy.viewport(view); else { home(); fresh = true; }
         }
         // a redraw removes and re-adds every node, and the chosen one lost its border while its panel stayed open
         if (focus().select) cy.getElementById(focus().select).select();
+        // the marks placed once the layout has put the nodes: a render during the drawing placed them at the origin, the
+        // framing after it only moved their plane, and the tags hung at the canvas's side until a click or the deck redrew
+        // them (the author, 11-15: «пару кнопок parts висит оторвано сбоку … только после прогрузки встает на свое место»)
+        drawing = false; placeBadges();
         applyMineDim();
         const one = undrawable[0];
         banner('undrawable', one && `${undrawable.length} edge(s) not drawn — they name a node this graph does not `
             + `contain (e.g. ${one.source} → ${one.target}). The rest of the graph is shown.`, $('cy'));
 }
 
-// "Mine only": the nodes the name in "acting as" holds — a person's view in a project without a mode
+// "Mine only": the nodes held by the names this page signs as (one of them, as «Mine» chose, or all) — a view in a
+// project without a mode, signing nothing
 export function applyMineDim() {
     if (!cy) return;
-    const me = myRole();
+    const names = mineNames();
     cy.elements().removeClass('dimmed');
-    if (!S.mineOnly || !me || S.graph.mode?.mode) return;
-    const mine = new Set(S.tasks.filter(t => t.assignee === me).map(t => t.id));
+    if (!S.mineOnly || !names.length || S.graph.mode?.mode) return;
+    const mine = new Set(S.tasks.filter(t => names.includes(t.assignee)).map(t => t.id));
     cy.nodes().forEach(n => { if (!mine.has(n.id())) n.addClass('dimmed'); });
     cy.edges().forEach(e => { if (!mine.has(e.source().id()) || !mine.has(e.target().id())) e.addClass('dimmed'); });
 }
 export function toggleMine() {
     S.mineOnly = !S.mineOnly;
+    keep(`gfso.mineOnly:${S.project}`, S.mineOnly ? '1' : '');   // …kept per project, as the name chosen is (critic 4)
     $('queue-toggle').classList.toggle('active', S.mineOnly);
     applyMineDim();
 }

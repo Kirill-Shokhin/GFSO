@@ -18,10 +18,10 @@ import pytest
 def engine():
     e = make_engine(llm=None, check_interval=10_000)
     e.start()
-    e.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("agent"))
+    e.assign_task(TaskId("root"), spec("goal", "c1", "c2"), AgentId("user"))
     e.wait_idle()
-    e.decompose_task(TaskId("root"), [(TaskId("kid"), spec("part", "k1"), AgentId("agent")),
-                                      (TaskId("aside"), spec("aside", "a1"), AgentId("agent"))],
+    e.decompose_task(TaskId("root"), [(TaskId("kid"), spec("part", "k1"), AgentId("user")),
+                                      (TaskId("aside"), spec("aside", "a1"), AgentId("user"))],
                      [CriterionMapping("c1", TaskId("kid")), CriterionMapping("c2", TaskId("aside"))],
                      register=REGISTER_SPLIT)
     e.wait_idle()

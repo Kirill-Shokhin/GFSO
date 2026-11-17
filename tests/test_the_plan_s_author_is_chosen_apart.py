@@ -3,8 +3,6 @@ content is its author's (§4.5) and the form the apparatus's — a plan authored
 judged and repaired by the system's (measured 2026-11-01: sonnet's plans lead haiku's on structure, haiku's pipeline
 leads on pins). Unset, the author is the system's model, as before."""
 import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -12,7 +10,7 @@ import gfso.tools_llm as TL
 from gfso import issuer as I
 from gfso.decompose import planning
 from gfso.engine.validation import l2_gate_on
-from tests.support import make_engine
+from tests.support import make_engine, written
 
 
 def _e():
@@ -56,7 +54,7 @@ def test_the_plan_file_is_reviewed_on_the_systems_model_not_its_authors(monkeypa
         author=model, review=review) or "")
     monkeypatch.setattr(TL._planning, "text_of", lambda p: p)
     monkeypatch.setattr(TL, "_plan_written", lambda text: {})
-    TL.plan(e, "sort a file") if verb == "plan" else TL.refine_plan(e, "x", "a note")
+    written(TL.plan, e, "sort a file") if verb == "plan" else written(TL.refine_plan, e, "x", "a note")
     assert got == {"author": "claude-sonnet-5-5", "review": "claude-haiku-5-5"}
 
 
@@ -72,8 +70,8 @@ def test_what_a_plan_spends_is_on_the_book_of_the_project_that_asked(monkeypatch
     assert sum(r.get("cost_usd") or 0 for r in e.graph._storage.get_usage()) == 0.5
 
 
-def test_a_plan_asked_again_joins_the_one_under_way_and_reads_the_one_written(monkeypatch):
-    """Its answer can be lost on the way while the verb goes on, no graph shows it, and each resend paid a whole plan."""
+def test_a_plan_asked_again_is_the_one_under_way_and_reads_the_one_written(monkeypatch):
+    """Each resend paid a whole plan: one writing per call's arguments, read by every call after it."""
     monkeypatch.setattr(TL, "_PLANNING", {})
     calls, release = [], threading.Event()
 
@@ -81,22 +79,23 @@ def test_a_plan_asked_again_joins_the_one_under_way_and_reads_the_one_written(mo
         calls.append(1)
         release.wait(5)
         return {"path": "p"}
-
-    with ThreadPoolExecutor(2) as pool:
-        first = pool.submit(TL._once, ("k",), write)
-        while not calls:
-            time.sleep(0.01)
-        second = pool.submit(TL._once, ("k",), write)
-        release.set()
-        assert first.result() == second.result() == {"path": "p"}
-    assert TL._once(("k",), write) == {"path": "p"} and len(calls) == 1
+    once = lambda: TL._once(("plan", "p"), write)
+    assert once()["started"] and not once()["started"]
+    release.set()
+    assert written(once) == once() == {"path": "p"} and len(calls) == 1
 
 
 def test_a_plan_that_failed_is_written_again(monkeypatch):
     monkeypatch.setattr(TL, "_PLANNING", {})
     calls = []
-    assert TL._once(("k",), lambda: calls.append(1) or {"error": "no"}) == {"error": "no"}
-    assert TL._once(("k",), lambda: calls.append(1) or {"path": "p"}) == {"path": "p"} and len(calls) == 2
+    assert written(TL._once, ("plan", "p"), lambda: calls.append(1) or {"error": "no"}) == {"error": "no"}
+    assert written(TL._once, ("plan", "p"), lambda: calls.append(1) or {"path": "p"}) == {"path": "p"} and len(calls) == 2
+
+
+def test_a_plan_its_writing_broke_answers_why_and_is_written_again(monkeypatch):
+    monkeypatch.setattr(TL, "_PLANNING", {})
+    out = written(TL._once, ("plan", "p"), lambda: (_ for _ in ()).throw(ValueError("no such file")))
+    assert out == {"error": "no such file", "refused": True} and ("plan", "p") not in TL._PLANNING
 
 
 def test_the_go_on_a_plan_file_stands_on_the_review_in_the_file(monkeypatch):

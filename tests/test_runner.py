@@ -118,6 +118,24 @@ def test_checker_gap_and_conflict_are_advisory_findings():
     assert len(crit.conflicts) == 1
 
 
+def test_a_deferral_on_nothing_its_split_needs_is_told_to_the_customer_and_gates_nothing():
+    """ON_THE_FLY_MODE §7: a plan may defer too much — it only waits. The review reads each deferral (the projection
+    lists them) and names one whose producers' results could not change the split; the gate still reads only whether
+    the criteria entail."""
+    e = _engine()
+    _decompose_clean(e)                                              # b consumes a
+    e.record_session_fit(TaskId("b"), "", False, {"producers": ["a"], "why": "b's parts follow a's format"})
+    reply = json.dumps({"criteria": [{"criterion": "c1", "verdict": "sufficient", "why": "a"},
+                                     {"criterion": "c2", "verdict": "sufficient", "why": "b"}],
+                        "deferrals": [{"part": "b", "why": "b's split does not read a's output"},
+                                      {"part": "a", "why": "a reading inventing one"}]})
+    crit = critique_node(e, TaskId("p"), llm=_CheckerLLM("```json\n" + reply + "\n```"))
+    assert crit.gate_passed and crit.semantic_covered is True
+    assert "[reported, not gating — a split deferred on nothing it needs] b — b's split does not read a's output" \
+        in crit.semantic_findings
+    assert "inventing" not in crit.semantic_findings                # a part that defers nothing is no such report
+
+
 def test_checker_incomplete_verdict_is_no_verdict():
     """A parent criterion the checker did not check ⇒ semantic_covered=None — an incomplete
     certificate is NEVER read as clean."""

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Mapping, NewType, Optional
 
-from gfso.config import LABEL_CHARS
+from gfso.config import LABEL_CHARS, caller_via
 
 from .enums import State, Signal, DoneReason, Verdict, AutonomyLevel, Predictability, RevisionReason
 
@@ -51,7 +51,7 @@ class Probe:
     inputs: tuple[tuple[str, str], ...] = ()
     # `expect` is the WHOLE output the command prints on correct work, as `procedure.shows` reads it (escapes as the
     # characters, whitespace runs as one) — so the system decides it by running the command itself, and a validator's
-    # `held: true` over an output that differs is the false PASS the engine overrules (`tools_llm._observe_exact`).
+    # `held: true` over an output that differs is the false PASS the engine overrules (`tools_llm._observe_pins`).
     # False: `expect` describes the output in words or names a part of it, which only a reader can judge.
     exact: bool = False
 
@@ -458,6 +458,9 @@ class SignalData:
     # …and the commit that carried it when it was handed over: what joins once a PASS accepts it, wherever the branch
     # has moved since (the branch is the agents' to write)
     commit: Optional[str] = None
+    # …and the repository a chat's DELIVER recorded it in (`tools_llm.signal`): where it is, a fact of the log, never
+    # read back from a roster that moves; None for a place of the system's, whose base holds its branch
+    repository: Optional[str] = None
     # …and how its judge builds it before any check (a command run in the judge's copy; "" = nothing to build; None =
     # not declared: `make` where the tree has a Makefile at its root, else nothing — `adapters.snapshots._build`)
     build: Optional[str] = None
@@ -477,6 +480,8 @@ class SignalData:
     # version, whose deadline is its own (§12.3).
     visit: Optional[tuple] = None
     by_system: bool = field(default_factory=_SYSTEM_DECIDES.get)   # `system_decides`, read where the signal is built
+    # …and the credential the signer came through (`session`, a token's id, `default`), read where it is built too
+    via: Optional[str] = field(default_factory=caller_via)
 
     @property
     def blockers(self) -> tuple[TaskId, ...]:

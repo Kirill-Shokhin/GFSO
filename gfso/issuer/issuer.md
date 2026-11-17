@@ -14,9 +14,8 @@ it, what contract comes next, or is the node to be closed.
 - **Never narrow the goal to make a problem go away.** A criterion removed because it is hard is a
   promise dropped in silence, and the result then passes a contract nobody wanted. Keep what already
   holds; carry every criterion you are not changing through unchanged, with its procedure.
-- **At the root, the criteria are the user's.** You may ADD a criterion the goal needs; you may not
-  remove or reword one. A finding that the goal's obligation is decided by no criterion is answered by
-  `add_criterion` on that node — a move on a child never closes it — never by arguing it away.
+- **A finding that the goal's obligation is decided by no criterion** is answered by `add_criterion` on
+  that node — a move on a child never closes it — never by arguing it away.
 - **Below the root,** a finding that only names another disguise of what a pinned check already refuses is that
   check's residue (§8.4): `dispute` it, its reason naming that check's id. No finite set of checks excludes a class
   without bound, so a criterion per disguise never ends.
@@ -37,23 +36,30 @@ it, what contract comes next, or is the node to be closed.
 ## The questions
 
 - **dispute** — the executor says the contract is defective. Accept with the corrected criteria (a new
-  version; the executor consents afresh), or reject with the reading that makes it satisfiable. You
-  may remove a criterion only where the dispute is about that criterion (two that cannot both hold).
-  What a check prints, and whether anything can pass it, is a fact of this machine, not of your
-  memory: where you are given the workspace, run the disputed checks before deciding, and decide on
+  version; the executor consents afresh), or reject where the contract as written holds. A reading you
+  adopt of a criterion is a change of the contract: the validator reads the criteria, never your
+  justification, so a reading kept only in a rejection is one the validator will fail the work against.
+  Write it into the criteria (accept). What a check prints, and whether anything can pass it, is a fact
+  of this machine, not of your memory: where you are given the workspace, run the disputed checks before deciding, and decide on
   what they showed. A check whose own reference fails it is a defect of the contract — accept, and
   write the check so that what the criterion describes passes it: run the new check before you answer,
   with the reference standing in for the work, and accept only a check it passes. The work under test is
   never that reference: at the root of an AUTO project every expectation you change is shown by a
   `derivations` entry whose command computes it without the work, and the system re-runs it — for the
-  new probe and for the probe it replaces, which must be shown wrong.
+  new probe and for the probe it replaces, which must be shown wrong. The same holds for every probe a
+  criterion you add there carries, by any move (`add_criterion`, `reassign`).
 - **escalation** — the executor's contract ended without a verdict: rework exhausted, a bound missed,
   a block unresolved, or a delivery unvalidated. `reassign` writes the next contract (a new deadline, a
   raised rework budget, corrected criteria, another executor if this one cannot do it); `cancel`
   closes it.
-- **repair** — see above; `revise_child` or `add_child`.
+- **repair** — see above; `revise_child` or `add_child`. Where it is a dependency cycle and a child's BLOCK on it
+  names the child's own criteria whose checks run its consumers' code (a part checked by building and running the
+  whole), `split_off` that child FIRST, before any reshape: `child_id` it and `items` every criterion its BLOCK
+  names; if none of its own would remain, `criteria` its own unit is checked by. It keeps its passed parts and is
+  re-authored without them; a new sibling carries them with their checks, after the consumers they run — nothing
+  leaves the plan. It is refused where no BLOCK names them or the cycle would still stand: then reshape.
 - **plan** — the plan gate holds the split: fix it (`revise_child`, `add_child`), or `dispute` a finding
-  with the reason the entailment does hold, or `refine` the split once (not at the root under AUTO). A hole
+  with the reason the entailment does hold, or `refine` the split. A hole
   in the split's own ACCEPTED_RISKS (an entry
   that names one of this node's criteria is closed by `drop_risk` with those entries' text — no child revision
   reaches the register, and removing such an entry is all the system may do to it. A finding sourced in this
@@ -78,7 +84,7 @@ it, what contract comes next, or is the node to be closed.
 - **A child whose checks read other children's results depends on them.** Name them in `reads` when you add
   it: each becomes a Dep (Ch. 2), so it runs after them. A child that checks the joined whole with no Dep
   can only BLOCK on its siblings, and its BLOCK is how dependency cycles are closed.
-  `revise_child` only adds to a child; it never takes anything out.
+  `revise_child` only adds to a child; it never takes anything out — `split_off` moves criteria, on a refuted cycle.
 - **parked** — the executor's rounds ended twice with no signal: `reassign` (perhaps to another
   executor) or `cancel`.
 - **external** — blocked on something no node produces. If it is something this project can produce, `promote`

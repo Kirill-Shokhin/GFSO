@@ -49,18 +49,76 @@ def signal_role(sig: str) -> str:
     return "split" if str(sig).upper() in EXECUTOR_SIGNALS else "issuer"
 
 
+#: the argument a structural move is signed by at a door — the name the MCP door pins to its connection
+SIGNER = "agent"
+#: …where a verb signs by another argument, the one the doors pin for it: a split the system authors names its author
+SIGNED_BY = {"auto_decompose": "author"}
+
+
+def signer_arg(verb: str) -> str:
+    """The argument `verb` is signed by at a door."""
+    return SIGNED_BY.get(verb, SIGNER)
+
+
+#: EVERY VERB'S SIGNER ARGUMENTS, the one table every door reads: the name a move is signed by is the call's credential's,
+#: never the caller's word (docs/notes/SIGN_IN.md). The MCP door drops them from its schema; at every door a name the
+#: credential may not sign as is refused, and an omitted one is its default (`tools_llm._signed`). A verb's READ of
+#: "whose view" (`next_step(s).actor`, `available_actions.agent`) signs nothing and is not here.
+SIGNERS = {"signal": ("source",), "record_verdict": ("reviewer",), "stop_project": ("by",), "start_project": ("by",),
+           "tech_report": ("actor",), **{v: (a,) for v, a in SIGNED_BY.items()},
+           **{v: (SIGNER,) for v in ("revise", "edit_accepted_risks", "edit_criteria", "set_mode", "reopen",
+                                     "rule_unrun_finding", "return_finding", "decompose", "reassign", "map_criterion",
+                                     "add_dependency", "remove_dependency", "dispute_finding", "create_task",
+                                     "edit_scope")}}
+
+#: the verbs that change nothing a party answers for — the rest are moves, refused to a call no credential signs
+#: verbs that write nothing and make no project — what a call no credential names may still call. `probe_inputs` is
+#: not one: it lays the pinned inputs down as files (a hand validator's preparation, signed like any check)
+READS = frozenset({"get_task", "project", "get_checks", "get_graph", "list_holes", "get_review", "get_verdict",
+                   "available_actions", "get_dependencies", "metrics", "usage", "claim_drift",
+                   "next_step", "next_steps", "tech_reports", "list_agents", "canon"})
+
+
+#: checks, not moves: anyone may run a check on a delivery (§10.2) — the signature is the issuer's signal
+CHECKS = frozenset({"validate_result", "review_decomposition", "record_verdict"})
+
+
+def door_role(engine, verb: str, node, signal: Optional[str] = None) -> Optional[str]:
+    """The role `verb` on `node` is keyed by at the door — "issuer" or "split" — or None where it names no node."""
+    side = DOOR_KEYS[verb][1]
+    if side == "signal":
+        return signal_role(str(signal or "").upper())
+    if side == "risks":
+        # a machine Del's own moves are in-process, never through a door: here the caller writes as the issuer (the
+        # packet's pre-fill) wherever the Del is a machine, and as the split's decomposer otherwise
+        t = engine.graph.get_task(TaskId(node)) if node else None
+        return None if t is None else "issuer" if AgentId(t.assignee) in engine.workforce.executor_pool() else "split"
+    return side
+
+
 def door_holder(engine, verb: str, node, signal: Optional[str] = None) -> Optional[str]:
     """Who the mode gives `verb` on `node` to, where the door refuses it from anyone else — None: the door takes it."""
     if verb not in DOOR_KEYS or engine.mode() is None or (verb == "auto_decompose" and not engine.all_tasks()):
         return None                              # stating the goal is the customer's one act
-    side, sig = DOOR_KEYS[verb][1], str(signal or "").upper()
-    if side == "signal":
-        role = signal_role(sig)
-    elif side == "risks":
-        # a machine Del's own moves are in-process, never through a door: here the caller writes as the issuer (the
-        # packet's pre-fill) wherever the Del is a machine, and as the split's decomposer otherwise
-        t = engine.graph.get_task(TaskId(node)) if node else None
-        role = None if t is None else "issuer" if AgentId(t.assignee) in engine.workforce.executor_pool() else "split"
-    else:
-        role = side
-    return engine.mode_holder(node, role, ruling=verb == "signal" and sig in RULINGS)
+    if DOOR_KEYS[verb][0] is None and engine.nothing_left():
+        return None                              # the roster outlives a goal that ended: its roles are anyone's to free
+    role = door_role(engine, verb, node, signal)
+    return engine.mode_holder(node, role, ruling=verb == "signal" and str(signal or "").upper() in RULINGS)
+
+
+def signer_due(engine, verb: str, node) -> Optional[str]:
+    """Who alone may sign `verb` on `node` at a door: the holder of the role the verb is keyed by — the node's issuer
+    for its contract, its Del for its split (§10.1, Inv-8: a state moves only by its owner's moves) — or None where the
+    verb is a check, a signal (its `source` is checked by the engine) or names no node that stands."""
+    if verb not in DOOR_KEYS or verb in CHECKS or DOOR_KEYS[verb][1] in (None, "signal"):
+        return None
+    return role_holder(engine, verb, node)
+
+
+def role_holder(engine, verb: str, node, signal: Optional[str] = None) -> Optional[str]:
+    """Who holds the role `verb` on `node` is keyed by — the node's issuer, or its Del for a split — or None where the
+    verb names no node that stands. A page session's omitted signer defaults to it where the person owns the name."""
+    t = engine.graph.get_task(TaskId(node)) if engine is not None and node else None
+    if t is None or (role := door_role(engine, verb, node, signal)) is None:
+        return None
+    return str(engine.graph.issuer_of(t.id) if role == "issuer" else t.assignee or "") or None

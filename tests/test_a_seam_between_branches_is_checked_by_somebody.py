@@ -40,12 +40,12 @@ def two_branches():
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "root", "criteria": _crit("gP", "gQ")},
-                  assignee="agent", deadline="2030-01-20T00:00:00")
+                  assignee="user", deadline="2030-01-20T00:00:00")
     T.decompose(e, "root", [{"task_id": branch, "spec": {"description": branch, "criteria": _crit(branch + "1")},
-                             "assignee": "agent", "covers": [covered], "deadline": "2030-01-10T00:00:00"}
+                             "assignee": "user", "covers": [covered], "deadline": "2030-01-10T00:00:00"}
                             for branch, covered in (("P", "gP"), ("Q", "gQ"))], accepted_risks=REGISTER)
-    T.decompose(e, "P", [{"task_id": "a1", "spec": {"description": "a1", "criteria": _crit("ca1")}, "assignee": "agent", "covers": ["P1"], "deadline": "2030-01-09T00:00:00"}], accepted_risks=REGISTER)
-    T.decompose(e, "Q", [{"task_id": "b1", "spec": {"description": "b1", "criteria": _crit("cb1")}, "assignee": "agent", "covers": ["Q1"], "deadline": "2030-01-02T00:00:00"}], accepted_risks=REGISTER)
+    T.decompose(e, "P", [{"task_id": "a1", "spec": {"description": "a1", "criteria": _crit("ca1")}, "assignee": "user", "covers": ["P1"], "deadline": "2030-01-09T00:00:00"}], accepted_risks=REGISTER)
+    T.decompose(e, "Q", [{"task_id": "b1", "spec": {"description": "b1", "criteria": _crit("cb1")}, "assignee": "user", "covers": ["Q1"], "deadline": "2030-01-02T00:00:00"}], accepted_risks=REGISTER)
     e.wait_idle()
     try:
         yield e
@@ -113,8 +113,8 @@ def test_a_cycle_closed_across_two_branches_is_named(two_branches):
     """
     T.add_dependency(two_branches, "a1", "b1", glue="b1 links the object a1 emits")
     two_branches.wait_idle()
-    T.signal(two_branches, "a1", "ACCEPT", source="agent")
-    out = T.signal(two_branches, "a1", "BLOCK", source="agent",
+    T.signal(two_branches, "a1", "ACCEPT", source="user")
+    out = T.signal(two_branches, "a1", "BLOCK", source="user",
                    reason="a1 cannot start without b1's schema", blocker_task_ids=["b1"])
     # …and its sender is told, though the split whose order it refutes is not a1's parent but root
     assert "cannot finish before it" in out.get("plan_order_refuted", ""), out

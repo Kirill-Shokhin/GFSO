@@ -104,6 +104,12 @@ into `item` as `item — why_out` and reads it back with `why_out` empty (`build
 `executor` (the session the fit was judged against; empty when none), `whole_volume` and `whole_fits_one_session` (the
 whole plan's size estimate in words and the judgement), and `parts`, an array of `{id, volume, fits_one_session}`, one per
 part judged. The marks are put back on the parts by `parse` and recorded by the build (`_record_the_session_fit`).
+A part may also carry `split_after = {after = [<producer ids>], why = "<what of their result the split needs>"}`: its
+split is deferred until those producers' results are accepted, then made by the system's refine round with their
+verdicts and delivered files in hand (FM-6's remedy, §8.6). Each producer must be a `deps` producer of the part in the
+same split and not yet settled, and `why` must say something; otherwise the build refuses the deferral (the planner's
+repair rounds lift it by naming such a producer or splitting the part now). A deferred part is owed its split, as one
+judged too big for a session is.
 
 ### `[review]`
 

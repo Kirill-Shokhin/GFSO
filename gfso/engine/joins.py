@@ -31,6 +31,12 @@ class Joins:
         # reopened root read landed at its second DONE, ahead of its join, over a base without what it reopened for
         self._landed: dict[str, int] = {}
         self._join_owed = None                   # the host's word: does this node's result owe a join? (`set_join_owed`)
+        self._left = lambda whole: []            # the host's word: the parts it merged nowhere, still to merge (`set_left`)
+
+    def set_left(self, left) -> None:
+        """The host says which passed parts of a whole it merged nowhere, still to merge (`left(whole) -> [(part, why)]`),
+        read from its record and git: what no process keeps in memory survives a restart."""
+        self._left = left
 
     def set_join_owed(self, owed) -> None:
         """The host that keeps a place per node says which passed nodes owe a join (`owed(task) -> bool`, asked
@@ -84,6 +90,7 @@ class Joins:
         nothing naming them)."""
         with self._lock:
             left = dict(self._unjoined)
+        left = {**dict(self._left(whole)), **left}
         return [(str(k.id), left[str(k.id)]) for k in self._graph.get_active_children(whole.id) if str(k.id) in left]
 
     def landed(self, t) -> bool:

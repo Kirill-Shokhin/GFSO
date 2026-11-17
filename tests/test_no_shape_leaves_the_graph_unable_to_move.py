@@ -30,10 +30,10 @@ _RISK = REGISTER
 
 def _two_children(e):
     T.create_task(e, "root", {"description": "a goal", "criteria": [criterion("g", "G holds")]},
-                  assignee="agent")
+                  assignee="user")
     T.decompose(e, "root", [{"task_id": kid, "spec": {"description": f"work {kid}",
                                                       "criteria": [criterion(kid, f"{kid} holds")]},
-                             "assignee": "agent", "covers": ["g"]} for kid in ("a", "b")],
+                             "assignee": "user", "covers": ["g"]} for kid in ("a", "b")],
                 accepted_risks=_RISK)
     return e
 
@@ -54,8 +54,8 @@ def _delivered(e, node):
     # so the shape named "spent its rework bound and escalated" never escalated — and that is the
     # one shape a root's conjunction cannot survive.
     if e.graph.get_task(node).state.name == "OFFERED":
-        _accepted(T.signal(e, node, "ACCEPT", "agent"), "ACCEPT", node)
-    _accepted(T.signal(e, node, "DELIVER", "agent", result=f"{node} done"), "DELIVER", node)
+        _accepted(T.signal(e, node, "ACCEPT", "user"), "ACCEPT", node)
+    _accepted(T.signal(e, node, "DELIVER", "user", result=f"{node} done"), "DELIVER", node)
 
 
 def _validated(e, node, verdict="PASS", failed=()):
@@ -66,7 +66,7 @@ def _validated(e, node, verdict="PASS", failed=()):
                      observed={c.name: {"note": f"ran the check for {c.name}",
                                         "ran": [p.command for p in (c.check or ())]}
                                for c in e.graph.get_task(node).spec.criteria})
-    _accepted(T.signal(e, node, verdict, "agent",
+    _accepted(T.signal(e, node, verdict, "user",
                        **({"failed_criteria": list(failed)} if failed else {})), verdict, node)
 
 
@@ -85,15 +85,15 @@ def _claim_the_aggregate(e):
     against, wearing a name.
     """
     if e.graph.get_task("root").state.name == "OFFERED":
-        T.signal(e, "root", "ACCEPT", "agent")
+        T.signal(e, "root", "ACCEPT", "user")
     if e.graph.get_task("root").state.name == "EXECUTING":
-        T.signal(e, "root", "DELIVER", "agent", result="the aggregate")
+        T.signal(e, "root", "DELIVER", "user", result="the aggregate")
     if e.graph.get_task("root").state.name == "VALIDATING":
         T.record_verdict(e, "root", "PASS", reviewer="rev",
                          observed={"g": {"note": "read what the children produced; it holds",
                                          "ran": [p.command for p in
                                                  (e.graph.get_task("root").spec.criteria[0].check or ())]}})
-        T.signal(e, "root", "PASS", "agent")
+        T.signal(e, "root", "PASS", "user")
 
 
 def _walk(e, steps):
@@ -108,7 +108,7 @@ def _walk(e, steps):
 @pytest.mark.parametrize("name,steps", [
     ("nothing has started yet", []),
     ("one child accepted, one untouched",
-     [lambda e: T.signal(e, "a", "ACCEPT", "agent")]),
+     [lambda e: T.signal(e, "a", "ACCEPT", "user")]),
     ("one child delivered and awaiting a verdict",
      [lambda e: _delivered(e, "a")]),
     ("one child passed, the other not started",
@@ -125,12 +125,12 @@ def _walk(e, steps):
                   _validated(e, "a", "FAIL", ("a",)))
                  for _ in range(4)]]),
     ("a child blocked on a sibling",
-     [lambda e: T.signal(e, "a", "ACCEPT", "agent"),
-      lambda e: T.signal(e, "a", "BLOCK", "agent", reason="waiting on b",
+     [lambda e: T.signal(e, "a", "ACCEPT", "user"),
+      lambda e: T.signal(e, "a", "BLOCK", "user", reason="waiting on b",
                          blocker_task_ids=["b"])]),
     ("a child cancelled out of the plan",
-     [lambda e: T.signal(e, "a", "CANCEL", "agent", reason="out of scope"),
-      lambda e: T.signal(e, "a", "CONFIRM_CANCEL", "agent")]),
+     [lambda e: T.signal(e, "a", "CANCEL", "user", reason="out of scope"),
+      lambda e: T.signal(e, "a", "CONFIRM_CANCEL", "user")]),
     # THE SHAPE THE SWEEP DID NOT HAVE, and the one a real run dies on: one child settled WITHOUT
     # passing while every sibling is done and the parent is delivered. The parent's AND can never be
     # satisfied, so no verdict arrives — and the frontier used to answer "the graph is working,

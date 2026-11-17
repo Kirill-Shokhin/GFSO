@@ -10,6 +10,252 @@ below. Nothing in this file states a measured effect of using GFSO on real work:
 that would establish one (E3) has shown so far, and what not, is in `docs/RESULTS.md` and
 `docs/EVIDENCE_LOG.md` §13, with §3/§9/§11 for the earlier ones.
 
+## [Unreleased]
+
+## [0.4.0] — 2026-11-17
+
+### Changed
+- A verdict reads the delivered work: the system runs every pinned check itself on a fresh copy of the delivery before
+  the validator (one that is not exact is matched as a part of what it prints), and a pass the delivery does not
+  reproduce decides nothing; a pin that ran past its time, or a program the delivery should hold and lacks, is read as
+  for an exact one. Where the validator changed a delivered file in its own copy, a pass the system's own run does not
+  decide is no verdict (the instrument's defect, never a FAIL of the executor). A third validation asked at a door after
+  two that decided nothing on the same delivery is refused, naming what lifts it.
+- Before the go, the planner runs every pin of its plan once over the base, in the container where the checks run. A pin
+  bash itself refuses (its run and `bash -n` both), or whose own input file the place cannot lay by its name, goes back
+  to the plan's repair with their own words; a program bash finds missing is listed for the reader, never flagged. The
+  plan file says what ran (`review.pins_on_the_base`; on a host execution, that none ran), and the plan's answer keeps
+  such a pin open. Never a gate.
+- The plan reaches the person's page when it is written (`GET /api/plan`, the `plan_written` event), and under AUTO the
+  page opens then, once per project while the server runs. The go says, in every mode, when the work runs on this machine outside Docker,
+  which of the person's files the agents' copy lacks, and the goal as given; the page's header shows the same.
+- Once a project has work, who holds it changes only from the person's page (its mode popover): an agent's connection,
+  the CLI and a named token are refused, naming that. A second `refine_plan` over a file whose note was answered is
+  refused, naming the go.
+- A dispute that names a pinned check — by its id or by quoting its behaviour whole — questions that check's criterion,
+  so the issuer's honest re-pin lands; an acceptance carrying a re-pin the contract does not take is refused whole,
+  naming the re-pin that lifts it. An executor report that does not parse records the parser's own reason; an escape
+  JSON does not have (a model quoting `\xNN` in prose) is read as the two characters it wrote.
+- Everything gfso starts goes through one door (`gfso.adapters.children`): no console flashes, and with
+  `GFSO_NO_WINDOWS=1` nothing is put on the screen — the sign-in is not started and the person is told the steps
+  instead. Every on/off switch reads one way (`1/true/yes/on`, `0/false/no/off`; another word is refused naming the
+  variable), bar `GFSO_NETWORK_RECORD`, which takes only `off`. `GFSO_DATA_DIR` is honoured everywhere; state files are written atomically, keeping their mode.
+- The graph is open to read from wherever the server is reachable (a phone through `tailscale serve`, the LAN, another account on the computer) and moves only with a name; `--protected` closes reading too; a container's call through Docker's port forwarder is served nothing without a token.
+- The person is written `user`; databases from 0.3.0 are migrated once (at the server's start, or `gfso migrate`); `agent` and `user` are reserved.
+- An issuer's answer to a dispute that the system refuses before its signal is logged as a refused move with its reason, so the issuer's next turn reads it instead of repeating it; a reading the issuer adopts is written into the criteria, where the validator reads it.
+- The go opens the project's page in the person's browser on a server on their own machine (`GFSO_OPEN_PAGE=0` keeps it closed): told in words to write the link, a fresh client said it only at the end.
+- A move is signed by a name its credential carries, resolved by the server in one place for every door — the page,
+  `/api/run`, MCP over HTTP and stdio, the CLI with or without a server, `gfso wait`, a session's lease — and never typed
+  by the caller: a signer argument naming a name the credential may not sign as is refused, naming what lifts it. On a
+  server bound to loopback the person is whoever the operating system says owns the other end of the connection: his
+  page moves with no sign-in step and no cookie, signing as `user`, and so does any client of his with no credential;
+  another account on the computer reads but moves nothing, and a connection Docker Desktop's port forwarder holds for a
+  container is served only the page's empty shell; only the server's own port, at the address it holds, is the page's origin (`localhost` and `::1` also name an address another account may bind). `gfso up --protected` asks a sign-in as well
+  (`gfso ui` opens it; `--host <name>` prints the link for another device, as a phone through `tailscale serve`); a
+  session counts only at the name it was opened at, a loopback one only from the person's own connection and never
+  through a front. A console of its own name signs through a token `gfso agent <name>` issues (`GFSO_TOKEN`). A front's
+  name, a bind past loopback or a forwarding header with no credential moves nothing. `GET /api/whoami` says who a call
+  is; the log keeps the credential (`via`) beside the signer. `GFSO_AGENT_ID` names nothing now: a console launched with it and no token is told what to
+  run.
+- One door for every user-agent, the client's kind read at it — a coding agent that waits in the background (`code`) or
+  a chat that hands the turn back to its person (`chat`): its bridge's header, else its client's name, else `chat` —
+  and each kind served its own instructions at initialize. No verb holds a call to wait: `next_steps` answers at once,
+  the long wait is one server endpoint (`POST /api/wait`, which `gfso wait` runs in the background), `plan` and
+  `refine_plan` start their writing and answer with a handle, and a chat learns what its run needs on its next reply.
+  A project waits on one plan, its latest asked, kept on disk until it is read: a person back after hours or a restart
+  finds it and pays for it once, a failed writing ends the wait and says why, and with no server the plan is written
+  in the call.
+- `gfso setup` removes the agent images an earlier version built once no declared execution names them, and bounds
+  Docker's build cache, saying only what that freed. A new page, `docs/DECISIONS.md`, says why the product is built
+  the way a user meets it, each decision on the canon clause it rests on or named the product's own choice.
+- With an executor on this host (no execution declared, the person's own `GFSO_LOCAL_AGENTS` word) the system writes no
+  branch, index nor working tree of the person's either: every passed node's delivered commit — a system place's, or
+  one a person or a chat delivered in their own tree — joins its whole's place, the root's accepted commit lands as
+  `gfso/<project>/accepted`, a whole the person holds is named each part's commit to merge, read from the record and
+  git after any restart, and a place made again after the clearing starts from its node's own last delivery. Running
+  dispatched work on this host is said to be the person's choice, never an agent's. The test suite keeps the Claude
+  CLI's state of its own, never the person's `~/.claude`.
+- A node's place and its validations' rounds are kept in gfso's own state (`<data>/places/…`), never beside the user's
+  repository, where `.gfso-nodes-<repo>` used to grow next to their work; inside a container the paths are as before, a
+  place left standing or recorded in the old layout is still read. A server's start holds a project stopped only where
+  the system carries its work: a graph people hold is no longer stopped by it, and the stop an earlier start left on
+  one comes off when it is opened. The MCP instructions tell the user-agent, before their cut, that it speaks for the
+  project, that the rules are derived from the canon with a Lean-checked core, to answer why from `canon` citing the
+  section, never to route around a rule, and never to wait inside a call.
+- A refused credential, a usage limit or a dead execution place stops a project only where the system's own roles carry
+  its work (a mode set, or a live node a machine party holds or issues); on a graph people hold, the asker gets the
+  refusal and the people's clocks run on.
+
+### Added
+- Every structural move through a door (HTTP, MCP, CLI) is signed — `user`, or `author` for a split the system authors —
+  and refused, in the issuer's own words, unless the signer holds the role the move is keyed by: the node's issuer for its
+  contract, its Del for its split (Inv-8). Unsigned, the signer is the door's own identity, so no move is logged under a
+  holder who did not make it; the MCP door pins the signer to its connection. A goal set for another is issued by its
+  signer (§15.2). `available_actions` names each structural move with who signs it.
+- Admission reads a pinned probe's command as a POSIX shell reads it — quotes, escapes, comments, here-documents,
+  command and process substitutions, subshells and brace groups, pipes, `cd`/`pushd`, the shell's variables exported or
+  not, wrappers, `bash -c` and pinned shell scripts with the place they name for themselves — and refuses a program run
+  from the probe's own directory that imports the delivery off a path without the working directory: a script, pytest's
+  or unittest's collected files, a `-m` module, `-c` code, doctest examples. A path a program adds to its own `sys.path`
+  from where it lies (`__file__`) is that directory or above it, never the delivery, and no longer lifts the refusal.
+- Admission refuses a probe that hands `python -m unittest` a file outside the directory it starts in: unittest cannot
+  import it whatever is delivered, so the probe would fail every run and decide nothing.
+
+- A node a live party works itself over the MCP door — a person's or the user's own console's, held by it in EXECUTING or
+  REWORKING — is seen worked while that party is connected: `working` in `/api/runtime` and a `working` event on the
+  page's live feed, closed when the node leaves work or the party's last bridge lease is gone.
+- `in_chat` works on every project: the user's own agent performs the nodes it holds in their repository, and its
+  delivery is the commit it stands on at DELIVER, kept under `refs/gfso/<project>/delivered/<node>`; the judge checks
+  that commit out, so what is written after DELIVER is no part of the verdict (it used to be judged as the directory
+  went on to be). What is not committed is named and not delivered. Under a container execution the commit is carried
+  into the project's volume and judged there; parts a system executor did under a node the agent holds land in the
+  user's repository as `gfso/<project>/joined/<node>` (a part a conflict kept out, as its own branch) for the agent to
+  merge; a root the agent delivered is accepted as its own commit. A project's executors work in the default container
+  under every mode. A repository committed as a bare gitlink is refused at DELIVER; a declared submodule is the user's.
+- The first lines an agent reads after the install (`gfso`, `--help`, `gfso run`, `gfso doctor` before setup) say that a
+  task asked of gfso runs through its tools after setup and a restart, never written by hand.
+- A plan's part may defer its split until named producers deliver (`split_after = {after, why}`): FM-6's remedy,
+  "defer the split until contact has made it definable" (§8.6). The deferral is admitted only on Dep producers of the
+  part in the same split, at least one not yet settled, with a reason; otherwise it is refused before the build, and
+  lifted by naming such a producer or splitting now. So no chain of deferrals grows without validated work between its
+  links. Under AUTO the system asks for the split only once those producers are accepted. Its round is handed, as the
+  ground the split stands on, each producer's verdict per criterion, its delivery commit and the files it declared,
+  read at that commit; the goal's obligations still read the node's contract alone. The run's log says what each
+  deferred split was made with. The plan file, the review's projection and `refine_plan`'s list of changes show
+  deferrals, and the review names one that waits on nothing its split needs, reported to the customer, gating nothing.
+  A plan handed in whole under AUTO cannot defer, since the system never splits it.
+- Over MCP each console's connection signs its own moves: a console launched with the token `gfso agent <name>` issues
+  (`GFSO_TOKEN`) signs that connection's moves as that name, so several consoles work one graph under their own
+  names. A project with a mode (solo, semi, auto) still has
+  one user's agent, and a named console is refused there with the reason.
+- Before a whole's session, each accepted part joined into its tree is checked for its own added lines: a part whose
+  lines are gone or changed in the whole's committed tree is named to the session, with each file and the commit that
+  last changed it. A merge that lost a part's work used to surface only at the whole's validation, a round later.
+- `server.json` describes the server for the MCP registry (`io.github.Kirill-Shokhin/gfso`).
+- One command installs and sets up: `pipx run gfso setup` (or `uvx gfso setup`) installs this release to stay with
+  the same tool and runs the installed setup. `gfso` and `gfso --help` open with "Just installed? Run `gfso setup`",
+  and `setup` heads the list of commands.
+- `gfso wait project=<p>` waits on a run as monitoring: run in the background, it asks only the live server, never
+  builds an engine of its own, and exits when the run needs its customer (the root settled, a move of the caller's,
+  or the run stopped). The user-agent protocol and the answer to the go use it, so a client is not held by a
+  ten-minute call.
+- `canon(section)`: the user-agent reads the theory GFSO is built on, by chapter or section, before answering why
+  the system works as it does. The text is this version's: the checkout's own file, or the release's on GitHub,
+  fetched once.
+- The go on a plan file names each criterion its review left open (`open_at_the_go`), and its answer tells the
+  person in one line: the root's checks still decide the result, but a failure there points to no part.
+- The log names a contract an issuer rewrote under work in hand: "CONTRACT REWRITTEN … N check(s) changed".
+- `rule_unrun_finding(task_id, findings, ruling, why)`: where a validator reported it could not run a standing finding
+  (`ran: false`), the node's issuer is asked to retire or keep it; at an AUTO root or in the user's own plan the run
+  stops for the user, who rules it with this verb and starts the run again. Before, such a node re-validated until its
+  bound ran out.
+- `set_mode(bounds=, max_iterations=)`: a project sets how long each waiting state may last and how many rework rounds
+  its nodes get — the project's question, not the server's.
+- A newer gfso on PyPI is told to the person once (`doctor`, and the user-agent's first call); `GFSO_NO_UPDATE_CHECK=1`
+  turns the asking off.
+- Python 3.14: `requires-python` is `>=3.11,<3.15` and CI tests 3.14. Every compiled dependency ships a cp314 or
+  abi3 wheel for Linux and Windows, and the suite passes on it.
+
+### Fixed
+- `revise` through a door is signed by the call's credential: an omitted signer reached the engine as no one, and
+  every credential's revision was refused as not its issuer's.
+- On a phone the graph answers the finger: a drag begun on a node pans and opens nothing, arrows stay unlit under a pan
+  and an arrow's tip opens beside the touch, a part's tag (now marked ↓) answers a press at once over a wider zone and
+  goes down, moving between parts and a double tap's framing are drawn in place, a node chosen in the In work list
+  opens its panel with «Show it on the graph», a report's date no longer breaks a letter a line, and dragging the
+  bottom panel leaves no undrawn strip under it. On the projects list the sign-in hint takes a line of its own, so the
+  search and the count are whole, and a note on the machine's reading wraps instead of being cut.
+- An MCP bridge whose server was stopped answers every call while it is gone and reconnects once it answers: it used to
+  give up at once and stay alive answering nothing, every later call waiting for the client's own ceiling.
+- An MCP bridge ends when its client ends the session: it stayed alive holding its lease, which kept the shared server
+  up.
+- A roster file removed by hand reads as an empty roster: the roles it held stayed in memory and were still handed to
+  the next node.
+- A dispatcher that is stopped cancels the re-asks it had scheduled and schedules none after: they used to wait out
+  their delay behind it on threads of their own.
+- What the customer's notes on a plan require reaches its criteria, or the round says what did not (FM-1.f, §8.3).
+  `refine_plan` reads every note's requirements as obligations, with the question the review asks of the goal,
+  and hands them to the round. After the round the review decides them against the pinned checks. One no pinned
+  check probes is named in the answer as NOT ANSWERED, the note not spent, and stays among the review's open
+  obligations, marked `of = "note"`, for the next round and the go. The reviews read the goal alone, so a note's
+  `sub` that no criterion carried was seen by nothing, and the run delivered an engine without it.
+- A refused call leaves no project it made: a refused `set_mode` (or any refused verb that may make a project) on a
+  new name used to make one, an empty graph listed among the person's, on the HTTP and MCP doors alike. On the MCP
+  door a verb that does not author (a read) no longer makes the project it names; it answers "no such project", as
+  the HTTP door does.
+- A root whose result does not land keeps no idle containers while it is tried again: its project's containers end
+  between tries, and each try starts what it needs.
+- `plan` and `refine_plan` hold the plan's whole text up to 400,000 characters, and the MCP door declares a room of
+  500,000 for it, which Claude Code applies in place of its token cap. At 80,000 a coreutils plan (88–105k) went
+  by path alone, and the customer met permission prompts reading the file.
+- `gfso doctor` reads the entry a session in this directory starts: a stale entry (a directory's own, or the user's
+  naming another installation) that connects is no longer reported as registered, and the line names how to reach
+  this installation. `gfso setup` no longer tells the person to restart into a session that would start a
+  directory's stale entry.
+- A move offered in `next_steps`, `get_task` and the other answers that offer one never names a `reopen` that R′'s
+  gate refuses: it is said refused, in the gate's own words.
+- `gfso wait` returns at once on a stop the system made for the user to lift (a disk bound under AUTO, a refuted plan
+  of theirs) that stood before the wait, as it already did on one made during the wait.
+- A cancelled MCP call no longer ends its whole session. A call the client cancelled while the verb ran returned as
+  if answered; the SDK, its cancel already answered, answered again, and its assertion closed the session with every
+  call in flight, which the bridge reported as a server restart. The bridge now says only that the connection broke.
+- A part whose pinned checks import a module another part writes, that part not before it, is a finding when the
+  plan is written (§2.7): the import is read from the pinned files themselves, whatever `runs` declares. Such a plan
+  started, its parts blocked, and their checks were rewritten after delivery.
+- The machine issuer no longer promotes a producer for code a sibling writes that the blocked part's own checks
+  run; the refusal names the remedy (re-pin the part's checks over its own code, or the seam).
+- A `refine_plan` round whose review still finds open the root criterion its note named, or one the round added,
+  says NOT ANSWERED and spends no note.
+- `gfso log -f` flushes each line, so a follower read through a pipe gets events as they land.
+- A stop or start from the page of a project with a mode is recorded as the person's, not the server's agent.
+- A refused verb's own text reaches the agent over MCP: every verb's answer type admits the refusal, which the SDK's
+  validation of a list-typed answer (`decompose`) had replaced with a schema error.
+- `gfso setup` stays under an agent's two-minute shell call: the agent image builds in a process of its own, setup waits
+  a bounded time, and the next `gfso setup` waits on that build rather than starting another.
+- `gfso wait` answers at once when the run is stuck or stops while waited on; a wait the server
+  refuses (an unknown project) says so instead of "no server answering".
+- A standing finding from a past round is re-run on the delivery in hand: a kept script that entered its own round's
+  copy of the delivery judged that copy, and refuted every later round.
+- A member of a scope whose top no longer holds all of it is validated on its own; it had waited in VALIDATING with no
+  validator.
+- A validation that lapsed offers its issuer no cancel: a re-ASSIGN keeping the contract re-presents the delivery.
+- A pinned check naming a placeholder nothing fills (`{exec}`, `{workspace}`; only `{inputs}` is filled) is refused at
+  admission, naming the check; a plan file carrying one is refused at the go until the check is rewritten.
+- A refine round is handed the review's verdicts on the root criteria the parts do not secure, and its answer says
+  NOT REPAIRED where it left one so; a round whose note stays open says NOT ANSWERED, and the plan's answer then tells
+  the customer the note is not spent.
+- A finished goal frees its roles; a session handed a node another session worked is told what that session did; a plan
+  is placed for the executor that will do it, and a plan the go would refuse says so when it is written.
+- A question about a large graph no longer copies it at every step: reads are kept until the next write and the
+  graph's own walks read it without copying. On a 408-node graph the page's graph read went from 1.4 s to 0.03 s and
+  `next_steps` from 24.5 s to 0.4 s. A test counts the whole-graph copies one question makes and holds them equal on
+  a small and a large graph.
+- A project its parties worked in is no longer offered for deletion as one that "never ran": a graph people hold
+  calls no model, and the rule read spend alone.
+- What `register_agent` and `list_agents` say of validation — which validator will validate a role, what a validator will validate —
+  is read within the role's project, as the dispatcher binds them: it named another project's validator in the same
+  directory.
+- A plan's part whose pinned check runs another part's result is found waiting on it before anything is built, read off
+  the checks themselves and not only the part's own `runs`: a `./` path another part writes, or the program built of the
+  source it writes, is that part's; a program no part writes runs what every other part probing through it says it runs.
+  The finding goes to the authoring's repair round, as a declared `runs` did. The c_compiler plan's plumbing said
+  `runs: []`, probed `./c_compiler`, waited on nothing and stood BLOCKED five hours; a `runs` entry under the parent's
+  id (`root.lexer`) is read as the part it names, where it was read as none.
+- A settled node is not reopened — by `reopen`, `revise`, `edit_criteria`, `edit_accepted_risks`, `reassign`, a split's
+  re-admission re-issuing it or a raw `signal` ASSIGN; it is asked before the signal is queued — while
+  the place its project's volumes stand in does not answer (a volume gone, or Docker down): the node, its verdict and
+  its reopens stay, and the refusal names the cause and the lift: bring the place back, or past a volume gone take the goal up again
+  as a new one from `gfso/<project>/accepted`. It used to erase the verdict, spend the reopen, and stop the project
+  "place down" at the node's first round. A project working on the host is not asked.
+- A goal's close removes its validation and contact rounds and its temp from the project's directory (in its volume
+  or beside the base): nothing reads them past the root's PASS, and a finding's files the record kept are laid again
+  from the record. The base, its read copy, a place that did not join and the sessions' state stay.
+- A plan the planner authored as one part logs "one part — the goal is worked whole and checked by its own
+  criteria", where it logged "nothing was built — no verdict to give".
+- `gfso setup`'s last instruction to the client says a task the person asked gfso to do is not done in the session
+  before the restart, by hand or through `gfso run`: told «install gfso and do …», a fresh client wrote the file itself
+  and said done before its tools came.
+
 ## [0.3.0] — 2026-11-07
 
 ### Added

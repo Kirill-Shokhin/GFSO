@@ -1,7 +1,7 @@
 // Authoring contracts: a revision of a node (Edit) and a split into children (Decompose); their rows are forms.js.
 import {$, el, esc} from './dom.js';
 import {task, post} from './api.js';
-import {S, myRole} from './state.js';
+import {S} from './state.js';
 import {notice, act} from './overlays.js';
 import {frame} from './hints.js';
 import {critRow, listRow, readCrits, readList, iso, suggest} from './forms.js';
@@ -14,11 +14,15 @@ const edit = {id: null, assignee: '', crits: [], risks: [], recorded: {}};
 export const addEditCriterion = c => critRow($('edit-criteria-rows'), c, {cls: 'ec'});
 export const addEditAcceptedRisk = value => listRow($('edit-accepted_risks-list'), 'excluded factor…', value);
 
-export async function openEdit({id}) {
+export async function openEdit({id, risks: risksAs}) {
     const d = await task(id);
     // WHOSE list this form edits is whose word it writes (§9.2, §10.1): the executor over its own split edits
-    // the split's register; anyone else — its issuer — the packet's pre-fill. The server routes the same way.
-    const own = myRole() === (d.assignee || '') && (d.children || []).length > 0;
+    // the split's register; anyone else — its issuer — the packet's pre-fill. The server routes the same way, and signs
+    // it as the name the panel was told (`moves.edit_accepted_risks`); a page that owns no such name has no list here
+    const own = risksAs === (d.assignee || '') && (d.children || []).length > 0;
+    edit.risksAs = risksAs || '';
+    $('edit-risks').hidden = !edit.risksAs;
+    $('edit-risks-as').textContent = edit.risksAs;
     const risks = own ? (d.accepted_risks_recorded || []) : (d.prefilled_accepted_risks || []);
     // a kept row posts its RECORDED form, so an edit elsewhere does not strip P, impact, denial (critic r4, 2026-10-04)
     Object.assign(edit, {id, assignee: d.assignee || '', risks: risks.map(n => n.item),
@@ -33,17 +37,15 @@ export async function openEdit({id}) {
 }
 
 export async function submitEdit() {
-    const agent = myRole();
-    if (!agent) return notice('Set your role (agent) above first — only the self-owner may edit.', 'bad');
     const criteria = readCrits($('edit-criteria-rows')), riskItems = readList($('edit-accepted_risks-list'));
     const assignee = $('edit-assignee').value.trim();
     const send = (tool, body) => post(`/api/run/${tool}`, {task_id: edit.id, ...body});
     // ONE ACT, ONE REVISION: each verb is a re-ASSIGN (Inv-1), and posting all of them every time sent the
     // node back to OFFERED twice for one edit (wave 26). Only what CHANGED is sent.
     const critsMoved = JSON.stringify(criteria) !== JSON.stringify(edit.crits);
-    const risksMoved = JSON.stringify(riskItems) !== JSON.stringify(edit.risks);
-    const sends = [critsMoved && ['edit_criteria', {criteria, agent}],
-        risksMoved && ['edit_accepted_risks', {accepted_risks: riskItems.map(i => edit.recorded[i] || i), agent}],
+    const risksMoved = !!edit.risksAs && JSON.stringify(riskItems) !== JSON.stringify(edit.risks);
+    const sends = [critsMoved && ['edit_criteria', {criteria}],
+        risksMoved && ['edit_accepted_risks', {accepted_risks: riskItems.map(i => edit.recorded[i] || i)}],
         assignee && assignee !== edit.assignee && ['reassign', {assignee}]].filter(Boolean);
     if (!critsMoved && !risksMoved && assignee === edit.assignee) notice('Nothing changed — no revision sent.', 'ok');
     // the first refusal stops the rest
@@ -119,12 +121,17 @@ export async function submitDecompose() {
     if (unmapped.length)
         return notice(`every criterion of this node must be mapped to the child that delivers it `
                       + `(CHECK-1, joint sufficiency). Still unmapped: ${unmapped.join(', ')}.`, 'bad');
-    if (children.every(c => !c.spec.accepted_risks.length))
-        return notice('a decomposition needs its ACCEPTED_RISKS register (a decomposition '
-                      + 'without one is incomplete by definition). Add at least one factor — `+ accepted_risks` '
-                      + 'on a subtask — or say in it that none is known.', 'bad');
+    // THE SPLIT'S OWN REGISTER, the decomposer's: its odds of being refuted at contact and where they come from (§9.5,
+    // CHECK-4) — the parts' pre-filled risks are their packets', and a split sent with only those was refused at the door
+    // whatever was typed (a probe, 2026-11-14)
+    const p = parseFloat($('dc-denial-p').value), why = $('dc-denial-why').value.trim();
+    if (!(p >= 0 && p <= 1) || !why)
+        return notice('say how likely this split is to be wrong once the work meets reality (0–1) and where that figure '
+                      + 'comes from — the split carries it as its own risk (§9.5).', 'bad');
     // …AND THE ENGINE'S OWN REFUSAL REACHES THE USER — a rejected plan closed the modal like an accepted one.
+    // …signed by the session as the split's holder (§11.5), never by a name sent
     await act(post('/api/run/decompose', {parent_id: dec.id, children,
+        accepted_risks: [{denial: true, p, justification: why}],
         mappings: sels.map(s => ({criterion_name: s.dataset.crit, child_id: children[+s.value].task_id}))}),
         {ok: async () => { modal('decompose-modal', false); await S.reload(); }});
 }

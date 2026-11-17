@@ -16,7 +16,7 @@ from gfso.adapters import execution as E
 from gfso.adapters.execution import ContainerExecution, LocalExecution, scratch_of
 from gfso.adapters.worktrees import base_of
 from gfso.core.protocol.procedure import INPUTS_TOKEN, materialize_inputs, probe_id
-from gfso.core.types import VOLUME, Criteria, Probe, nodes_dir
+from gfso.core.types import VOLUME, Criteria, Probe, nodes_dir, nodes_root
 from gfso.packets import checkout_note
 
 IMAGE = "gfso-test-image"
@@ -79,7 +79,7 @@ def test_two_bases_never_share_a_directory():
 def test_a_name_with_nothing_unsafe_stands_byte_for_byte(tmp_path, name):
     (w := tmp_path / name).mkdir()
     assert nodes_dir(name) == f".gfso-nodes-{name}"
-    assert scratch_of(w, "p") == tmp_path / f".gfso-nodes-{name}" / "p" / f".gfso-scratch-.{name}"
+    assert scratch_of(w, "p") == nodes_root(w) / "p" / f".gfso-scratch-.{name}" and nodes_root(w).name == nodes_dir(name)
     assert ContainerExecution("e", IMAGE, None, str(tmp_path / "s"), str(w), "p").mounts == [name, f".gfso-nodes-{name}/p"]
 
 

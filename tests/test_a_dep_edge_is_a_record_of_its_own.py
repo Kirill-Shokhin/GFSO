@@ -36,12 +36,12 @@ def _declared(e):
 
 def _split(e, deps=True):
     T.create_task(e, "root", {"description": "parent", "criteria": [criterion("g", "G"), criterion("p", "P")],
-                              "accepted_risks": REGISTER}, assignee="agent")
+                              "accepted_risks": REGISTER}, assignee="user")
     T.decompose(e, "root", [
         {"task_id": "root.prod", "spec": {"description": "producer", "criteria": [criterion("pp", "PP")]},
-         "assignee": "agent", "covers": ["p"]},
+         "assignee": "user", "covers": ["p"]},
         {"task_id": "root.cons", "spec": {"description": "consumer", "criteria": [criterion("c", "C")]},
-         "assignee": "agent", "covers": ["g"], **({"deps": [{"from": "root.prod", "glue": "cons reads prod's output"}]} if deps else {})}],
+         "assignee": "user", "covers": ["g"], **({"deps": [{"from": "root.prod", "glue": "cons reads prod's output"}]} if deps else {})}],
         accepted_risks=REGISTER)
     e.wait_idle()
 
@@ -78,18 +78,18 @@ def test_the_wire_form_of_a_seam_is_read_as_the_edge_it_declares():
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "parent", "criteria": [criterion("g", "G"), criterion("p", "P")],
-                              "accepted_risks": REGISTER}, assignee="agent")
+                              "accepted_risks": REGISTER}, assignee="user")
     T.decompose(e, "root", [
         {"task_id": "root.prod", "spec": {"description": "producer", "criteria": [criterion("pp", "PP")]},
-         "assignee": "agent", "covers": ["p"]},
+         "assignee": "user", "covers": ["p"]},
         {"task_id": "root.cons", "spec": {"description": "consumer", "criteria": [
             criterion("c", "C"), {"name": "dep__root.prod", "description": "reads prod", "depends_on": "root.prod"}]},
-         "assignee": "agent", "covers": ["g"]}], accepted_risks=REGISTER)
+         "assignee": "user", "covers": ["g"]}], accepted_risks=REGISTER)
     e.wait_idle()
     _no_bare_entry(e)
     assert _declared(e) == [("root.prod", "root.cons", "reads prod")]
     T.edit_criteria(e, "root.cons", [criterion("c", "C2"), {"name": "dep__root.prod", "description": "reads prod",
-                                                            "depends_on": "root.prod"}], "agent")
+                                                            "depends_on": "root.prod"}], "user")
     e.wait_idle()
     _no_bare_entry(e)
     assert _declared(e) == [("root.prod", "root.cons", "reads prod")], "one declaration, not two"
@@ -127,8 +127,8 @@ def test_a_block_naming_a_declared_producer_records_no_discovery_and_leaves_the_
     e = make_engine()
     e.start()
     _split(e)
-    for s in (SignalData(signal=Signal.ACCEPT, task_id=TaskId("root.cons"), source=AgentId("agent")),
-              SignalData(signal=Signal.BLOCK, task_id=TaskId("root.cons"), source=AgentId("agent"),
+    for s in (SignalData(signal=Signal.ACCEPT, task_id=TaskId("root.cons"), source=AgentId("user")),
+              SignalData(signal=Signal.BLOCK, task_id=TaskId("root.cons"), source=AgentId("user"),
                          reason="prod not done", blocker_task_ids=(TaskId("root.prod"),))):
         e.send_signal(s)
         e.wait_idle()
@@ -190,9 +190,9 @@ def test_an_older_database_is_migrated_once_logged_and_reads_as_before(tmp_path)
 
 def _pair(e):
     T.create_task(e, "root", {"description": "parent", "criteria": [criterion("g", "G"), criterion("p", "P")],
-                              "accepted_risks": REGISTER}, assignee="agent")
+                              "accepted_risks": REGISTER}, assignee="user")
     T.decompose(e, "root", [{"task_id": k, "spec": {"description": k, "criteria": [criterion(k[-1] + "c", k)]},
-                             "assignee": "agent", "covers": [c]} for k, c in (("root.A", "p"), ("root.B", "g"))],
+                             "assignee": "user", "covers": [c]} for k, c in (("root.A", "p"), ("root.B", "g"))],
                 accepted_risks=REGISTER)
     e.wait_idle()
 
@@ -204,7 +204,7 @@ def test_an_edge_a_re_admission_adds_into_a_standing_child_orders_its_deadline()
     e.start()
     _pair(e)
     T.decompose(e, "root", [{"task_id": "root.B", "spec": {"description": "root.B", "criteria": [criterion("Bc", "root.B")]},
-                             "assignee": "agent", "covers": ["g"], "deps": [{"from": "root.A", "glue": "B reads A"}]}],
+                             "assignee": "user", "covers": ["g"], "deps": [{"from": "root.A", "glue": "B reads A"}]}],
                 accepted_risks=REGISTER)
     e.wait_idle()
     a, b = (e.graph.get_task(TaskId(k)) for k in ("root.A", "root.B"))
@@ -222,7 +222,7 @@ def test_an_edge_the_nodes_own_contract_declares_with_its_split_is_held_to_check
                     accepted_risks=a.spec.accepted_risks)
     with pytest.raises(ValueError, match="Dep cycle"):
         e.decompose_task(TaskId("root.A"), [(TaskId("root.A.x"), Spec("x", (Criteria("xc", "x", check=pinned("xc")),)),
-                                             AgentId("agent"))], [CriterionMapping("Ac", TaskId("root.A.x"))],
+                                             AgentId("user"))], [CriterionMapping("Ac", TaskId("root.A.x"))],
                          register=REGISTER_SPLIT, contract=contract)
     assert sorted((str(x.from_id), str(x.to_id)) for x in e.graph.dep_edges(adopted=True)) == [("root.A", "root.B")]
     e.stop()
@@ -235,7 +235,7 @@ def test_an_edge_stated_again_in_other_words_is_one_edge():
     _pair(e)
     T.add_dependency(e, "root.A", "root.B", glue="g1")
     T.edit_criteria(e, "root.B", [criterion("Bc", "B2"), {"name": "dep__root.A", "description": "g2", "depends_on": "root.A"}],
-                    "agent")
+                    "user")
     T.add_dependency(e, "root.A", "root.B", glue="g3", check=[{"behaviour": "b", "command": "check A", "expect": "ok"}])
     e.wait_idle()
     assert [str(x.from_id) for x in e.graph.dep_edges(closed=True)] == ["root.A"]
@@ -255,8 +255,8 @@ def test_declaring_and_cutting_an_edge_is_a_logged_re_admission_that_re_offers_n
     e.start()
     _pair(e)
     due = (datetime.now() + timedelta(days=2)).isoformat()
-    T.revise(e, "root.B", {"description": "root.B", "criteria": [criterion("Bc", "root.B")]}, "agent", deadline=due)
-    T.signal(e, "root.B", "ACCEPT", "agent")
+    T.revise(e, "root.B", {"description": "root.B", "criteria": [criterion("Bc", "root.B")]}, "user", deadline=due)
+    T.signal(e, "root.B", "ACCEPT", "user")
     e.wait_idle()
     n, log = len(_admissions(e)), len(e.audit_log(TaskId("root.B")))
     out = T.add_dependency(e, "root.A", "root.B", glue="B reads A")
@@ -287,7 +287,7 @@ def test_the_decompose_doors_deps_name_a_node_and_one_pair_is_one_edge():
     e.start()
     _pair(e)
     kid = lambda deps: [{"task_id": "root.B", "spec": {"description": "root.B", "criteria": [criterion("Bc", "root.B")]},
-                         "assignee": "agent", "covers": ["g"], "deps": deps}]
+                         "assignee": "user", "covers": ["g"], "deps": deps}]
     for bad in ([{"glue": "x"}], [{"from": "root.nope", "glue": "x"}]):
         assert T.decompose(e, "root", kid(bad), accepted_risks=REGISTER).get("refused"), bad
     T.decompose(e, "root", kid([{"from": "root.A", "glue": "x"}, {"from": "root.A", "glue": "y"}]), accepted_risks=REGISTER)
@@ -313,7 +313,7 @@ def test_cutting_an_edge_never_moves_a_deadline_nor_re_offers_the_consumer_at_wo
     e.start()
     _pair(e)
     T.add_dependency(e, "root.A", "root.B", glue="B reads A")      # siblings due together: the new order forces a move
-    T.signal(e, "root.B", "ACCEPT", "agent")
+    T.signal(e, "root.B", "ACCEPT", "user")
     e.wait_idle()
     b = e.graph.get_task(TaskId("root.B"))
     due, n = b.deadline, len(e.audit_log(TaskId("root.B")))
@@ -332,7 +332,7 @@ def test_an_edge_written_through_a_revision_is_declared_by_the_one_act_and_keeps
     _pair(e)
     n = len(_admissions(e))
     T.edit_criteria(e, "root.B", [criterion("Bc", "B"), {"name": "dep__root.A", "description": "B reads A",
-                                                          "depends_on": "root.A"}], "agent")
+                                                          "depends_on": "root.A"}], "user")
     e.wait_idle()
     assert _admissions(e)[n:] and _admissions(e)[-1]["deps"] == {"root.B": [["root.A", "B reads A"]]}
     a, b = (e.graph.get_task(TaskId(k)) for k in ("root.A", "root.B"))
@@ -340,7 +340,7 @@ def test_an_edge_written_through_a_revision_is_declared_by_the_one_act_and_keeps
     assert {c["check"]: c["verdict"] for c in T.get_checks(e, "root")}["CHECK-3:deadlines"] != "unmet"
     T.revise(e, "root", {"description": "parent", "criteria": [criterion("g", "G"), criterion("p", "P"), {
         "name": "dep__root.A", "description": "the goal reads A", "depends_on": "root.A"}], "accepted_risks": REGISTER},
-        "agent")
+        "user")
     assert [r["deps"] for r in json.loads(e.graph._storage.get_critique(goal_deps_key(TaskId("root"))) or "[]")] == [
         [["root.A", "the goal reads A"]]]
     e.stop()
@@ -350,7 +350,7 @@ def test_a_pair_named_by_deps_and_by_a_criterion_reading_it_is_one_edge():
     e = make_engine()
     e.start()
     _pair(e)
-    T.decompose(e, "root", [{"task_id": "root.B", "deps": [{"from": "root.A", "glue": "schema"}], "assignee": "agent",
+    T.decompose(e, "root", [{"task_id": "root.B", "deps": [{"from": "root.A", "glue": "schema"}], "assignee": "user",
                              "covers": ["g"], "spec": {"description": "root.B", "criteria": [
                                  criterion("Bc", "root.B"), criterion("reads", "B runs A's binary", depends_on="root.A")]}}],
                 accepted_risks=REGISTER)

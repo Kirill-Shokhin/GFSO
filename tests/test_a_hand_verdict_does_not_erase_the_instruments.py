@@ -36,10 +36,10 @@ def _validated_fail_then_passed_by_hand(e, tid="leaf"):
                            "criteria": [criterion("ghost_runs",
                                                   "python -m ghost prints 2.0.0")],
                            "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     e.wait_idle()
-    T.signal(e, tid, "ACCEPT", "agent")
-    T.signal(e, tid, "DELIVER", "agent", result="claimed done")
+    T.signal(e, tid, "ACCEPT", "user")
+    T.signal(e, tid, "DELIVER", "user", result="claimed done")
     e.wait_idle()
     e.record_exec_verdict(TaskId(tid), "FAIL", ["ghost_runs"], "val-1",
                           per_criterion=_INSTRUMENT_FAIL)
@@ -63,7 +63,7 @@ def test_a_node_cannot_close_over_an_observed_fail():
     e = make_engine()
     e.start()
     _validated_fail_then_passed_by_hand(e)
-    r = T.signal(e, "leaf", "PASS", "agent")
+    r = T.signal(e, "leaf", "PASS", "user")
     e.wait_idle()
 
     assert not r.get("accepted"), r
@@ -79,8 +79,8 @@ def test_a_rework_under_it_ends_the_contradiction():
     _validated_fail_then_passed_by_hand(e)
     T.record_verdict(e, "leaf", "FAIL", reviewer="alice-qa", failed_criteria=["ghost_runs"],
                      observed={"ghost_runs": "checked again: no module"})
-    T.signal(e, "leaf", "FAIL", "agent", failed_criteria=["ghost_runs"])
-    T.signal(e, "leaf", "DELIVER", "agent", result="built it this time")
+    T.signal(e, "leaf", "FAIL", "user", failed_criteria=["ghost_runs"])
+    T.signal(e, "leaf", "DELIVER", "user", result="built it this time")
     e.wait_idle()
 
     assert e.overruled_verdict(TaskId("leaf")) is None
@@ -95,10 +95,10 @@ def test_two_verdicts_that_AGREE_leave_no_trace_of_a_conflict():
     T.create_task(e, "ok", {"description": "a leaf",
                             "criteria": [criterion("c", "C")],
                             "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     e.wait_idle()
-    T.signal(e, "ok", "ACCEPT", "agent")
-    T.signal(e, "ok", "DELIVER", "agent", result="built it")
+    T.signal(e, "ok", "ACCEPT", "user")
+    T.signal(e, "ok", "DELIVER", "user", result="built it")
     e.record_exec_verdict(TaskId("ok"), "PASS", [], "val-1",
                           per_criterion=[{"criterion": "c", "verdict": "pass",
                                           "evidence": "ran the check, it printed OK",

@@ -87,7 +87,7 @@ def _goal(e, tmp_path, split=True):
     for aid, kind in (("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(aid, kind, workdir=str(tmp_path), project="p")
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
-    e.set_mode(Mode.AUTO, None, AgentId("agent"))
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
     if split:
         T.TOOLS["decompose"](e, "root", [{"task_id": "root.kid", "covers": ["g"], "spec": {
@@ -128,7 +128,7 @@ def _the_race(e, agents, verdict="PASS"):
     out = {}
 
     def turn():
-        out["turn"] = I.issuer_turn(e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))
+        out["turn"] = I.issuer_turn(e, TaskId("root"), "outside", "user", _llm=_Issuer(LATE))
         e.wait_idle()
 
     out["validated"] = _auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root", verdict=verdict, first=turn))
@@ -147,7 +147,7 @@ class _Run:
         self.base = _repo(tmp_path / "ws")
         self.e = e = make_engine(llm=StubLLM(), validate_signals=True)
         self.agents = _goal(e, self.base, split)
-        e.set_settings({"l2_gate": "1"}, AgentId("agent"), "the gate as it stands by default; the suite's conftest has it off")
+        e.set_settings({"l2_gate": "1"}, AgentId("user"), "the gate as it stands by default; the suite's conftest has it off")
         self.lied, self.turned, self.tmp = [], False, tmp_path
         self.sessions = {"root.kid": ("kid.txt", "the part\n"), "root": ("root.txt", "the whole\n"),
                          "root.late": ("late.txt", "the late part\n")}
@@ -191,7 +191,7 @@ class _Run:
         return I.issuer_turn(e, tid, question, actor, _llm=_Issuer(self.answer))
 
     def attach(self):
-        assert I.issuer_turn(self.e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))["status"] == "applied"
+        assert I.issuer_turn(self.e, TaskId("root"), "outside", "user", _llm=_Issuer(LATE))["status"] == "applied"
         self.e.wait_idle()
         self.turned = True
 
@@ -213,7 +213,11 @@ class _Run:
                                                               first=self.first.pop(str(tid), None)), **k)
 
     def in_base(self, name):
-        return (self.base / name).exists()
+        """Is `name` in the root's landed result — the accepted branch; the user's own tree is never written."""
+        return W.git(self.base, "cat-file", "-e", f"refs/heads/gfso/p/accepted:{name}").returncode == 0
+
+    def landed(self, name) -> str:
+        return _git(self.base, "show", f"refs/heads/gfso/p/accepted:{name}")
 
     def done(self):
         complete = self.e.next_steps(TaskId("root")).get("complete")
@@ -234,7 +238,7 @@ def _the_part_stands_in_the_base(run):
     assert run.lied == [], f"`complete` said over a base without the part: {run.lied}"
     assert run.in_base("late.txt") and run.in_base("kid.txt")
     assert run.e.next_steps()["complete"] is True and run.e.next_steps(TaskId("root"))["complete"] is True
-    assert _git(run.base, "log", "--format=%s", "-1").startswith("gfso: root joins the base")
+    assert not (run.base / "late.txt").exists() and not (run.base / "kid.txt").exists(), "the user's tree was written"
 
 
 def test_a_part_attached_while_the_validator_ran_reaches_the_base(tmp_path, monkeypatch):
@@ -254,7 +258,7 @@ def _force_around_the_pass(run, monkeypatch, assign_first):
     real, armed, turn, ended = loop.process_signal, [1], {}, threading.Event()
 
     def attach():
-        turn.update(I.issuer_turn(run.e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE)))
+        turn.update(I.issuer_turn(run.e, TaskId("root"), "outside", "user", _llm=_Issuer(LATE)))
         ended.set()
 
     def step(sd, graph, agents, llm, q, *rest):
@@ -374,7 +378,7 @@ def test_a_review_that_moved_nothing_lifts_the_hold_though_it_counts_nothing(tmp
     agents, ran, go = _goal(e, tmp_path), threading.Event(), threading.Event()
     _through_a_seam(e, agents, "root.kid")
     _deliver(e, "root")
-    e.set_settings({"l2_gate": "1"}, AgentId("agent"), "the gate as it stands by default; the suite's conftest has it off")
+    e.set_settings({"l2_gate": "1"}, AgentId("user"), "the gate as it stands by default; the suite's conftest has it off")
     # …the one thing set by hand: what puts `plan` on this node, the rest of the turn real
     monkeypatch.setattr(e, "decomposition_refuted", lambda t: "run review_decomposition(root) first" if str(t) == "root" else None)
     assert I.open_questions(e) == [(TaskId("root"), "plan")] and I.review_due(e, TaskId("root")), I.open_questions(e)
@@ -484,7 +488,30 @@ def test_a_reopened_pass_its_fresh_run_failed_stands_green_after_its_rework(tmp_
                   and not e.joins.joining_nodes())
         assert e.refuted_passes() == [] and e.next_steps()["complete"] is True, e.next_steps()
         assert q_V_reversed(e._graph) == ["root"], "the history stands: that pass was found wrong"
-        assert run.in_base("root.txt") and (run.base / "root.txt").read_text().endswith(f"{run.runs}\n"), "the rework's tree landed"
+        assert run.in_base("root.txt") and run.landed("root.txt").endswith(f"{run.runs}"), "the rework's tree landed"
+    finally:
+        e.stop()
+
+
+def test_a_root_reopened_after_its_places_were_cleared_keeps_its_parts_work(tmp_path, monkeypatch):
+    """Its places and branches go at the PASS; made again for the reopen, the root's place starts from the work it had —
+    its last delivery, in the base — not the user's untouched HEAD, which dropped the part's work while the poorer
+    result passed and moved the accepted branch (critic). A reopen re-earns the verdict over that work (§12.14)."""
+    run = _Run(tmp_path, monkeypatch, split=True)
+    e, root = run.e, TaskId("root")
+    try:
+        cleared, clear = threading.Event(), DG.clear_workspaces
+        monkeypatch.setattr(DG, "clear_workspaces", lambda *a: (clear(*a), cleared.set())[0])
+        run.drive(lambda: e.next_steps(root).get("complete") is True and cleared.is_set())
+        first = _git(run.base, "rev-parse", "refs/heads/gfso/p/accepted")
+        assert run.in_base("kid.txt") and _git(run.base, "branch", "--list", "gfso/p/root") == ""
+        cleared.clear()
+        e.reopen(root, e.graph.issuer_of(root))
+        e.wait_idle()
+        run.drive(lambda: e.next_steps(root).get("complete") is True and cleared.is_set()
+                  and _git(run.base, "rev-parse", "refs/heads/gfso/p/accepted") != first)
+        assert run.in_base("kid.txt"), "the reopened root's result lost its part's work"
+        assert _git(run.base, "merge-base", "--is-ancestor", first, "refs/heads/gfso/p/accepted") == ""
     finally:
         e.stop()
 
@@ -532,9 +559,9 @@ def test_under_auto_no_signature_closes_a_whole_over_a_part_whoever_signs(tmp_pa
     e, agents = _delivered_whole(tmp_path)
     try:
         instrument_passes(e, TaskId("root"))
-        assert I.issuer_turn(e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))["status"] == "applied"
+        assert I.issuer_turn(e, TaskId("root"), "outside", "user", _llm=_Issuer(LATE))["status"] == "applied"
         e.wait_idle()
-        assert "root.late" in str(T.signal(e, "root", "PASS", "agent"))
+        assert "root.late" in str(T.signal(e, "root", "PASS", "user"))
         assert e.graph.get_state(TaskId("root")) == State.VALIDATING
     finally:
         e.stop()
@@ -550,15 +577,15 @@ def test_a_child_that_stands_keeps_its_admission_when_its_sibling_is_refused(tmp
         if str(sd.task_id) in ("n1", "n2") and sd.signal == Signal.ASSIGN:
             assigned.append(str(sd.task_id))
             if len(assigned) == 2:
-                real(SignalData(signal=Signal.PASS, task_id=TaskId("kid"), source=AgentId("agent")), *rest)
+                real(SignalData(signal=Signal.PASS, task_id=TaskId("kid"), source=AgentId("user")), *rest)
         real(sd, *rest)
 
     monkeypatch.setattr(loop, "process_signal", step)
     e.start()
-    T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]}, assignee="agent")
+    T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]}, assignee="user")
     T.decompose(e, "root", [{"task_id": "kid", "assignee": "exec-1", "covers": ["g"],
                              "spec": {"description": "a part", "criteria": [criterion("k", "K")]}}], accepted_risks=REGISTER)
-    T.decompose(e, "kid", [{"task_id": "kid.a", "assignee": "agent", "covers": ["k"],
+    T.decompose(e, "kid", [{"task_id": "kid.a", "assignee": "user", "covers": ["k"],
                             "spec": {"description": "below", "criteria": [criterion("a", "A")]}}], accepted_risks=REGISTER)
     e.wait_idle()
     try:
@@ -566,7 +593,7 @@ def test_a_child_that_stands_keeps_its_admission_when_its_sibling_is_refused(tmp
         assert "error" not in (o := T.signal(e, "kid", "DELIVER", "exec-1", result="early")), o
         instrument_passes(e, TaskId("kid"))
         with pytest.raises(InvariantViolation, match="is DONE"):
-            T.decompose(e, "kid", [{"task_id": t, "assignee": "agent", "covers": ["k"], "spec": {
+            T.decompose(e, "kid", [{"task_id": t, "assignee": "user", "covers": ["k"], "spec": {
                 "description": f"part {t}", "criteria": [criterion(f"{t}c", "C")]}} for t in ("n1", "n2")])
         e.wait_idle()
         first, second = assigned[:2]
@@ -581,10 +608,10 @@ def test_a_holders_signature_lands_where_an_instruments_is_held(tmp_path):
     """Under no mode, at a seam (§12.8): one step, two signers."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
-    T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]}, assignee="agent")
+    T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]}, assignee="user")
     T.decompose(e, "root", [{"task_id": "kid", "assignee": "exec-1", "covers": ["g"],
                              "spec": {"description": "a part", "criteria": [criterion("k", "K")]}}], accepted_risks=REGISTER)
-    T.decompose(e, "kid", [{"task_id": "kid.a", "assignee": "agent", "covers": ["k"],
+    T.decompose(e, "kid", [{"task_id": "kid.a", "assignee": "user", "covers": ["k"],
                             "spec": {"description": "below", "criteria": [criterion("a", "A")]}}], accepted_risks=REGISTER)
     e.wait_idle()
     e._graph.authorized_validators = {"val-1"}
@@ -595,7 +622,7 @@ def test_a_holders_signature_lands_where_an_instruments_is_held(tmp_path):
         why = []
         assert not DG._signal(e, TaskId("kid"), Signal.PASS, "val-1", _why=why) and "kid.a" in why[0], why
         assert e.graph.get_state(TaskId("kid")) == State.VALIDATING
-        assert "error" not in (o := T.signal(e, "kid", "PASS", "agent")), o
+        assert "error" not in (o := T.signal(e, "kid", "PASS", "user")), o
         e.wait_idle()
         assert e.graph.get_state(TaskId("kid")) == State.DONE and e.passes_over_open_parts() == ["kid"]
     finally:
@@ -608,17 +635,17 @@ def test_a_holder_keeps_his_moves_and_is_named_them(tmp_path):
     e.project_name = "p"
     agents = AgentRegistry(path=str(tmp_path / "agents.json"))
     agents.register("exec-1", "llm-executor", workdir=str(tmp_path), project="p")
-    T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]}, assignee="agent")
+    T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]}, assignee="user")
     T.decompose(e, "root", [{"task_id": "kid", "assignee": "exec-1", "covers": ["g"],
                              "spec": {"description": "a part", "criteria": [criterion("k", "K")]}}], accepted_risks=REGISTER)
-    T.decompose(e, "kid", [{"task_id": "kid.a", "assignee": "agent", "covers": ["k"],
+    T.decompose(e, "kid", [{"task_id": "kid.a", "assignee": "user", "covers": ["k"],
                             "spec": {"description": "below", "criteria": [criterion("a", "A")]}}], accepted_risks=REGISTER)
     e.wait_idle()
     try:
         assert "error" not in (o := T.signal(e, "kid", "ACCEPT", "exec-1")), o
         assert "error" not in (o := T.signal(e, "kid", "DELIVER", "exec-1", result="early")), o
         instrument_passes(e, TaskId("kid"))
-        assert "error" not in (o := T.signal(e, "kid", "PASS", "agent")), o
+        assert "error" not in (o := T.signal(e, "kid", "PASS", "user")), o
         e.wait_idle()
         d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None)
         d.dispatch_once()
@@ -634,7 +661,7 @@ def test_a_holder_keeps_his_moves_and_is_named_them(tmp_path):
 def test_a_stale_pass_moves_nothing_of_a_node_no_longer_validating(tmp_path):
     """A PASS arriving after a re-ASSIGN and its ACCEPT, or after a lapse: re-presenting it was a decision no issuer made."""
     def again(e):
-        I.issuer_turn(e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))
+        I.issuer_turn(e, TaskId("root"), "outside", "user", _llm=_Issuer(LATE))
         e.wait_idle()
         DG._represent(e, e.graph.get_task(TaskId("root")), str(e.graph.issuer_of(TaskId("root"))), {"root.late"})
         e.wait_idle()
@@ -642,7 +669,7 @@ def test_a_stale_pass_moves_nothing_of_a_node_no_longer_validating(tmp_path):
         e.wait_idle()
 
     def lapse(e):
-        I.issuer_turn(e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))
+        I.issuer_turn(e, TaskId("root"), "outside", "user", _llm=_Issuer(LATE))
         e.wait_idle()
         e.send_signal(SignalData(signal=Signal.TIMEOUT, task_id=TaskId("root")))
         e.wait_idle()
@@ -665,7 +692,7 @@ def test_a_standing_pass_is_not_replayed_over_a_part_attached_since(tmp_path):
     e, agents = _delivered_whole(tmp_path)
     try:
         instrument_passes(e, TaskId("root"))
-        assert I.issuer_turn(e, TaskId("root"), "outside", "agent", _llm=_Issuer(LATE))["status"] == "applied"
+        assert I.issuer_turn(e, TaskId("root"), "outside", "user", _llm=_Issuer(LATE))["status"] == "applied"
         e.wait_idle()
         assert _auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root")) == "rejected"
         assert e.graph.get_state(TaskId("root")) == State.OFFERED, "re-presented, not signed"

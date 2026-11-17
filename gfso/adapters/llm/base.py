@@ -47,6 +47,8 @@ class RecordingProvider(LLMProviderPort):
     #: can the provider read its session's context after each tool call from inside the run (`budget.hooked`, `arm`)?
     #: Else the budget reads it between rounds
     handover_hook = False
+    #: the work session's own record of its files and commands while a budget runs (`budget._opened`), else None
+    session_record = None
 
     def _book(self, rec: dict) -> None:
         """A call's record onto the ledger, with the budget its session ran under: the roster's setting changes later, and
@@ -65,7 +67,6 @@ class RecordingProvider(LLMProviderPort):
         self.resume_fallback = None       # what a lost conversation reopens on, set while a budget runs (`budget.run`)
         self.machine_state = None         # optional: the place's state as the system reads it, for a reopen (`budget.run`)
         self.reads_as_report = None       # optional: does an answer parse as the role's report (`budget._as_note`)
-
     @property
     def agent(self) -> str | None:
         """Who the calls work as — the name the stage carries (`<node> <role>(<agent>)`), None where it names none: what
@@ -84,13 +85,23 @@ class RecordingProvider(LLMProviderPort):
         """The run reached for a work tool — counted by its name (the invariants read the shell's)."""
         self.last_tool_calls[name] = self.last_tool_calls.get(name, 0) + 1
 
-    def note_tools(self, use: dict | None, results: list) -> None:
+    def note_tools(self, use: dict | None, results: list, uses: list = (), detail: dict | None = None) -> None:
         """What one event of the run says of its tools: a call it makes (`use`, counted by name), and the results it
-        gets back — a shell call's that is no error is a command that ran (`last_shell_ran`)."""
+        gets back — a shell call's that is no error is a command that ran (`last_shell_ran`); with the message's every
+        whole call (`uses`) and the CLI's structured account of a result (`detail`), the session's record (`note_session`)."""
+        self.note_session(uses, results, detail)
         if use:
             self.note_tool(str(use["name"]))
             self._shell |= {use.get("id")} if use["name"] == "Bash" else set()
         self.last_shell_ran += sum(1 for r in results if r.get("tool_use_id") in self._shell and not r.get("is_error"))
+
+    def note_session(self, uses: list, results: list, detail: dict | None = None) -> None:
+        """What one event says of the work session's own record (`session_record`), where a budget keeps one."""
+        if self.session_record is not None:
+            for u in uses:
+                self.session_record.use(u)
+            for r in results:
+                self.session_record.result(r, detail if len(results) == 1 else None)
 
     def tag_last(self, stage: str) -> None:
         """Label the most recent call with its pipeline stage (the caller knows; the port does not)."""

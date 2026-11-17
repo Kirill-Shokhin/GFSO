@@ -56,7 +56,7 @@ def _project(tmp_path, hands="exec-1"):
     for aid, kind in (("exec-1", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(aid, kind, workdir=str(tmp_path), project="p")
     D.publish_the_workforce(e, agents.list())
-    e.set_mode(Mode.SOLO, None, AgentId("agent"), hands=hands)
+    e.set_mode(Mode.SOLO, None, AgentId("user"), hands=hands)
     T.create_task(e, "root", {"description": "the goal", "accepted_risks": REGISTER,
                               "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
@@ -92,21 +92,21 @@ def test_after_the_holders_accept_its_hands_perform_and_report_in_its_name(tmp_p
     e, agents = _project(tmp_path)
     ran, llm = [], _LLM()
     d = _dispatcher(e, agents, ran, llm)
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
     _pass(e, d)
-    assert ran == [("root", "agent")], f"one session, run for the holder: {ran}"
+    assert ran == [("root", "user")], f"one session, run for the holder: {ran}"
     assert llm.cwd == [str(tmp_path)], "the session runs where the hands work"
     assert _state(e) in (State.VALIDATING, State.DONE)
     deliver = [x for x in e._audit.get_entries() if x.task_id == TaskId("root") and x.signal == Signal.DELIVER]
-    assert [str(x.source) for x in deliver] == ["agent"], "the delivery is the holder's, Del unchanged"
-    assert str(e.graph.get_task(TaskId("root")).assignee) == "agent"
+    assert [str(x.source) for x in deliver] == ["user"], "the delivery is the holder's, Del unchanged"
+    assert str(e.graph.get_task(TaskId("root")).assignee) == "user"
 
 
 def test_in_chat_the_holder_performs_and_nothing_is_started(tmp_path):
     e, agents = _project(tmp_path, hands=None)
     ran = []
     d = _dispatcher(e, agents, ran)
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
     _pass(e, d)
     assert ran == [] and _state(e) == State.EXECUTING
 
@@ -115,7 +115,7 @@ def test_the_holder_is_told_to_consent_and_then_to_wait_not_to_build(tmp_path):
     e, _ = _project(tmp_path)
     step = lambda: next(s for s in TL.TOOLS["next_steps"](e)["steps"] if s.get("task_id") == "root")
     assert "do not build it yourself" in step()["directive"] and "exec-1" in step()["directive"]
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
     e.wait_idle()
     s = step()
     assert s["mine"] and s["directive"].startswith("PERFORMED BY exec-1"), s["directive"]
@@ -123,7 +123,7 @@ def test_the_holder_is_told_to_consent_and_then_to_wait_not_to_build(tmp_path):
 
 def test_in_chat_the_holder_is_told_to_execute(tmp_path):
     e, _ = _project(tmp_path, hands=None)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
     e.wait_idle()
     s = next(s for s in TL.TOOLS["next_steps"](e)["steps"] if s.get("task_id") == "root")
     assert "PERFORMED BY" not in s["directive"]
@@ -132,10 +132,10 @@ def test_in_chat_the_holder_is_told_to_execute(tmp_path):
 def test_the_mode_records_how_the_holder_performs(tmp_path):
     e, _ = _project(tmp_path)
     assert (e.mode()["perform"], e.mode()["hands"]) == ("dispatch", "exec-1")
-    assert e.hands_of("agent") == "exec-1" and e.hands_of("exec-1") is None and e.hands_of("someone") is None
-    e.set_mode(Mode.SOLO, None, AgentId("agent"), hands=None)
-    assert e.mode()["perform"] == "in_chat" and e.hands_of("agent") is None
-    e.set_mode(Mode.AUTO, None, AgentId("agent"), hands=None)
+    assert e.hands_of("user") == "exec-1" and e.hands_of("exec-1") is None and e.hands_of("someone") is None
+    e.set_mode(Mode.SOLO, None, AgentId("user"), hands=None)
+    assert e.mode()["perform"] == "in_chat" and e.hands_of("user") is None
+    e.set_mode(Mode.AUTO, None, AgentId("user"), hands=None)
     assert "perform" not in e.mode(), "under AUTO the user-agent holds nothing to perform"
 
 
@@ -144,7 +144,7 @@ def test_a_round_queued_for_a_node_that_is_offered_again_waits_for_the_holder(tm
     e, agents = _project(tmp_path)
     ran = []
     d = _dispatcher(e, agents, ran)
-    d._run_guarded(TaskId("root"), "agent", generation_of_task(e.graph.get_task(TaskId("root"))))
+    d._run_guarded(TaskId("root"), "user", generation_of_task(e.graph.get_task(TaskId("root"))))
     e.wait_idle()
     assert _state(e) == State.OFFERED and ran == []
 
@@ -158,7 +158,7 @@ def _scoped(tmp_path):
                       "mappings": [{"criterion": "g", "child_id": "a"}, {"criterion": "g", "child_id": "b"}],
                       "deps": [], "accepted_risks": REGISTER, "scope": [],
                       "whole_volume": "~80 lines, 5 checks", "whole_fits_one_session": True},
-                     "the goal", e, assignee="agent")
+                     "the goal", e, assignee="user")
     e.wait_idle()
     return e, agents
 
@@ -174,10 +174,10 @@ def test_one_session_of_the_hands_carries_the_holders_scope_only_after_its_conse
     _pass(e, d, 20)
     assert scoped == [] and all(_state(e, t) == State.OFFERED for t in ("root.a", "root.b"))
     for t in ("root.a", "root.b"):
-        assert TL.TOOLS["signal"](e, t, "ACCEPT", "agent").get("accepted"), t
+        assert TL.TOOLS["signal"](e, t, "ACCEPT", "user").get("accepted"), t
     _pass(e, d, 20)
     # (a session that signals nothing gets its one retry — the fake reports nothing)
-    assert scoped and set(scoped) == {("root", "agent")}, scoped
+    assert scoped and set(scoped) == {("root", "user")}, scoped
 
 
 class _Revised(_LLM):
@@ -189,7 +189,7 @@ class _Revised(_LLM):
 
     def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
         if not self.calls:
-            T.edit_criteria(self._e, "root", [criterion("g2", "G2 holds")], agent="agent", reason="other")
+            T.edit_criteria(self._e, "root", [criterion("g2", "G2 holds")], agent="user", reason="other")
             self._e.wait_idle()
         return super().run_agent(system, user, allowed_tools, cwd, timeout)
 
@@ -197,7 +197,7 @@ class _Revised(_LLM):
 def test_a_contract_revised_while_the_hands_work_is_not_consented_to_for_the_holder(tmp_path):
     e, agents = _project(tmp_path)
     d = _dispatcher(e, agents, [], _Revised(e))
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
     _pass(e, d, 20)
     log = [x.signal for x in e._audit.get_entries() if x.task_id == TaskId("root") and not x.rejected]
     assert log.count(Signal.ACCEPT) == 1 and Signal.DELIVER not in log, log
@@ -208,40 +208,58 @@ def _signals(e, tid="root"):
     return [(x.signal.name, str(x.source)) for x in e._audit.get_entries() if x.task_id == TaskId(tid) and not x.rejected]
 
 
+class _Unreadable(_LLM):
+    """A session that ends without its report: prose where the JSON should stand."""
+
+    def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+        super().run_agent(system, user, allowed_tools, cwd, timeout)
+        return "I wrote exts.py and checked it; all good, the work is done."
+
+
+def test_a_report_that_does_not_parse_leaves_its_text_on_the_record(tmp_path):
+    """Stranger run s17b lost two minutes to an executor report nobody could read afterwards: the text went back to the
+    dispatcher only (Thm 11). CONTROL: drop `its text ends` from `run_executor`'s line and this goes red."""
+    e, agents = _project(tmp_path)
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
+    assert D.run_executor(e, TaskId("root"), "exec-1", agents, _llm=_Unreadable())["status"] == "unparsed"
+    said = [r["message"] for r in e.pipeline_log() if "DID NOT PARSE" in str(r.get("message"))]
+    assert said and "all good, the work is done" in said[-1], said
+
+
 def test_a_session_asked_for_on_an_offered_holders_node_consents_to_nothing(tmp_path):
     e, agents = _project(tmp_path)
-    assert D.run_executor(e, TaskId("root"), "agent", agents, _llm=_LLM())["status"] == "not_consented"
-    assert ("ACCEPT", "agent") not in _signals(e)
+    assert D.run_executor(e, TaskId("root"), "user", agents, _llm=_LLM())["status"] == "not_consented"
+    assert ("ACCEPT", "user") not in _signals(e)
 
 
 def test_a_revision_between_the_dispatch_and_the_session_is_not_consented_for_the_holder(tmp_path, monkeypatch):
     e, agents = _project(tmp_path)
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
     e.wait_idle()
     orig, done = e.accepted_moves, []
 
     def revised_in_the_window(tid):           # read by the round right before it calls the session
         if not done:
             done.append(1)
-            T.edit_criteria(e, "root", [criterion("g2", "G2 holds")], agent="agent", reason="other")
+            T.edit_criteria(e, "root", [criterion("g2", "G2 holds")], agent="user", reason="other")
             e.wait_idle()
         return orig(tid)
     monkeypatch.setattr(e, "accepted_moves", revised_in_the_window)
     _pass(e, _dispatcher(e, agents, [], _LLM()), 10)
-    assert _signals(e).count(("ACCEPT", "agent")) == 1 and _state(e) == State.OFFERED, _signals(e)
+    assert _signals(e).count(("ACCEPT", "user")) == 1 and _state(e) == State.OFFERED, _signals(e)
 
 
 def test_a_member_revised_while_the_scope_place_is_made_is_not_consented_for_the_holder(tmp_path, monkeypatch):
     e, agents = _scoped(tmp_path)
     for t in ("root.a", "root.b"):
-        TL.TOOLS["signal"](e, t, "ACCEPT", "agent")
+        TL.TOOLS["signal"](e, t, "ACCEPT", "user")
     e.wait_idle()
     orig, done = S._enter_workspace, []
 
     def ew(*a, **k):
         if not done:
             done.append(1)
-            T.edit_criteria(e, "root.a", [criterion("a2", "A2 holds")], agent="agent", reason="other")
+            T.edit_criteria(e, "root.a", [criterion("a2", "A2 holds")], agent="user", reason="other")
             e.wait_idle()
         return orig(*a, **k)
     monkeypatch.setattr(S, "_enter_workspace", ew)
@@ -258,7 +276,7 @@ def test_a_member_revised_while_the_scope_place_is_made_is_not_consented_for_the
                    scope_runner=lambda en, t, ex, ag: S.run_scope_executor(en, t, ex, ag, _llm=llm),
                    scope_validator=lambda *a, **k: None)
     _pass(e, d, 10)
-    assert _signals(e, "root.a").count(("ACCEPT", "agent")) == 1, _signals(e, "root.a")
+    assert _signals(e, "root.a").count(("ACCEPT", "user")) == 1, _signals(e, "root.a")
 
 
 def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_delivery(tmp_path):
@@ -266,7 +284,7 @@ def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_d
                                                 "--allow-empty"]):
         subprocess.run(["git", "-C", str(tmp_path), *cmd], check=True)
     e, agents = _project(tmp_path)
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
     e.wait_idle()
     entered, revised, live, overlap, places = threading.Event(), threading.Event(), [], [], []
 
@@ -287,9 +305,9 @@ def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_d
     d.dispatch_once()
     # the revision lands INSIDE v1's session: a sleep did not hold once the place is observed before the session (ab2e147)
     assert entered.wait(30), "v1's session never started"
-    T.edit_criteria(e, "root", [criterion("g2", "G2 holds")], agent="agent", reason="other")
+    T.edit_criteria(e, "root", [criterion("g2", "G2 holds")], agent="user", reason="other")
     e.wait_idle()
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
     e.wait_idle()
     _pass(e, d, 10)
     revised.set()
@@ -311,8 +329,8 @@ def test_a_validation_queued_behind_other_sessions_is_the_systems_wait_not_the_h
     d = Dispatcher(e, agents, poll=30, max_concurrent=1, runner=lambda *a, **k: {"status": "x"},
                    validator_runner=lambda en, t, *a, **k: started.append(str(t)) or gate.wait(5),
                    consent_runner=lambda *a, **k: {"status": "x"})
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
-    TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="done; it holds", self_validation="PASS")
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="done; it holds", self_validation="PASS")
     e.wait_idle()
     d._cap.opening.acquire()                          # every slot taken by other nodes' sessions
     try:
@@ -335,7 +353,7 @@ def test_a_queued_validation_stays_the_systems_wait_however_long_the_queue():
     clock = _Later()
     e = make_engine(clock=clock)
     e.start()
-    T.create_task(e, "root", {"description": "x", "criteria": [criterion("a")]}, assignee="agent")
+    T.create_task(e, "root", {"description": "x", "criteria": [criterion("a")]}, assignee="user")
     e.wait_idle()
     key = e.claims.queue_validation(TaskId("root"))
     clock.off = VALIDATION_CLAIM_TTL + 1
@@ -357,10 +375,10 @@ def test_the_hands_work_again_after_the_holder_rejects_their_dispute(tmp_path):
     e, agents = _project(tmp_path)
     llm = _DisputesFirst()
     d = _dispatcher(e, agents, [], llm)
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
     _pass(e, d, 20)
     assert _state(e) == State.CHALLENGED
-    assert TL.TOOLS["signal"](e, "root", "REJECT_CHALLENGE", "agent", justification="g is met as written").get(
+    assert TL.TOOLS["signal"](e, "root", "REJECT_CHALLENGE", "user", justification="g is met as written").get(
         "accepted")
     _pass(e, d, 20)
     assert len(llm.calls) == 2 and _state(e) in (State.VALIDATING, State.DONE), (len(llm.calls), _state(e))

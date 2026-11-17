@@ -8,20 +8,32 @@ docstrings (from tools.py) become the tool descriptions the agent reads.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import functools
 import inspect
 import json
 import typing
 import weakref
-from pathlib import Path
 from typing import Optional
 
 import anyio
+try:            # LEFT: the MCP SDK is optional AT IMPORT (see `_bind`)
+    import mcp.server.lowlevel.server as _lowlevel
+    from mcp import types as _types
+    from mcp.server.session import ServerSession as _ServerSession
+except ImportError:  # pragma: no cover
+    _lowlevel = None
 
-from gfso.config import DEFAULT_PROJECT, ROOT_ID, project_by_env
+from gfso import updates
+from gfso.config import (CALLER, CLIENT, CLIENT_HEADER, CLIENT_KINDS, DEFAULT_PROJECT, agent_id, caller_id, client_kind,
+                         how_it_is_waited, ROOT_ID, project_by_env)
 from gfso.engine import Engine
+from gfso.engine.moves import READS, SIGNERS
+from gfso import signin
 from gfso.runtime import ProjectRegistry
-from gfso.tools import _agent_id
+from gfso import presence
+from gfso.mcp import protocol as _PROTOCOL
+from gfso.tools import _agent_id, is_refusal
 from gfso import tools_llm as T                   # the COMPLETE action surface (structural + LLM verbs)
 
 
@@ -93,7 +105,7 @@ def _resolver(engine_or_registry):
     (the server). resolver(project=None, ctx=None) → the engine; precedence: explicit `project`
     param → the calling SESSION's project → the registry's active."""
     if hasattr(engine_or_registry, "engine"):        # ProjectRegistry
-        def _res(project=None, ctx=None):
+        def _res(project=None, ctx=None, create=True):
             key = _session_key(ctx)
             name = project or (_SESSION_PROJECTS.get(key) if key is not None else None)
             # A SESSION THAT NAMES NO PROJECT WHERE THE FALLBACK IS `default` AND OTHER PROJECTS EXIST is asked which: an
@@ -106,36 +118,21 @@ def _resolver(engine_or_registry):
                 raise ValueError(f"this session names no project, and this server holds {len(others)} besides "
                                  f"`default`: {', '.join(others[:10])} — name yours with `use_project` (`default` "
                                  f"included), or pass `project=`")
-            return engine_or_registry.engine(name)
+            return engine_or_registry.engine(name, create=create)
         return _res
-    return lambda project=None, ctx=None: engine_or_registry   # bare Engine — ignored
+    return lambda project=None, ctx=None, create=True: engine_or_registry   # bare Engine — ignored
 
 
-# Actor-identity params are PINNED on the agent's door: everything arriving over MCP IS the agent,
-# so it can never sign a signal or an authoring act as someone else (the UI/HTTP door carries the
-# human's explicit name; the CLI stays the unpinned dev door). Delegation params (assignee) stay
-# free — NAMING an executor is legitimate; SPEAKING as one is not.
-_PINNED_ACTOR = {"signal": ("source",), "revise": ("agent",),
-                 "edit_accepted_risks": ("agent",), "edit_criteria": ("agent",),
-                 "record_verdict": ("reviewer",),
-                 # the mode is the user's choice, relayed by their agent — recorded under who set it
-                 "set_mode": ("agent",),
-                 # who stopped a project, and who filed a report, are recorded under the agent's own name
-                 "stop_project": ("by",), "start_project": ("by",), "tech_report": ("actor",),
-                 # reopen re-earns a TERMINAL node under R′ (§12.14) — as load-bearing an act as any
-                 # signal, and it was the one whose actor the caller still chose freely, so it
-                 # landed in the audit log attributed to whatever name the model wrote.
-                 "reopen": ("agent",),
-                 # who authors a split decides whether the node's contract may be re-authored (only by its issuer,
-                 # Inv-1) — a name the caller chose would let any agent claim to be any node's issuer
-                 "auto_decompose": ("author",)}
+# THE SIGNER ARGUMENTS ARE NOT IN THIS DOOR'S SCHEMA: a connection signs as its credential's name (`moves.SIGNERS`, the
+# table every door reads; `tools_llm._signed` fills them), so a name the model saw is no argument it can type here.
+# Delegation params (assignee) stay free — NAMING an executor is legitimate; SPEAKING as one is not.
 
 
 # The verbs an agent calls when it ENTERS a graph — the moment a human would want to look at it.
 # The address lived only in the agent's instructions, so no tool RESULT carried it and the link was
 # offered only if the model happened to remember one; here it rides back with the act itself.
 from gfso import tools as _T
-from gfso.serverctl import UI_LINK_VERBS as _UI_LINK_VERBS, ui_link as _ui_link   # ONE list, both doors
+from gfso.serverctl import UI_LINK_VERBS as _UI_LINK_VERBS, open_the_page, ui_link as _ui_link   # ONE list, both doors
 from gfso.workspaces import LANDED
 from gfso.adapters.netrecord import said_apart
 from gfso.config import HEARTBEAT_SECONDS as _HEARTBEAT
@@ -159,9 +156,9 @@ def _brief(listing: dict, active: str, keep: int = 12) -> dict:
 
 #: What a verb's listing declares for an answer that holds a plan's whole text (`tools_llm.PLAN_TEXT_MAX`, escaped as
 #: JSON): Claude Code saves a longer result than 50,000 characters to a file, unless the tool declares its own, up to
-#: 500,000 (docs: code.claude.com/docs/en/mcp, "Raise the limit for a specific tool") — and a plan past 47,000 was read
-#: from outside the person's folder, four prompts (M3, M4, 2026-11-05).
-ANSWER_ROOM = {verb: {"anthropic/maxResultSizeChars": 100_000} for verb in ("plan", "refine_plan")}
+#: 500,000, which then holds in place of its token cap (docs: code.claude.com/docs/en/mcp, "Raise the limit for a specific
+#: tool", "Scope") — and a plan past 47,000 was read from outside the person's folder, four prompts (M3, M4, 2026-11-05).
+ANSWER_ROOM = {verb: {"anthropic/maxResultSizeChars": 500_000} for verb in ("plan", "refine_plan")}
 
 
 def _link_for_them(link: str) -> str:
@@ -225,8 +222,26 @@ def _link_and_say(name: str, out: dict, project, engine) -> None:
                       f"enters; their branch is not touched and the result comes as branch "
                       f"`gfso/{out.get('active') or '<project>'}/accepted`.")
     if name == "auto_decompose" and out.get("root_id") and not out.get("error") and engine is not None             and (engine.mode() or {}).get("mode") == "auto":
-        out["say"] = (f"{_link_for_them(link)}it runs unattended, they can watch there, "
-                      "you report the end. Both lines go to the person BEFORE any other call; only then loop `next_steps(wait=600)`.")
+        if (opened := open_the_page(project or out.get("active"))) is not False:
+            out["page_opened"] = opened
+        out["say"] = (_the_go_says(out) + f"{_link_for_them(link)}it runs unattended, they can watch there"
+                      + (" (it is open in their browser now)" if out.get("page_opened") is True else "") + ", "
+                      "you report the end. "
+                      + (f"And one more line: the plan goes with {len(out['open_at_the_go'])} criterion(s) its review "
+                         "left open (`open_at_the_go`) — the root's checks still decide the result, but a failure there "
+                         "will not point to a part. " if out.get("open_at_the_go") else "")
+                      + "These lines go to the person BEFORE any other call. " + how_it_is_waited(engine.project_name))
+    elif name == "auto_decompose" and "goal_as_given" in out:
+        out["say"] = _the_go_says(out) + "These lines go to the person BEFORE any other call."
+
+
+def _the_go_says(out: dict) -> str:
+    """What the go's answer records of the start (`tools_llm.recorded_at_the_go`), said first: where the work runs and
+    what of their repository it lacks were the client's to say off a roster it skipped, and the goal its own paraphrase."""
+    return ((T.ON_HOST if out.get("runs_on_host") else "")
+            + (f"Name what the agents' copy lacks (`not_imported`): {'; '.join(out['not_imported'])}. "
+               if out.get("not_imported") else "")
+            + ("Quote the goal the work is held to, verbatim (`goal_as_given`). " if out.get("goal_as_given") else ""))
 
 
 def _unread_go(name: str, engine, kwargs) -> Optional[dict]:
@@ -242,20 +257,47 @@ def _unread_go(name: str, engine, kwargs) -> Optional[dict]:
                      "then `auto_decompose(plan=path)`; a second goal, in a fresh project (`use_project`)", "refused": "the plan unread"}
 
 
+def _the_call(engine_or_registry, resolve, fn, project, ctx, args, kwargs) -> tuple:
+    """(the engine a verb runs on, its call there) — or (the answer, None) where the door answers itself. The project is
+    made only by a verb that may make it, as on the HTTP door (a read made the project it read, one per typo), and a
+    refusal, the door's or the verb's, leaves none it made: a refused `set_mode` made one."""
+    try:
+        engine, made = resolve(project, ctx, create=False), False
+    except KeyError as unknown:
+        if not _T.may_make_a_project(fn.__name__):
+            return {"error": f"no such project {unknown.args[0]!r} — `list_projects` names them; `use_project` makes "
+                             f"a new one", "refused": True}, None
+        engine, made = resolve(project, ctx), True
+    except ValueError as e:              # whose graph this call is about is not settled: said, not raised
+        return {"error": str(e)}, None
+    no = _unread_go(fn.__name__, engine, kwargs) or _named_under_a_mode(fn.__name__, engine, kwargs)
+    call = (lambda **_: no) if no else functools.partial(fn, engine, *args, **kwargs)
+    if made:
+        call = functools.partial(engine_or_registry.kept_if_done, made, engine, call)
+    return (call(), None) if no else (engine, call)
+
+
+def _with_refusal(ret):
+    """A verb's answer type that admits its refusal: every verb may answer `{"error": …, "refused": true}`
+    (`tools_llm._answering`), and the SDK validates the answer against the declared type — a refused `decompose`
+    (declared a list) reached the agent as a pydantic error with the refusal's text cut away (2026-11-13)."""
+    return ret if ret in (dict, inspect.Signature.empty) else typing.Union[ret, dict]
+
+
 def _bind(engine_or_registry, fn):
     """Wrap a tools.py function (engine, *args) as an MCP tool: drop `engine` from the signature so the
     SDK infers the schema from the remaining typed params; keep the docstring as the description.
     When a ProjectRegistry is bound, every tool additionally gains an optional trailing `project`
     param (None = the active project) — the multi-project surface lives in the BINDING layer, the
-    tools stay pure (engine, *args). Actor params (_PINNED_ACTOR) are REMOVED from the schema and
-    forced to the standing agent id at call time.
+    tools stay pure (engine, *args). Signer params (`moves.SIGNERS`) are REMOVED from the schema: the call's
+    credential signs it.
 
     Annotations are resolved to real types here: tools.py uses `from __future__ import annotations`
     (string hints), and the wrapper's globals are this module's — so the SDK's schema introspection would
     fail to eval e.g. `Optional[str]`. `get_type_hints(fn)` resolves them in tools.py's own namespace."""
     resolve = _resolver(engine_or_registry)
     multi = hasattr(engine_or_registry, "engine")
-    pinned = _PINNED_ACTOR.get(fn.__name__, ())
+    pinned = SIGNERS.get(fn.__name__, ())
     # A verb that takes `_progress` runs for minutes (a decomposition, a validator run): it streams its stages and a
     # heartbeat to the client. It was bound by two hand-written wrappers whose signatures drifted from the verbs —
     # `validate_result` lost `validator`, `auto_decompose` lost `max_iterations` (ortho audit, D-F15); the schema
@@ -299,30 +341,53 @@ def _bind(engine_or_registry, fn):
     async def wrapper(*args, project=None, ctx=None, **kwargs):
         """Run the verb off the event loop, on the engine this session's project resolves to.
 
-        A thread per call because a verb that blocks would otherwise stall the whole bridge, and
-        the identity of pinned parameters is taken from the transport, never from the caller.
+        A thread per call because a verb that blocks would otherwise stall the whole bridge.
         """
-        if pinned:
-            for name in pinned:
-                kwargs[name] = _agent_id()
-        try:
-            engine = resolve(project, ctx)
-        except ValueError as e:              # whose graph this call is about is not settled: said, not raised
-            return {"error": str(e)}
-        if no := _unread_go(fn.__name__, engine, kwargs):
-            return no
-        call = functools.partial(fn, engine, *args, **kwargs)
+        engine, call = _the_call(engine_or_registry, resolve, fn, project, ctx, args, kwargs)
+        if call is None:
+            return engine
         out = await (_with_progress(ctx, f"[{fn.__name__}]", call) if long else anyio.to_thread.run_sync(call))
-        return _with_ui_link(fn.__name__, out, project or engine.project_name, engine)
+        # …A CALL ITS CLIENT CALLED OFF ENDS HERE. The worker thread shields the await from cancellation, so a call the
+        # client cancelled while the verb ran (Claude Code does, moving a long call to the background) returned as
+        # if answered; the SDK, its cancel already answered, answered again and its assertion ended the WHOLE session:
+        # every call in flight lost, the bridge reporting a restart that never was (a tester's run, 2026-11-13). The
+        # checkpoint delivers the cancellation, which the SDK treats as the duplicate it suppresses.
+        await anyio.lowlevel.checkpoint()
+        if kwargs.get("task_id") and not is_refusal(out) and fn.__name__ not in READS:   # a read works on nothing
+            presence.moved(engine, kwargs["task_id"], _agent_id())
+        out = _with_ui_link(fn.__name__, out, project or engine.project_name, engine)
+        # …and the news read off the loop too: it reads the frontier under the storage's lock, as a verb does
+        return await anyio.to_thread.run_sync(contextvars.copy_context().run, _with_news, ctx, fn.__name__, out, engine)
 
-    wrapper.__signature__ = sig.replace(
-        parameters=params, return_annotation=hints.get("return", sig.return_annotation))
-    wrapper.__annotations__ = {k: v for k, v in hints.items() if k != "engine" and k not in pinned}
+    wrapper.__signature__ = sig.replace(parameters=params,
+                                        return_annotation=_with_refusal(hints.get("return", sig.return_annotation)))
+    wrapper.__annotations__ = {k: _with_refusal(v) if k == "return" else v for k, v in hints.items()
+                               if k != "engine" and k not in pinned}
     if multi:
         wrapper.__annotations__["project"] = typing.Optional[str]
     if (multi or long) and Context is not None:
         wrapper.__annotations__["ctx"] = Context
     return wrapper
+
+
+#: what each session of a chat client was last told its run needs of it, by session: the news rides once
+_TOLD = _SessionProjects()
+
+
+def _with_news(ctx, name: str, out, engine):
+    """A chat client's reply carries what its run needs of its customer (`needs_its_customer`), once, since its session
+    was last told: no call of a chat client is held and nothing wakes it, so it learns at its next call, whatever it is."""
+    if client_kind() != "chat" or not isinstance(out, dict) or (key := _session_key(ctx)) is None:
+        return out
+    if (p := CALLER.get()) is not None and not p.signs_as:
+        return out                 # …a reader is no customer: its read marks no plan told (critic over open reading)
+    seen = out if name == "next_steps" else T.next_steps(engine)
+    why = T.needs_its_customer(seen)
+    told, _TOLD[key] = _TOLD.get(key), (engine.project_name, why)
+    if not why or told == (engine.project_name, why):
+        return out
+    T.said_a_plan(engine.project_name, seen)       # …a plan said once is no news again: the run's own news comes next
+    return out if name == "next_steps" else {**out, "news": why}
 
 
 async def _with_progress(ctx, label: str, call):
@@ -351,7 +416,7 @@ async def _awaited_with_a_heartbeat(loop, ctx, label: str, step: dict, call):
     take longer than any per-message timeout, so the tick is not progress about the work; it is the
     session's evidence that the work is still there.
     """
-    task = loop.run_in_executor(None, call)
+    task = loop.run_in_executor(None, contextvars.copy_context().run, call)   # the caller's principal travels with it
     while True:
         done, _ = await asyncio.wait({task}, timeout=_HEARTBEAT)
         if done:
@@ -363,6 +428,14 @@ async def _awaited_with_a_heartbeat(loop, ctx, label: str, step: dict, call):
                                           f"{label} still working ({step['n'] * _HEARTBEAT}s)")
             except Exception:
                 pass          # progress is presentation — never break the pipeline
+
+
+def _a_move_here(what: str) -> None:
+    """A project verb mounted beside the tools (`_mount_project_*`) is outside the signing every tool passes
+    (`tools_llm._signed`): what it changes is refused here to a call no credential signs — a reader through a front
+    or the LAN reads, and deletes or makes nothing (critic over the open-read change: a reader deleted a project)."""
+    if (p := CALLER.get()) is not None and not p.signs_as:
+        raise ValueError(f"{what} is a move, and this call is signed by no one: {p.lift}")
 
 
 def _mount_project_delete(server, reg) -> None:
@@ -385,6 +458,7 @@ def _mount_project_delete(server, reg) -> None:
         name = name or project
         if not name:
             return {"error": "delete_project needs the project: delete_project(project='…')"}
+        _a_move_here("deleting a project")
         key = _session_key(ctx)
         if key is not None and _SESSION_PROJECTS.get(key) == name:
             raise ValueError(f"{name!r} is your session's current project — use_project away first")
@@ -398,6 +472,13 @@ def _mount_project_delete(server, reg) -> None:
                                       "return": dict}
     server.add_tool(delete_project, name="delete_project",
                     description=(delete_project.__doc__ or "").strip())
+
+
+def _protocol(section: str = "") -> dict:
+    """THE REST OF THE PROTOCOL your instructions stop short of — the modes, the loop, the workforce, a host executor, a
+    second goal — for when the person asks for one: no `section`, the headings; `section='modes'` the section whose
+    heading names it."""
+    return _PROTOCOL.reference(section)
 
 
 def _mount_project_verbs(server, reg) -> None:
@@ -423,8 +504,9 @@ def _mount_project_verbs(server, reg) -> None:
         if not name:
             return {"error": "use_project needs the project's name: use_project(project='…') "
                              "(or `name=`, the older spelling — both work)"}
+        if (key := _session_key(ctx)) is None or not reg.exists(name):   # the server's active one, or a new one
+            _a_move_here("making a project or switching the server's active one")
         reg.engine(name)                              # validates the name + creates lazily
-        key = _session_key(ctx)
         if key is not None:
             _SESSION_PROJECTS[key] = name
         else:                                         # no session (bare transport) → global active
@@ -441,6 +523,9 @@ def _mount_project_verbs(server, reg) -> None:
             out.update(_T.next_for(e, _agent_id(), entering=True))
         except Exception:   # gives up only the hint; the switch stands
             pass
+        # …and a newer gfso, said where every task begins: nothing else would ever tell the person
+        if newer := updates.newer():
+            out["newer_gfso"] = newer
         return _with_ui_link("use_project", out)
 
     def list_projects(limit: int = 25, match: str = "", ctx: _Ctx = None) -> dict:
@@ -474,6 +559,95 @@ def _mount_project_verbs(server, reg) -> None:
     _mount_project_delete(server, reg)
 
 
+def _named_under_a_mode(verb: str, engine, kwargs: dict) -> Optional[dict]:
+    """A connection named other than the standing agent, refused in a project with a mode, or making one: a mode reads
+    the standing agent as the user's own (who holds what, whose disputes the system answers), so its calls were
+    decided as a stranger's — its own root offered to the system, its consent not its move (critic). Until the user's
+    agent is a project's own, a named connection works in a project without a mode."""
+    who = caller_id()
+    if who == agent_id() or not (engine.mode() or (verb == "set_mode" and kwargs.get("mode"))):
+        return None
+    return {"refused": True, "error": f"this connection acts as {who!r}, and a project with a mode (solo, semi, auto) "
+            f"is held by this server's standing agent {agent_id()!r}: a named connection works in a project without "
+            f"a mode. Use such a project, or connect without a name."}
+
+
+#: the client kind a client's own name at `initialize` stands for; a name not here is `chat`: told it holds nothing, a
+#: client loses nothing (the person is told what to run), told it has a shell or a wake it lacks, it acts on neither
+_KIND_OF_NAME = {"claude-code": "code"}
+
+
+def _kind(request, params) -> str:
+    """A connection's client kind: its bridge's header (`GFSO_CLIENT` of the door's entry), else what its client's name at
+    `initialize` stands for, else `chat`. A header naming no kind is refused, never read as another."""
+    said = request.headers.get(CLIENT_HEADER) if request is not None else None
+    if said is not None and said not in CLIENT_KINDS:
+        raise ValueError(f"this connection names its client kind {said[:40]!r}: not one of {', '.join(CLIENT_KINDS)}")
+    return said or _KIND_OF_NAME.get(params.clientInfo.name if params is not None else "", "chat")
+
+
+def client_kind_of(ctx) -> str:
+    """The client kind of the connection a call came on (`_kind`)."""
+    try:
+        req = ctx.request_context.request
+    except (ValueError, LookupError, AttributeError):        # stdio, or no request
+        req = None
+    session = _session_key(ctx)
+    return _kind(req, session.client_params if session is not None else None)
+
+
+def _serve_instructions_by_kind() -> None:
+    """Each session is answered at `initialize` with its client kind's instructions (`protocol.BY_KIND`). The protocol
+    carries instructions in the InitializeResult alone, and the SDK answers it from the session's own options, built for
+    that session before the request comes (`ServerSession._received_request`, `_init_options`): a session class of its
+    own, set where the SDK's lowlevel server builds its sessions by name, replaces this server's text there and no other
+    server's. Private ground: `tests/test_a_connection_names_its_client.py` fails on an SDK that no longer reads it."""
+    if _lowlevel.ServerSession is not _ServerSession:
+        return
+
+    class KindSession(_ServerSession):
+        """A session served its client kind's instructions."""
+
+        async def _received_request(self, responder):
+            match responder.request.root:
+                case _types.InitializeRequest(params=params) if self._init_options.instructions in _PROTOCOL.BY_KIND.values():
+                    meta = responder.message_metadata
+                    try:
+                        kind = _kind(meta.request_context if meta is not None else None, params)
+                    except ValueError:      # …its every call refuses the header; the text it reads meanwhile is chat's
+                        kind = "chat"
+                    self._init_options.instructions = _PROTOCOL.BY_KIND[kind]
+            return await super()._received_request(responder)
+    _lowlevel.ServerSession = KindSession
+
+
+def _principal_of(ctx):
+    """Who this call's connection comes from (`signin.principal_of`): over HTTP its request's credential; over stdio, with
+    no request, this process's own (`signin.local_principal`)."""
+    try:
+        req = ctx.request_context.request
+    except (ValueError, LookupError, AttributeError):        # stdio, or no request: one process, one credential
+        req = None
+    return signin.principal_of(req) if req is not None else signin.local_principal()
+
+
+#: the sessions whose client has been said in the server's log, held weakly: an entry dies with its session
+_MET: "weakref.WeakSet" = weakref.WeakSet()
+
+
+def _met(ctx) -> None:
+    """The client a session's `initialize` named and the capabilities it declared, said once in the server's log: what
+    Claude Desktop or another client sends is read there, never assumed (the client kind, `client_kind`)."""
+    session = _session_key(ctx)
+    if session is None or session in _MET or session.client_params is None:
+        return
+    _MET.add(session)
+    params = session.client_params
+    info = params.clientInfo
+    print(f"[gfso] a client connected: {info.name} {info.version}, declaring "
+          f"{json.dumps(params.capabilities.model_dump(exclude_none=True))}", flush=True)
+
+
 def create_server(engine_or_registry):
     """Register every tools.py function on a FastMCP server (a bare Engine or a ProjectRegistry —
     with a registry every tool gains the optional `project` param + the use_project/list_projects
@@ -484,21 +658,36 @@ def create_server(engine_or_registry):
         from mcp.server.fastmcp import FastMCP
     except ImportError as e:  # pragma: no cover
         raise RuntimeError("MCP SDK not installed — reinstall the package: `pip install gfso`") from e
-    # The user-agent's protocol travels as the server's INSTRUCTIONS (delivered at initialize) — the
-    # agent starts knowing WHAT GFSO is and HOW to drive it, not just 25 bare tool schemas. One source
-    # of truth: gfso/mcp/ORCHESTRATOR.md.
-    #
-    # Read UNGUARDED. A swallowed OSError here handed the agent an empty protocol on any install
-    # whose wheel lacked the file, and the server looked healthy from every angle — 32 tools, clean
-    # initialize, instructions "". tests/test_packaging.py keeps the file in the distribution; if it
-    # is ever missing, a traceback is the correct outcome.
-    protocol = (Path(__file__).parent / "ORCHESTRATOR.md").read_text(encoding="utf-8")
-    server = FastMCP("gfso", instructions=protocol)
+    # The user-agent's protocol travels as the server's INSTRUCTIONS (delivered at initialize), by the client's kind
+    # (`gfso.mcp.protocol`): the agent starts knowing WHAT GFSO is and HOW to drive it with what its client has.
+    _serve_instructions_by_kind()
+
+    class _Door(FastMCP):
+        """Every call is signed by ITS connection's principal: a server serving several consoles signed them all by its
+        own environment, so `engineering`'s ACCEPT landed as `agent` and was refused (measured 2026-11-13). The name is
+        its credential's — the token its console was launched with, else the standing agent (`signin.principal_of`)."""
+
+        async def list_tools(self):
+            """The listing a client asks for right after `initialize`: where its session is first seen."""
+            _met(self.get_context())
+            return await super().list_tools()
+
+        async def call_tool(self, name, arguments):
+            """The verb, served under its connection's principal and client kind for that call alone."""
+            _met(ctx := self.get_context())
+            token, kind = CALLER.set(_principal_of(ctx)), CLIENT.set(client_kind_of(ctx))
+            try:
+                return await super().call_tool(name, arguments)
+            finally:
+                CALLER.reset(token)
+                CLIENT.reset(kind)
+    server = _Door("gfso", instructions=_PROTOCOL.BY_KIND["chat"])
     # Bound from `T.TOOLS[...]`, not the module functions — the registry entries are the ones wrapped to announce
     # themselves in INFLIGHT; bound to the bare functions, `/api/runtime` reported `busy: []` through a decomposition.
     for name, fn in T.TOOLS.items():
         server.add_tool(_bind(engine_or_registry, fn), name=name, description=(fn.__doc__ or "").strip(),
                         meta=ANSWER_ROOM.get(name))
+    server.add_tool(_protocol, name="protocol", description=(_protocol.__doc__ or "").strip())   # the door's own text
     if hasattr(engine_or_registry, "use"):    # ProjectRegistry → the project verbs
         _mount_project_verbs(server, engine_or_registry)
     return server

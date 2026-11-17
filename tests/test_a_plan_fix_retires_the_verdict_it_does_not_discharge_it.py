@@ -42,8 +42,8 @@ def _reviewed_plan():
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "r", "criteria": [criterion("c1", "C1")],
-                              "accepted_risks": _RISKS}, assignee="agent")
-    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K1")]}, "assignee": "agent", "covers": ["c1"]}], accepted_risks=REGISTER)
+                              "accepted_risks": _RISKS}, assignee="user")
+    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K1")]}, "assignee": "user", "covers": ["c1"]}], accepted_risks=REGISTER)
     e.wait_idle()
     e._graph._storage.store_critique(TaskId("root"), json.dumps(_FINDING))
     node = e.graph.get_task(TaskId("root"))
@@ -78,7 +78,7 @@ def test_fixing_a_child_or_adding_one_retires_it_too():
     e.stop()
 
     e = _reviewed_plan()
-    T.decompose(e, "root", [{"task_id": "kid2", "spec": {"description": "k2", "criteria": [criterion("k2", "K2")]}, "assignee": "agent", "covers": ["c1"]}], accepted_risks=REGISTER)
+    T.decompose(e, "root", [{"task_id": "kid2", "spec": {"description": "k2", "criteria": [criterion("k2", "K2")]}, "assignee": "user", "covers": ["c1"]}], accepted_risks=REGISTER)
     e.wait_idle()
     assert e.open_l2_findings(TaskId("root")) is None
     e.stop()
@@ -88,7 +88,7 @@ def test_the_refusal_says_the_fix_takes_two_steps():
     """What the doors were owed: the exits are not equals, and the live refusal now says so."""
     e = _reviewed_plan()
 
-    refused = T.signal(e, "kid", "ACCEPT", "agent")
+    refused = T.signal(e, "kid", "ACCEPT", "user")
 
     assert refused["accepted"] is False
     said = refused["error"]

@@ -51,7 +51,7 @@ def _plan(tmp_path, check=False):
     """par → {prod, cons}, Dep prod → cons (bare, or with cons's own check on it: `dep__prod`), cons → {cons.a, cons.b}."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     T.decompose(e, "par", [{"task_id": "prod", "spec": {"description": "prod", "criteria": [criterion("p")]},
                             "assignee": "exec-1", "covers": ["g"]},
                            {"task_id": "cons", "spec": {"description": "cons", "criteria": [criterion("c"), criterion("d")]},
@@ -133,7 +133,7 @@ def _three(tmp_path, *kids):
     """par → `kids`, one criterion each."""
     e = _eng()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "agent")
+    _goal(e, "par", "user")
     T.decompose(e, "par", [{"task_id": k, "spec": {"description": k, "criteria": [criterion(k.lower())]},
                             "assignee": "exec-1", "covers": ["g"]} for k in kids], accepted_risks=REGISTER)
     return e, agents

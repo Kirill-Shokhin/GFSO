@@ -23,7 +23,7 @@ def _node(e):
     T.create_task(e, "root", {"description": "r",
                               "criteria": [criterion("c1", "C1"),
                                            criterion("c2", "C2")],
-                              "accepted_risks": _RISKS}, assignee="agent")
+                              "accepted_risks": _RISKS}, assignee="user")
     e.wait_idle()
 
 
@@ -92,7 +92,7 @@ def test_revise_carries_the_same_lock():
     e.wait_idle()
 
     out = T.revise(e, "root", {"description": "r", "criteria": [criterion("c1", "C1")],
-                               "accepted_risks": _RISKS}, agent="agent",
+                               "accepted_risks": _RISKS}, agent="user",
                    expect_criteria=["c1", "c2"])
 
     assert out["refused"] is True and out["added_since_you_read"] == ["c3"], out

@@ -66,4 +66,8 @@ def _fit(engine, task_id, prefix: str) -> dict:
     """The decomposer's recorded count and judgement, under the spec's own keys — absent if never judged."""
     f = engine.session_fit(task_id)
     return {} if f is None else {f"{prefix}volume": f.get("volume", ""),
-                                 f"{prefix}fits_one_session": bool(f.get("fits"))}
+                                 f"{prefix}fits_one_session": bool(f.get("fits"))} | (
+        # …its producers as the split names its siblings: `{parent}.{id}` read back as `{id}`
+        {"split_after": {"after": [str(x).removeprefix(str(task_id).rpartition(".")[0] + ".")
+                                   for x in f["after"].get("producers") or ()], "why": f["after"].get("why", "")}}
+        if f.get("after") and not prefix else {})

@@ -306,7 +306,9 @@ gfso/
                             # LLMProviderPort, ExecutionPort, AgentPort, VerifierPort, ClockPort, RunnerPort
                             # (+ their stdlib defaults SystemClock/ThreadRunner — zero-dep, live here)
     protocol/               # fsm.py = THE TABLE (+ `not_admissible_here`: why a signal moves nothing
-                            # here and where the intent goes) · invariants.py · validation.py (role map)
+                            # here and where the intent goes) · invariants.py · validation.py (role map) ·
+                            # procedure.py (a pinned check: its identity, admission's one ladder) ·
+                            # shell.py (a probe's command read as a POSIX shell reads it)
     handlers/               # CHECK-1-6 structural · CHECK-7-8 numeric-bound tier (capability-honest
                             # skips; the formula/solver tier is a declared, unimplemented extension)
     graph/                  # model · mutations (incl. RECORD_DEP/ADJUDICATE_DEP) · metrics (∅→None) ·

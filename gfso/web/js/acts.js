@@ -3,7 +3,7 @@
 // and BLOCKS the page — a tester's tab froze on `Deliver` and the delivery was lost (wave 26).
 import {$, esc, data} from './dom.js';
 import {task, post} from './api.js';
-import {S, taskOf, hasKids, myRole} from './state.js';
+import {S, taskOf, hasKids} from './state.js';
 import {mark, PLAN_COST, criteriaOf} from './vocab.js';
 import {notice, clearNotice, askInPage, act} from './overlays.js';
 
@@ -77,31 +77,44 @@ async function send(url, body, what) {
     clearNotice();
     await act(post(url, body), {what, ok: async () => { closeForm(); await S.reload(); }});
 }
-const submitAction = (id, signal, extra) =>
-    send('/api/run/signal', {task_id: id, signal, source: myRole(), ...extra}, 'the engine refused that signal');
+const submitAction = (id, signal, extra) => signal === 'REOPEN'
+    ? send('/api/run/reopen', {task_id: id}, 'the engine refused the reopen')
+    : send('/api/run/signal', {task_id: id, signal, ...extra}, 'the engine refused that signal');
+// …each signed by the page's session, never by a name sent: the server signs as the holder of the role (signin.py)
 
 // A verdict is per CRITERION: the engine refuses a PASS silent about one, and text that only restates
 // the verdict ("ok") — neither of which a one-line prompt could avoid.
-export function recordVerdict({id}) {
-    const d = taskOf(id), me = myRole();
+export function recordVerdict({id, as}) {
+    const d = taskOf(id);
+    // …each criterion's pinned checks, to tick the ones run: the engine credits a PASS only with the probes it names
+    // (`ran`), and a typed line alone was refused on every seam (a probe, 2026-11-14)
+    const pinned = c => { const cr = (taskOf(id).criteria || []).find(x => x.name === c) || {};
+        // …and the DONE parts' pinned checks the criterion rests on: a whole's verdict accounts for them too (critic)
+        return [...(cr.check || []).map((p, j) => ({id: cr.probe_ids?.[j], what: p.behaviour || p.command})),
+                ...(cr.part_probes || []).map(p => ({id: p.id, what: `${p.check} (part's ${p.criterion})`}))].filter(p => p.id); };
     const rows = critNames(id).map((c, i) => `<div class="act-crit">${faint(esc(c), ' block', 'label')}`
+        + pinned(c).map((p, j) => `<label class="act-small"><input type="checkbox" id="ran-${i}-${j}" data-probe="${esc(p.id)}"> I ran: ${esc(p.what)}</label>`).join('')
         + `<input id="obs-${i}" class="act-field" placeholder="what you ran and what it printed">`
         + `<label class="act-small"><input type="checkbox" id="fail-${i}"> this criterion FAILED</label></div>`).join('');
     form(`<div class="section-title">Record a verdict</div>`
         + faint('One line per criterion, naming what you ran and what it showed. "ok" is refused: it restates the verdict instead of recording a check.', ' below')
-        + `<input id="rv-reviewer" class="act-field" value="${esc(d.assignee && me === d.assignee ? '' : me)}"`
-        + ` placeholder="reviewer — must NOT be this node's executor (${esc(d.assignee || '?')})">`
+        // …signed as the node's issuer where that name is yours, else your own name (`user`) — the door's choice, said (panel.js)
+        // …and where that name is the node's own executor, said as what the record will be: its self-check (§10.3), never
+        // an independent verdict (critic 2: «never its executor (ui-draft)» beside «Signed as ui-draft»)
+        + faint(as && as === d.assignee
+            ? `Signed as <b>${esc(as)}</b>, this node's own executor: recorded as its self-check, not an independent verdict.`
+            : `Signed as ${as ? `<b>${esc(as)}</b>` : "this node's issuer where that name is yours, else your own name"}`
+              + ` — never its executor (${esc(d.assignee || '?')}).`, ' below')
         + (rows || '<div class="act-small">This node has no criteria, so there is nothing a verdict could be about.</div>')
         + buttons({action: 'send-verdict', id}, 'Record'));
 }
 
 export function submitVerdict({id}) {
-    const reviewer = ($('rv-reviewer')?.value || '').trim();
-    if (!reviewer) return notice('name the reviewer', 'bad');
     const crits = critNames(id), failed = crits.filter((c, i) => $('fail-' + i)?.checked);
-    const observed = Object.fromEntries(crits.map((c, i) => [c, $('obs-' + i)?.value || '']));
+    const ran = i => [...document.querySelectorAll(`[id^="ran-${i}-"]:checked`)].map(x => x.dataset.probe);
+    const observed = Object.fromEntries(crits.map((c, i) => [c, ran(i).length ? {note: $('obs-' + i)?.value || '', ran: ran(i)} : $('obs-' + i)?.value || '']));
     // e.g. reviewer == executor — the engine refuses
-    return send('/api/run/record_verdict', {task_id: id, reviewer, observed, verdict: failed.length ? 'FAIL' : 'PASS',
+    return send('/api/run/record_verdict', {task_id: id, observed, verdict: failed.length ? 'FAIL' : 'PASS',
                                             failed_criteria: failed}, 'the engine refused that verdict');
 }
 
@@ -112,9 +125,13 @@ export async function aiDecompose({id}) {
     // WHAT IT DID TO YOUR CONTRACT, SAID: authoring a subtree REWRITES the node's own criteria, and a tester's
     // four hand-written ones were replaced with no warning (wave 27). The old set is in the log (Inv-7).
     const before = critNames(id);
-    await act(post('/api/run/auto_decompose', {request: taskOf(id).description || '', root_id: id, depth: 1}),
-              {what: 'Decomposition refused', ok: null});
+    const r = post('/api/run/auto_decompose', {request: taskOf(id).description || '', root_id: id, depth: 1});
+    const refused = await act(r.then(x => x.clone()), {what: 'Decomposition refused', ok: null});
     await S.reload();
+    // …and an authoring that added nothing says why: a model call refused for its credential answered 200 with holes,
+    // and the page said nothing at all (a probe, 2026-11-14)
+    if (!refused) try { const d = await (await r).json(), holes = (d.holes || []).map(h => typeof h === 'string' ? h : h.why || h.reason || JSON.stringify(h));
+        if (holes.length) notice(['The authoring left this open:', ...holes].join('\n'), 'bad'); } catch (e) { /* the act already said what it could */ }
     const after = critNames(id), gone = before.filter(n => !after.includes(n));
     if (gone.length)
         notice(`This rewrote ${id}'s own criteria: ${gone.join(', ')} ${gone.length > 1 ? 'are' : 'is'} no longer in the set `

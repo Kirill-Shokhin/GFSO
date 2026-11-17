@@ -12,6 +12,7 @@ import io
 import pytest
 
 from gfso import sessions as S
+from gfso.adapters import children as CH
 from gfso.adapters import execution as E
 from gfso.adapters.llm import headless as H
 from gfso.workspaces import session_key
@@ -57,9 +58,9 @@ def cli(tmp_path, monkeypatch):
 
     monkeypatch.setattr(H.subprocess, "Popen", popen)
     monkeypatch.setattr(H.ClaudeCodeProvider, "_read_stream", read_stream)
-    monkeypatch.setattr(E, "adopt", lambda p: p)
-    monkeypatch.setattr(E, "kill_tree", lambda p: None)
-    monkeypatch.setattr(E, "release", lambda p: None)
+    monkeypatch.setattr(CH, "adopt", lambda p: p)
+    monkeypatch.setattr(CH, "kill_tree", lambda p: None)
+    monkeypatch.setattr(CH, "release", lambda p: None)
     llm = H.ClaudeCodeProvider()
     llm._cmd = "claude"
     return llm, seen, state, tmp_path

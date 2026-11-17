@@ -2,10 +2,10 @@
 // stands, what it cost — and how a new one comes into being: by name, in the URL, made by its first
 // creating verb. Everything here is read from the files on disk by the server: listing a project never
 // builds its engine, so a look sets nothing running.
-import {$, esc, morph, tally} from './dom.js';
+import {$, esc, coded, morph, tally} from './dom.js';
 import {TIP} from './hints.js';
 import {PROJECT, getJSON, api, leave} from './api.js';
-import {S, procs} from './state.js';
+import {S, procs, signsAs, lift} from './state.js';
 import {notice, askInPage, act} from './overlays.js';
 import {modelName, goalWord, terminal} from './vocab.js';
 import {hm, dayLong, usd, clockAt} from './fmt.js';
@@ -26,7 +26,7 @@ export async function refreshProjects() {
     S.project = PROJECT;
     all = d.projects.map(n => ({n, t: d.last_active?.[n], ...(d.about?.[n] || {})}));
     $('project-open').textContent = S.project || 'Projects';
-    $('project-delete').hidden = !neverRan(all.find(p => p.n === S.project), d.active);
+    $('project-delete').hidden = !neverRan(all.find(p => p.n === S.project), d.active) || !signsAs().length;   // a move: signed in only
     if (!panel().hidden) draw();
 }
 
@@ -36,12 +36,14 @@ export async function refreshProjects() {
 // active project, and says so.
 // …and nothing at work on it now: a ledger row is written when a session ENDS, so a goal being planned or a first session
 // still running has no cost yet and is not "never ran"; the server's active project is refused by the door, so not offered
+// …nor a move of its parties beyond giving the work out: a graph people hold calls no model, and by spend alone a
+// 400-node development graph was offered for deletion (the author, 2026-11-13)
 const neverRan = (p, active) => !!p && p.n !== 'default' && p.n !== active && !p.cost && !(p.models || []).length
-    && !procs().length;
+    && !p.moves && !procs().length;
 export async function deleteProject() {
     const name = S.project;
     const typed = await askInPage(`Delete the project <b>${esc(name)}</b>? It never ran — no model call, nothing spent. `
-        + 'Its database goes with its whole history; this cannot be undone.', {yes: 'Delete', field: `type ${esc(name)} to confirm`});
+        + `Its database goes with its whole history; this cannot be undone. Signed as <b>${esc(S.me?.name || '')}</b>.`, {yes: 'Delete', field: `type ${esc(name)} to confirm`});
     if (typed === false) return;
     if (typed !== name) return notice('the name typed is not this project — nothing was deleted', 'bad');
     await act(api(`/api/projects/${encodeURIComponent(name)}`, {method: 'DELETE'}), {ok: leave});
@@ -146,6 +148,11 @@ export const closeProjects = () => { panel().hidden = !!PROJECT; };
 // AN ADDRESS THAT NAMES NO PROJECT SHOWS NONE: it read the server's active project, whichever an agent had last used, so
 // a bare link opened someone's run and woke its engine (the author, 2026-11-03: «прямая ссылка должна давать пустой проект
 // наверное либо его отсутствие»). The page is the list, read from the files, on the server's own feed, which builds no engine.
+// a new project is a move like any other: not offered to a browser that signs as no one (critic 2), who is told instead how
+// to sign in (critic 3: the list said nothing)
+export const offerNew = () => { $('project-new').hidden = !signsAs().length;
+    $('project-signin').hidden = !!signsAs().length; $('project-signin').innerHTML = coded(lift()); };
+
 export async function listOnly() {
     document.body.classList.add('no-project');
     const again = async () => { S.inflight = (await getJSON('/api/runtime').catch(() => null))?.in_flight || []; await refreshProjects(); draw(); readResources(); };

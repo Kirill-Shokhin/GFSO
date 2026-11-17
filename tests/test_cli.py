@@ -52,7 +52,7 @@ def test_a_long_argument_can_come_from_a_file(tmp_path, capsys):
 def test_the_help_says_what_the_callers_own_id_is(capsys):
     """A person at this door was invited to name themselves and then refused for doing it.
 
-    Measured on the human door 2026-09-01: `next_step` reported `"assignee": "agent", "mine": true`,
+    Measured on the human door 2026-09-01: `next_step` reported `"assignee": "user", "mine": true`,
     `signal --help` said a person names themselves, so the tester sent `source=w18c-human` and was
     told `w18c-human is not executor for root (executor=agent)`. The refusal is right; the
     invitation before it was the defect — a graph built by `auto_decompose` assigns every node to
@@ -61,8 +61,8 @@ def test_the_help_says_what_the_callers_own_id_is(capsys):
     out = capsys.readouterr().out
     assert agent_id() in out and "auto_decompose" in out
     assert "your id at this door" in out.lower()
-    # …and the case where a person really does name themselves survives (nodes they assigned).
-    assert "assignee" in out and "reassign" in out
+    # …and a name is signed by its credential, never typed
+    assert "GFSO_TOKEN" in out and "never typed" in out
 
 
 def test_the_listing_shows_the_project_argument_every_command_takes(capsys):

@@ -9,13 +9,17 @@ import inspect
 import json
 import pathlib
 import sqlite3
+import subprocess
 import sys
 import sysconfig
+import threading
 
 import pytest
 
 from gfso import __version__
+from gfso import config as _config
 from gfso import doctor as D
+from gfso.adapters import execution as E
 from gfso import serverctl
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.mcp import connect
@@ -114,9 +118,9 @@ def _setup_with(monkeypatch, capsys, exe="claude", add=(0, ""), get="") -> tuple
         return type("R", (), {"returncode": rc, "stdout": out, "stderr": err})
 
     monkeypatch.setattr(D.shutil, "which", lambda name: exe)
-    monkeypatch.setattr(D.subprocess, "run", run)
+    monkeypatch.setattr(D.children, "run", run)
     monkeypatch.setattr(D, "port_state", lambda: ("free", "nothing is listening"))
-    monkeypatch.setattr(D, "webbrowser_open", lambda url: None)
+    monkeypatch.setattr(D, "open_outside", lambda url: None)
     monkeypatch.setattr(D, "desktop_config_path", lambda: None)
     monkeypatch.setattr(D, "install_execution", lambda: "agent image: x")
     monkeypatch.setattr(D, "doctor", lambda: print("the doctor's table") or 0)
@@ -195,7 +199,7 @@ def test_an_entry_that_could_not_come_back_says_the_command(monkeypatch, capsys)
         out = _entry("User config (all projects)", "C:/old/gfso.exe") if argv[1:3] == ["mcp", "get"] else ""
         return type("R", (), {"returncode": 1 if argv[1:3] == ["mcp", "add"] else 0, "stdout": out,
                               "stderr": EXISTS[1] if len(calls) == 1 else "boom"})
-    monkeypatch.setattr(D.subprocess, "run", run)
+    monkeypatch.setattr(D.children, "run", run)
     assert D._register_door("claude") is False
     assert "claude mcp add --scope user gfso" in capsys.readouterr().out
 
@@ -207,10 +211,27 @@ def test_a_users_entry_naming_this_installation_is_left_alone(monkeypatch, capsy
 
 
 def test_a_directorys_own_entry_is_said_not_removed(monkeypatch, capsys):
-    """Here it goes before the user's, and it is the directory's, not this command's, to drop."""
+    """Here it goes before the user's, and it is the directory's, not this command's, to drop — and setup's last line no
+    longer promises a restart's tools: a session started here has the other installation's."""
     out, calls = _setup_with(monkeypatch, capsys, get=_entry("Local config (private to you in this project)", "C:/old/gfso.exe"))
     assert not any(c[1:3] == ["mcp", "remove"] for c in calls), calls
-    assert "claude mcp remove gfso -s local" in out and NEW_SESSION in out, out
+    assert "claude mcp remove gfso -s local" in out and NEW_SESSION not in out, out
+
+
+@pytest.mark.parametrize("scope, command, expected, said", [
+    ("Local config (private to you in this project)", "C:/old/gfso.exe", False, "claude mcp remove gfso -s local"),
+    ("User config (all projects)", "C:/old/gfso.exe", False, "`gfso setup` registers this one"),
+    ("User config (all projects)", None, True, "registered"),
+])
+def test_the_doctor_reads_the_entry_a_session_here_starts(monkeypatch, scope, command, expected, said):
+    """A stale entry connects: read by its line alone it was "registered" while a session here started another
+    installation."""
+    command = command or str(D.console_script())
+    monkeypatch.setattr(D.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(D.children, "run", lambda argv, **kw: type("R", (), {"returncode": 0, "stdout": (
+        _entry(scope, command) if argv[1:3] == ["mcp", "get"] else f"gfso: {command} connect - ✓ Connected")}))
+    ok, line = D.mcp_registered()
+    assert ok is expected and said in line, line
 
 
 @pytest.mark.parametrize("listing, expected", [
@@ -220,7 +241,7 @@ def test_a_directorys_own_entry_is_said_not_removed(monkeypatch, capsys):
 ])
 def test_the_doctor_reads_the_door_by_its_name_and_its_connection(monkeypatch, listing, expected):
     monkeypatch.setattr(D.shutil, "which", lambda name: "claude")
-    monkeypatch.setattr(D.subprocess, "run", lambda argv, **kw: type("R", (), {"returncode": 0, "stdout": listing}))
+    monkeypatch.setattr(D.children, "run", lambda argv, **kw: type("R", (), {"returncode": 0, "stdout": listing}))
     assert D.mcp_registered()[0] is expected
 
 
@@ -268,7 +289,7 @@ def test_asking_whether_the_door_is_registered_cannot_restart_the_server(monkeyp
         returncode, stdout = 0, "gfso: ..."
 
     monkeypatch.setattr(D.shutil, "which", lambda name: "claude")
-    monkeypatch.setattr(D.subprocess, "run",
+    monkeypatch.setattr(D.children, "run",
                         lambda argv, **kw: seen.update(env=kw.get("env") or {}) or _Out())
     assert D.mcp_registered()[0] is True
     assert seen["env"].get("GFSO_NO_RECONCILE") == "1", "the probe was allowed to reconcile"
@@ -334,9 +355,10 @@ def test_setup_starts_an_installed_docker_desktop_whose_daemon_is_down(monkeypat
     """A Docker installed and not running stopped a fresh client on a step a command does; Docker Engine on Linux starts
     under sudo, so there it is only said."""
     ran, states = [], iter([(True, "engine 29")])
+    monkeypatch.setenv("GFSO_NO_WINDOWS", "0")              # …nothing is started: the run is a fake
     monkeypatch.setattr(D.sys, "platform", platform)
     monkeypatch.setattr(D.shutil, "which", lambda name: "docker")
-    monkeypatch.setattr(D.subprocess, "run", lambda argv, **kw: ran.append(argv))
+    monkeypatch.setattr(D.children, "run", lambda argv, **kw: ran.append(argv))
     monkeypatch.setattr(D, "docker_state", lambda: next(states))
     assert D.start_docker(5) is starts
     assert (ran == [["docker", "desktop", "start", "--timeout", "5"]]) is starts
@@ -346,3 +368,67 @@ def test_doctor_names_the_command_that_installs_docker_here(monkeypatch):
     monkeypatch.setattr(D.shutil, "which", lambda name: None)
     monkeypatch.setattr(D.sys, "platform", "win32")
     assert "winget install -e --id Docker.DockerDesktop" in D.docker_state()[1]
+
+
+def test_a_moved_state_directory_holds_the_declaration_the_server_reads(tmp_path, monkeypatch):
+    """With `GFSO_DATA_DIR` set, `serve.json` was written under the home and read from the state directory: a
+    switch the person declared was in force nowhere (ortho audit F16). CONTROL: compose `declared_path` from the home
+    again and it is red."""
+    monkeypatch.setenv("GFSO_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path / "elsewhere"))
+    monkeypatch.delenv("GFSO_NETWORK_RECORD", raising=False)
+    serverctl.declare("GFSO_NETWORK_RECORD", "off")
+    assert _config.network_record_off() and serverctl.declared()["GFSO_NETWORK_RECORD"] == "off"
+
+
+def test_a_declaration_written_while_it_is_read_lands_whole(tmp_path, monkeypatch):
+    """A reader holding `serve.json` for an instant refused a write over it on Windows, and a write in place left it
+    empty to every reader meanwhile: written beside and moved over, the move waited for (`config.write_atomic`).
+    CONTROL: drop the retry and it is red on Windows."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    serverctl.declare("A", "1")
+    held = open(serverctl.declared_path(), encoding="utf-8")
+    threading.Timer(0.2, held.close).start()
+    serverctl.declare("B", "2")
+    assert json.loads(serverctl.declared_path().read_text(encoding="utf-8")) == {"A": "1", "B": "2"}
+    assert [p.name for p in tmp_path.iterdir()] == ["serve.json"], "a temporary was left"
+
+
+def test_doctor_and_every_execution_ask_docker_one_question(monkeypatch):
+    """"Is Docker up" was decided three times with three timeouts and three readings of its failure (ortho audit F13):
+    doctor and an execution's refusal read one `docker_server`."""
+    down = "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine"
+    monkeypatch.setattr(D.shutil, "which", lambda name: "docker")
+    monkeypatch.setattr(E, "run", lambda args, **kw: subprocess.CompletedProcess(args, 1, "", down))
+    assert D.docker_state() == (False, f"installed, its daemon does not answer — start Docker (docker): {down}")
+    assert E._unavailable(None, storage=False) == down
+    monkeypatch.setattr(E, "run", lambda args, **kw: subprocess.CompletedProcess(args, 0, "28.0.0|Docker Desktop 4.43.0", ""))
+    assert "CVE-2025-9074" in D.docker_state()[1] and D.docker_state()[1] == E._unavailable(None, storage=False)
+
+
+@pytest.mark.parametrize("declared, exported, served, drifted", [
+    ("1", None, False, True), ("1", None, True, False), ("0", "1", True, True), (None, "1", False, False),
+    (None, None, True, False)])
+def test_a_server_whose_screen_is_not_the_installations_has_drifted(monkeypatch, declared, exported, served, drifted):
+    """The screen is its owner's: `gfso up` restarts a server whose knob is not what the installation declares
+    (serve.json), and a connecting client's own export never does — one restarted an idle server under its own knob and
+    the next go would have put a page on the owner's screen (2026-11-17). CONTROL: drop the screen from `drift`, or read
+    the export there, and it is red."""
+    monkeypatch.delenv("GFSO_NO_WINDOWS", raising=False)
+    if exported:
+        monkeypatch.setenv("GFSO_NO_WINDOWS", exported)
+    monkeypatch.setattr(serverctl, "declared", lambda: {} if declared is None else {"GFSO_NO_WINDOWS": declared})
+    rt = {"version": __version__, "code_version": "f", "no_windows": served}
+    assert any("no_windows" in d for d in serverctl.drift(rt, {"GFSO_AGENTS_PATH": ""}, "f")) is drifted
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_a_file_written_over_keeps_its_mode(tmp_path):
+    """Replaced by a new file, a 0600 declaration came back readable by everyone (critic). CONTROL: drop the mode's
+    carry in `write_atomic` and it is red."""
+    (p := tmp_path / "serve.json").write_text("{}")
+    p.chmod(0o600)
+    _config.write_atomic(p, '{"A": "1"}')
+    assert p.stat().st_mode & 0o777 == 0o600 and p.read_text() == '{"A": "1"}'
+    _config.write_atomic(fresh := tmp_path / "new.json", "x", 0o600)
+    assert fresh.stat().st_mode & 0o777 == 0o600

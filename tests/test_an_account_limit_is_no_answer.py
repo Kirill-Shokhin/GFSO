@@ -22,6 +22,7 @@ import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso import delegate as D
 from gfso import sessions as S
+from gfso.adapters import children as CH
 from gfso.adapters import execution as E
 from gfso.adapters.llm import headless as H
 from gfso.adapters.llm.stats import is_limit, refused_by_limit
@@ -51,7 +52,7 @@ def test_the_adapter_records_the_limit_where_its_readers_look(monkeypatch, tmp_p
     monkeypatch.setattr(H.subprocess, "Popen", lambda args, **kw: _Proc())
     monkeypatch.setattr(H.ClaudeCodeProvider, "_read_stream", lambda self, p, t0, cap: (dict(LIMIT_ENVELOPE), [], 0))
     for name in ("adopt", "kill_tree", "release"):
-        monkeypatch.setattr(E, name, lambda p: p)
+        monkeypatch.setattr(CH, name, lambda p: p)
     hold_a_credential(monkeypatch, tmp_path)
     llm = H.ClaudeCodeProvider()
     llm._cmd = "claude"

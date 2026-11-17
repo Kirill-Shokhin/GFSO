@@ -141,7 +141,7 @@ def test_a_seam_criterion_left_to_the_seams_note_is_refused_saying_what_to_add()
 def _consumer(check=None):
     e = make_engine()
     e.start()
-    T.create_task(e, "root", {"description": "root", "criteria": [criterion("g", "G")]}, assignee="agent")
+    T.create_task(e, "root", {"description": "root", "criteria": [criterion("g", "G")]}, assignee="user")
     T.decompose(e, "root", [{"task_id": k, "spec": {"description": k, "criteria": [criterion("k" + k, k.upper())]},
                              "assignee": "worker", "covers": ["g"]} for k in ("a", "b")], accepted_risks=REGISTER)
     T.add_dependency(e, "a", "b", glue="b reads a", check=check)

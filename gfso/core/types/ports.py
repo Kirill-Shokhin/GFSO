@@ -7,6 +7,7 @@ MISSING implementation costs — a degraded feature, or a voided guarantee — b
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import queue
 import re
@@ -24,6 +25,7 @@ from .primitives import (
     TaskId, AgentId, Task, CheckResult, Recommendation,
     DispatchPayload, SignalData, DepEdge, Spec,
 )
+from gfso import config as _config
 from gfso.config import PIPELINE_PAGE, USAGE_PAGE
 
 
@@ -78,6 +80,12 @@ class StoragePort(ABC):
         """Every node of this graph, terminal ones included — the frontier and the metrics both read the
         whole set, and a store that hid settled nodes would make `q_V` measure a different question."""
         ...
+
+    def task_view(self) -> dict:
+        """{id: Task} to READ, never to change or hand on: the graph's own walks (a subtree, the live edges) asked
+        for a copy of every node at every step — 2,344 whole copies for one question on a 421-node graph, quadratic
+        in its size (measured 2026-11-13). A store that keeps its nodes answers with them as they are."""
+        return {str(t.id): t for t in self.get_all_tasks()}
 
     @abstractmethod
     def get_children(self, task_id: TaskId) -> list[Task]:
@@ -191,8 +199,8 @@ class StoragePort(ABC):
         they update in place and are WS-only noise). Default no-op so existing storages stay valid."""
         ...
 
-    def get_pipeline(self, limit: int = PIPELINE_PAGE) -> list[dict]:
-        """The most recent pipeline lines, oldest-first: [{ts, source, message}]."""
+    def get_pipeline(self, limit: int = PIPELINE_PAGE, about: str = "") -> list[dict]:
+        """The most recent pipeline lines beginning with `about`, oldest-first: [{ts, source, message}]."""
         return []
 
     def log_usage(self, row: dict) -> None:
@@ -573,14 +581,49 @@ def place_name(base: str) -> str:
 
 
 def nodes_dir(base: str) -> str:
-    """The name of the directory beside a base (its name `base`) that holds its projects' places."""
+    """The name of the directory (`nodes_root`) that holds the projects' places of a base named `base`."""
     return NODES + place_name(base)
+
+
+def _unescaped(name: str) -> str:
+    return os.fsdecode(re.sub(rb"~([0-9a-f]{2})", lambda m: bytes.fromhex(m[1].decode()), os.fsencode(name)))
 
 
 def base_named(nodes: str) -> str:
     """The base's name a `nodes_dir` was made from; one recorded before `place_name` holds no escape and reads as it is."""
-    return os.fsdecode(re.sub(rb"~([0-9a-f]{2})", lambda m: bytes.fromhex(m[1].decode()),
-                              os.fsencode(nodes.removeprefix(NODES))))
+    return _unescaped(nodes.removeprefix(NODES))
+
+
+#: where the installation keeps the places of every base it works on: its own state, never the user's file system around
+#: the repository — places beside it grew `.gfso-nodes-<repo>` next to the user's work (6.5 GB once, 2026-11-14), and a
+#: tester found them there. One directory per base's parent, named by a short hash of it (the parent's path spelled whole
+#: made the deepest places too long for Windows, measured), the parent's path in a file beside (`PARENT`): a place is read
+#: back to its base by one local read, no subprocess — the transition bus asks it.
+PLACES = "places"
+PARENT = "parent"
+
+
+def nodes_root(base) -> Path:
+    """The directory that holds the projects' places of the git base `base`: `<data>/places/<hash of its parent>/<nodes_dir>`,
+    the parent written beside on its first naming."""
+    # …by the parent as resolved (a link, a junction): one spelling of it is one directory, and the places stand where
+    # the system reads them back resolved (`_real`) — an unresolved home behind a link refused every call (critic)
+    b = Path(os.path.abspath(base))
+    root = Path(os.path.realpath(_config.data_dir())) / PLACES / hashlib.sha1(
+        os.path.normcase(os.path.realpath(b.parent)).encode()).hexdigest()[:10]
+    if not (root / PARENT).is_file():
+        root.mkdir(parents=True, exist_ok=True)
+        (root / PARENT).write_text(str(b.parent), encoding="utf-8")
+    return root / nodes_dir(b.name)
+
+
+def base_of_nodes(nodes) -> Path:
+    """The base whose `nodes_root` is `nodes`; a directory made beside its base before 2026-11-15 reads as it was laid
+    out then."""
+    n = Path(nodes)
+    if n.parent.parent.name == PLACES and (n.parent / PARENT).is_file():
+        return Path((n.parent / PARENT).read_text(encoding="utf-8")) / base_named(n.name)
+    return n.parent / base_named(n.name)
 
 
 #: what names a validation's scratch beside the place it validates (`scratch_of`)

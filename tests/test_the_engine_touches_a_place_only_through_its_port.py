@@ -34,6 +34,7 @@ HOSTS_OWN = {
     ("adapters/execution.py", "_no_places", "shutil.which('git')"): "the user's own git on the host, as its import uses",
     ("workspaces.py", "stands", "Path(where).is_dir()"): "a directory that is no node's place is a base",
     ("workspaces.py", "made", "HOST.is_dir(place)"): "the legacy record's fallback, a host directory until V2",
+    ("workspaces.py", "_place_of", "HOST.is_dir(str(old))"): "a host place laid out beside its base before the places moved into the installation (2026-11-15)",
     ("core/protocol/procedure.py", "_gone", "HOST.exists(path)"): "a path in no round: the base or outside the places",
     ("core/protocol/procedure.py", "_gone", "HOST.exists(str(Path(path).parent))"): "a path in no round, as above",
     ("adapters/worktrees.py", "is_repo_top", "shutil.which('git')"): "this host's git",
@@ -53,13 +54,14 @@ HOSTS_OWN = {
         "the user's repository, carried in",
     ("adapters/execution.py", "_lfs_of", "f.stat()"): "the user's repository, carried in",
     **{("adapters/execution.py", "stored_on_host", call): "the user's LFS store, the accepted result's objects landing"
-       for call in ("(at := Path(lfs.path_in(str(store), oid))).is_file()", "at.stat()", "os.replace(tmp, at)",
-                    "(tmp := at.with_name(f'{oid}.gfso-{uuid.uuid4().hex}')).write_bytes(data)",
-                    "at.parent.mkdir(parents=True, exist_ok=True)")},
+       for call in ("(at := Path(lfs.path_in(str(store), oid))).is_file()", "at.stat()", "write_atomic(at, data)")},
     ("adapters/execution.py", "Volume.land_tree", "shutil.rmtree(to)"): "a host directory of the user's: the result",
     ("adapters/execution.py", "Volume.land_tree", "to.exists()"): "a host directory of the user's: the result",
     ("adapters/execution.py", "fetched_on_host", "(f := (Path(d) / 'accepted.bundle')).write_bytes(bundle)"):
         "the accepted result, landing in the user's repository",
+    ("adapters/execution.py", "take_in", "open(b, 'rb')"): "the user's repository, a chat's delivery carried in",
+    ("adapters/execution.py", "take_in", "tempfile.TemporaryDirectory(prefix='gfso-take-')"):
+        "the user's repository, a chat's delivery carried in",
     ("adapters/execution.py", "fetched_on_host", "tempfile.TemporaryDirectory(prefix='gfso-land-')"):
         "the accepted result, landing in the user's repository",
     ("tools_llm.py", "_keep_rejected_report", "d.mkdir(parents=True, exist_ok=True)"): "the server's state",
@@ -73,9 +75,7 @@ HOSTS_OWN = {
     ("delegate.py", "_checker_validate", "Path(entry['canonical']).read_text(encoding='utf-8')"): "the hidden tests",
     ("issuer/__init__.py", "_prompt", "PROMPT.read_text(encoding='utf-8')"): "the product's prompt",
     ("sessions.py", "_spawn", "(_PROMPTS / prompt).read_text(encoding='utf-8')"): "the product's prompt",
-    ("roster.py", "_put_atomically", "tmp.write_text(text, encoding='utf-8')"): "the roster file",
-    ("roster.py", "_put_atomically", "tmp.unlink(missing_ok=True)"): "the roster file",
-    ("roster.py", "_put_atomically", "os.replace(tmp, path)"): "the roster file",
+    ("roster.py", "_put_atomically", "write_atomic(path, text)"): "the roster file",
     ("roster.py", "missing_workdir", "Path(wd).is_dir()"): "a role's workdir: a base",
     ("roster.py", "AgentRegistry._load_locked", "self._path.stat()"): "the roster file",
     ("roster.py", "AgentRegistry._load_locked", "self._path.read_text(encoding='utf-8')"): "the roster file",
@@ -118,8 +118,8 @@ HOSTS_OWN = {
     ("adapters/execution.py", "_mirror", "mirror.write_text(text, encoding='utf-8')"): "the host's mirror of a log",
     # …a project's places as they stood on the host before its volume, read once to be copied in
     ("adapters/execution.py", "Volume.ready", "p.is_dir()"): "the host's leftover, or its CLI state of before",
-    ("adapters/execution.py", "_left", "ex.own.is_dir()"): "the host's leftover of a project's places",
-    ("adapters/execution.py", "_left", "ex.own.iterdir()"): "the host's leftover of a project's places",
+    ("adapters/execution.py", "_left", "own.is_dir()"): "the host's leftover of a project's places",
+    ("adapters/execution.py", "_left", "own.iterdir()"): "the host's leftover of a project's places",
     ("adapters/execution.py", "_left", "d.is_dir()"): "the host's leftover of a project's places",
     ("adapters/execution.py", "_left", "d.iterdir()"): "the host's leftover of a project's places",
     ("adapters/execution.py", "_left", "x.is_dir()"): "the host's leftover of a project's places",
@@ -174,7 +174,7 @@ def _touches(path: Path, module: str) -> set:
 
 def _direct(f, positional: int) -> bool:
     if isinstance(f, ast.Name):
-        return f.id == "open"
+        return f.id in ("open", "write_atomic")
     if not isinstance(f, ast.Attribute):
         return False
     if (mod := ast.unparse(f.value)) == "HOST":

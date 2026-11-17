@@ -22,10 +22,9 @@ from gfso.core.protocol.procedure import admission_defects, criterionless
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (NO_TICK_S, clock_off_s, dep_scope, keep_off, non_leaf_ids, project_now,
-                                   standing_split)
+                                   project_state_bound, standing_split)
 from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation
 from gfso.core.handlers import run_all_checks, recommend
-from gfso.config import state_bound
 
 from .findings import regression, ruled
 from .audit import AuditLog, AuditEntry, VERSION_INSTALLING, consented_on_current_version
@@ -44,7 +43,8 @@ def _payload_fields(sd: SignalData) -> dict:
         in_flight=sd.in_flight, spec=_spec_json(sd),
         revision_reason=sd.revision_reason.name if sd.revision_reason is not None else None,
         retire_findings=tuple(sd.retire_findings), artifact=sd.artifact, commit=sd.commit,
-        build=sd.build, by_system=sd.by_system and required_role(sd.signal) == Role.ISSUER,
+        repository=sd.repository, build=sd.build, by_system=(system := sd.by_system and required_role(sd.signal) == Role.ISSUER),
+        via=None if system else sd.via,
     )
 
 
@@ -122,7 +122,7 @@ def _ruling_as_it_stood(sd: SignalData, graph, audit: AuditLog) -> SignalData:
     return replace(sd, retire_findings=tuple(ruled(sd.retire_findings, standing)[0]))
 
 
-def _refused(signal_data: SignalData, state: State, why: str, audit: AuditLog,
+def record_refusal(signal_data: SignalData, state: State, why: str, audit: AuditLog,
              events: EventBus) -> None:
     """A signal that moved nothing, on the record with its REASON (Inv-7/Thm 11).
 
@@ -294,7 +294,7 @@ def process_signal(
             validate_signal(signal_data, graph, audit)
         except ValidationError as e:
             log.warning(f"validation failed: {e}")
-            _refused(signal_data, state, str(e), audit, events)
+            record_refusal(signal_data, state, str(e), audit, events)
             return
 
     # FSM transition
@@ -309,7 +309,7 @@ def process_signal(
         # scoring 0.972 on the held-out suite. The route out is not a secret; it just was never said.
         _why = not_admissible_here(signal_data.signal, state)
         log.info(f"rejected: {signal_data.signal.name} in {state.name} for {task_id} — {_why}")
-        _refused(signal_data, state, _why, audit, events)
+        record_refusal(signal_data, state, _why, audit, events)
         return
 
     new_state, effects = result
@@ -514,17 +514,17 @@ def _execute_effects(
 _OWN_BOUND_ONLY = (State.VALIDATING, State.ESCALATED, State.CANCELLING)
 
 
-def state_bound_left(task, now: float) -> Optional[float]:
+def state_bound_left(task, now: float, graph=None) -> Optional[float]:
     """Seconds this visit has left under the state's OWN bound (§12.2) — None where there is none."""
-    bound = state_bound(task.state.name)
+    bound = project_state_bound(graph, task.state.name)
     if not bound:
         return None
     return bound - (now - (task.state_entered_at or task.created_at).timestamp())
 
 
-def state_bound_passed(task, now: float) -> bool:
+def state_bound_passed(task, now: float, graph=None) -> bool:
     """Has this visit outlived the state's OWN bound (§12.2, Inv-5)? — the monitor's question."""
-    left = state_bound_left(task, now)
+    left = state_bound_left(task, now, graph)
     return left is not None and left < 0
 
 
@@ -567,7 +567,7 @@ def _the_clock_speaks_first(signal_data: SignalData, graph: Graph, state: State,
             or state in TERMINAL_STATES or not entered_on_a_spent_bound(task, graph)):
         return False
     signal_queue.put(SignalData(signal=Signal.TIMEOUT, task_id=task.id, visit=visit))
-    _refused(signal_data, state,
+    record_refusal(signal_data, state,
              f"{state.name} was entered on a deadline already spent (§12.2), so it is a "
              f"zero-length transit and admits no signal: the timeout it fires on entry is on its "
              f"way, and {signal_data.signal.name} belongs to the state that follows it",
@@ -665,7 +665,7 @@ def timeout_monitor(
             # …AND THE STATE'S OWN BOUND, which every waiting state now carries and which the
             # opt-in age clock above never was: a bound that can be switched off is not a bound
             # (Inv-5 asks that every non-terminal state but IDLE have one).
-            if state_bound_passed(task, now):
+            if state_bound_passed(task, now, graph):
                 stale = True
             if (overdue or stale) and task.state not in TERMINAL_STATES:
                 visit = (task.state, (task.state_entered_at or task.created_at))

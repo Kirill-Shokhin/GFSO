@@ -36,7 +36,7 @@ def _declare(home, **more):
 def _dispatching():
     """A project whose mode dispatches its nodes to its executor (`perform="dispatch"`)."""
     e = make_engine()
-    e.set_mode(Mode.SOLO, None, AgentId("agent"), said="solo, dispatched", hands="p-exec")
+    e.set_mode(Mode.SOLO, None, AgentId("user"), said="solo, dispatched", hands="p-exec")
     return e
 
 
@@ -75,12 +75,13 @@ def test_a_role_registered_again_keeps_the_execution_it_declares(home):
     assert isinstance(WS.execution_of(e, TL._roster()), ContainerExecution)
 
 
-def test_work_in_the_users_own_chat_keeps_its_project_on_this_host(home):
-    """`in_chat` is refused under a container: the default would have made the user's own mode unusable."""
+def test_an_executor_beside_the_users_own_chat_works_in_the_default_container(home):
+    """Under `in_chat` the parts below the holder's depth are dispatched to the project's executor — unattended work,
+    which runs in a container; the chat's own deliveries are carried in to their judge (`take_in`)."""
     _declare(home)
     e = make_engine()
-    e.set_mode(Mode.SOLO, None, AgentId("agent"), said="solo in my chat")
-    assert e.mode()["perform"] == "in_chat" and _registered(e, home, "p-exec") is None
+    e.set_mode(Mode.SEMI, None, AgentId("user"), said="semi in my chat")
+    assert e.mode()["perform"] == "in_chat" and _registered(e, home, "p-exec") == "default"
 
 
 def test_no_default_declared_registers_as_before(home):

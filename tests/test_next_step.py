@@ -8,7 +8,7 @@ import json
 from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, DepEdge, Signal,
                              SignalData, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS)
 from tests.support import REGISTER_SPLIT, criterion, make_engine, pinned, REGISTER
-from gfso import tools as T
+from gfso import config, signin, tools as T
 from gfso.core.types import Mode
 from tests.test_the_mode_decides_who_holds_what import _RISK, _engine
 
@@ -181,12 +181,12 @@ def test_next_steps_orders_issuer_actions_before_executes():
 
 
 def test_frontier_is_del_aware(monkeypatch):
-    """Del is REAL on the frontier: with GFSO_AGENT_ID set, my nodes carry mine=true; a node assigned to
+    """Del is REAL on the frontier: signed by a token for my name, my nodes carry mine=true; a node assigned to
     someone else is VISIBLE but its executor-step directive is hands-off — and the FSM would reject my
     executor signal on it anyway (source ≠ Del)."""
     e = make_engine(llm=StubLLM(), validate_signals=True)
     e.start()
-    monkeypatch.setenv("GFSO_AGENT_ID", "claude-main")
+    signed = config.CALLER.set(signin.by_token(signin.issue("claude-main")[1]))
     # `mine1` is the project's one root; his node hangs under it as a child with its coverage
     # declared, so what holds `his1` back on the frontier is Del and nothing else.
     T.create_task(e, "mine1", {"description": "agent node",
@@ -203,6 +203,7 @@ def test_frontier_is_del_aware(monkeypatch):
     assert r["accepted"] is False and "not executor" in r["error"]
     # and the rightful executor passes
     assert T.signal(e, "his1", "ACCEPT", "kirill")["state"] == "EXECUTING"
+    config.CALLER.reset(signed)
     e.stop()
 
 

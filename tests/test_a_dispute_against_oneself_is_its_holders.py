@@ -17,7 +17,7 @@ import threading
 import gfso.tools as T
 from gfso import issuer as I
 from gfso.core.types import Signal, State, TaskId
-from tests.support import criterion
+from tests.support import issuer_sweep, criterion
 from tests.test_a_ruling_is_part_of_the_acceptance import _challenged_with_a_finding
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
 from tests.test_the_mode_decides_who_holds_what import _RISK, _Roster, _engine, _kid
@@ -29,11 +29,7 @@ def _sweep(e, tmp_path, pid):
                       ran={"Bash": 1})
     verbs = I.Verbs(llm=lambda m, **k: llm, busy=lambda *a: contextlib.nullcontext(), review=None, refine=None,
                     place=lambda en, ag, n: str(tmp_path))
-    before = set(threading.enumerate())
-    I.answer_open_questions(e, _Roster(), lambda k: True, lambda *a, **k: None, threading.Semaphore(1), verbs, {})
-    for th in set(threading.enumerate()) - before:
-        if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
-            th.join(10)
+    issuer_sweep(e, _Roster(), lambda k: True, lambda *a, **k: None, threading.Semaphore(1), verbs, {})
     e.wait_idle()
     return llm
 
@@ -53,7 +49,7 @@ def test_the_system_does_not_answer_a_self_assigned_roots_own_dispute(tmp_path):
     (step,) = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "root"]
     assert step["mine"] and "CHALLENGED" in step["directive"], step
     # …and the holder's own answer lifts it, signed by its true author
-    out = T.signal(e, "root", "ACCEPT_CHALLENGE", "agent", retire_findings=[pid], justification="not g's")
+    out = T.signal(e, "root", "ACCEPT_CHALLENGE", "user", retire_findings=[pid], justification="not g's")
     e.wait_idle()
     assert out["accepted"] and e.regression_probes(TaskId("root")) == {}, out
     e.stop()
@@ -61,9 +57,9 @@ def test_the_system_does_not_answer_a_self_assigned_roots_own_dispute(tmp_path):
 
 def test_control_the_system_still_answers_a_dispute_at_a_seam(tmp_path):
     e = _engine()
-    e.record_root_issuer(TaskId("root"), "agent")
+    e.record_root_issuer(TaskId("root"), "user")
     _root(e, assignee="exec-1")
-    assert str(e.graph.issuer_of(TaskId("root"))) == "agent" != str(e.graph.get_task(TaskId("root")).assignee)
+    assert str(e.graph.issuer_of(TaskId("root"))) == "user" != str(e.graph.get_task(TaskId("root")).assignee)
     pid = _challenged_with_a_finding(e, "root", "g")
     llm = _sweep(e, tmp_path, pid)
     assert llm.calls and e.graph.get_state(TaskId("root")) == State.OFFERED, "the seam's dispute went unanswered"
@@ -74,7 +70,7 @@ def test_a_machine_issuing_to_itself_keeps_the_systems_answer():
     """Only the AGENT's own node is its holder's to answer: a registered executor issuing to itself has no other live
     mover, and with no answer its dispute would wait out its bound into an ESCALATED nobody moves (critic over af0d0a2)."""
     e = _engine()
-    e.record_root_issuer(TaskId("root"), "agent")
+    e.record_root_issuer(TaskId("root"), "user")
     T.TOOLS["create_task"](e, "root", {"description": "g", "criteria": [criterion("g", "G holds")]}, assignee="exec-1")
     T.signal(e, "root", "ACCEPT", "exec-1")
     T.TOOLS["decompose"](e, "root", [{**_kid("c", ["g"], criterion("k", "K holds")), "assignee": "exec-1"}],

@@ -15,30 +15,38 @@ const BLOCK = A('BLOCK', 'red', 'Block', 'reason');
 // BLOCKED is (§12.1); under a mode that issuer is the machine.
 // Moves — the panel's controls that are no signal: E Edit (a re-ASSIGN, §12.3), D Decompose, V Record verdict (the
 // human counterpart of validate_result).
+// A STATE'S WORD IS WHAT THE RECORD SAYS, and a state alone never says that work goes on: it is a waiting point between two
+// signals (§12.1). So the word below is the state at rest — accepted, delivered, sent back — and `WORKED` its word while
+// the page sees the work going on (`now.lit`: a process, a presence). "In Progress" on every accepted node was true only
+// under AUTO, where a session takes a node the moment it is accepted; on a graph people hold, hundreds "were in progress"
+// while two were worked (the author, 2026-11-13/14); a word naming whose move it was read worse (2026-11-14).
 const ROWS = {
     //           bucket       label          moves
     DONE:       ['done',      'Done',        ''],
-    EXECUTING:  ['busy',      'In Progress', 'ED'],
+    EXECUTING:  ['busy',      'Accepted',    'ED'],
     OFFERED:    ['attend',    'Not started', 'ED'],
     BLOCKED:    ['pathology', 'Blocked',     'ED'],
-    REWORKING:  ['busy',      'Rework',      'ED'],
+    REWORKING:  ['busy',      'Sent back',   'ED'],
     CHALLENGED: ['pathology', 'Challenged',  'ED'],
-    VALIDATING: ['busy',      'Validating',  'EV'],
+    VALIDATING: ['busy',      'Delivered',   'EV'],
     IDLE:       ['quiet',     'Waiting',     ''],
     CANCELLING: ['pathology', 'Cancelling',  ''],
     ABANDONED:  ['quiet',     'Cancelled',   ''],
     ESCALATED:  ['pathology', 'Escalated',   'E'],
 };
+export const WORKED = {EXECUTING: 'In progress', REWORKING: 'Rework', VALIDATING: 'Validating'};
 // WHICH signals a node admits is the engine's answer (`/api/tasks/{id}/actions`): a copy of the FSM here had drifted —
 // no Challenge after consent (ortho audit). What stays here is how each signal is offered; ASSIGN is not offered as a
-// signal (Edit is the re-ASSIGN; a DONE's reopen has no control here yet).
+// signal (Edit is the re-ASSIGN); on a closed node the ASSIGN the engine admits its issuer is a REOPEN (R′, §12.14) and
+// is offered as one — the page had no way to it (the author's door, a probe 2026-11-14).
 const LOOK = Object.fromEntries([
     A('ACCEPT', 'green', 'Accept'), A('CHALLENGE', 'orange', 'Challenge', 'reason'), A('DELIVER', 'blue', 'Deliver', 'result'),
     BLOCK, A('RESOLVE_BLOCK', 'blue', 'Resolve Block', 'action'), A('ACCEPT_CHALLENGE', 'green', 'Accept Challenge'),
     A('REJECT_CHALLENGE', 'muted', 'Reject Challenge', 'justification'), A('PASS', 'green', 'Pass'), A('FAIL', 'red', 'Fail', '', true),
     A('CANCEL', 'muted', 'Cancel', 'reason'), A('CONFIRM_CANCEL', 'muted', 'Confirm Cancel', 'in_flight'),
+    A('REOPEN', 'muted', 'Reopen'),
 ].map(a => [a.s, a]));
-export const look = sig => LOOK[sig];
+export const look = (sig, state) => LOOK[sig === 'ASSIGN' && terminal(state) ? 'REOPEN' : sig];
 // The state predicates every view reads, written once: terminal (§12.1), delivered — the engine's settled_positive,
 // DONE by a PASS or the timeout's AUTO_PASS — and working (consented work or its validation in course).
 export const terminal = s => s === 'DONE' || s === 'ABANDONED';

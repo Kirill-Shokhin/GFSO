@@ -61,7 +61,7 @@ def _two_consumers_of_one_producer(tmp_path):
     for aid, kind in (("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(aid, kind, workdir=str(tmp_path), project="p")
     D.publish_the_workforce(e, agents.list())
-    e.set_mode(Mode.AUTO, None, AgentId("agent"))
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.create_task(e, "root", {"description": "the goal", "accepted_risks": REGISTER, "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
     kid = lambda i: {"id": i, "name": i, "description": f"part {i}", "volume": "~40 lines, 2 checks",

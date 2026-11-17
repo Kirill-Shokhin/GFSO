@@ -167,16 +167,16 @@ def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Opti
                 built.append(ran)
         yield str(at)
         if edits is not None:      # …after a run that ended, not one that raised: its copy is no record
-            edits.extend(_changed_or_unknown(place, at, execution, commit))
+            edits.extend(changed_or_unknown(place, at, execution, commit))
     finally:
         execution.remove_tree(str(at))
 
 
-def _changed_or_unknown(place, at, execution, commit: Optional[str] = None) -> list[str]:
+def changed_or_unknown(place, at, execution, commit: Optional[str] = None, base: Optional[tuple] = None) -> list[str]:
     """`changed`, or nothing where it could not be read: a fact for the record, never the cause of a finished
     report being lost."""
     try:
-        return changed(place, at, execution, commit)
+        return changed(place, at, execution, commit, base)
     except Exception as e:            # noqa: BLE001 — informational, whatever went wrong
         log.warning(f"what the run changed in {at} could not be read ({e!r}) — no edits recorded")
         return []
@@ -189,18 +189,23 @@ import os, shutil, subprocess, sys
 from pathlib import Path
 place, at = sys.argv[1], Path(sys.argv[2])
 dot = at / ".git"
+def rel(p, start):   # ...a place on another drive than its copy has no relative path: absolute, read here alone
+    try:
+        return Path(os.path.relpath(p, start)).as_posix()
+    except ValueError:
+        return Path(os.path.abspath(p)).as_posix()
 if dot.is_dir():
     alt = dot / "objects" / "info" / "alternates"
     if alt.is_file():
         borrowed = os.path.normpath(os.path.join(place, ".git", "objects", alt.read_text(encoding="utf-8").strip()))
-        alt.write_bytes((Path(os.path.relpath(borrowed, dot / "objects")).as_posix() + "\n").encode())
+        alt.write_bytes((rel(borrowed, dot / "objects") + "\n").encode())
 elif dot.is_file():
     gitdir = Path(os.path.normpath(os.path.join(place, dot.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip())))
     if (gitdir / "commondir").is_file() and not (gitdir / "commondir").is_symlink():
         common = os.path.normpath(gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip())
         dot.unlink()
         shutil.copytree(gitdir, dot, symlinks=True, ignore=shutil.ignore_patterns("gitdir", "locked", "*.lock"))
-        (dot / "commondir").write_text(Path(os.path.relpath(common, dot)).as_posix() + "\n", encoding="utf-8")
+        (dot / "commondir").write_text(rel(common, dot) + "\n", encoding="utf-8")
         head = subprocess.run(["git", *sys.argv[3:], "--git-dir", str(dot), "rev-parse", "HEAD"], capture_output=True,
                               text=True)
         (dot / "HEAD").write_text(head.stdout.strip() + "\n", encoding="utf-8")
@@ -257,25 +262,33 @@ def _shared_git(place: Path, at: Path, execution) -> None:
         raise OSError(f"the copy {at} could not get a git of its own: {(r.stderr or '').strip()[-300:]}")
 
 
-def changed(place, at, execution, commit: Optional[str] = None) -> list[str]:
+def changed(place, at, execution, commit: Optional[str] = None, base: Optional[tuple] = None) -> list[str]:
     """The committed files that differ in the copy — content, kind, link target or presence; a touch is no change —
     from `commit`, the delivery the copy is a checkout of, read in the copy's own repository; else from the place as it
     stands. Each side is written as a git tree where the work runs: on the host, a link a container made is no file
     to read (WinError 1920) — EACH IN ITS OWN REPOSITORY AND CONTAINER (`W.git`): the place's in its executor's, the
     copy's in its round's, which already runs what the executor delivered (its checks); one container holding both ran
     the copy's config over the place's neighbours. The two compared entry by entry: a blob's id is its content's,
-    whichever repository wrote it. Empty where either side could not be read: unknown is not "changed"."""
-    head = commit or W.git(place, "rev-parse", "HEAD", execution=execution).stdout.strip()
-    if not head:
-        return []
+    whichever repository wrote it. Empty where either side could not be read: unknown is not "changed". `base`: the
+    place's side, read once for many copies of it (`on_disk`)."""
     if commit:
         r = W.git(at, "ls-tree", "-r", "-z", "--full-tree", commit, execution=execution)
-        a = None if r.returncode else _entries(r.stdout)
+        head, a = commit, None if r.returncode else _entries(r.stdout)
     else:
-        with execution.scratch("gfso-index-", dir=execution.temp_of(str(place))) as d:   # …the place's own temp
-            a = _tree(place, head, Path(d) / "index", execution)
+        head, a = base or on_disk(place, execution) or (None, None)
+    if not head:
+        return []
     b = _tree(at, head, Path(at) / ".git" / "gfso-index-copy", execution)              # …gone with the copy
     return [] if a is None or b is None else sorted(p for p in a.keys() | b.keys() if a.get(p) != b.get(p))
+
+
+def on_disk(place, execution) -> Optional[tuple]:
+    """(HEAD, {path: mode and id} of its files as they stand in `place`) — the place's side of `changed`; None where
+    it has no commit or could not be read."""
+    if not (head := W.git(place, "rev-parse", "HEAD", execution=execution).stdout.strip()):
+        return None
+    with execution.scratch("gfso-index-", dir=execution.temp_of(str(place))) as d:   # …the place's own temp
+        return head, _tree(place, head, Path(d) / "index", execution)
 
 
 def _entries(listing: str) -> dict:

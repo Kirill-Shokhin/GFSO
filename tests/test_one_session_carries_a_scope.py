@@ -58,7 +58,7 @@ def _project(tmp_path, fits=True, mode=Mode.AUTO):
     for aid, kind in (("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(aid, kind, workdir=str(tmp_path), project="p")
     D.publish_the_workforce(e, agents.list())
-    e.set_mode(mode, None, AgentId("agent"))
+    e.set_mode(mode, None, AgentId("user"))
     T.create_task(e, "root", {"description": "the goal", "accepted_risks": _RISK,
                               "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
@@ -253,10 +253,10 @@ def test_a_hand_pass_on_a_whole_whose_part_was_delivered_again_is_refused(tmp_pa
         assert D._signal(e, TaskId(t), Signal.PASS, "exec-1", _why=why), why
     e.wait_idle()
     why = []
-    assert not D._signal(e, TaskId("root"), Signal.PASS, "agent", _why=why)
+    assert not D._signal(e, TaskId("root"), Signal.PASS, "user", _why=why)
     assert "no appointed observer has observed this delivery" in why[0], why
     _pass("root")
-    assert D._signal(e, TaskId("root"), Signal.PASS, "agent", _why=why), why
+    assert D._signal(e, TaskId("root"), Signal.PASS, "user", _why=why), why
     e.stop()
 
 
@@ -397,7 +397,7 @@ def test_under_a_holder_issuer_the_split_is_still_its_executors_and_no_session_i
     would be refused (critic, 2026-09-28)."""
     monkeypatch.setattr(D, "answer_open_questions", lambda *a, **k: [])
     e, agents = _project(tmp_path, fits=False, mode=Mode.SEMI)
-    assert str(e.graph.issuer_of(TaskId("root.a"))) == "agent", "the holder issues the parts"
+    assert str(e.graph.issuer_of(TaskId("root.a"))) == "user", "the holder issues the parts"
     per_node = []
     _drive(e, _dispatcher(e, agents, _LLM(), _LLM(), per_node), lambda: False, rounds=15)
     assert ("exec", "root.a") not in per_node
@@ -463,7 +463,7 @@ def test_what_failed_through_parts_is_read_only_for_the_fail_it_was_recorded_wit
     e.note_failed_through_parts(TaskId("root"), {"g": ["root.a"]})
     assert e.failed_through_parts(TaskId("root")) == {"g": ["root.a"]}
     root = e.graph.get_task(TaskId("root"))
-    e.revise(root.id, root.spec, AgentId("agent"), reason=None)          # a new version: another generation
+    e.revise(root.id, root.spec, AgentId("user"), reason=None)          # a new version: another generation
     e.wait_idle()
     assert e.failed_through_parts(TaskId("root")) == {}
     e.stop()
@@ -563,14 +563,14 @@ def test_under_semi_the_holder_is_told_the_whole_over_a_failing_part_fails(tmp_p
     """A whole is not attained while a part fails (Thm 1): that FAIL is true now and is its issuer's step. Listed as
     a wait for the part's rework, the whole sat in VALIDATING past T_validate and escalated (critic, 2026-09-28)."""
     e, agents = _semi_scope_below_the_holder(tmp_path)
-    assert str(e.graph.issuer_of(TaskId("root.a"))) == "agent" and e.scope_top(TaskId("root.a.x1")).id == TaskId("root.a")
+    assert str(e.graph.issuer_of(TaskId("root.a"))) == "user" and e.scope_top(TaskId("root.a.x1")).id == TaskId("root.a")
     run = _delivered("root.a.x1", "root.a.x2", "root.a")
     d = _dispatcher(e, agents, _LLM(run, run), _Validator(e, {("root.a.x1", "x1_ok")}), [])
     _drive(e, d, lambda: e.graph.get_state(TaskId("root.a.x1")) == State.REWORKING, rounds=60)
     assert e.graph.get_state(TaskId("root.a")) == State.VALIDATING
     step = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "root.a")
     assert "FAIL on a_ok" in step["directive"] and "Thm 1" in step["directive"], step
-    assert D._signal(e, TaskId("root.a"), Signal.FAIL, "agent", failed_criteria=("a_ok",), reason="x1 fails")
+    assert D._signal(e, TaskId("root.a"), Signal.FAIL, "user", failed_criteria=("a_ok",), reason="x1 fails")
     e.stop()
 
 

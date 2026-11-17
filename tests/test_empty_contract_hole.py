@@ -13,7 +13,7 @@ from gfso.core.types.enums import State
 
 def _task(tid: str, criteria=(), mappings=()) -> Task:
     return Task(id=TaskId(tid), spec=Spec("d", tuple(criteria)), state=State.EXECUTING,
-                assignee=AgentId("agent"), criterion_mappings=tuple(mappings))
+                assignee=AgentId("user"), criterion_mappings=tuple(mappings))
 
 
 def test_children_without_parent_criteria_is_a_hole():

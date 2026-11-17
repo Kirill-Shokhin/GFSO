@@ -14,13 +14,13 @@ from tests.support import REGISTER, criterion, make_engine
 
 
 def _root(e):
-    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("a", "A"), criterion("b", "B")]}, "agent")
+    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("a", "A"), criterion("b", "B")]}, "user")
     e.wait_idle()
 
 
 def _child(k, c):
     return {"task_id": k, "spec": {"description": f"part {k}", "criteria": [criterion(f"{k}_ok", k)]},
-            "assignee": "agent", "covers": [c]}
+            "assignee": "user", "covers": [c]}
 
 
 def test_the_one_root_refusal_starts_the_split_by_decompose_and_its_advice_is_admitted():

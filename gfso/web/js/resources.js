@@ -57,7 +57,7 @@ const notes = d => [...failed(d), failed(d).length > 0 && untried(d).length > 0 
     !failed(d).length && (!Object.values(d.read_at || {}).some(t => t != null) ? RES.first
     : !(d.read.containers && d.read.stats && d.read.disk) && RES.unread),
     d.older_build?.containers && RES.older(d.older_build.containers)].filter(Boolean)
-    .map(n => `<div class="pn-meta">${esc(n)}</div>`).join('');
+    .map(n => `<div class="pn-meta rs-note">${esc(n)}</div>`).join('');
 
 // THE DECK'S VIEW: this project, node by node, then the project's own containers
 export function render(el) {

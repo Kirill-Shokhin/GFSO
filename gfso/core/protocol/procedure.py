@@ -18,8 +18,12 @@ the residue is stated rather than closed: behaviour outside P is unchecked — t
 from __future__ import annotations
 
 import ast
+import doctest
+import fnmatch
 import hashlib
+import itertools
 import os
+import posixpath
 import re
 import sys
 from dataclasses import replace
@@ -27,6 +31,7 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Optional, Sequence
 
 from gfso.core.types import HOST, Criteria, Probe, files_at, unprojected
+from gfso.core.protocol.shell import commands, substitution_end
 from gfso.core.protocol.invariants import emits_a_constant, probe_held, probes_of, spoken_verdict, underprobed
 
 
@@ -212,11 +217,44 @@ def inputs_unpinned(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     return out
 
 
+#: what the shell hands a program as written, so a brace inside it is the program's (awk, JSON, a heredoc's C source)
+_QUOTED = re.compile(r"""<<-?\s*['"]?(\w+)['"]?[^\n]*\n.*?^\s*\1\s*$|'[^']*'|"(?:\\.|[^"\\])*\"""", re.S | re.M)
+#: an unquoted `{name}` no `$` expands and no run fills — the system fills `{inputs}` alone
+_PLACEHOLDER = re.compile(r"(?<!\$)\{(?!inputs\})[A-Za-z_]\w*\}")
+
+
+def unfilled_placeholders(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
+    """{criterion: the placeholders its pinned commands carry} — `{exec}`, `{workspace}`: run as written, such a command
+    runs nothing anyone meant, and no truthful report can cite it as run (§12.16 (ii); `{exec}` ×142 in one AUTO run's
+    pins, tmyl10584)."""
+    out: dict[str, list[str]] = {}
+    for c in criteria or ():
+        if found := [m for p in (c.check or ()) for m in _PLACEHOLDER.findall(_QUOTED.sub(" ", p.command or ""))]:
+            out[c.name] = list(dict.fromkeys(found))
+    return out
+
+
 #: a file a command names under `{inputs}` — a literal name; a glob or a shell variable names no one file
 _NAMED_INPUT = re.compile(re.escape(INPUTS_TOKEN) + r"/([^\s'\";|&<>()]+)")
 #: …a file the command itself makes there — a redirect's or an `-o`'s target — which no one has to pin (critic)
 _MADE_INPUT = re.compile(r"(?:>>?|-o)\s*" + re.escape(INPUTS_TOKEN) + r"/([^\s'\";|&<>()]+)")
 _PATTERN = re.compile(r"[*?\[\]${}`]")
+
+
+def _segments(path: str) -> str:
+    """`path` with its empty and `.` segments dropped: `./fixture//a.txt` is `fixture/a.txt`."""
+    return "/".join(x for x in path.split("/") if x not in ("", "."))
+
+
+def _names_pinned(name: str, have: set) -> bool:
+    """Whether `name` under `{inputs}` reaches what the probe pins, read as the path it names: `fixture/.` is the
+    directory `fixture` that pinned files under it make (stranger run s17b: the core criterion's `{inputs}/fixture/.`
+    was refused twice, then dropped from the plan); one ending in `/` names a directory, never a pinned file
+    (`data.csv/.` fails on Linux); a `..` climbs where nothing is pinned, so it is read as written (critic)."""
+    k = _segments(name)
+    if ".." in k.split("/"):
+        return name in have
+    return not k or (k in have and not name.endswith(("/", "/."))) or any(h.startswith(k + "/") for h in have)
 
 
 def inputs_named_not_pinned(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
@@ -227,10 +265,10 @@ def inputs_named_not_pinned(criteria: Iterable[Criteria]) -> dict[str, list[str]
     out: dict[str, list[str]] = {}
     for c in criteria or ():
         for p in c.check or ():
-            have = {input_name(path) for path, _ in _input_items(p.inputs)}
+            have = {_segments(input_name(path)) for path, _ in _input_items(p.inputs)}
             made = set(_MADE_INPUT.findall(p.command or ""))
             bad = [n for n in dict.fromkeys(_NAMED_INPUT.findall(p.command or "")) if n not in made
-                   and not _PATTERN.search(n) and n.rstrip("/") not in have and not any(h.startswith(n.rstrip("/") + "/") for h in have)]
+                   and not _PATTERN.search(n) and not _names_pinned(n, have)]
             if bad:
                 out.setdefault(c.name, []).extend(f"{INPUTS_TOKEN}/{n}" for n in bad)
     return out
@@ -326,27 +364,501 @@ def unread_inputs(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     return out
 
 
-#: A pinned Python program run as a SCRIPT from `{inputs}` — `python {inputs}/x.py`, or bare `pytest {inputs}/…`.
-#: Python puts the script's own directory on its path, not the working directory; `python -m …` and `python -c`
-#: put the working directory there, so they are not this shape.
-_RUNS_A_PINNED_SCRIPT = re.compile(
-    r"(?:^|[\s;&|(])(?:(?:python3?|py)(?:\.exe)?(?:\s+-(?![mc]\b)\S+)*|(?<!-m )pytest(?:\s+-\S+)*)"
-    r"\s+[\"']?\{inputs\}/([^\s\"';&|)]+\.py)")
+#: What a probe's command runs, read as the shell would run it (`shell.commands`) — the guard below is about WHERE
+#: Python looks for the delivery, which only the shell's own reading decides: which simple commands run, from which
+#: directory, under which environment. The state walked is the shell's own: the directory (None in the working
+#: directory, else the path inside `{inputs}` — `..` its parent), the one `cd -` returns to, the pushd stack, and its
+#: variables — exported (`env`), not (`var`), marked for export before they are set, and `set -a`.
+#: the interpreter by its file name: python, python3, python3.11, py, …exe — wherever it lives
+_INTERPRETER = re.compile(r"(?:python(?:\d+(?:\.\d+)?)?|py)(?:\.exe)?")
+#: options that take the next word as their value: the interpreter's (short, as letters), pytest's, unittest's, a
+#: shell's, a wrapper's
+_PY_VALUED = set("XW")
+_PYTEST_VALUED = {"-k", "-m", "-p", "-c", "-n", "-W", "--rootdir", "--basetemp", "--confcutdir", "--ignore",
+                  "--deselect", "--ignore-glob", "--junitxml", "--log-file"}
+_UNITTEST_VALUED = {"-k", "-s", "-p", "-t", "--start-directory", "--pattern", "--top-level-directory"}
+_SHELL_LONG_VALUED = {"--rcfile", "--init-file"}
+_WRAPPER_VALUED = {"-s", "-k", "-n", "-u", "-g", "-C", "--signal", "--kill-after", "--chdir", "--unset"}
+#: words that run the command after them (their own options and a duration skipped)
+_WRAPPERS = {"env", "timeout", "nice", "nohup", "time", "command", "exec", "stdbuf", "xargs", "sudo",
+             "do", "then", "else", "if", "elif", "while", "until"}
+_SHELLS = {"bash", "sh", "dash", "zsh", "ksh"}
+#: modules run by `-m` that read programs off the current directory as a test runner does
+_RUNNERS = {"pytest": "pytest", "py.test": "pytest", "unittest": "unittest", "doctest": "doctest"}
+_ASSIGNMENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.S)
+_VARIABLE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+#: what pytest collects from a directory: its test files, and the conftest it loads with them
+_COLLECTED = re.compile(r"(?:^|/)(?:test_[^/]*|[^/]*_test|conftest)\.py$")
+#: a pinned script naming itself: `$0`, `${BASH_SOURCE[0]}`, and `${0%/*}` its directory
+_OWN_NAME = re.compile(r"\$\{?(?:0|BASH_SOURCE(?:\[0\])?)\}?(?![\w%])")
+_OWN_DIR = re.compile(r"\$\{(?:0|BASH_SOURCE(?:\[0\])?)%/\*\}")
+#: the current directory as a value, read where the walk stands when the word is
+_CWD = re.compile(r"\$\{?PWD\}?|\$\(\s*pwd(?:\s+-[LP])?\s*\)|`\s*pwd\s*`")
+#: how deep pinned scripts that run pinned scripts are read
+_SCRIPT_DEPTH = 3
 
 
-def _imports_beyond(body: str, local: set[str]) -> set[str]:
-    """Top-level modules a Python source imports that are neither the stdlib nor among `local` — or nothing,
-    where it cannot be parsed or arranges its own path (it may put the working directory there itself)."""
-    if "sys.path" in body:
-        return set()
+def _on_the_path(value: str, here: Optional[str]) -> bool:
+    """Does a PYTHONPATH value name the working directory, for a Python started `here` (None in the working
+    directory)? An absolute path or a variable names one the contract states; a relative one, the directory Python
+    starts in; `{inputs}` names the probe's own."""
+    for part in re.split(r"[:;]", value):
+        if not part or part.lstrip("${").startswith("PYTHONPATH") or INPUTS_TOKEN in part:
+            continue
+        if part[0] in "/$~`" or re.match(r"[A-Za-z]:", part) or here is None:
+            return True
+    return False
+
+
+def _moved(here: Optional[str], target: str) -> Optional[str]:
+    """Where a `cd target` started `here` lands: the path inside `{inputs}` (`..` its parent), or None — the working
+    directory, or a place under it."""
+    t = target.rstrip("/")
+    if t == INPUTS_TOKEN or t.startswith(INPUTS_TOKEN + "/"):
+        here, t = "", t[len(INPUTS_TOKEN):].lstrip("/")
+    elif here is None or not t or t.startswith(("/", "$", "~", "`")):
+        return None
+    p = posixpath.normpath(posixpath.join(here or ".", t or "."))
+    return p if p == ".." else None if p.startswith("..") else ("" if p == "." else p)
+
+
+def _runs_off_the_workdir(cmd: str, state: Optional[dict] = None) -> list[tuple]:
+    """What `cmd` runs from `{inputs}` with the working directory off Python's path — ("file", name, collect) of a
+    program, ("glob", pattern, collect) of the programs a pattern names, ("module", (here, dotted), collect) of a
+    module named by its dots, ("code", text, None) of a `-c`, ("script", (name, state), None) of a pinned shell script —
+    `collect` naming the runner that picks the files."""
+    st = {"here": None, "back": None, "dirs": [], "env": {}, "var": {}, "marked": set(), "all": False,
+          **(state or {})}
+    out, groups = [], []
+    for item in commands(cmd):
+        if item[0] == "open":
+            groups.append(_copy(st) if item[1] else None)
+        elif item[0] == "close":
+            saved = groups.pop() if groups else None
+            st = saved or st                                   # a subshell's cd and variables end with it
+        else:
+            saved = _copy(st) if item[2] else None
+            for sub in (s for w in item[1] for s in w.subs):
+                out += _runs_off_the_workdir(sub, _copy(st))
+            out += _one_command(list(item[1]), st)
+            st = saved or st
+    return out
+
+
+def _copy(st: dict) -> dict:
+    return {**st, "dirs": list(st["dirs"]), "env": dict(st["env"]), "var": dict(st["var"]), "marked": set(st["marked"])}
+
+
+def _expanded(word: str, st: dict) -> str:
+    """A word with the variables the walk knows put in — a loop's as the first pattern it ranges over, so
+    `I={inputs}; python $I/t.py` and `for f in {inputs}/*.py; do python "$f"` read as they run; others as they stand.
+    The current directory is the one the walk is in NOW — inside `{inputs}` that place, in the working directory left
+    as written, an absolute path the contract names."""
+    if st["here"] is not None:
+        word = _CWD.sub(posixpath.join(INPUTS_TOKEN, st["here"]).rstrip("/"), word)
+    values = {**st["var"], **st["env"]}
+    return _VARIABLE.sub(lambda m: values.get(m.group(1) or m.group(2), m.group(0)), word)
+
+
+def _one_command(words: list, st: dict) -> list[tuple]:
+    """One simple command over the walked state `st`: what it runs, and what it changes of the state."""
+    words, env, assigned = _prefixed([_expanded(w, st) for w in words], st)
+    if not words:                                              # assignments alone set the shell's variables
+        for name, value in assigned.items():
+            _set(st, name, value)
+        return []
+    if words[:2] in (["uv", "run"], ["coverage", "run"], ["poetry", "run"]):
+        words = (["python"] if words[2:3] and words[2].endswith(".py") else []) + words[2:]
+    prog, args = PurePosixPath(words[0]).name, words[1:]
+    if prog in _BUILTINS:
+        _BUILTINS[prog](args, st)
+    elif prog == "eval":
+        return _runs_off_the_workdir(" ".join(args), _copy(st))
+    elif prog in _SHELLS:
+        return _shell_run(args, st["here"], env)
+    elif _INTERPRETER.fullmatch(prog) or prog in _RUNNERS:
+        return _python_run(words, st["here"], env)
+    elif "/" in words[0] and (rel := _rel(words[0], st["here"])) and not rel.startswith(".."):
+        if rel.endswith(".py"):
+            return _python_run(["python", *words], st["here"], env)   # a pinned program run by its `#!`
+        return [("script", (rel, {"here": st["here"], "env": env}), None)]
+    return []
+
+
+def _prefixed(words: list, st: dict) -> tuple[list, dict, dict]:
+    """The command past its assignments and wrappers (`env`, `timeout 5`, `nice -n 1`, …): (its words, the
+    environment it runs with, the assignments that stand before it)."""
+    env, assigned = dict(st["env"]), {}
+    while words and (_ASSIGNMENT.match(words[0]) or PurePosixPath(words[0]).name in _WRAPPERS):
+        w = words.pop(0)
+        if m := _ASSIGNMENT.match(w):
+            env[m.group(1)] = assigned[m.group(1)] = m.group(2)
+            continue
+        while words and (words[0].startswith("-") or re.fullmatch(r"[\d.]+[smhd]?", words[0])):
+            if words[0] in ("-i", "--ignore-environment"):
+                env.clear()
+            elif words[0] in ("-u", "--unset") and words[1:2]:
+                env.pop(words[1], None)
+            words = words[2:] if words[0] in _WRAPPER_VALUED else words[1:]
+    return words, env, assigned
+
+
+def _set(st: dict, name: str, value: str) -> None:
+    """A variable assigned: into the environment where it is exported, marked for export, or `set -a` holds."""
+    if st["all"] or name in st["env"] or name in st["marked"]:
+        st["env"][name] = value
+        st["marked"].discard(name)
+    else:
+        st["var"][name] = value
+
+
+def _export(args: list, st: dict) -> None:
+    for w in (a for a in args if not a.startswith("-")):
+        name, eq, value = w.partition("=")
+        if eq:
+            st["env"][name] = value
+        elif name in st["var"]:
+            st["env"][name] = st["var"][name]
+        else:
+            st["marked"].add(name)
+        st["var"].pop(name, None)
+
+
+def _declare(args: list, st: dict) -> None:
+    if any(a.startswith("-") and "x" in a for a in args):
+        return _export(args, st)
+    for name, eq, value in (a.partition("=") for a in args if not a.startswith("-")):
+        if eq:
+            _set(st, name, value)
+
+
+def _unset(args: list, st: dict) -> None:
+    for name in args:
+        st["env"].pop(name, None)
+        st["var"].pop(name, None)
+        st["marked"].discard(name)
+
+
+def _set_options(args: list, st: dict) -> None:
+    st["all"] = "-a" in args or "allexport" in args or (st["all"] and "+a" not in args)
+
+
+def _cd(args: list, st: dict) -> None:
+    target = next((w for w in args if not w.startswith("-") or w == "-"), "")
+    st["here"], st["back"] = (st["back"], st["here"]) if target == "-" else (_moved(st["here"], target), st["here"])
+
+
+def _pushd(args: list, st: dict) -> None:
+    st["dirs"].append(st["here"])
+    _cd(args, st)
+
+
+def _popd(args: list, st: dict) -> None:
+    st["here"] = st["dirs"].pop() if st["dirs"] else st["here"]
+
+
+def _for(args: list, st: dict) -> None:
+    if len(args) > 2 and args[1] == "in":
+        st["var"][args[0]] = args[2]
+
+
+#: the shell's own commands that change the state a later program starts in
+_BUILTINS = {"cd": _cd, "pushd": _pushd, "popd": _popd, "export": _export, "declare": _declare, "typeset": _declare,
+             "unset": _unset, "set": _set_options, "for": _for}
+
+
+def _shell_run(args: list, here: Optional[str], env: dict) -> list[tuple]:
+    """A shell started on a command (`-c`) or a script: what it runs, in a process that inherits only the
+    environment."""
+    j, opts = 0, []
+    while j < len(args) and args[j][:1] in "-+" and args[j] != "--":
+        w = args[j]                                            # `-euo pipefail`: each o or O takes the next word
+        opts.append(w)
+        j += 1 + (w in _SHELL_LONG_VALUED if w.startswith("--") else w[1:].count("o") + w[1:].count("O"))
+    if j >= len(args):
+        return []
+    if any("c" in o[1:] for o in opts if not o.startswith("--")):
+        return _runs_off_the_workdir(args[j], {"here": here, "env": dict(env)})
+    rel = _rel(args[j], here)
+    return [("script", (rel, {"here": here, "env": dict(env)}), None)] if rel and not rel.startswith("..") else []
+
+
+def _interpreter_options(words: list) -> tuple[set, Optional[str], str, int]:
+    """An interpreter's options as Python reads them: (its flag letters, `-m`/`-c` or None, that mode's module or
+    code, the index of the first word after them) — `-Im pytest` is the flag I and then `-m pytest`."""
+    flags, i = set(), 1
+    while i < len(words) and words[i].startswith("-") and words[i] not in ("-", "--"):
+        w, i = words[i], i + 1
+        for k, ch in enumerate(w[1:] if not w.startswith("--") else "", 1):
+            if ch in "mc":
+                return flags, "-" + ch, w[k + 1:] or (words[i] if i < len(words) else ""), i + (not w[k + 1:])
+            if ch in _PY_VALUED:
+                i += not w[k + 1:]
+                break
+            flags.add(ch)
+    return flags, None, "", i
+
+
+def _pytest_options(rest: list, here: Optional[str]) -> tuple[list, bool]:
+    """pytest's arguments (what it collects) and whether its own `pythonpath` setting names the working directory —
+    relative to where pytest starts, in any of its spellings (`-o x`, `-ox`, `--override-ini[=]x`)."""
+    args, named, j = [], False, 0
+    while j < len(rest):
+        w, j = rest[j], j + 1
+        value = None
+        if w in ("-o", "--override-ini"):
+            value, j = (rest[j] if j < len(rest) else ""), j + 1
+        elif w.startswith(("--override-ini=", "-o")):
+            value = w.partition("=")[2] if w.startswith("--") else w[2:]
+        elif w in _PYTEST_VALUED:
+            j += 1
+        if value is not None and value.startswith("pythonpath="):
+            named = named or _on_the_path(value.partition("=")[2], here)
+        if not w.startswith("-"):
+            args.append(w.split("::")[0])
+    return args, named
+
+
+def _python_run(words: list, here: Optional[str], env: dict) -> list[tuple]:
+    """One interpreter or test-runner invocation started `here` with environment `env`: what it runs from `{inputs}`
+    with the working directory off its path."""
+    runner = _RUNNERS.get(PurePosixPath(words[0]).name)
+    flags, mode, target, i = (set(), None, "", 1) if runner else _interpreter_options(words)
+    pp = env.get("PYTHONPATH")
+    named = pp is not None and not flags & {"I", "E"} and _on_the_path(pp, here)
+    dropped = bool(flags & {"I", "P"} or (env.get("PYTHONSAFEPATH") and "E" not in flags))
+    runner = _RUNNERS.get(target) if mode == "-m" else runner
+    if mode and not runner:
+        if named or (here is None and not dropped):            # -m and -c put the working directory first
+            return []
+        return [("code", target, None)] if mode == "-c" else [("module", (here, target), None)]
+    if not runner:
+        script = words[i] if i < len(words) else ""
+        return [m for m in [_in_inputs(script, here, None)] if m and script.endswith(".py") and not named]
+    rest = words[i:]
+    if runner == "unittest":
+        runs = _unittest(rest, here, dropped and not named)
+    else:
+        args, by_ini = _pytest_options(rest, here)
+        named = named or by_ini
+        runs = [_in_inputs(a, here, runner) for a in args or ([] if runner == "doctest" else ["."])]
+    if named or (mode == "-m" and here is None and not dropped):
+        return [r for r in runs if r and r[0] == "unimportable"]
+    return [r for r in runs if r]
+
+
+def _unittest(rest: list, here: Optional[str], dropped: bool) -> list:
+    """What `-m unittest` runs: its discovery (from `-s`, default here, files matching `-p`, default `test*.py`), or
+    the modules, classes or files it is named."""
+    opts, pos, j = {}, [], 0
+    while j < len(rest):
+        w, j = rest[j], j + 1
+        if w in _UNITTEST_VALUED:
+            opts[w.lstrip("-")[:1]], j = (rest[j] if j < len(rest) else ""), j + 1
+        elif not w.startswith("-"):
+            pos.append(w)
+    if not pos or pos[0] == "discover":
+        p = pos[1:]
+        start, pattern = opts.get("s") or (p[0] if p else "."), opts.get("p") or (p[1] if len(p) > 1 else "test*.py")
+        return [_in_inputs(start, here, pattern)]
+    return [_unittest_file(n, here, dropped) if n.endswith(".py") or "/" in n else ("module", (here, n), None)
+            for n in pos]
+
+
+def _unittest_file(name: str, here: Optional[str], dropped: bool) -> Optional[tuple]:
+    """A file unittest is named by path: it imports it as a module named by its path from where it starts, so one
+    outside that directory, or any where the start directory is off the path (`-I`, `-P`, PYTHONSAFEPATH), it cannot
+    import at all — ("unimportable", name, None), whatever the delivery holds."""
+    rel = _rel(name, here)
+    if rel is not None and (dropped or here is None
+                            or here != ".." and posixpath.relpath(rel, here or ".").startswith("..")):
+        return ("unimportable", name, None)
+    return _in_inputs(name, here, None)
+
+
+def _rel(path: str, here: Optional[str]) -> Optional[str]:
+    """`path` as a path inside `{inputs}` — "" its top, ".." its parent, "../…" beyond — or None off it."""
+    if path.startswith(INPUTS_TOKEN):
+        rel = path[len(INPUTS_TOKEN):].lstrip("/")
+    elif here is not None and not path.startswith(("/", "$", "~")):
+        rel = posixpath.join(here, path)
+    else:
+        return None
+    rel = posixpath.normpath(rel) if rel else "."
+    return "" if rel == "." else rel
+
+
+def _in_inputs(path: str, here: Optional[str], collect: Optional[str]) -> Optional[tuple]:
+    """("file", name, collect) / ("glob", pattern, collect) where `path` lies in `{inputs}` — named under it, or
+    relative from inside it; from its parent, a directory collected whole holds it."""
+    rel = _rel(path, here)
+    if rel == ".." and collect:
+        return ("glob", "*", collect)
+    if rel is None or rel.startswith(".."):
+        return None
+    if not any(ch in rel for ch in "*?[") and (rel.endswith(".py") or collect == "doctest" and rel):
+        return ("file", rel, collect)
+    return ("glob", rel if any(ch in rel for ch in "*?[") else (rel + "/*" if rel else "*"), collect)
+
+
+def _added_paths(tree: ast.AST) -> list[str]:
+    """The text of each path a source adds to its own `sys.path` — `insert`, `append`, `extend`, an assignment, or
+    `site.addsitedir` — its names spelled out through the source's own assignments."""
+    names = {t.id: ast.unparse(n.value) for n in ast.walk(tree) if isinstance(n, ast.Assign)
+             for t in n.targets if isinstance(t, ast.Name)}
+    added = [a for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and (ast.unparse(n.func) in ("sys.path.insert", "sys.path.append", "sys.path.extend", "site.addsitedir"))
+             for a in n.args[-1:]]
+    assigned = [(n.value, n.targets) for n in ast.walk(tree) if isinstance(n, ast.Assign)]
+    assigned += [(n.value, [n.target]) for n in ast.walk(tree) if isinstance(n, ast.AugAssign)]
+    added += [v for v, targets in assigned if any("sys.path" in ast.unparse(t) for t in targets)]
+    out = []
+    for a in added:
+        text = ast.unparse(a)
+        for _ in range(4):
+            text = re.sub(r"\b[A-Za-z_]\w*\b", lambda m: f"({names[m.group(0)]})" if m.group(0) in names else m.group(0),
+                          text)
+        out.append(text)
+    return out
+
+
+def _imported(body: str) -> Optional[set[str]]:
+    """The top-level modules a Python source imports — None where it cannot be parsed, or puts on its own path what
+    may be the working directory: the current directory, the environment, anything not taken from where the program
+    itself lies (`__file__`, `sys.argv[0]`), which is `{inputs}` or above it, never the delivery. A source too deep to
+    parse decides nothing either."""
+    # …the whole reading, not the parse alone: Python 3.14 parses a source 3.11 found too deep and then recursed in
+    # `ast.unparse` (red on CI's 3.14 legs)
     try:
         tree = ast.parse(body)
-    except (SyntaxError, ValueError):
-        return set()
+        added = _added_paths(tree)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
+    if any(not re.search(r"__file__|sys\.argv\[0\]", p) or re.search(r"getcwd|cwd\(\)|environ|PWD", p)
+           for p in added):
+        return None
     names = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
-    names |= {n.module.split(".")[0] for n in ast.walk(tree)
-              if isinstance(n, ast.ImportFrom) and n.level == 0 and n.module}
-    return names - set(sys.stdlib_module_names) - local - {"__future__"}
+    return names | {n.module.split(".")[0] for n in ast.walk(tree)
+                    if isinstance(n, ast.ImportFrom) and n.level == 0 and n.module}
+
+
+def _imports_beyond(files: Mapping[str, str], start: Iterable[str]) -> set[str]:
+    """What the sources `start` import, through the probe's own files they import in turn, that is neither the stdlib,
+    nor one of those files, nor the test runner — what the delivery would have to hold."""
+    local = {PurePosixPath(f).parts[0].removesuffix(".py"): f for f in files if PurePosixPath(f).parts}
+    out, seen, todo = set(), set(), list(start)
+    while todo:
+        body = todo.pop()
+        if body in seen:
+            continue
+        seen.add(body)
+        names = _imported(body)
+        if names is None:
+            continue
+        for n in names - set(sys.stdlib_module_names) - {"__future__", "pytest", "_pytest"}:
+            if n in local:
+                f = local[n]
+                todo.append(files.get(f) or files.get(f"{n}/__init__.py", ""))
+            else:
+                out.add(n)
+    return out
+
+
+def _module_file(where: tuple, files: Mapping[str, str]) -> Optional[str]:
+    """The probe file a dotted name started `here` imports — `test_x.Case.test_one` is `test_x.py` — if it is one."""
+    here, dotted = where
+    if here is None or here == "..":                           # started off `{inputs}`, Python does not look there
+        return None
+    parts = dotted.split(".")
+    for k in range(len(parts), 0, -1):
+        base = posixpath.join(here or "", *parts[:k])
+        for f in (base + ".py", base + "/__init__.py"):
+            if f in files:
+                return f
+    return None
+
+
+def _collected(f: str, collect: Optional[str]) -> bool:
+    """Whether the runner `collect` picks the file `f` out of a pattern: pytest its test files and conftests, doctest
+    and a plain program every Python file, unittest the files its discovery pattern matches."""
+    if collect == "pytest":
+        return bool(_COLLECTED.search(f))
+    if collect in (None, "doctest"):
+        return f.endswith(".py")
+    return fnmatch.fnmatch(PurePosixPath(f).name, collect)
+
+
+def _script_runs(where: tuple, files: Mapping[str, str], depth: int) -> list:
+    """What a pinned shell script runs, its own name and directory put in for `$0` and `$(dirname "$0")`."""
+    name, state = where
+    if depth >= _SCRIPT_DEPTH or name not in files:
+        return []
+    own_dir = posixpath.join(INPUTS_TOKEN, posixpath.dirname(name)).rstrip("/")
+    text = _OWN_DIR.sub(own_dir, files[name])
+    return _runs_off_the_workdir(_OWN_NAME.sub(f"{INPUTS_TOKEN}/{name}", _own_place(text, own_dir)), state)
+
+
+def _own_place(text: str, own_dir: str) -> str:
+    """A pinned script's text with each substitution that asks where the script itself lies put in as that place —
+    the script's directory where it takes a `dirname` (`$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)`,
+    `$(dirname "$(readlink -f "$0")")`, …), the script itself where it does not — however the asking is wrapped."""
+    out, i = [], 0
+    while (k := text.find("$(", i)) >= 0:
+        end = substitution_end(text, k + 2)
+        inner = text[k:end]
+        mine = _OWN_NAME.search(inner) and not inner.startswith("$((")
+        out.append(text[i:k] + ((own_dir if "dirname" in inner else _OWN_NAME.search(inner).group(0)) if mine else inner))
+        i = end
+    return "".join(out) + text[i:]
+
+
+def _examples(text: str) -> str:
+    """The Python a doctest runs out of `text` — nothing where its examples cannot be read."""
+    try:
+        return "\n".join(e.source for e in doctest.DocTestParser().get_examples(text))
+    except ValueError:
+        return ""
+
+
+def _with_scripts(runs: list, files: Mapping[str, str], depth: int = 0) -> list:
+    """The runs with each pinned shell script's own runs in its place, read from its pinned text."""
+    out = []
+    for r in runs:
+        out += _with_scripts(_script_runs(r[1], files, depth), files, depth + 1) if r[0] == "script" else [r]
+    return out
+
+
+def _bodies_run(runs: list, files: Mapping[str, str]) -> list[str]:
+    """The sources the runs execute: a program's own, a pattern's matches as its runner collects them, a module's, a
+    `-c`'s text, a doctest's examples, a pinned script's own runs, and the conftests pytest loads beside what it runs —
+    none of pytest's where one of those conftests arranges the path itself."""
+    runs = _with_scripts(runs, files)
+    conftests = {f: b for f, b in files.items() if PurePosixPath(f).name == "conftest.py"}
+    if any(r[2] == "pytest" for r in runs) and any(_imported(b) is None for b in conftests.values()):
+        runs = [r for r in runs if r[2] != "pytest"]
+    out = []
+    for kind, what, collect in runs:
+        if kind == "unimportable":
+            continue
+        if kind == "code":
+            out.append(what)
+            continue
+        if kind == "module":
+            what, kind = _module_file(what, files) or "", "file"
+        found = [what] if kind == "file" else [f for f in files if fnmatch.fnmatch(f, what) and _collected(f, collect)]
+        out += [files.get(f, "") for f in found]
+        if collect == "doctest":
+            out += [_examples(files.get(f, "")) for f in found]
+        if collect == "pytest":
+            d = posixpath.dirname(what.split("*")[0].split("?")[0].split("[")[0])
+            out += [b for f, b in conftests.items() if (posixpath.dirname(f) + "/") in ("/", d + "/")
+                    or d.startswith(posixpath.dirname(f) + "/")]
+    return out
+
+
+def _files_of(probe: Probe) -> dict[str, str]:
+    """A probe's pinned files by their path inside `{inputs}`."""
+    return {PurePosixPath(path.replace("\\", "/")).as_posix(): body for path, body in probe.inputs or ()}
 
 
 #: The one wording of the refusal, for every door that admits a contract.
@@ -365,18 +877,37 @@ def probes_off_the_workdir(criteria: Iterable[Criteria]) -> dict[str, list[str]]
     happens to (measured, E3 2026-09-28: ten of thirteen such probes raised ModuleNotFoundError in a clean
     interpreter, and an executor had written a `.pth` into the shared environment to make them pass; the
     authoring rule `PYTHONPATH=. python {inputs}/x.py` was in the prompt and broken twelve times of
-    thirteen). A command that sets `PYTHONPATH` is out of this shape whatever it sets it to: the path it
-    names is then the contract's, visible, not the environment's."""
+    thirteen). A command that sets `PYTHONPATH` is out of this shape whatever it sets it to — the path it
+    names is then the contract's, visible, not the environment's — unless the interpreter ignores it (`-I`, `-E`)
+    or a relative one set inside `{inputs}` names the probe's own directory (`_runs_off_the_workdir`)."""
     out: dict[str, list[str]] = {}
     for c in criteria or ():
         for p in (c.check or ()):
             cmd = p.command or ""
-            if not p.inputs or "PYTHONPATH" in cmd:
+            if not p.inputs:
                 continue
-            files = {PurePosixPath(path.replace("\\", "/")).as_posix(): body for path, body in p.inputs}
-            local = {PurePosixPath(f).parts[0].removesuffix(".py") for f in files if PurePosixPath(f).parts}
-            if any(_imports_beyond(files.get(s, ""), local) for s in _RUNS_A_PINNED_SCRIPT.findall(cmd)):
+            files = _files_of(p)
+            if _imports_beyond(files, _bodies_run(_runs_off_the_workdir(cmd), files)):
                 out.setdefault(c.name, []).append(cmd)
+    return out
+
+
+#: The one wording of that refusal, for every door that admits a contract.
+UNITTEST_UNIMPORTABLE = ("its probe has unittest import a file by a path outside the directory it starts in, which "
+                         "unittest cannot import whatever is delivered — every run fails and decides nothing; from the "
+                         "working directory, run it as `python -m unittest discover -s {inputs} -p test_x.py` or "
+                         "`python -m pytest {inputs}/test_x.py`")
+
+
+def probes_unittest_cannot_import(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
+    """{criterion: [pinned commands that have unittest import a file outside the directory it starts in]}. unittest
+    turns such a path into a module name it cannot import, so the probe fails over any delivery (critic over the probe
+    guard, run in a container, 2026-11-14): a check that cannot pass forbids nothing a delivery could change."""
+    out: dict[str, list[str]] = {}
+    for c in criteria or ():
+        if bad := [p.command for p in (c.check or ()) if any(
+                r[0] == "unimportable" for r in _with_scripts(_runs_off_the_workdir(p.command or ""), _files_of(p)))]:
+            out[c.name] = bad
     return out
 
 
@@ -466,6 +997,9 @@ def admission_defects(criteria: Iterable[Criteria]) -> list[str]:
             f"{{inputs}})" for k, v in sorted(twin_probes(crit).items())]
     out += [f"{k}: its probe reads {INPUTS_TOKEN} and pins nothing there ({', '.join(v)}) — it would run over an empty "
             f"directory; pin the files it reads in its `inputs`" for k, v in sorted(inputs_unpinned(crit).items())]
+    out += [f"{k}: its probe carries {', '.join(v)}, which no run fills — the system fills {INPUTS_TOKEN} alone, so the "
+            f"command would run as written; write out what it stands for (quote it if the program reads it literally)"
+            for k, v in sorted(unfilled_placeholders(crit).items())]
     out += [f"{k}: its probe names {', '.join(v)} and does not pin it — each probe's inputs are laid down in its own "
             f"directory, so a file pinned under another probe or nowhere cannot be opened; pin it in THIS probe's `inputs`"
             for k, v in sorted(inputs_named_not_pinned(crit).items())]
@@ -476,6 +1010,7 @@ def admission_defects(criteria: Iterable[Criteria]) -> list[str]:
             f"them at validation time under a directory the validator owns; give each a relative path inside it"
             for k, v in sorted(unsafe_input_paths(crit).items())]
     out += [f"{k}: {OFF_THE_WORKDIR} — {', '.join(v)}" for k, v in sorted(probes_off_the_workdir(crit).items())]
+    out += [f"{k}: {UNITTEST_UNIMPORTABLE} — {', '.join(v)}" for k, v in sorted(probes_unittest_cannot_import(crit).items())]
     out += [f"{k}: {SHARED_SCRATCH} — {', '.join(v)}" for k, v in sorted(shared_scratch(crit).items())]
     out += [f"{k}: {LEAVES_THE_WORKDIR} — {', '.join(v)}" for k, v in sorted(probes_that_leave_the_workdir(crit).items())]
     out += [f"{k}: every probe it pins emits a constant ({', '.join(v)}) and cannot come out false, so the criterion "
@@ -1036,6 +1571,12 @@ def shows(printed: str, expect: str) -> bool:
     return as_read(printed) == as_read(expect)
 
 
+def contains(printed: str, expect: str) -> bool:
+    """Does `printed` show `expect` as a part of it, read as `shows` reads both — a pin that is not `exact`. Nothing
+    expected shows nothing."""
+    return bool(want := as_read(expect)) and want in as_read(printed)
+
+
 def as_read(s: str) -> str:
     """A printed text as a check reads it: written `\\t`/`\\n` escapes as the characters, whitespace runs as one."""
     return " ".join(str(s or "").replace("\\t", "\t").replace("\\n", "\n").split())
@@ -1280,6 +1821,12 @@ PROBE_S = 60
 #: …and whether every one of them had its WHOLE bound (no budget cutting it): then the same tree times out again, and
 #: asking the validation again only pays for the same ⊥ (`BOUND_SPENT`, the dispatcher's `no-verdict:bound`)
 PAST_WHOLE = "past_bound_whole"
+#: an entry's pass observed on no delivered tree — a pin's run on the delivery shows neither its `expect` nor the one the
+#: report cites, or the judge changed its copy where the system's own run decides nothing: ⊥ for its criterion, its
+#: reasons read as `PAST_BOUND` is (`with_engine_observations`)
+ON_NO_DELIVERY = "on_no_delivery"
+#: a shell's exit when the command could not be run at all — not found, not executable: no observation of the delivery
+NOT_RUN_RC = (126, 127)
 #: said in a refusal whose every unobserved criterion is PAST_WHOLE — read by the dispatcher, which stops re-asking
 BOUND_SPENT = ("NOT ASKED AGAIN: every unobserved check ran past its whole own bound on this delivered tree, which would "
                "time out again — VALIDATING's bound hands the node to its issuer (§12.2), who may re-pin the check to finish "
@@ -1288,9 +1835,10 @@ BOUND_SPENT = ("NOT ASKED AGAIN: every unobserved check ran past its whole own b
 
 
 def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria],
-                             parts: Mapping[str, Sequence[Criteria]] | None, observed: Mapping | None) -> list:
-    """The report with what the system itself observed of its `exact` pinned probes (`observed`: {probe id: {matched,
-    out, note}}, `tools_llm._observe_exact`) put where every reader of `held` reads it: a probe it saw print other than
+                             parts: Mapping[str, Sequence[Criteria]] | None, observed: Mapping | None,
+                             edited: Sequence[str] = ()) -> list:
+    """The report with what the system itself observed of its pinned probes (`observed`: {probe id: {matched,
+    out, note}}, `tools_llm._observe_pins`) put where every reader of `held` reads it: a probe it saw print other than
     its `expect` did NOT hold — each citation of it, by id or bare hash, says `held: false`, and every entry of a
     criterion resting on it or on a copy of it (`same_probe`), the node's own or through a part, is a `fail` citing it
     with what it printed (Inv-2, §12.8: an observed divergence is that criterion's fail; Inv-3). Matched, the report
@@ -1298,22 +1846,33 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
     evidence saying the system did not observe it — a run the system could not make decides nothing (A1 (i)), and the
     `held` there is visibly the validator's word. A `held: false` is never raised. Before it the PASS on such a probe
     was the validator's word alone, and FM-3 has no structural guard (§9.10) — a false FAIL costs a round, a false PASS
-    closes a node."""
+    closes a node. A pin not `exact` the system saw print no part of its `expect`: `_reproduced`. `edited`: the delivered
+    files the judge changed in its copy beyond what the pinned checks change — a PASS the system's run does not decide
+    is then ⊥."""
     pinned = {probe_id(c.name, p): p for cs in [criteria or ()] + list((parts or {}).values()) for c in cs
               for p in (c.check or ()) if _norm(p.command)}
-    exact = {pid: o for pid, o in (observed or {}).items() if pid in pinned and pinned[pid].exact}
+    seen = {pid: o for pid, o in (observed or {}).items() if pid in pinned}
     def _the_reports(e: Mapping) -> dict:    # …the system's marks alone: a report cannot ⊥ its own FAIL, nor speak as the system
-        e = {k: v for k, v in e.items() if k not in (PAST_BOUND, PAST_WHOLE, OVER_A_PASS)}
+        e = {k: v for k, v in e.items() if k not in (PAST_BOUND, PAST_WHOLE, OVER_A_PASS, ON_NO_DELIVERY)}
         return {**e, "probe": [{k: v for k, v in q.items() if k != SYSTEM_SAW} for q in probes_of(e)]} if probes_of(e) else e
-    if not exact:
-        return [_the_reports(e) for e in per_criterion or ()]
 
     def _copies(seen: dict) -> dict:   # every id one observation is of (`same_probe`)
         seen_as = {same_probe(pinned[pid]): o for pid, o in seen.items()}
         return {pid: seen_as[same_probe(p)] for pid, p in pinned.items() if same_probe(p) in seen_as}
-    off = _copies({pid: o for pid, o in exact.items() if o.get("matched") is False})
-    unseen = {pid: o for pid, o in _copies({pid: o for pid, o in exact.items() if "matched" not in o}).items()
-              if pid not in off and "matched" not in exact.get(pid, {})}
+    # …an exact pin that printed otherwise, or any pin whose shell said the program it names in the delivery is not there:
+    # the delivery's FAIL. A pin not exact that printed some text but no part of what it pins holds a pass only on what
+    # the report cites it printing (`_reproduced`); one that printed nothing, or whose bare-named program the shell did
+    # not find, observed nothing a substring decides — the validator's word, as before (A1 (i))
+    off = _copies({pid: o for pid, o in seen.items() if o.get("matched") is False
+                   and (pinned[pid].exact or delivery_lacks(o))})
+    unshown = {pid: o for pid, o in _copies({pid: o for pid, o in seen.items() if not pinned[pid].exact
+                                              and o.get("matched") is False and o.get("rc") not in NOT_RUN_RC
+                                              and str(o.get("printed") or "").strip()}).items() if pid not in off}
+    unseen = {pid: o for pid, o in _copies({pid: o for pid, o in seen.items() if "matched" not in o}).items()
+              if pid not in off and "matched" not in seen.get(pid, {})}
+    if not (off or unshown or unseen or edited):
+        return [_the_reports(e) for e in per_criterion or ()]
+    decided = {pid for pid, o in _copies(seen).items() if o.get("matched") is True} | set(off) | set(unshown)
     rests: dict[str, list[str]] = {}
     for k, cs in [*((c.name, (c,)) for c in criteria or ()), *(parts or {}).items()]:
         rests.setdefault(_norm(k), []).extend(probe_id(c.name, p) for c in cs for p in (c.check or ()))
@@ -1324,8 +1883,8 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
         probes = [{**q, "held": False, SYSTEM_SAW: True} if named(q) else q for q in probes_of(e)]
         on = list(dict.fromkeys(rests.get(_norm(e.get("criterion")), ())))
         if hit := [pid for pid in on if pid in off]:
-            why = [f"the system ran pinned check {pid} itself and it printed {off[pid].get('out', '')!r}, not the "
-                   f"whole output it pins, {pinned[pid].expect!r}" for pid in hit]
+            why = [f"the system ran pinned check {pid} itself and it printed {off[pid].get('out', '')!r}, not "
+                   f"{'the whole output' if pinned[pid].exact else 'what'} it pins, {pinned[pid].expect!r}" for pid in hit]
             cited = {named(q) for q in probes}
             e = {**e, **({OVER_A_PASS: True} if spoken_verdict(e.get("verdict")) != "fail" else {}), "verdict": "fail", "evidence": " | ".join(why + [str(e["evidence"])] if e.get("evidence") else why),
                  "divergences": [*why, *(e.get("divergences") or ())],
@@ -1336,19 +1895,59 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
             # …a check that ran past its own bound decided nothing (A1 (i)): ⊥, and no PASS over it (Inv-2) — read as
             # the validator's word, a looping delivery hid from the system's FAIL (security's critic, 2026-10-31). It
             # only LOWERS a pass: a FAIL the validator showed with evidence is a decision this absence does not undo
-            why = [f"the system ran exact pinned check {pid} itself and it {unseen[pid].get('note')}: undecided"
-                   for pid in late]
+            why = [f"the system ran {'exact ' * pinned[pid].exact}pinned check {pid} itself and it "
+                   f"{unseen[pid].get('note')}: undecided" for pid in late]
             e = {**e, "verdict": "undecidable", "probe": probes, PAST_BOUND: late,
                  PAST_WHOLE: all(unseen[pid].get("whole") for pid in late),
                  "evidence": " | ".join(why + [str(e["evidence"])] if e.get("evidence") else why)}
         else:
             if probes:
                 e = {**e, "probe": probes}
-            if blind := [f"the system did not run exact pinned check {pid} itself ({unseen[pid].get('note')}): its "
-                         f"holding is the validator's word" for pid in on if pid in unseen]:
+            if blind := [f"the system did not run {'exact ' * pinned[pid].exact}pinned check {pid} itself "
+                         f"({unseen[pid].get('note')}): its holding is the validator's word" for pid in on if pid in unseen]:
                 e = {**e, "evidence": " | ".join([str(e["evidence"])] + blind if e.get("evidence") else blind)}
+        e = _reproduced(e, [pid for pid in on if pid in unshown], unshown, pinned)
+        # …and where the judge changed a delivered file in its copy, its PASS stands only where the system's own run
+        # decided the criterion: what it observed beyond that was observed on no delivered tree
+        if edited and spoken_verdict(e.get("verdict")) == "pass" and not (on and set(on) <= decided):
+            e = _on_no_delivery(e, [f"the validator changed delivered file(s) in its copy that no pinned check changes "
+                                    f"when the system runs it ({', '.join(edited)}), and the system's own run of the "
+                                    f"pinned checks does not decide this criterion: the instrument's defect, not the "
+                                    f"executor's — undecided"])
         out.append(e)
     return out
+
+
+def _reproduced(e: dict, unshown: list, seen: Mapping, pinned: Mapping) -> dict:
+    """`e`, or — where it passes over pins (`unshown`, not `exact`) the system's run on the delivery printed no part of
+    (`seen`) — ⊥ for its criterion (`ON_NO_DELIVERY`): a pass whose cited `expect` that same run does not show either was
+    observed on no delivered tree — a judge's copy it changed, state an earlier probe of its left. Not a FAIL: an
+    `expect` in words shows in no output, and the judge reads it over the system's run."""
+    if spoken_verdict(e.get("verdict")) != "pass":
+        return e
+    cites = lambda q, pid: (str(q.get("id", "")).strip() in (pid, pid.split("#")[-1])
+                            or _norm(q.get("command")) == _norm(pinned[pid].command))
+    gone = [pid for pid in unshown if not any(cites(q, pid) and contains(seen[pid].get("printed", ""), q.get("expect"))
+                                              for q in probes_of(e))]
+    return e if not gone else _on_no_delivery(e, [
+        f"the system ran pinned check {pid} on the delivery and it printed {seen[pid].get('out', '')!r}, which shows "
+        f"neither {pinned[pid].expect!r} nor what the report cites it printing: undecided" for pid in gone])
+
+
+def _on_no_delivery(e: dict, why: list) -> dict:
+    """`e` as ⊥ for its criterion, `why` its reasons (`ON_NO_DELIVERY`): a pass observed on no delivered tree."""
+    return {**e, "verdict": "undecidable", ON_NO_DELIVERY: why,
+            "evidence": " | ".join(why + [str(e["evidence"])] if e.get("evidence") else why)}
+
+
+#: a shell's word that a program a check names by a path — in the delivery, not rooted — is not there or will not run
+_LACKS = re.compile(r"(?:^|[\s:])(?!/)[^\s:/]*/[^\s:]*: (?:No such file or directory|Permission denied)", re.M)
+
+
+def delivery_lacks(o: Mapping) -> bool:
+    """Did a check's 126/127 come from the delivery lacking the program it names by a path (`./prog`)? — its FAIL, as an
+    exact pin's. A bare name the shell did not find (`check: command not found`) observed nothing of the delivery."""
+    return o.get("rc") in NOT_RUN_RC and bool(_LACKS.search(str(o.get("printed") or "")))
 
 
 def same_probe(p: Probe) -> tuple:
@@ -1530,6 +2129,8 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
             gaps.setdefault(str(e.get("criterion")), []).append(
                 f"the system ran its pinned check(s) {', '.join(map(str, e[PAST_BOUND]))} and they did not finish within "
                 f"the time they were given — undecided")
+        if e.get(ON_NO_DELIVERY):     # …nor a pass observed on no delivered tree: the same ⊥, the report's to redo
+            gaps.setdefault(str(e.get("criterion")), []).extend(map(str, e[ON_NO_DELIVERY]))
     # The internal-node exemption (§10.3) is narrowed to the case that HAS it: §10.3 lets an INTERNAL node
     # self-verify; at a seam independence is owed and a self-validation is not a verdict at all. The
     # caller guarantees that upstream today, and the repo's own recurring class is a rule that

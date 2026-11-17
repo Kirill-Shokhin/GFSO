@@ -9,6 +9,8 @@ export const phone = () => getComputedStyle(document.documentElement).getPropert
 // that renders its evidence as HTML cannot be read as evidence. Not a security claim.
 export const esc = s => String(s).replace(/[&<>"']/g, ch => (
     {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
+// a server's sentence with its commands in backticks, drawn as code (a refusal's `lift`: «sign in: run `gfso ui`»)
+export const coded = s => esc(s).replace(/`([^`]*)`/g, '<code>$1</code>');
 
 // An element filled by ASSIGNMENT, never re-parsed: a form that writes back must not cut a criterion
 // at its first `"` and save the stump (an Edit + Save once shortened a node's own contract).

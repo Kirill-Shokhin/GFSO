@@ -5,7 +5,7 @@
 - **Private code: say `off`, with the task.** The default is `open` because a task that installs or fetches needs it; under `off` such a task fails at that step unless its image already holds what it fetches. Say "network off" when you give the task: your agent sets it before the plan.
 - **A secret in your history enters with it.** Every session can read the history. Search it (`git log -p --all -S '<the secret>'`) and rewrite it out (`git filter-repo`) before the first run.
 - **Only what is committed enters.** Commit what the task needs, and leave out what it must not see.
-- **Two things stay on your machine, outside Docker.** The Claude Code session you talk to, which reads what the agents wrote as text; and the server at `127.0.0.1:8000`, with no login, so any process of yours can reach every project on it. Its database is a plain, unencrypted file holding whatever your specs and results say.
+- **Two things stay on your machine, outside Docker.** The Claude Code session you talk to, which reads what the agents wrote as text; and the server at `127.0.0.1:8000`: it takes moves only from a process of your own OS user (or a call carrying a credential it issued), which the OS names per connection, while another account on the computer, or a device a front such as `tailscale serve` lets in, reads every project unless the server runs `--protected` (below); and any process of yours — your own agents included — can reach every project on it, as you from a page, as `user` otherwise, or with what it reads from gfso's state. Its database is a plain, unencrypted file holding whatever your specs and results say.
 - **This is a preliminary research release.** Vulnerabilities get an acknowledgement, not a schedule.
 
 ## What it promises, in short
@@ -41,12 +41,55 @@ That is the part for deciding whether to run it. From here on the file is the de
 
 Two properties matter before you run it anywhere but a laptop.
 
-**The server is unauthenticated.** `gfso up` starts one server bound to `127.0.0.1:8000`. It has no
-login, no accounts and no authorization: identity in GFSO is an agent id carried by the protocol, and
-the protocol's guarantees take a permissioned scope as a premise — authenticated transport, one
-sequencer (canon §16.4, §16.15). Any process on your machine that can reach that port can read and
-mutate every project on it. Do not bind it to a public interface, and do not put it behind a reverse
-proxy without adding authentication of your own.
+**The server serves your OS user, signs every move by a credential, and does not defend you against your own
+processes.** `gfso up` starts one server bound to `127.0.0.1:8000`. Every door — the page, `/api/run`, MCP over HTTP and
+stdio, the CLI with a server or without one, `gfso wait`, a session's lease — resolves who a call comes from in one
+place, and no door takes a signer the caller typed. First, on a server bound to loopback, the door asks the OS, for each
+request and each socket, which process holds the other end of its connection, and whether that process is your OS
+user's (on macOS, among your own processes' sockets — written, not yet run on a Mac); nothing is remembered by port, which another user's process may
+take once a connection closes. A connection another OS user of the machine holds, or one whose owner the OS will not
+name (a front run by the system, such as `tailscale serve`, is refused the owner lookup the same way), READS every project
+and moves nothing unless it carries a token (a browser never sends one by itself), or a page session opened at a front's
+own name (below) and shown at that same name: the graph is open to read by default, a move takes a name. The rule
+lives in the one layer every door is built from — the verbs behind `/api/run`, MCP (HTTP and stdio) and the CLI —
+and the few routes outside it apply the same test: a reader may call what writes nothing and makes no project, every
+other verb or route (a lease, a wait, a project's making or deletion, a model call) answers it as a move. A public front (`tailscale funnel`, `ngrok`,
+`cloudflared`) therefore makes every project readable from the internet: use `--protected` behind one. Under
+`--protected` such a connection with no credential is served the page's empty shell and its sign-in and nothing else — no
+read, no move, no live socket — and so, in EVERY mode, is a connection a port forwarder holds (below). A session opened at a loopback name counts only from your own OS user: a
+loopback cookie goes to every port of that name (RFC 6265 §8.5), another account's server too. The server is run with
+no forwarding header taken for the client, so the OS is always asked of the real socket. Then:
+
+- your page, from your own OS user, is you, with no sign-in step and no cookie: it signs as `user`, your name here;
+  `gfso ui` just opens it, and `/signin` on a loopback name sets nothing; `gfso up --protected` (or `gfso setup --protected`, kept in `data/serve.json` for every later start, shown by
+  `gfso status` and `/api/runtime` as `page_auth: key`; `--no-protected` undoes it) asks it to sign in as well:
+  `gfso ui` opens a session on a one-time code written into gfso's state and spent on use, never in any verb's answer,
+  so no credential passes through a model or its provider; the session signs as every name you own;
+- a console signs as the one name its token was issued for (`gfso agent <name>`, read from `GFSO_TOKEN`); a name the
+  system's roles hold (an executor's, a validator's) is not issued;
+- a local client that is no browser, with no credential, from your OS user, asking the server by a loopback name, signs
+  as `user`, your name, as your standing agent — what keeps a fresh client working with no step at setup;
+- a browser page of another site, a call that names a front's host, a server bound past loopback, and any call carrying
+  a `Forwarded`, `X-Forwarded-*` or `Tailscale-*` header move nothing with no credential: a front's every client
+  arrives from this machine, so loopback says nothing there.
+
+What the default holds off: a web page of another site, and any move by another OS user of this machine (it reads, as
+every device the server is reachable from does; `--protected` closes reading too). What it does not: any
+process of your own OS user, your own agents included — locally you and they are one user, and a click on your page is
+your act whichever process made it. `--protected` adds that a process of yours must also hold a page session to move as
+you from a browser; it can still reach the port as `user`, read gfso's state, or issue itself a token at your shell.
+What the signing protects is attribution: a name an agent saw and typed, or a stale field, signs nothing by itself;
+signing as another name takes its issuance, a step the log records beside the name (`via`: `session`, `local-peer`, the
+token's id, `default`). Sessions and tokens are kept hashed. The check of the OS user holds only while no other way to
+the port arrives from a process of yours: the system's containers are kept off the host's loopback (below), and a
+connection a port forwarder holds — Docker Desktop's, which relays any container on the machine's engine, another
+account's in `docker-users` too — is not yours, and is served nothing without a token: what it carries may be a
+container's code, an executor's included. The page is its own only at the address the server holds (`127.0.0.1` by default): `localhost` and `::1`
+also name `[::1]`, which another account may bind beside it, so the door does not answer to them. A known
+limit the other way: a client of yours run elevated (as administrator) beside a server that is not may have an owner
+the server cannot read, and is then served as another account is: a reader. The protocol's
+guarantees still take a permissioned scope as a premise — authenticated transport, one sequencer (canon §16.4, §16.15).
+Do not bind the server to a public interface.
 
 What the server does refuse is a web page: it answers only to its own host names (so a name re-pointed
 at 127.0.0.1 is not served), and from a browser page that is not its own it serves no write and no
@@ -55,8 +98,11 @@ What agents write is shown on that page escaped, and a policy under it (`Content
 what the library's host serves, should the escaping miss: the page's own tags pin its libraries by hash, the policy that host.
 A server started on another name (`gfso serve --host`) answers to that name; any further name is added
 by hand in `GFSO_ALLOWED_HOSTS` (comma-separated). A front that forwards such a name to the server (a
-reverse proxy, `tailscale serve`) gives whatever reaches the front the server's every door: the
-system's own containers are kept off a front on your machine's addresses or your networks (below), nothing else
+reverse proxy, `tailscale serve`) must keep the Host header: through it a browser moves only with a session
+(`gfso ui --host <front>` on the server's computer prints a one-time link to open on the device, a session opened at
+the front's name), a client only with its token. With no credential, a call through any front (Caddy, `cloudflared`,
+`ngrok http`, `tailscale serve`) or to a server bound past loopback reads every project and moves nothing; under
+`--protected` it is served the page's shell alone. The system's own containers are kept off a front on your machine's addresses or your networks (below), nothing else
 there is — one the internet reaches a session under an `open` switch reaches too.
 
 **The engine executes code it did not write.** In the delegated regime it runs agents through the project's
@@ -84,7 +130,9 @@ them, what its root imports: never an uncommitted edit, an ignored file, nor wha
 files that reader names can still follow what an earlier root's work left in the volume, the new root's import coming
 only once the goal is set: a name it gives is read from your HEAD or not at all, and the documents your request names
 always come in. With the word, dispatched work runs on
-your machine unattended, with what is said below for a session with no execution.
+your machine unattended, with what is said below for a session with no execution. The word is yours alone to give, and
+held by you, not by the system: your own agent runs as you and could write it as well, which the system cannot tell
+from your writing it; a refusal for its lack is addressed to you, and the agent's instructions leave it to you.
 Docker is part of the installation: `gfso setup` builds the agents' image from the file the package
 ships (no credential and no agent state in it; built from a base named by its digest and a CLI
 binary refused unless its checksum is the one the file names) and declares it in `data/executions.json` as the
@@ -333,8 +381,8 @@ What one session can still reach:
 - A finding filed before the system recorded probe files has its files recorded at its first re-run,
   from its round as it stands then; one whose round is already gone is shown, not demanded.
 
-Under a container execution a node performed in your own chat (`perform="in_chat"`) is refused: its
-work stands on your disk, where no container reads it.
+Under a container execution a node performed in your own chat (`perform="in_chat"`) is carried into the
+volume by the commit it delivered (`refs/gfso/<project>/delivered/<node>`); what is not committed is no part of it.
 
 Without an execution, and with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`, sessions run as you, on your machine, with nothing between them and the rest
 of it: a validation's copy is still the recorded commit where a scratch for it can be made, but nothing

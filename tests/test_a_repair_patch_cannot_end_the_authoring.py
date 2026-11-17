@@ -1,10 +1,18 @@
 """A repair patch is read by the admission when it is taken: E2 T03's last round wrote a probe naming an unpinned file while
 answering other findings, nothing re-read it, and the build's refusal ended a paid authoring (2026-11-02). Through the real
 build: a stubbed one hid that a rewrite under a new name still ended the authoring (critic, same day)."""
+import copy
+import json
+
 import pytest
 
 import gfso.decompose as D
+from gfso.critic import runner
+from gfso.critic.types import NodeCritique
+from gfso.decompose import artifact, planning
 from tests.support import make_engine
+from tests.test_a_note_s_requirements_reach_the_criteria import _Says
+from tests.test_the_go_only_adds_to_the_plan import GOAL, _plan as _goal_plan
 
 
 def _ok(name, cmd="./prog --check"):
@@ -34,7 +42,7 @@ def _authored(monkeypatch, *rounds):
     e = make_engine()
     e.start()
     try:
-        _, spec, _problems = D._build_verified(_plan(), "req", e, "root", "agent", llm=None)
+        _, spec, _problems = D._build_verified(_plan(), "req", e, "root", "user", llm=None)
     finally:
         e.stop()
     return spec, {k["id"]: k for k in spec["subtasks"]}
@@ -72,7 +80,7 @@ def test_a_patch_a_later_round_can_still_finish_is_left_to_it(monkeypatch):
     e = make_engine()
     e.start()
     try:
-        _, spec, _p = D._build_verified(_plan(), "req", e, "root", "agent", llm=None)
+        _, spec, _p = D._build_verified(_plan(), "req", e, "root", "user", llm=None)
     finally:
         e.stop()
     assert any("design" in str(x) for x in told[1]), "the second round is told"
@@ -92,6 +100,62 @@ def test_a_root_criterion_refused_leaves_with_its_mappings():
     out = D._taken_back([plan], bad, None)
     assert [c["name"] for c in out["root_criteria"]] == ["r"]
     assert not [m for m in out["mappings"] if m["criterion"] == "r2"]
+
+
+def test_what_is_taken_back_is_said_where_the_customer_reads():
+    """Stranger run s17b: the core criterion never admitted left the plan, said only on the progress line, and the
+    client gave the go without hearing a requirement was gone. It reaches the plan FILE, which the customer reads whole
+    (a critic: carried in the build's holes it never reached the file, and the sufficiency round overwrote it).
+    CONTROL: drop `"taken_back": self.said` in `planning._TakenBack.into` and it is red."""
+    plan, back = _plan(), planning._TakenBack(None)
+    D._taken_back([plan], {**plan, "root_criteria": [_ok("r", "./prog --r"), _bad("r2")]}, back)
+    text = artifact.render("the goal", plan, back.into({"by": "m"}))
+    assert "taken_back" in text and "r2 leaves: no version of it was admitted" in text, text[-600:]
+
+
+_CORE = "the tool lists every file extension under the given directory with its count, sorted by count " * 3
+
+
+def test_the_line_says_what_left_and_the_part_that_went_with_it():
+    """The customer read «root / core leaves: no version of it was admitted» — a name, not what it required — and not
+    that the part it was the only criterion of left too. CONTROL: drop `— it required: …` from the line in `_taken_back`
+    (or the part's line) and it is red."""
+    plan = _plan()
+    bad = {**plan, "root_criteria": [_ok("r", "./prog --r"), {**_bad("core"), "description": _CORE}],
+           "subtasks": [plan["subtasks"][0], {**plan["subtasks"][1], "criteria": [{**_bad("open"), "description": "o"}]}]}
+    back = planning._TakenBack(None)
+    out = D._taken_back([plan], bad, back)
+    said = back.into({})["taken_back"]
+    core = next(x for x in said if "core leaves" in x)
+    assert _CORE[:100] in core and len(core) < 300, core
+    assert "b" not in {k["id"] for k in out["subtasks"]}
+    assert any(x.startswith("b ") and "part" in x and "leaves" in x for x in said), said
+
+
+def test_a_criterion_a_later_round_re_admits_is_not_said_to_have_left():
+    """`_TakenBack` accumulates over the authoring's rounds; a later round that writes the criterion again, admitted,
+    leaves it in the plan, and the file must not tell the customer it is gone. CONTROL: return every line in `into`."""
+    back = planning._TakenBack(None)
+    back("repair: the rounds are spent, what the admission refuses is taken back: root / core leaves: no version of it "
+         "was admitted — it required: x | a / design leaves: no version of it was admitted — it required: y")
+    a, b = _plan()["subtasks"]
+    final = {**_plan(), "root_criteria": [_ok("r", "./prog --r"), _ok("core", "./prog --core")],
+             "subtasks": [{**a, "criteria": [_ok("other")]}, b]}
+    assert back.into({}, final)["taken_back"] == ["a / design leaves: no version of it was admitted — it required: y"]
+    assert "taken_back" not in back.into({}, {**final, "subtasks": [{**a, "criteria": [_ok("design")]}, b]})
+
+
+def test_what_the_round_on_the_customers_note_takes_back_reaches_the_file(monkeypatch):
+    """`refine` passed the raw progress to the round that folds in the note: what that round took back never reached the
+    file. CONTROL: pass `progress` instead of `back` to `refine_with` in `planning.refine` and it is red."""
+    said = "repair: the rounds are spent, what the admission refuses is taken back: root / gone leaves: no version"
+    monkeypatch.setattr(D, "default_llm", lambda *a, **k: _Says(json.dumps({"gaps": []})))
+    monkeypatch.setattr(D, "repaired_before_build", lambda spec, *a, **k: spec)
+    monkeypatch.setattr(D, "refine_with", lambda *a, progress=None, **k: (progress(said), (False, None, []))[1])
+    monkeypatch.setattr(planning, "extract_spec", lambda *a, **k: copy.deepcopy(_goal_plan()))
+    monkeypatch.setattr(runner, "review_decomposition", lambda e, rid, llm=None: NodeCritique(str(rid), gate_passed=True))
+    out = artifact.parse(planning.refine(artifact.render(GOAL, _goal_plan()), "a note", "m", progress=lambda m: None))
+    assert any("gone leaves" in x for x in out["review"].get("taken_back") or ()), out["review"]
 
 
 def test_a_new_part_keeps_what_is_admitted_of_it():

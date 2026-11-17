@@ -355,7 +355,7 @@ def test_a_session_is_held_to_the_gate_at_the_reading_that_binds_it(monkeypatch)
 def test_a_validation_reads_where_it_runs_once():
     """Each of a validation's model, scratch, exact checks, reports and later batches read the roster again: a role lost
     meanwhile put the later ones on the host, past the gate the first passed (critic's class, read)."""
-    for f in (TL._refuse_validation, TL._ready_to_validate, TL.validate_result, TL._validation_pass, TL._observe_exact,
+    for f in (TL._refuse_validation, TL._ready_to_validate, TL.validate_result, TL._validation_pass, TL._observe_pins,
               TL._validator_texts, TL.validate_scope):
         calls = [n for n in ast.walk(ast.parse(inspect.getsource(f).lstrip()))
                  if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "execution_of"]

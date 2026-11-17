@@ -18,9 +18,9 @@ def _a_root_delivered_by_the_standing_agent():
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     T.create_task(e, "root", {"description": "a goal", "criteria": [criterion("g", "G holds")]},
-                  assignee="agent")
-    T.signal(e, "root", "ACCEPT", "agent")
-    T.signal(e, "root", "DELIVER", "agent", result="ran the check for g: it printed ok")
+                  assignee="user")
+    T.signal(e, "root", "ACCEPT", "user")
+    T.signal(e, "root", "DELIVER", "user", result="ran the check for g: it printed ok")
     return e
 
 
@@ -31,7 +31,7 @@ def test_the_executor_leaving_out_his_name_is_refused_as_himself():
     e = _a_root_delivered_by_the_standing_agent()
     out = T.record_verdict(e, "root", "PASS", observed=_SEEN)
     assert not out.get("recorded"), out
-    assert "agent" in out["error"] and "executor" in out["error"], out["error"]
+    assert "user" in out["error"] and "executor" in out["error"], out["error"]
     assert e.current_exec_verdict("root") is None
 
 

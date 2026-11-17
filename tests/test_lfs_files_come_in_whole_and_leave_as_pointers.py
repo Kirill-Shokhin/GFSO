@@ -161,6 +161,26 @@ def test_the_host_says_what_the_import_leaves_out_and_carries_what_it_holds(tmp_
     assert E.left_out(tmp_path / "no-git") == []
 
 
+def test_what_the_gitignore_keeps_out_is_named(tmp_path):
+    """Data a .gitignore keeps out of the commit reaches no agent: the import names it, as it names uncommitted files."""
+    base = _repo(tmp_path)
+    (base / ".gitignore").write_text("data/\n.venv/\n__pycache__/\n.pytest_cache/\n*.md\n")
+    _g(base, "add", ".gitignore", lfs=False)
+    _g(base, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "ignore data", lfs=False)
+    assert E.left_out(base) == [], "nothing ignored on disk: nothing said"
+    for d in (".venv", "__pycache__", ".pytest_cache"):          # what any checkout regenerates: counted, not named
+        (base / d).mkdir()
+        (base / d / "x").write_text("x")
+    assert E.left_out(base) == [], "only regenerated paths: nothing the work could need"
+    for i in range(9):                                            # files sorted before it filled the line (critic)
+        (base / f"a{i}.md").write_text("x")
+    (base / "data").mkdir()
+    (base / "data" / "train.csv").write_text("x\n")
+    said = E.left_out(base)
+    assert len(said) == 1 and said[0].startswith(f"10 paths of {base} ignored by its .gitignore") and "data/" in said[0]
+    assert not any(d in said[0] for d in (".venv", "__pycache__", ".pytest_cache"))
+
+
 def test_the_call_that_starts_the_work_says_what_the_agents_copy_lacks(tmp_path, monkeypatch):
     base = _repo(tmp_path)
     (base / "mine.txt").write_text("not committed")
@@ -292,7 +312,7 @@ def test_live_lfs_files_come_in_as_content_and_a_delivery_commits_their_pointers
         W.ensure(x.base, a, "gfso/p/a", x.base, execution=x)
         assert x.files.read_bytes(str(a / "big.bin")) == CONTENT, "a node's clone reads the base's store"
         x.session(str(a)).run(["sh", "-c", "printf new > big.bin"], cwd=str(a), timeout=120).check_returncode()
-        W.commit_all(x.base, a, "work", "agent", x, branch="gfso/p/a")
+        W.commit_all(x.base, a, "work", "user", x, branch="gfso/p/a")
         blob = lambda path, *lfs: x.session(str(a)).run(["git", *W.APART, *lfs, "cat-file", "blob", f"HEAD:{path}"],
                                                         cwd=str(a), timeout=120).stdout
         assert L.parse(blob("big.bin").encode()) == (hashlib.sha256(b"new").hexdigest(), 3), "a pointer committed"
@@ -331,7 +351,7 @@ def test_live_an_lfs_object_made_inside_reaches_the_parent_that_joins_it_and_the
         W.ensure(x.base, a, "gfso/p/a", x.base, execution=x)
         x.session(str(a)).run(["sh", "-c", "printf new > big.bin && printf lost > lost.bin"], cwd=str(a),
                               timeout=120).check_returncode()
-        W.commit_all(x.base, a, "work", "agent", x, branch="gfso/p/a")
+        W.commit_all(x.base, a, "work", "user", x, branch="gfso/p/a")
         assert x.files.read_bytes(L.path_in(str(x.base / ".git" / "lfs" / "objects"), new)) == b"new", \
             "carried into the base with the delivery's commits"
         W.ensure(x.base, p, "gfso/p/p", x.base, execution=x)

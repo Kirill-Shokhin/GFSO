@@ -10,7 +10,7 @@ Result: any number of parallel agent sessions share ONE process — one event bu
 session in the UI), one dispatcher set, one registry — with zero manual server management.
 
 Knobs (env): GFSO_SHARED_URL (default http://127.0.0.1:8000/mcp) · the spawned server inherits this
-session's env (GFSO_DB_PATH etc.) but NOT its working directory — it runs in `serverctl.home()`, so
+session's env (GFSO_DB_PATH etc.) but NOT its working directory — it runs in `config.home()`, so
 the database and `data/server.log` belong to the installation rather than to whichever directory the
 agent client happened to start in.
 """
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import contextlib
 import sys
 import threading
@@ -37,9 +36,11 @@ from mcp.server.stdio import stdio_server
 from mcp.shared.message import SessionMessage
 from mcp.types import ErrorData, JSONRPCError, JSONRPCMessage, JSONRPCRequest
 
-from gfso.config import (reconcile_allowed, db_path as _db_path,
+from gfso.adapters.children import detached
+from gfso.config import (reconcile_allowed, data_dir, db_path as _db_path, home,
                          install_spawned_server_env, spawned_server_popen_env)
-from gfso.config import LOOPBACK as _LOOPBACK, shared_url
+from gfso.config import LOOPBACK as _LOOPBACK, CLIENT_HEADER, launch_client, shared_url
+from gfso.signin import credential_header, launch_refusal
 
 URL = shared_url()
 
@@ -52,7 +53,7 @@ def ensure_server(url: str = URL, wait_s: float = 25.0) -> bool:
     """Spawn the shared server DETACHED if its port is closed; wait until it answers.
     Returns True if the server is (now) up.
 
-    Every path is resolved against `serverctl.home()`, not against the current directory, and the
+    Every path is resolved against `config.home()`, not against the current directory, and the
     child is spawned THERE. This door is the one an agent client runs, and a client picks its own
     working directory: Claude Desktop starts its servers wherever it likes, so a cwd-relative
     `data/gfso.db` put the user's graphs in a directory nobody could name — while `GFSO_HOME`, the
@@ -63,42 +64,16 @@ def ensure_server(url: str = URL, wait_s: float = 25.0) -> bool:
     host, port = u.hostname or _LOOPBACK, u.port or 8000
     if _port_open(host, port):
         return True
-    home = serverctl.home()
-    data = home / "data"
-    data.mkdir(parents=True, exist_ok=True)
+    home().mkdir(parents=True, exist_ok=True)
+    data = data_dir()
     log = serverctl.open_server_log(data)
     print(f"[gfso connect] shared server not running — starting it on :{port}",
           file=sys.stderr, flush=True)
-    # A HIDDEN CONSOLE, not NO console — the difference is the whole class of "an empty window keeps
-    # popping up". DETACHED_PROCESS left the server without a console, and on Windows a console
-    # child of a console-LESS parent allocates its own console, which the default host shows as a
-    # window. We answered that three times at OUR spawn sites (CREATE_NO_WINDOW in the headless
-    # runner, the code verifier, the experiment layer) — but the flag is not inherited, so every
-    # spawn we do NOT control re-opened the class: the claude CLI starting its stdio MCP server is
-    # exactly that case. Measured with a probe over visible top-level windows: a console-less parent
-    # yields 2 new visible windows for one uncontrolled grandchild (a terminal host window and a
-    # pseudo-console), a hidden-console parent yields 0 — its descendants attach to the console it
-    # already owns and open nothing. So the fix belongs here, once, at the root of the tree.
-    si = None
-    if os.name == "nt":
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        si.wShowWindow = 0                                       # SW_HIDE
-        flags = 0x00000010 | 0x00000200                          # CREATE_NEW_CONSOLE | NEW_PROCESS_GROUP
-    else:
-        flags = 0
-    subprocess.Popen(
-        [sys.executable, "-m", "gfso.cli", "serve", "--storage", "sqlite",
-         # one derivation, in `gfso.config` (S4) — composed here by hand, this ignored GFSO_DATA_DIR
-         "--db-path", str(_db_path()),
-         "--no-browser", "--port", str(port), "--host", host],
-        cwd=str(home),
-        stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-        # The server outlives whoever started it: it is a background service, and the UI a person
-        # left open belongs to the person, not to the agent session that happened to raise it.
-        # GFSO_AUTOEXIT=1 restores the old lease-scoped lifetime for anyone who wants it.
-        env=spawned_server_popen_env(),
-        creationflags=flags, startupinfo=si, start_new_session=(os.name != "nt"))
+    # The server outlives whoever started it: it is a background service, and the UI a person left open belongs to the
+    # person, not to the agent session that happened to raise it. GFSO_AUTOEXIT=1 restores the lease-scoped lifetime.
+    detached([sys.executable, "-m", "gfso.cli", "serve", "--storage", "sqlite", "--db-path", str(_db_path()),
+              "--no-browser", "--port", str(port), "--host", host],
+             log, cwd=str(home()), env=spawned_server_popen_env())
     t0 = time.monotonic()
     while time.monotonic() - t0 < wait_s:
         if _port_open(host, port):
@@ -121,6 +96,13 @@ def foreign_holder(host: str, port: int) -> bool:
     return _port_open(host, port) and serverctl.runtime() is None
 
 
+
+
+def _tell(result: dict) -> None:
+    """Say on stderr what the reconcile DID: a server left alone already said why (`_left_alone`), and a line
+    "reconciled" after it claimed a restart that never happened (2026-11-14, three sessions on :8000)."""
+    if result.get("drift") and result.get("action") != "left-alone":
+        print(f"[gfso connect] server reconciled ({'; '.join(result['drift'])})", file=sys.stderr, flush=True)
 
 
 def _left_alone(drift, fp, said: str) -> dict:
@@ -250,9 +232,9 @@ def ensure_correct(verbose: bool = True, holds_lease: bool = False, force: bool 
         # with a traceback instead of the report it exists to print, and `gfso connect` exited, which
         # an agent client shows as a session with no gfso tools at all. Invisible from a source
         # checkout, where the home is the repository and always exists.
-        (serverctl.home() / "data").mkdir(parents=True, exist_ok=True)
+        home().mkdir(parents=True, exist_ok=True)
         try:
-            os.chdir(serverctl.home())             # db/log paths are relative to the working tree
+            os.chdir(home())                       # db/log paths are relative to the working tree
             # Spawning is FLAKY on Windows: the port a just-stopped server held can still be in the
             # kernel's hands when the replacement tries to bind, and the replacement then dies
             # unseen. Observed live — `up` reported "did not come up", the identical command a
@@ -266,7 +248,7 @@ def ensure_correct(verbose: bool = True, holds_lease: bool = False, force: bool 
                 time.sleep(2)
             else:
                 raise RuntimeError(f"the shared server did not come up in three attempts — see "
-                                   f"{serverctl.home() / 'data' / 'server.log'}")
+                                   f"{data_dir() / 'server.log'}")
         finally:
             os.chdir(prior)
         action = "restarted" if action == "restarted" else "started"
@@ -281,7 +263,7 @@ def ensure_correct(verbose: bool = True, holds_lease: bool = False, force: bool 
     # line wearing the word "why"; what a caller asked is what was found and what was done about it.
     said = ((f"the server was already current — {action}" if action == "already-correct"
              else f"{action} ({'; '.join(why)})" if why else f"{action}")
-            + f" · code {fp} · home {serverctl.home()}")
+            + f" · code {fp} · home {home()}")
     if verbose:
         # The HOME is printed, not assumed: it decides where the database, the log and the agent
         # registry live, and it differs between a source checkout and an installed package.
@@ -307,7 +289,7 @@ _ALIVE_ID = "gfso-bridge-alive"
 #: gives up with nothing said. The call may still be running: only the wait is answered.
 _CALL_CEILING_S = 1700.0
 _PAST_THE_CEILING = ("no answer in {:.0f} s, on a session still alive: the call may yet be running on the server. `next_steps` "
-                     "reads the work; the same `plan` again joins one under way, at no second price.")
+                     "reads the work.")
 
 
 def _request_id(msg):
@@ -498,10 +480,20 @@ async def _relay(url: str, client_read, client_write) -> None:
             jsonrpc="2.0", id=rid, error=ErrorData(code=-32001, message=_PAST_THE_CEILING.format(_CALL_CEILING_S))))))
 
     try:
-        async with streamablehttp_client(url, terminate_on_close=True) as (srv_read, srv_write, _sid):
-            await _replay_handshake(srv_write, srv_read)   # …on a reconnect; a no-op the first time
+        # this console's credential, set at its launch outside the agent, signs every move of this connection; its
+        # client kind is the door entry's, said beside it
+        named = {**credential_header(), **({CLIENT_HEADER: c} if (c := launch_client()) else {})} or None
+        async with streamablehttp_client(url, headers=named, terminate_on_close=True) as (srv_read, srv_write, _sid):
+            # …on a reconnect; a no-op the first time. Bounded: a server that took the session and never answered its
+            # handshake held the bridge here reading nothing of the client's, before any watch of its own (critic)
+            with anyio.fail_after(_ALIVE_WAIT_S):
+                await _replay_handshake(srv_write, srv_read)
             async with anyio.create_task_group() as tg:
-                tg.start_soon(pump, client_read, srv_write)            # session → shared server
+                async def session_side() -> None:
+                    """session → shared server, until the client closes its stdio: then the whole leg ends with it."""
+                    await pump(client_read, srv_write)
+                    tg.cancel_scope.cancel()
+                tg.start_soon(session_side)
                 tg.start_soon(pump, srv_read, client_write, True)      # shared server → session
                 tg.start_soon(_watch_unanswered, pending, anyio, lambda: srv_write.send(_alive_question()), alive, late)
     except BaseException:
@@ -516,7 +508,8 @@ async def _relay(url: str, client_read, client_write) -> None:
         # cannot be made from this side; what CAN be said is where to look.
         n = await _answer_the_orphans(
             client_write, pending,
-            "the shared server restarted or stopped answering and this bridge is rebuilding, so this call was not "
+            "the connection to the shared server broke — it restarted, stopped answering, or ended this session while "
+            "staying up — and this bridge is rebuilding, so this call was not "
             "answered. Whether it RAN on the server is not knowable from here — it may have "
             "completed, may have started, or may never have arrived. Check before you resend: "
             "`get_graph` / `get_task` for an authoring call, `get_verdict` for a validation, "
@@ -530,14 +523,16 @@ async def _relay(url: str, client_read, client_write) -> None:
 
 def _heartbeat(url: str, lease_id: str, stop) -> None:
     """Hold this session's LEASE on the shared server (every ~4s). The server self-exits once the
-    last lease expires — the whole lifecycle mirrors the sessions with zero manual management."""
+    last lease expires — the whole lifecycle mirrors the sessions with zero manual management. The lease carries the
+    connection's credential, so what the party it signs as works is seen while it is alive (`gfso.presence`)."""
     u = urlparse(url)
     api = f"http://{u.hostname}:{u.port or 8000}/api/lease"
+    body = json.dumps({"id": lease_id}).encode()
     while not stop.is_set():
         try:
             urllib.request.urlopen(urllib.request.Request(
-                api, data=json.dumps({"id": lease_id}).encode(),
-                headers={"Content-Type": "application/json"}, method="POST"), timeout=3).read()
+                api, data=body,
+                headers={"Content-Type": "application/json", **credential_header()}, method="POST"), timeout=3).read()
         except Exception:
             pass                      # server briefly down/restarting — the bridge will notice itself
         stop.wait(4.0)
@@ -604,27 +599,72 @@ def _why(e: BaseException) -> str:
     return f"{type(cur).__name__}{': ' + tail if tail else ''}"
 
 
+#: What a call is told while the shared server does not answer: the bridge stays, so the next call after it is back goes.
+_DOWN = ("the shared server is not answering — it was stopped or has not come back — so this call was not sent. Run `gfso "
+         "up`, or wait for whoever stopped it: this bridge reconnects by itself once the server answers, and the next call "
+         "goes through.")
+
+
+async def _answer_while_down(client_read, client_write, settle_s: float = 0.0) -> bool:
+    """Hold the client's stdio while the server is gone: every call answered at once with `_DOWN`, until the server
+    answers again (False) or the client ends the session (True). Leaving instead — returning out of `stdio_server` —
+    deadlocks against a client still holding the pipe (`_relay`), and every later call waited in silence for the
+    client's own ceiling, the server long back up (reproduced 2026-11-14: `gfso down`, `gfso up`, then six calls of six
+    unanswered at 60 s each). `settle_s`: how long to keep answering before looking, for a server that answers and
+    keeps dropping the bridge."""
+    back = False
+    async with anyio.create_task_group() as tg:
+        async def look() -> None:
+            """Wait out `settle_s`, then until the server answers; then end the wait."""
+            nonlocal back
+            await anyio.sleep(settle_s)
+            while await anyio.to_thread.run_sync(serverctl.runtime) is None:
+                await anyio.sleep(_RECONNECT_WAIT_S)
+            back = True
+            tg.cancel_scope.cancel()
+        tg.start_soon(look)
+        async for msg in client_read:                  # …a parse error arrives as an exception: nothing to answer
+            if isinstance(msg, SessionMessage) and isinstance(msg.message.root, JSONRPCRequest):
+                # …shielded: the server coming back cancels this loop, and a cancel while the reply waits on the client's
+                # stdout dropped the call already read — unanswered to the client's ceiling (critic, in-process probe)
+                with anyio.CancelScope(shield=True):
+                    await client_write.send(SessionMessage(JSONRPCMessage(JSONRPCError(
+                        jsonrpc="2.0", id=msg.message.root.id, error=ErrorData(code=-32001, message=_DOWN)))))
+        tg.cancel_scope.cancel()                       # stdio closed: the client ended the session
+    return not back
+
+
 async def _bridge(url: str) -> None:
-    """Own the client's stdio ONCE, and rebuild only the HTTP leg under it.
+    """Own the client's stdio ONCE, and rebuild only the HTTP leg under it — never leaving while the client holds it.
 
     The retry loop used to live outside `anyio.run`, so each attempt re-entered `_relay` and with it
     `stdio_server()` — and tearing that down deadlocks against a client still holding the pipe. The
     client's side is opened here, once, and outlives every rebuild; what is rebuilt is the leg that
-    actually broke.
+    actually broke. A server that is gone, or one that keeps dropping the bridge, is waited out answering every call
+    (`_answer_while_down`); the bridge ends only with the client's session.
     """
-    async with stdio_server() as (client_read, client_write):          # Claude Code side
-        for attempt in range(_RECONNECTS + 1):
+    # …and closing its writer is what lets `stdio_server` end: its stdout task ends only with the write stream, so a
+    # bridge whose client had gone stayed alive holding its lease, the shared server never let go (critic)
+    async with stdio_server() as (client_read, client_write), client_write:     # Claude Code side
+        attempt = 0
+        while True:
+            began = time.monotonic()
             try:
                 await _relay(url, client_read, client_write)
                 return                              # stdio closed = the client ended the session
             except Exception as e:
-                if attempt >= _RECONNECTS or serverctl.runtime() is None:
-                    print(f"[gfso connect] bridge closed ({_why(e)}) and the shared server "
-                          f"is not answering — run `gfso up` and reconnect this session.",
-                          file=sys.stderr, flush=True)
-                    return
+                # a leg that held for a while is a fresh start: its count is of drops in a row, not over the session
+                attempt = 1 if time.monotonic() - began > _RECONNECT_WAIT_S * _RECONNECTS else attempt + 1
+                if attempt > _RECONNECTS or await anyio.to_thread.run_sync(serverctl.runtime) is None:
+                    print(f"[gfso connect] the shared server is not answering ({_why(e)}) — each call is told so until "
+                          f"it does, and this bridge reconnects then", file=sys.stderr, flush=True)
+                    if await _answer_while_down(client_read, client_write,
+                                                _RECONNECT_WAIT_S * _RECONNECTS if attempt > _RECONNECTS else 0.0):
+                        return
+                    attempt = 0
+                    continue
                 print(f"[gfso connect] the shared server dropped this bridge ({_why(e)}) "
-                      f"but is answering again — reconnecting ({attempt + 1}/{_RECONNECTS})",
+                      f"but is answering again — reconnecting ({attempt}/{_RECONNECTS})",
                       file=sys.stderr, flush=True)
                 await anyio.sleep(_RECONNECT_WAIT_S)
 
@@ -644,6 +684,9 @@ def main(argv: list | None = None) -> None:  # pragma: no cover — exercised li
         # stdout, not stderr: a person asked a question and this is the answer to it.
         print(said)
         sys.exit(0 if set(argv[1:]) & {"-h", "--help", "help", "--version"} else 2)
+    if (refused := launch_refusal()) is not None:
+        print(f"[gfso connect] {refused}", file=sys.stderr, flush=True)
+        sys.exit(1)
     _u = urlparse(URL)
     if foreign_holder(_u.hostname or _LOOPBACK, _u.port or 8000):
         print(f"[gfso connect] {port_state()[1]}", file=sys.stderr, flush=True)
@@ -657,10 +700,7 @@ def main(argv: list | None = None) -> None:  # pragma: no cover — exercised li
     # verbose=False is load-bearing: stdout IS the JSON-RPC channel of this stdio server, so a
     # status line printed onto it corrupts the session. Everything goes to stderr.
     try:
-        result = ensure_correct(verbose=False, holds_lease=False)
-        if result["drift"]:
-            print(f"[gfso connect] server reconciled ({'; '.join(result['drift'])})",
-                  file=sys.stderr, flush=True)
+        _tell(ensure_correct(verbose=False, holds_lease=False))
     except SystemExit:
         raise
     except Exception as ex:

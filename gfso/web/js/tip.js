@@ -8,9 +8,17 @@ export function tip(html, e) {
     const el = box();
     el.innerHTML = html;
     el.classList.add('visible');
-    const r = el.getBoundingClientRect(), x = e.clientX + 14, y = e.clientY + 14;
+    // …measured at the left edge: left where the last tip stood, at a phone's right edge it measured one word wide and
+    // wrapped a name a syllable a line (the author, 2026-11-17)
+    el.style.left = '0px';
+    // …a finger's event carries its point in its touch: read off the event itself it was NaN, and the tip stood wherever
+    // the last one had (the author's «странное всплывание» on an arrow's tap)
+    const at = e.changedTouches?.[0] ?? e.touches?.[0] ?? e;
+    const r = el.getBoundingClientRect(), x = at.clientX + 14, y = at.clientY + 14;
     el.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
-    el.style.top = `${y + r.height > innerHeight - 8 ? e.clientY - r.height - 10 : y}px`;
+    // …above the pointer where there is no room below, but never past the window's top: a tall tip of the header's
+    // chips stood above the page, its heading out of sight (the author, 2026-11-13: «подпись сверху то есть вне страницы»)
+    el.style.top = `${Math.max(8, y + r.height > innerHeight - 8 ? at.clientY - r.height - 10 : y)}px`;
     e.tipped = true;
     mine = false;
 }

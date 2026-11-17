@@ -137,12 +137,12 @@ def test_under_semi_the_issuers_pre_fill_is_his_move_on_a_node_held_below():
     e.start()
     e.project_name = "p"
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
-    e.set_mode(Mode.SEMI, None, AgentId("agent"))
+    e.set_mode(Mode.SEMI, None, AgentId("user"))
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G")]})
     T.TOOLS["decompose"](e, "root", [{"task_id": "kid", "covers": ["g"],
                                       "spec": {"description": "a part", "criteria": [criterion("k", "K")]}}],
                          accepted_risks=REGISTER)
     e.wait_idle()
-    out = TL.TOOLS["edit_accepted_risks"](e, "kid", [_RISK], agent="agent")
+    out = TL.TOOLS["edit_accepted_risks"](e, "kid", [_RISK], agent="user")
     assert "error" not in out and "pre-filled" in out["written_as"], out
     e.stop()

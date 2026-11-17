@@ -20,7 +20,7 @@ from gfso.adapters.llm.headless import ClaudeCodeProvider
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.types import Mode, PlaceUnavailable, TaskId
 from gfso.delegate import Dispatcher
-from tests.support import criterion, hold_a_credential, make_engine, carry_nothing_in
+from tests.support import carried_by_the_system, criterion, hold_a_credential, make_engine, carry_nothing_in
 from tests.test_a_cut_call_does_not_spend_the_nodes_retry import _an_offer
 from tests.test_delegate import _agents
 from tests.test_the_mode_decides_who_holds_what import _admit, _engine, _kid
@@ -72,7 +72,7 @@ def test_a_session_its_place_could_not_start_is_neither_cut_nor_a_report_and_sto
     assert llm.run_agent("sys", "packet", ("Read",), cwd=str(tmp_path / "ws")) == ""
     c = llm.calls[-1]
     assert c["ended"] == "unavailable" and c["place"] == "e3-linux" and not c["transport_torn"], c
-    e = make_engine(llm=None)
+    e = carried_by_the_system(make_engine(llm=None))
     e.record_llm_usage("executor", llm, TaskId("n"))
     stop = e.paused()
     assert stop and stop["by"] == "system" and stop["place"] == "e3-linux" and not stop.get("until"), stop
@@ -242,8 +242,8 @@ def test_the_validation_door_names_the_place_down(tmp_path, monkeypatch):
     e.start()
     T.TOOLS["create_task"](e, "root", {"description": "r", "criteria": [criterion("c", "C")]})
     e.wait_idle()
-    T.signal(e, "root", "ACCEPT", "agent")
-    T.signal(e, "root", "DELIVER", "agent", result="x")
+    T.signal(e, "root", "ACCEPT", "user")
+    T.signal(e, "root", "DELIVER", "user", result="x")
     out = TL.TOOLS["validate_result"](e, task_id="root", workdir=str(tmp_path / "ws"),
                                       _llm=ClaudeCodeProvider("haiku", execution=ex))
     assert "execution place e3-linux" in str(out.get("error")) and "usage limit" not in str(out.get("error")), out
@@ -260,3 +260,24 @@ def test_the_planning_door_says_no_plan_was_written_not_that_it_was_unreadable(t
     assert out.get("root_id") is None and "execution place e3-linux" in str(out.get("error")), out
     assert "parseable" not in str(out.get("error"))
     assert not any(c.get("parse_failed") for c in out.get("stats") or ())
+
+
+def test_an_issuer_answer_that_moved_nothing_is_said(tmp_path, monkeypatch):
+    """s16b, 2026-11-16: a challenged root's issuer answered twelve times over 20 minutes, each answer refused or
+    moving nothing, and not one line reached the log — opacity inside the protocol (Thm 11's corollary). Each such
+    answer is said, with what refused it, as an unanswered turn already was."""
+    ex, docker = _place(tmp_path, monkeypatch)
+    docker.up = True
+    e = _engine(Mode.AUTO)
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("val-1", "llm-validator"))
+    T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
+    _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")))
+    said = []
+    e.emit_info = lambda src, msg, _s=said: _s.append(msg)
+    monkeypatch.setattr(I, "settle", lambda *a: {"status": "refused", "why": "the ruling named no finding"})
+    d = Dispatcher(e, agents, runner=lambda *a: {"status": "unparsed"}, consent_runner=lambda *a: {"status": "unparsed"})
+    for _ in range(8):
+        d.dispatch_once()
+        time.sleep(0.5)
+    assert any("moved nothing" in m and "the ruling named no finding" in m for m in said), said
+    e.stop()

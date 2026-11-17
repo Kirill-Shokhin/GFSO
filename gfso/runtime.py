@@ -26,12 +26,19 @@ from gfso.config import (data_dir as _config_data_dir, active_project,
                          remember_active_project, DEFAULT_PROJECT)
 from gfso.llm import llm_factory
 from gfso.roster import AgentRegistry
+from gfso.decompose import kept as _kept_plans
+from gfso.tools import is_refusal
 from gfso.workspaces import drop_execution
 
 log = logging.getLogger(__name__)
 
 #: why a project that stood when the server started is stopped (PROJECT_CLOCK.md case 16)
 HELD_AT_START = "the server started: a project stays stopped until its Start"
+
+
+def _held_at_start(stop) -> bool:
+    """Is `stop` the one a server's start makes (`HELD_AT_START`), no one's own?"""
+    return bool(stop) and stop.get("by") == "system" and stop.get("why") == HELD_AT_START
 
 
 def data_dir():
@@ -135,9 +142,7 @@ class ProjectRegistry:
         if not self._NAME_RE.match(name):
             raise ValueError(f"bad project name {name!r} (allowed: [A-Za-z0-9_-], ≤64)")
         name = self._spelled(name)
-        if (name not in self._engines and not create
-                and name != DEFAULT_PROJECT
-                and not os.path.exists(os.path.join(self._dir, f"{name}.db"))):
+        if not create and not self.exists(name):
             raise KeyError(name)
         if (eng := self._engines.get(name)) is not None:    # open already: no wait behind another's opening
             return eng
@@ -153,10 +158,18 @@ class ProjectRegistry:
                 if name in self._held:       # …before its dispatcher: a project that stood is opened stopped, once —
                     self._held.discard(name)  # one deleted and made again after the start runs
                     try:
-                        self._engines[name].pause("system", HELD_AT_START)
+                        # …only where the system's own roles carry work: on a graph people hold the stop would stand
+                        # their deadlines still, which the canon never suspends (§12.2), and there is no run to stop
+                        # (the author, 2026-11-15: «там очевидно и часы вести не для кого»)
+                        if self._engines[name].system_carries_work():
+                            self._engines[name].pause("system", HELD_AT_START)
                     except Exception as ex:
                         print(f"gfso: project {name!r} could not be stopped at the server's start ({ex}) — it runs",
                               file=sys.stderr, flush=True)
+                # …and the same stop an earlier start left on a graph people hold comes off: nobody made it, and it
+                # stands their deadlines still (critic: the author's graphs kept it)
+                if _config.serves() and _held_at_start(self._engines[name].paused())                         and not self._engines[name].system_carries_work():
+                    self._engines[name].resume("system")
                 try:  # delegation autostart rides with the engine (works under every entry point)
                     # LEFT: import cycle gfso.runtime ↔ gfso.delegate (delegate → gfso.tools_llm →
                     # gfso.runtime), so delegation is reached from here only at call time.
@@ -179,6 +192,12 @@ class ProjectRegistry:
                     except Exception:
                         pass
         return self._engines[name]
+
+    def exists(self, project: str | None = None) -> bool:
+        """Whether the project is made — open here, or its file on disk; `default` always is."""
+        name = self._spelled(project or self._active)
+        return (name in self._engines or name == DEFAULT_PROJECT
+                or os.path.exists(os.path.join(self._dir, f"{name}.db")))
 
     def use(self, name: str) -> Engine:
         """Switch the ACTIVE project (creates it on first use). Every interface consulting the registry
@@ -204,6 +223,15 @@ class ProjectRegistry:
             raise ValueError("the default project cannot be deleted")
         if name == self._active:
             raise ValueError(f"{name!r} is the ACTIVE project — switch away first (use_project)")
+        self.unmake(name)
+        drop_execution(name)       # …its engine loaded or not: a new project of the name inherits no volume
+        AgentRegistry().forget_project(name)    # …nor roles
+        _kept_plans.forget_project(name)        # …nor a plan it waited on
+        return self.list()
+
+    def unmake(self, name: str) -> None:
+        """Remove a project's engine and file — and nothing else of its name: a refused call that made the project
+        leaves none (`kept_if_done`), its roles registered for the name standing."""
         with self._creating:                   # not while that same project is being opened
             eng = self._engines.pop(name, None)
         if eng is not None:
@@ -226,9 +254,7 @@ class ProjectRegistry:
             close = getattr(eng._graph._storage, "close", None)
             if close:
                 close()
-        drop_execution(name)       # …its engine loaded or not: a new project of the name inherits no volume
-        AgentRegistry().forget_project(name)    # …nor roles
-        base = os.path.join(self._dir, f"{name}.db")
+        base =os.path.join(self._dir, f"{name}.db")
         for suffix in ("", "-wal", "-shm"):
             try:
                 os.remove(base + suffix)
@@ -244,7 +270,18 @@ class ProjectRegistry:
             # door that performed it
             except Exception:
                 pass
-        return self.list()
+
+    def kept_if_done(self, made: bool, eng: Engine, call, **kw):
+        """`call(**kw)`'s answer — and a project `made` for it (`exists` false before) unmade if the call refused or raised:
+        a refused `set_mode` on a new name made one, on every door (an empty graph listed among the person's, one per
+        name tried)."""
+        out = None
+        try:
+            out = call(**kw)
+            return out
+        finally:
+            if made and (out is None or is_refusal(out)):
+                self.unmake(eng.project_name)
 
     def names(self) -> set:
         """Every project held: every .db in GFSO_DATA_DIR + the loaded ones (default always present) — no file peeked."""
@@ -335,8 +372,11 @@ class ProjectRegistry:
             p = self._peek(name)[1]
             # …a project that stood at the server's start and is not opened yet is stopped as its first opening will
             # stop it — its file does not say so until then (PROJECT_CLOCK.md case 16), and the list read it running
-            if p is not None and name in self._held and not p["stopped"]:
+            # — where a mode says the system carries it; a no-mode one is stopped only if its opening finds a machine's node
+            if p is not None and name in self._held and not p["stopped"] and p.get("mode"):
                 p = {**p, "stopped": {"by": "system", "at": self._started, "why": HELD_AT_START}}
+            elif p is not None and not p.get("mode") and _held_at_start(p["stopped"]) and name not in self._engines:
+                p = {**p, "stopped": None}     # …as its opening will lift it, unless a machine's node holds it there
             eng = self._engines.get(name)
             if p is not None and eng is not None:     # …its stop as it stands: two writes in one tick of the file's stamp left a peek stale
                 p = {**p, "stopped": eng.paused()}

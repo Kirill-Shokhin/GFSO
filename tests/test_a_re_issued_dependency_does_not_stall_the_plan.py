@@ -297,3 +297,20 @@ def test_an_accepted_dispute_keeps_the_rework_bound_in_force():
     assert e.graph.get_state(TaskId("root.x")).name == "OFFERED"
     assert e.graph.get_task(TaskId("root.x")).max_iterations == 3
     e.stop()
+
+
+def test_no_producer_is_promoted_for_a_siblings_code_its_own_checks_run(monkeypatch):
+    """A tester's regex run went promote → BLOCK → cancel: the parser's pins imported the api part's package, api
+    waited on the parser, and a promoted producer made api's file again and broke no order. The seam check names it;
+    the refusal sends the issuer to its remedy."""
+    e = _plan()
+    for sig in ("ACCEPT", "BLOCK"):
+        T.signal(e, "root.x", sig, "w", reason="myre has no compile")
+    e.wait_idle()
+    monkeypatch.setattr(I, "seam_findings", lambda eng, tid: [
+        "x's probes run the code of api, which x does not wait on: it is checked in a place holding only its own work"])
+    lexer = {"name": "api", "description": "the package", "criteria": [criterion("l1", "it compiles")]}
+    ok, why = I._promote(e, e.graph.get_task(TaskId("root.x")), "lead", {"child": lexer}, "x needs myre", None)
+    assert not ok and "x's probes run the code of api" in why and "not `promote`" in why
+    assert e.graph.get_task(TaskId("root.api")) is None
+    e.stop()

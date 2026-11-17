@@ -37,7 +37,7 @@ def _reviewed_plan():
     e.start()
     e.project_name = "p"
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
-    e.set_mode(Mode.AUTO, None, AgentId("agent"))
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "g holds")]})
     T.decompose(e, "root", [{"task_id": "kid", "covers": ["g"], "spec": {
@@ -125,7 +125,7 @@ def test_an_unreadable_round_does_not_erase_the_goals_undecided_obligations():
     e.start()
     e.project_name = "p"
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
-    e.set_mode(Mode.AUTO, None, AgentId("agent"))
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.TOOLS["create_task"](e, "root", {"description": "the goal: a config linter", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "g holds")]})
     T.decompose(e, "root", [{"task_id": "kid", "covers": ["g"], "spec": {
@@ -153,7 +153,7 @@ def test_a_round_that_did_not_read_the_goal_does_not_stamp_it_read(first):
     e.start()
     e.project_name = "p"
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
-    e.set_mode(Mode.AUTO, None, AgentId("agent"))
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.TOOLS["create_task"](e, "root", {"description": "the goal: a config linter", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "g holds")]})
     T.decompose(e, "root", [{"task_id": "kid", "covers": ["g"], "spec": {
@@ -171,7 +171,7 @@ def _auto_plan():
     e.start()
     e.project_name = "p"
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
-    e.set_mode(Mode.AUTO, None, AgentId("agent"))
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.TOOLS["create_task"](e, "root", {"description": "the goal: a config linter", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "g holds")]})
     T.decompose(e, "root", [{"task_id": "kid", "covers": ["g"], "spec": {
@@ -237,7 +237,7 @@ def test_an_unreadable_reading_after_the_authoring_repair_leaves_the_obligations
     nothing measured closed, so every obligation named stands."""
     e = _auto_plan()
     monkeypatch.setattr(D, "_refine_round", lambda *a, **k: (True, {}, []))
-    _, _, residue = D._close_the_goals_obligations(e, "req", ROOT, "agent", _GoalOnceThenNothing(), {}, [], None)
+    _, _, residue = D._close_the_goals_obligations(e, "req", ROOT, "user", _GoalOnceThenNothing(), {}, [], None)
     assert residue == ("reports missing keys",)
 
 
@@ -294,7 +294,7 @@ def test_a_dispute_needs_a_verdict_that_stands():
     CR.review_decomposition(e, ROOT, llm=_Checker(True))
     CR.review_decomposition(e, ROOT, llm=_Checker(False))
     with pytest.raises(ValueError, match="no current Level-2 verdict"):
-        e.dispute_review_finding(ROOT, "undecided: reports missing keys", "wrong", AgentId("agent"))
+        e.dispute_review_finding(ROOT, "undecided: reports missing keys", "wrong", AgentId("user"))
 
 
 def test_a_node_split_with_no_request_is_split_by_its_own_contract(monkeypatch):
@@ -368,7 +368,7 @@ def test_a_split_keeps_the_callers_goal_text_on_a_root_that_had_none(monkeypatch
     monkeypatch.setattr(D, "_build_verified", lambda spec, request, *a, **k: (_ for _ in ()).throw(
         RuntimeError(request)))
     with pytest.raises(RuntimeError) as err:
-        D.decompose_into(e, "a CLI that parses A and emits B", root_id="root", assignee="agent", llm=object())
+        D.decompose_into(e, "a CLI that parses A and emits B", root_id="root", assignee="user", llm=object())
     assert str(err.value) == "a CLI that parses A and emits B", "the build took the decomposer's text as the goal"
     assert "g: G holds" in seen[0]
 
@@ -380,7 +380,7 @@ def test_a_review_that_raises_again_only_what_was_disputed_is_not_the_issuers_fa
     e = _auto_plan()
     CR.review_decomposition(e, ROOT, llm=_Gap(True))
     for key in e.open_l2_findings(ROOT) or ():
-        e.dispute_review_finding(ROOT, key, "the child's criterion carries it", AgentId("agent"))
+        e.dispute_review_finding(ROOT, key, "the child's criterion carries it", AgentId("user"))
     T.edit_criteria(e, "kid", [criterion("kid_c", "K holds"), criterion("kid_d", "D holds")], agent="exec-1")
     e.wait_idle()
     assert e.open_l2_findings(ROOT) is None                          # the plan changed: its review is stale

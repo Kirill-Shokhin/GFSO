@@ -48,7 +48,7 @@ def _a_scratch(at):
 
 @docker
 def test_live_the_judged_code_moves_nothing_the_system_laid_for_its_judge(project):
-    batch = project.parent / ".gfso-nodes-ws/p/.gfso-scratch-.ws/root_1/batch1"
+    batch = project.own / ".gfso-scratch-.ws/root_1/batch1"
     made(project, ".gfso-scratch-.ws/root_1/batch1/delivery")
     d = materialize_inputs((PIN,), batch / "probe_inputs", project.files)[probe_id("c", PIN.check[0])].as_posix()
     v, b = project.session(str(batch / "delivery")), batch.as_posix()
@@ -84,7 +84,7 @@ def test_live_what_one_system_check_leaves_reaches_no_later_one(project):
     try:
         with project.scratch("gfso-exact-", system=True) as tmp:
             project.files.mkdir(str(tree := Path(tmp) / "exact" / "delivery"))
-            rows = dict(run_checks(project, [("p", c, plant), ("r", c, read)], str(project.parent / ".gfso-nodes-ws/p/a"),
+            rows = dict(run_checks(project, [("p", c, plant), ("r", c, read)], str(project.own / "a"),
                                    str(tree), 120))
         assert rows["p"].get("matched"), rows["p"]
         assert rows["r"].get("matched"), rows["r"]
@@ -105,7 +105,7 @@ def test_live_a_check_reaches_neither_the_delivery_later_checks_are_copied_from_
         with project.scratch("gfso-exact-", system=True) as tmp:
             project.files.mkdir(str(tree := Path(tmp) / "exact" / "delivery"))
             project.files.write_bytes(str(tree / "f"), b"as delivered" + bytes([10]))
-            rows = dict(run_checks(project, [("p", c, forge), ("r", c, read)], str(project.parent / ".gfso-nodes-ws/p/a"),
+            rows = dict(run_checks(project, [("p", c, forge), ("r", c, read)], str(project.own / "a"),
                                    str(tree), 120))
         assert rows["p"].get("matched"), rows["p"]
         assert rows["r"].get("matched") and "forged" not in rows["r"]["out"], rows["r"]["out"]
@@ -127,7 +127,7 @@ def test_live_a_program_one_check_lays_on_the_path_runs_in_no_later_one(project)
     try:
         with project.scratch("gfso-exact-", system=True) as tmp:
             project.files.mkdir(str(tree := Path(tmp) / "exact" / "delivery"))
-            rows = dict(run_checks(project, [("l", c, lie), ("c", c, cmp)], str(project.parent / ".gfso-nodes-ws/p/a"),
+            rows = dict(run_checks(project, [("l", c, lie), ("c", c, cmp)], str(project.own / "a"),
                                    str(tree), 120))
         assert rows["l"].get("matched"), rows["l"]
         assert rows["c"].get("matched"), rows["c"]
@@ -171,7 +171,7 @@ def test_live_no_exact_check_changes_the_delivery_a_later_one_reads(project, ord
                                                   "selftest.sh": b"echo ok > status.txt; echo SELFTEST OK\n"})
             runs = [("s", c, selftest), ("r", c, status)]
             rows = dict(run_checks(project, runs if order == "the selftest first" else runs[::-1],
-                                   str(project.parent / ".gfso-nodes-ws/p/a"), str(tree), 120))
+                                   str(project.own / "a"), str(tree), 120))
         assert rows["s"].get("matched") and rows["r"].get("matched") is False, rows
     finally:
         project.stop()
@@ -203,7 +203,7 @@ def test_live_a_delivery_that_cannot_be_copied_for_a_check_fails_it(project):
             r = project.session(str(tree)).run(["sh", "-c", 'for i in $(seq 1 20); do d=$(printf "d%.0s" $(seq 1 200)); '
                                                 'mkdir "$d" && cd "$d"; done; echo x > f'], cwd=str(tree), timeout=60)
             assert r.returncode == 0, r.stderr
-            rows = dict(run_checks(project, [("d", c, deep)], str(project.parent / ".gfso-nodes-ws/p/a"), str(tree),
+            rows = dict(run_checks(project, [("d", c, deep)], str(project.own / "a"), str(tree),
                                    120))
         assert rows["d"].get("matched") is False and "could not be copied" in rows["d"]["out"], rows
     finally:

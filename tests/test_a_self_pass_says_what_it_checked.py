@@ -24,15 +24,15 @@ _RISKS = REGISTER
 
 def _internal_leaf(e, tid):
     """A leaf whose Del is its parent's — the §10.3 internal node that self-verifies."""
-    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")]}, assignee="agent")
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")]}, assignee="user")
     T.decompose(e, "root", [{"task_id": tid, "spec": {"description": "a leaf", "criteria": [criterion("k", "K")]},
-                             "assignee": "agent", "covers": ["c"]}], accepted_risks=_RISKS)
+                             "assignee": "user", "covers": ["c"]}], accepted_risks=_RISKS)
     e.wait_idle()
-    T.signal(e, tid, "ACCEPT", "agent")
+    T.signal(e, tid, "ACCEPT", "user")
 
 
 def _delivered_with(e, tid, report, verdict="PASS"):
-    T.signal(e, tid, "DELIVER", "agent", result=report, self_validation=verdict)
+    T.signal(e, tid, "DELIVER", "user", result=report, self_validation=verdict)
     e.wait_idle()
     return e.get_exec_verdict(TaskId(tid))
 

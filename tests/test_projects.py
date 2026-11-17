@@ -23,7 +23,8 @@ from gfso.mcp.server import create_server, _bind
 from gfso.runtime import ProjectRegistry
 from gfso.core.types import AgentId, Mode
 from gfso.delegate import _DISPATCHERS
-from gfso import tools as T
+from gfso import tools as T, tools_llm as TL
+from gfso.config import CALLER, STANDING
 from gfso.adapters.llm.stub import StubLLM
 from tests.support import criterion, make_engine
 from gfso.mcp import server as S
@@ -86,7 +87,14 @@ def test_bad_project_name_rejected(monkeypatch, tmp_path):
 def _call(w, *a, **kw):
     """Drive a bound MCP tool the way the SDK does: it is a coroutine now, because a synchronous
     tool is awaited INLINE on the event loop and one blocking verb froze the whole server."""
-    return anyio.run(lambda: w(*a, **kw))
+    async def served():
+        """…under the principal its door resolves: a local client with no credential, the standing agent."""
+        token = CALLER.set(STANDING)
+        try:
+            return await w(*a, **kw)
+        finally:
+            CALLER.reset(token)
+    return anyio.run(served)
 
 
 def test_mcp_bind_gains_project_param_and_routes(monkeypatch, tmp_path):
@@ -116,9 +124,9 @@ def test_mcp_bind_project_param_with_var_keyword(monkeypatch, tmp_path):
     w = _bind(reg, varkw_tool)                          # must not raise
     kinds = [p.kind for p in inspect.signature(w).parameters.values()]
     assert kinds.index(inspect.Parameter.KEYWORD_ONLY) < kinds.index(inspect.Parameter.VAR_KEYWORD)
-    # the REAL signal verb: `source` is PINNED to the agent's own id (impersonation impossible over
-    # this door) and gone from the signature; payload params route intact
-    ws = _bind(reg, T.signal)
+    # the REAL signal verb, as the door binds it (`tools_llm.TOOLS`): `source` is signed by the call's credential
+    # (impersonation impossible over this door) and gone from the signature; payload params route intact
+    ws = _bind(reg, TL.TOOLS["signal"])
     assert "source" not in inspect.signature(ws).parameters
     T.create_task(reg.engine("pk"), "s1", {"description": "mine",
                                            "criteria": [criterion("a", "A")]})  # Del=agent
@@ -303,6 +311,9 @@ def test_projects_are_listed_newest_first_with_their_stamps(tmp_path, monkeypatc
     carries it, so nothing new is tracked and nothing has to be DELETED to make the list readable
     (those files are the provenance of past measurements)."""
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    # …and the default project's file of its own: the suite's shared one is written by any test just before, and
+    # ranked above these on CI (red on every leg of backup/0.4.0, green where it happened to be older)
+    monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "gfso.db"))
     for name in ("old_run", "middle_run", "new_run"):
         (tmp_path / f"{name}.db").write_bytes(b"")
         time.sleep(0.01)
@@ -320,6 +331,7 @@ def test_a_project_written_through_its_wal_is_listed_as_recent(tmp_path, monkeyp
     the last CHECKPOINT: a project worked in all afternoon was listed from two weeks earlier, below a
     hundred finished probes (2026-09-24). An empty WAL is not a write — a read-only open makes one."""
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "gfso.db"))    # the default's own file, as above
     now = time.time()
     for name, age in (("worked_today", 900), ("merely_looked_at", 300)):
         (tmp_path / f"{name}.db").write_bytes(b"")
@@ -383,8 +395,8 @@ def test_a_project_is_listed_by_when_it_was_worked_in_not_when_it_was_looked_at(
     for n in ("worked", "looked", "clock_only"):
         _mk(reg.engine(n), "root")
         _closed(reg, n)
-    _stamp_log(str(tmp_path / "worked.db"), 3600, [(600, "agent")])
-    _stamp_log(str(tmp_path / "looked.db"), 30 * 86400, [(3 * 86400, "agent"), (5, None)])
+    _stamp_log(str(tmp_path / "worked.db"), 3600, [(600, "user")])
+    _stamp_log(str(tmp_path / "looked.db"), 30 * 86400, [(3 * 86400, "user"), (5, None)])
     _stamp_log(str(tmp_path / "clock_only.db"), 40 * 86400, [(5 * 86400, None)])
     now = time.time()
     for n, age in (("looked", 0), ("worked", 3600), ("clock_only", 60 * 86400)):
@@ -421,11 +433,11 @@ def test_entering_a_project_says_the_move_the_graph_waits_on():
     assert empty["active"] == "fresh" and empty["mode"] is None
     # the mode before the plan: who holds the work is the user's choice, asked first
     assert empty["next"].index("set_mode") < empty["next"].index("auto_decompose"), empty["next"]
-    reg.engine("fresh").set_mode(Mode.SOLO, None, AgentId("agent"))
+    reg.engine("fresh").set_mode(Mode.SOLO, None, AgentId("user"))
     chosen = use.fn(project="fresh")
     assert chosen["mode"]["mode"] == "solo" and "set_mode" not in chosen["next"] and "auto_decompose" in chosen["next"]
     T.create_task(reg.engine("fresh"), "root", {"description": "a goal", "criteria": [criterion("c1", "holds")]},
-                  assignee="agent")
+                  assignee="user")
     reg.engine("fresh").wait_idle()
     staged = use.fn(project="fresh")
     assert staged["next"] and "auto_decompose" not in staged["next"], "the reply names the graph as it now stands"
@@ -440,9 +452,9 @@ def test_entering_a_finished_project_does_not_hear_its_own_work_finished(monkeyp
     e = reg.engine("old")
     monkeypatch.setattr(e, "next_step", lambda *a, **k: {"complete": True,
                                                          "directive": "COMPLETE — root 'r' is DONE/PASS. Execution finished."})
-    entered = T.next_for(e, "agent", entering=True)["next"]
+    entered = T.next_for(e, "user", entering=True)["next"]
     assert entered.startswith("this project's graph is finished") and "A new goal is a fresh project" in entered
-    assert T.next_for(e, "agent", about="r")["next"].startswith("COMPLETE"), "a signal's reply is unchanged"
+    assert T.next_for(e, "user", about="r")["next"].startswith("COMPLETE"), "a signal's reply is unchanged"
     e.stop()
 
 

@@ -32,15 +32,15 @@ def _parent_with_one_covering_child(e):
                               "criteria": [criterion("parse_contract",
                                                      "parse_kv raises ValueError on a missing "
                                                      "separator and on an empty key"), criterion("x", "X")]},
-                  assignee="agent")
+                  assignee="user")
     T.decompose(e, "root", [
         {"task_id": "root.kv", "spec": {"description": "the kv child",
                                         "criteria": [criterion("parse_behaviour",
                                                                "parse_kv raises ValueError on a "
                                                                "missing separator and on an empty key")]},
-         "assignee": "agent", "covers": ["parse_contract"]},
+         "assignee": "user", "covers": ["parse_contract"]},
         {"task_id": "root.x", "spec": {"description": "x", "criteria": [criterion("x", "X")]},
-         "assignee": "agent", "covers": ["x"]}], accepted_risks=REGISTER)
+         "assignee": "user", "covers": ["x"]}], accepted_risks=REGISTER)
     e.wait_idle()
 
 
@@ -51,7 +51,7 @@ def test_rewriting_a_child_criterion_under_the_same_name_changes_the_stamp():
     before = _criterion_stamps(e, e.graph.get_task(TaskId("root")))
 
     T.edit_criteria(e, "root.kv", [criterion("parse_behaviour",           # the SAME name
-                                             "parse_kv exists and is callable.")], "agent")
+                                             "parse_kv exists and is callable.")], "user")
     e.wait_idle()
     after = _criterion_stamps(e, e.graph.get_task(TaskId("root")))
 
@@ -84,7 +84,7 @@ def test_a_plan_nobody_touched_still_keeps_its_decisions():
 
     T.create_task(e, "root.other", {"description": "an unrelated sibling",
                                     "criteria": [criterion("x", "X")]},
-                  assignee="agent", parent_id="root", covers=["x"])
+                  assignee="user", parent_id="root", covers=["x"])
     e.wait_idle()
 
     assert _criterion_stamps(e, e.graph.get_task(TaskId("root")))["parse_contract"] == \
@@ -102,7 +102,7 @@ def test_swapping_a_child_pin_under_the_same_name_and_text_changes_the_stamp():
     same = criterion("parse_behaviour", "parse_kv raises ValueError on a missing separator and on an empty key")
     same["check"] = [{"behaviour": "something else", "command": "python -c \"import kv; print(kv.version())\"",
                       "expect": "prints a version"}]
-    T.edit_criteria(e, "root.kv", [same], "agent")
+    T.edit_criteria(e, "root.kv", [same], "user")
     e.wait_idle()
     assert before != _criterion_stamps(e, e.graph.get_task(TaskId("root"))), \
         "a child's probe was swapped under the same name and text and the stamp did not move"

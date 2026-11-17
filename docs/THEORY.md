@@ -111,6 +111,7 @@ Each of those is recorded run by run, with its own boundaries, in [`EVIDENCE_LOG
 
 ## Where to read on
 
+- [`DECISIONS.md`](DECISIONS.md) — what the product does, mapped to the clause of the canon that requires it.
 - [`CORE.md`](CORE.md) — the definition on one page: what GFSO is and is not, what it claims and does not.
 - [`applied_gfso_v4_en.md`](applied_gfso_v4_en.md) — the canon: the theory of directed action → axioms → theorems → protocol → metrics, the single source of truth.
 - [`method_gfso.md`](method_gfso.md) — the canon distilled for an operator.

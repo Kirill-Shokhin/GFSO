@@ -1,10 +1,10 @@
 // The header, by significance: the project's goal and where it stands, then ONLY what needs a person
 // (each a chip that selects its first node), then the quality metrics folded into one chip whose
 // popover carries the meanings the server sends beside them.
-import {$, esc, data, tally, daily, phone} from './dom.js';
-import {H, QUALITY, GRADES, doing} from './hints.js';
-import {post, GOAL, PROJECT} from './api.js';
-import {S, taskOf, myRole, procs, begun, stateWord} from './state.js';
+import {$, esc, coded, data, tally, daily, phone} from './dom.js';
+import {H, QUALITY, GRADES, doing, hover} from './hints.js';
+import {post, GOAL, PROJECT, FOCUS} from './api.js';
+import {S, taskOf, asGiven, heard, signsAs, lift, reader, mineNames, mineShown, viaWord, procs, begun, stateWord, issuerIsPerson, partyKind, viewTasks, inView} from './state.js';
 import {label, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow, PROC_KIND} from './run.js';
 import {dur, trim, cap, pct, stamp, clockAt, spoken} from './fmt.js';
@@ -22,31 +22,36 @@ const named = id => taskOf(id).name ? `${taskOf(id).name} (${id})` : id;
 // спрятаны между букв … статус стоит через тире»). A cancelled part is not owed, so it leaves N: counted, a finished
 // goal read "11 of 12" forever.
 function standing(root) {
-    const parts = S.tasks.filter(t => !isRoot(t) && !cancelled(t)), k = parts.filter(delivered).length;   // closed by FAIL is not done: the engine holds its consumers (settled_positive)
-    const said = s => label(s).toLowerCase();
+    const parts = viewTasks().filter(t => !isRoot(t) && t.id !== FOCUS && !cancelled(t)), k = parts.filter(delivered).length;   // closed by FAIL is not done: the engine holds its consumers (settled_positive)
+    const said = s => label(s).toLowerCase(), word = stateWord(root).toLowerCase(), it = FOCUS ? 'the part' : 'the goal';
+    // …the node's word is the one rule every view says (Accepted / In progress, Delivered / Validating, Sent back / Rework:
+    // vocab WORKED) — the header said «Accepted» beside a strip and a panel saying «in progress» (critic)
     const phrase = {
         // a split goal not yet taken has its parts at work: "not started" alone read beside "1 at work" (live AUTO row)
-        OFFERED: parts.length ? `the goal itself ${stateWord(root).toLowerCase()}` : stateWord(root).toLowerCase(), IDLE: said('OFFERED'),
-        REWORKING: "reworking: the goal's validation failed",
-        VALIDATING: 'delivered, awaiting the verdict',
+        OFFERED: parts.length ? `${it} itself ${word}` : word, IDLE: said('OFFERED'),
+        REWORKING: `${word}: ${it}'s validation failed`,
+        VALIDATING: `${word}, awaiting the verdict`,
         CHALLENGED: `${said('CHALLENGED')}, waiting on the issuer`, BLOCKED: `${said('BLOCKED')}, waiting on the issuer`,
         ESCALATED: 'escalated, the issuer decides',
         CANCELLING: 'being cancelled',
-    }[root.state] || said(root.state);
+    }[root.state] || word;
     // …the phrase and its count are two marks of their own, set apart as what needs a person is (the author, 2026-10-30:
     // «статус и количество это два разных поинта … там что мало место их разнести?»)
     // (`hd-plain`: at work with its parts counted the count says it; a phone's status row has no room for the word)
     return `<span class="hd-phrase${root.state === 'EXECUTING' && parts.length ? ' hd-plain' : ''}">${cap(phrase)}</span>` + (parts.length ? tally(`${k}/${parts.length}`, 'parts done') : '');
 }
 
-// the mode's settings in words (set_mode's own names: l2_gate, observe, deadline_s)
-const SETTING = {l2_gate: 'Plan review gate', observe: 'Checks observed before execution', deadline_s: 'Default deadline', network: 'Network'};
+// the mode's settings in words (set_mode's own names: l2_gate, observe, deadline_s, bounds, max_iterations)
+const SETTING = {l2_gate: 'Plan review gate', observe: 'Checks observed before execution', deadline_s: 'Default deadline', network: 'Network',
+    bounds: 'Waits before a timeout', max_iterations: 'Rework rounds'};
 const SWITCH = new Set(['l2_gate', 'observe']);   // switches, whatever their value's type
 // the engine keeps a setting as a string and reads a switch on only at "1" (validation.py): by truth, "0" read «on», the
 // opposite of the engine, on a real run; a time «29160», the network a line of JSON (critic)
 function settingWord(k, v) {
     if (SWITCH.has(k) || typeof v === 'boolean') return v === true || /^(1|true)$/i.test(String(v)) ? 'on' : 'off';
     if (/_s$/.test(k) && Number.isFinite(+v)) return dur(+v * 1e3);
+    // the states' own bounds, each said as a time: {VALIDATING: 604800} → «validating 7d»
+    if (k === 'bounds' && v && typeof v === 'object') return Object.entries(v).map(([s, n]) => `${s.toLowerCase()} ${dur(n * 1e3)}`).join(', ') || "the server's";
     let o = v;
     if (typeof v === 'string') try { o = JSON.parse(v); } catch (e) { return v; }
     return o && typeof o === 'object' ? [o.mode, ...(o.hosts || o.allow || [])].filter(Boolean).join(', ') || JSON.stringify(o) : String(v);
@@ -63,12 +68,14 @@ async function goal() {
     if (!root) return GOAL && S.missing ? '<span class="hd-phrase">A new project — it exists once its goal is created</span>'
         // …nor is a link opened before its project is: the server's sentence spoke to an agent, in red, of a normal wait
         : `<span class="hd-phrase">${S.missing ? 'This project does not exist yet — the page comes alive when it does'
-            : procs().some(w => PROC_KIND[w.verb] === 'plan') ? 'The goal is being planned' : 'No goal yet'}</span>`;
+            : procs().some(w => w.verb === 'auto_decompose') && S.plan?.goal ? 'The go is given: the project is being built'
+            : procs().some(w => PROC_KIND[w.verb] === 'plan') ? 'The goal is being planned' : S.plan?.goal ? 'A plan written, the go not given' : 'No goal yet'}</span>`;
     // …and how THIS project's mode was set: by whom, when, the model the system's own roles run on, its settings
     const m = S.graph.mode, st = m?.settings || {};
     // …each a capitalised head in words, its moment as the page says moments, an on/off as on/off (audit A10)
     const set = [m?.by && ['Set by', `${m.by}${m.at ? `, ${clockAt(at(m.at))}` : ''}`],
-        m?.boundary && ['Boundary', `depths 0…${m.boundary - 1} held by the user's agent`], m?.perform && ['Perform', PERFORM[m.perform] || m.perform],
+        // …the boundary the engine holds by, its default (the plan's middle) included: the record names only one set by hand
+        m?.mode === 'semi' && (m.holds_above ?? m.boundary) && ['Boundary', `depths 0…${Math.ceil(m.holds_above ?? m.boundary) - 1} held by the user's agent${m.boundary ? '' : ' (the plan\'s middle, by default)'}`], m?.perform && ['Perform', PERFORM[m.perform] || m.perform],
         m?.hands && ['Hands', m.hands], st.system_model && ['System model', `the system's roles run on ${modelName(st.system_model)}`],
         st.planner_model && ['Planner model', `the plan is authored on ${modelName(st.planner_model)}`],
         // a setting in seconds is said as a time (deadline_s 29160 → deadline 8.1h)
@@ -79,11 +86,16 @@ async function goal() {
     const done = delivered(root);
     // left: WHICH goal and who holds its work; where it stands goes to the middle, beside what needs a person —
     // the brand's dot marking the one real done: the goal delivered
-    const word = goalWord(root);
+    const word = FOCUS ? '' : goalWord(root);       // a part's view stands where the part stands, the goal closed or not (critic)
     status = word ? `<span class="hd-verdict${word === 'failed' ? ' bad' : ''}">${word}${done ? '<i class="brand-dot"></i>' : ''}</span>${landedAt(root)}`
-        : standing(root);
-    return `<button class="hd-root"${data({action: 'select', id: root.id})}${H.root(full)}>${esc(short)}</button>`
-        + (mode ? `<span class="hd-quality hd-left"><button class="hd-mode" data-action="pop">${esc(mode)}</button>${H.mode(MODES, mode, set)}</span>` : '');
+        : standing(FOCUS ? taskOf(FOCUS) : root);   // a view of one part stands where the part stands (critic)
+    const hd = heard(), ni = hd.not_imported || [];
+    return `<button class="hd-root"${data({action: 'select', id: root.id})}${H.root(full, asGiven(root))}>${esc(short)}</button>`
+        // …a project with work and no mode is put under one from here too: set_mode refuses an agent there as well
+        // …the mode said to every viewer, a reader included; its change offered only where the page signs (critic)
+        + `<span class="hd-quality hd-left"><button class="hd-mode" data-action="pop">${esc(mode || 'no mode')}</button>${H.mode(MODES, mode, set, changes(m))}</span>`
+        + (hd.runs_on_host ? `<span class="hd-warn"${H.host}>outside Docker</span>` : '')
+        + (ni.length ? `<span class="hd-warn"${H.notImported(ni)}>not all copied</span>` : '');
 }
 
 // One chip per kind of call on a person; `ids` are the nodes it is about, the first one is selected.
@@ -98,9 +110,8 @@ const CALLS = ['ESCALATED', 'CHALLENGED', 'BLOCKED'];
 // …and on the root the engine says: a move its mode gives the system (`performed_by`) is made without a person: a red chip stood
 // on a dispute the system answered 54 s later (live critic); a user's own dispute stays his
 const madeWithout = t => S.frontier?.steps?.some(x => x.task_id === t.id && !x.mine);
-const onAPerson = t => { const m = S.graph.mode; return m?.mode === 'auto' ? isRoot(t) && !madeWithout(t)
-    : m?.mode === 'semi' ? (S.run?.depth ?? depths(S.tasks))[t.id] < (m.boundary || 1) : true; };
-const byState = s => { const ts = S.tasks.filter(t => t.state === s && onAPerson(t));
+const onAPerson = t => issuerIsPerson(t) && !(S.graph.mode?.mode === 'auto' && madeWithout(t));
+const byState = s => { const ts = viewTasks().filter(t => t.state === s && onAPerson(t));
     return need(ts.length, label(s).toLowerCase(), ts.map(t => t.id), ts.map(t => named(t.id))); };
 // …AND HOW THOSE DONES REST: an instrument's proof and a signature are not one kind of green (§15.7).
 const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id), list.map(c => `${c.id} — ${closureNote(c)}`), cls);
@@ -112,34 +123,57 @@ const closures = (list, text, cls) => need(list.length, text, list.map(c => c.id
 const when = t => clockAt(typeof t === 'number' ? t * 1e3 : at(t));
 // …and none on a closed goal with nothing at work: there is nothing to stop or start (the author, 2026-10-30: «на done
 // проекте незачем висит кнопка stop») — nor the system's stop a server's start puts on every project that stood
+// WHERE THE SYSTEM HOLDS NOTHING — no mode, and no open node held by a party the system works (`machine`) — it starts
+// nothing: the run is the clock alone, and the switch and its question say so (the author's door). The difference is the
+// engine's own (who makes a party's moves), never "no mode": a no-mode node handed to an executor is dispatched (critic)
+const clockOnly = () => !S.graph.mode?.mode && !S.tasks.some(t => !terminal(t.state) && partyKind(t.assignee) === 'machine');
 function runSwitch(r) {
     // …but a stop someone made while the plan was written stands when the plan ends: it hid, and the Start with it (critic)
     const held = r && r.state !== 'running' && r.by !== 'system';
     if (!r || !(begun() || held) || (terminal(rootOf(S.tasks)?.state) && !procs().length)) return ['', ''];
-    if (r.state === 'running') return ['', `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`];
+    const clock = clockOnly();
+    // …and on a graph the system carries nothing of, no switch while it runs: a packet's deadline is never suspended (§12.2)
+    // and there is no run to stop (engineering 2bfcbab: a server's start no longer stops it); a stop that still stands keeps
+    // its Start, the one way out of it
+    if (r.state === 'running') return clock ? ['', ''] : ['', `<button class="hd-run" data-action="run-stop"${H.stop}>stop</button>`];
     // the count its own mark (audit A5); the tip headed by who and when, each session still at work by its node and what it
     // does — not the in-flight registry's verb and id joined by dots (A8, A9)
-    const text = r.state === 'stopping' ? `Stopping${tally(r.working.length, 'still at work')}` : 'Stopped';
-    const tip = r.state === 'stopping' ? H.stopping(r.by, when(r.at), r.why, r.working.map(w => `${w.task_id ? nameOf(taskOf(w.task_id)) || w.task_id : 'the system'}: ${doing(w.verb, PROC_KIND[w.verb])}, since ${when(w.since)}`))
-        : H.stopped(r.by, when(r.at), r.why);
+    const text = r.state === 'stopping' ? `Stopping${tally(r.working.length, 'still at work')}` : clock ? 'Clock stopped' : 'Stopped';
+    // …who moved it said with how it signed (`via`, the stop's own record): the page, a console's token, a local client
+    const by = [r.by, viaWord(r.via)].filter(Boolean).join(' ');
+    const tip = r.state === 'stopping' ? H.stopping(by, when(r.at), r.why, r.working.map(w => `${w.task_id ? nameOf(taskOf(w.task_id)) || w.task_id : 'the system'}: ${doing(w.verb, PROC_KIND[w.verb])}, since ${when(w.since)}`))
+        : (clock ? H.clockStopped : H.stopped)(by, when(r.at), r.why);
     return [`<span class="hd-run-state${r.state === 'stopping' ? ' live' : ''}"${tip}>${text}</span>`,
-        `<button class="hd-run" data-action="run-start"${H.start}>start</button>`];
+        `<button class="hd-run" data-action="run-start"${clock ? H.clockStart : H.start}>${clock ? 'start clock' : 'start'}</button>`];
 }
-// '' when the switch moved — the page then re-reads its header (main.js)
+// WHO HOLDS THE WORK, changed from the page: once a project has work, `set_mode` takes the change only from the person's
+// page (audit rows 3/10) — each other mode, and `in_chat` for the modes a person holds nodes in; nothing to a reader
+const OTHER = [['solo'], ['solo', 'in_chat'], ['semi'], ['semi', 'in_chat'], ['auto']];
+const changes = m => !signsAs().length ? [] : OTHER.filter(([x, p = 'dispatch']) => x !== m?.mode || p !== (m?.perform || 'dispatch'))
+    .map(([x, p]) => `<button class="hq-mode"${data({action: 'set-mode', mode: x, ...(p ? {perform: p} : {})})}>${x}${p ? ', in chat' : ''}</button>`);
+export async function setMode(d) {
+    const to = `${d.mode}${d.perform ? ', in chat' : ''}`;
+    return await askInPage(`Change who holds this project's work to <b>${esc(to)}</b>? It governs nodes issued after it; `
+        + `a node already issued keeps its holder. Signed as <b>${esc(S.me?.name || '')}</b>.`, {yes: 'Change'})
+        // …a SEMI boundary set by hand goes with a change that stays SEMI: sent without it, the plan's middle replaced it (critic)
+        && act(post('/api/run/set_mode', {mode: d.mode, ...(d.perform ? {perform: d.perform} : {}),
+            ...(d.mode === 'semi' && S.graph.mode?.mode === 'semi' && S.graph.mode.boundary != null ? {boundary: S.graph.mode.boundary} : {})}), {what: `To ${to}`, ok: null});
+}
+// '' when the switch moved — the page then re-reads its header (main.js); signed by the page's session, `via` telling it from a console
 const switchRun = (verb, body) => act(post(`/api/run/${verb}`, body), {ok: null});
 export async function stopRun() {
     const why = await askInPage('Stop this run? Nothing new starts — no executor, validator or issuer session, no '
-        + 'timeout. Sessions running now finish and their signals land; the graph is not changed.',
+        + `timeout. Sessions running now finish and their signals land; the graph is not changed. Signed as <b>${esc(S.me?.name || '')}</b>.`,
         {yes: 'Stop', field: 'why — kept with the stop, shown to whoever looks (optional)'});
-    return why === false ? false : switchRun('stop_project', {why, ...(myRole() ? {by: myRole()} : {})});
+    return why === false ? false : switchRun('stop_project', {why});
 }
 // Start sets the system working again — under AUTO its issuer and executors act and spend — so it is asked, as Stop is
 export async function startRun() {
     const auto = S.graph.mode?.mode === 'auto';
     return await askInPage('Start this run again? The system starts sessions here once more'
         + (auto ? ' — under AUTO its executors, validators and issuer act and spend on their own.' : '.')
-        + ' The time it stood stopped does not count against any deadline.', {yes: 'Start'})
-        && switchRun('start_project', myRole() ? {by: myRole()} : {});
+        + ` The time it stood stopped does not count against any deadline. Signed as <b>${esc(S.me?.name || '')}</b>.`, {yes: 'Start'})
+        && switchRun('start_project', {});
 }
 
 // The system's reports about ITSELF (a check contradicting its contract, a tool that cannot run): a quiet channel —
@@ -151,9 +185,9 @@ function drawReports() {
     if ($('hd-reports').dataset.seen === seen) return;
     $('hd-reports').dataset.seen = seen;
     $('hd-reports').innerHTML = !n ? '' : `<button class="hd-q" data-action="reports">${tally(n, (phone() ? '' : 'tech ') + (n > 1 ? 'reports' : 'report'))}</button>`
-        + H.reports([...said.map(line => ({head: "the system's own records", val: '', link: '', means: line})), ...[...reports].reverse().map(r => ({head: r.role || 'the system',
+        + H.reports([...said.map(line => ({head: "the system's own records", val: '', link: '', means: line})), ...[...reports].reverse().map(r => ({head: r.role === 'mcp' ? r.actor || 'a client' : r.role || 'the system',   // a role says itself; a client's report says WHO filed it, not the door (the author: «не ясно кто»)
             val: `<span class="hq-when">${esc(when(r.at))}</span>`,
-            link: r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(r.node)} →</button>` : '', means: r.text}))]);
+            link: r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(nameOf(taskOf(r.node)) || r.node)} →</button>` : '', means: r.text}))]);
 }
 export const toggleReports = () => $('hd-reports').classList.toggle('open');
 
@@ -164,7 +198,9 @@ function stalled(calls) {
     // at work HERE means a session open or a process in flight — a leaf left EXECUTING by an executor that died is
     // exactly the stall to name, so a working STATE does not count
     // …and a run the person stopped is not stalled: it is stopped, and says so beside the goal
-    if (calls || !run || !root || terminal(root.state) || busyNow(procs(), run.sessions)
+    // …and a graph the system carries nothing of never stalls: its quiet is people's pace, not a run that stopped without an
+    // end (the author, 11-15, on «stalled since» over a people's graph once its clock ran)
+    if (calls || clockOnly() || !run || !root || terminal(root.state) || busyNow(procs(), run.sessions)
         || S.runState?.state !== 'running') return '';
     const last = Math.max(...run.audit.map(a => a.t), ...run.sessions.map(s => s.end), 0);
     // a run read before the first event says nothing of a stall: it read «stalled since 1 Jan 08:00» (critic)
@@ -183,25 +219,32 @@ export async function drawHeader() {
     // answer, the Stop button was missing for the length of each read — a blinking button on a live run
     const left = await goal();
     let chips = CALLS.map(byState).join('')
-        + closures(S.closures.filter(contested), 'contested', '')
-        + closures(S.closures.filter(c => c.by_hand && !contested(c)), 'closed by hand', ' paper');
+        // a PASS by hand is no call and no figure: it is one verdict's fact — who checked and who signed (§10.2) — said on that
+        // node's panel and drawn on it, never counted apart (the author, 2026-11-14: a chip «не уместно там ее держать в любом
+        // случае», a Quality row «все ещё звучит как костыль»; Q's five metrics, §15.4, hold no such count)
+        + closures(S.closures.filter(c => contested(c) && inView(c.id)), 'contested', '');
     // WHAT THE ENGINE SAYS IS OWED (model.js loadFrontier): `stuck` comes with its `directive`. NAME WHO — "you" is
     // nobody on a shared graph. "Nothing needs you" is said only when the engine was asked.
     const f = S.frontier, heard = !!f;
+    let others = 0;
     if (f) {
         // …and a node a state chip already shows is not counted twice.
         // (dropped only where that chip IS shown: under AUTO a person's own move below the root has none — critic)
         const shown = t => CALLS.includes(t.state) && onAPerson(t);
         // the engine's `mine`, as it is: under AUTO it marks the customer's own rulings on the root (a user's dispute)
-        const own = (f.steps || []).filter(x => x.mine);
-        const mine = own.filter(x => !shown(taskOf(x.task_id))), me = myRole() || 'you', blocked = f.blocked_by || [];
+        // …and only the names «Mine» shows: locally a person owns every stream's name, and all of them read 230 «for you» (critic)
+        const yours = (f.steps || []).filter(x => x.mine && inView(x.task_id));
+        const own = yours.filter(x => !x.performed_by || mineNames().includes(x.performed_by));
+        // …and a view narrowed to one name is no calm word over the moves of the person's other names (critic 3)
+        others = yours.length - own.length;
+        const mine = own.filter(x => !shown(taskOf(x.task_id))), me = mineShown() === '*' ? 'you' : mineShown(), blocked = f.blocked_by || [];
         // …a turn on what is stuck or above it: one elsewhere answers nothing here, and a stuck with no node named stays a call
         const above = id => { const up = []; for (let t = taskOf(id); t; t = t.parent_id && taskOf(t.parent_id)) up.push(t.id); return up; };
         const answering = S.graph.mode?.mode === 'auto' && procs().some(w => PROC_KIND[w.verb] === 'issuer' && blocked.some(id => above(id).includes(w.task_id)));
         // …under AUTO a goal settled undelivered is settled: no one moves it (the engine says so), so no red beside
         // CANCELLED; elsewhere the chip carries the way out, and a DONE whose work did not land is stuck by the engine's word
         const roots = S.tasks.filter(t => !t.parent_id), settled = S.graph.mode?.mode === 'auto' && roots.length && roots.every(t => terminal(t.state) && !delivered(t));
-        chips = (f.stuck && !answering && !settled ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
+        chips = (f.stuck && !answering && !settled && (!FOCUS || !blocked.length || blocked.some(inView)) ? need(1, `stuck${blocked.length ? ': ' + blocked.map(named).join(', ') : ''}`, blocked,
                                 spoken(f.directive || '') || H.stuck, '', 'stuck') : '')
             + need(mine.length, `for ${me}`, mine.map(x => x.task_id),
                    mine.map(x => `${x.action} ${named(x.task_id)}`)) + chips;
@@ -209,10 +252,15 @@ export async function drawHeader() {
     chips += stalled(chips);
     drawReports();
     const [runState, runButton] = runSwitch(S.runState), small = phone();
-    $('hd-goal').innerHTML = left + (small ? '' : runState) + runButton;
+    // …its switch a move like any other: not offered to a browser that signs as no one
+    $('hd-goal').innerHTML = left + (small ? '' : runState) + (lift() ? '' : runButton);
     // …and a goal closed undelivered is said by its verdict alone: «FAILED nothing needs you» read as leave it (critic)
+    // …and a browser not signed in is asked about no one: «nothing needs you» was a calm word over nine deliveries waiting
+    // on a verdict (critic) — it is told how to sign in instead
     const root = rootOf(S.tasks), failed = root && terminal(root.state) && !delivered(root);
-    $('hd-needs').innerHTML = (small ? runState : '') + status + (chips || (heard && !failed && S.runState?.state === 'running' ? '<span class="hd-quiet">nothing needs you</span>' : ''));
+    // …the sign-in line stands beside any chip: it says how to act at all, not that all is calm (critic 3)
+    $('hd-needs').innerHTML = (small ? runState : '') + status + chips + (lift() ? (reader() ? `<span class="hd-quiet hd-signin"${hover('Read only', lift().replace(/`/g, ''))}>read only</span>` : `<span class="hd-quiet hd-signin">${coded(lift())}</span>`)
+        : !chips && heard && !failed && !others && S.runState?.state === 'running' ? '<span class="hd-quiet">nothing needs you</span>' : '');
 }
 
 // The quality metrics. What each MEANS, how far it can be trusted (§15.8's grade) and which of them call a person are the

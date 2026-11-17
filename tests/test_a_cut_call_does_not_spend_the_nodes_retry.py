@@ -135,7 +135,7 @@ def test_where_the_system_is_the_issuer_no_verdict_is_asked_again_not_parked(tmp
                              "accepted_risks": _RISK}, assignee="exec-1")
     T.decompose(e, "par", [{"task_id": "kid", "spec": {"description": "the work", "criteria": [criterion("k", "K")]}, "assignee": "exec-2", "covers": ["g"]}], accepted_risks=REGISTER)
     T.signal(e, "par", "ACCEPT", "exec-1")
-    e.set_mode(Mode.AUTO, None, AgentId("agent"))
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.signal(e, "kid", "ACCEPT", "exec-2")
     T.signal(e, "kid", "DELIVER", "exec-2", result="did it")
     tiers = []
@@ -156,7 +156,7 @@ def test_a_scope_whose_validation_twice_left_no_verdict_is_asked_again(monkeypat
     timers = []
     monkeypatch.setattr(D, "_system_issues", lambda *a: True)
     monkeypatch.setattr(D.threading, "Timer", lambda wait, *a: timers.append(wait) or types.SimpleNamespace(
-        daemon=True, start=lambda: None))
+        daemon=True, start=lambda: None, cancel=lambda: None))
     e = make_engine()
     d = D.Dispatcher(e, types.SimpleNamespace(list=lambda: {}, get=lambda k: None),
                      scope_validator=lambda *a, **k: "no-verdict")

@@ -103,13 +103,13 @@ export function render(el, run, nodes) {
     const top = run.exec.steps.find(([, k]) => k === run.exec.peak);
     el.innerHTML = `<svg class="tl" width="${W}" height="${H}">
         ${f.ticks(30, H - AXIS, 22)}${f.folds(30, H - AXIS, H - 6)}
-        <g class="tl-legend" transform="translate(${W - legendW},0)">${legend}</g>
+        ${run.sessions.length ? `<g class="tl-legend" transform="translate(${W - legendW},0)">${legend}</g>
         ${tallySvg(run.exec.peak, 'at once', 'tl-peak', LEFT - 10, cy(peak) + 3)}
         <text class="tl-peak tl-sub" x="${LEFT - 10}" y="${c0}">executors</text>
         <line class="tl-base" x1="${LEFT}" x2="${W - 16}" y1="${c0}" y2="${c0}"/>
         <line class="tl-base dash" x1="${LEFT}" x2="${W - 16}" y1="${cy(peak)}" y2="${cy(peak)}"/>
         <path class="tl-conc" d="${line}"/>
-        ${top ? `<circle class="tl-peakdot" cx="${f.X(top[0])}" cy="${cy(peak)}" r="2.5"/>` : ''}
+        ${top ? `<circle class="tl-peakdot" cx="${f.X(top[0])}" cy="${cy(peak)}" r="2.5"/>` : ''}` : ''}
         ${ids.length ? ids.map(row).join('') : `<text class="tl-wait" x="${LEFT + 8}" y="${TOP + 18}">No nodes yet: they are drawn when the plan is written</text>`}
         <line class="tl-split" x1="0" x2="${W}" y1="${TOP + ROW + 2}" y2="${TOP + ROW + 2}"/></svg>`;
     pinLeft(el.querySelector('svg.tl'), LEFT);

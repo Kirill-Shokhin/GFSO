@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from gfso.core.types import SignalData, Signal, Verdict
 
@@ -120,6 +120,18 @@ def spoken_verdict(raw) -> str:
     return "fail" if word == "failed" else word
 
 
+#: said wherever a FAIL's list is not the red set
+RED_SET = "the issuer's FAIL payload must be the red set (Inv-3)"
+
+
+def red_set(entries: Sequence[Mapping], known: Iterable[str] | None = None) -> list[str]:
+    """The criteria some entry does not pass, in first-spoken order (Inv-3: FAIL ⇒ failed_criteria ≠ ∅ over the node's
+    criteria) — one non-pass entry is its value, however many pass beside it (Inv-2). `known`: the node's criteria; an
+    entry about anything else is no conjunct of its V."""
+    red = dict.fromkeys(str(e.get("criterion")) for e in entries or () if spoken_verdict(e.get("verdict")) != "pass")
+    return list(red) if known is None else [n for n in red if n in set(map(str, known))]
+
+
 def verdict_word(raw, lenient: bool = False) -> "Verdict | None":
     """THE one reading of a verdict word — PASS, FAIL, or None where none was decided (⊥, §2.3). Any casing; `lenient`
     (a model's free report) also reads a leading word with a reason after it (`PASS — all green`), and prose that
@@ -200,12 +212,7 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
     verdict = str(verdict if verdict is not None else "").strip().upper()
     names = [str(c) for c in criteria]
     known = set(names)
-    # A criterion spoken twice is a pass only if every entry says pass: one observed non-pass is its value (Inv-2) —
-    # read by its last entry, a fail followed by a pass passed here while `_report_contradicts_itself` read it red
-    spoken: dict = {}
-    for e in per_criterion:
-        if spoken.get(name := str(e.get("criterion")), "pass") == "pass":
-            spoken[name] = spoken_verdict(e.get("verdict"))
+    spoken = dict.fromkeys(str(e.get("criterion")) for e in per_criterion)
     defects = []
 
     for missing in [n for n in names if n not in spoken]:
@@ -253,7 +260,7 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
                            f"({'; '.join(unheld)}) — what the probe showed is the criterion's value, and it is "
                            f"fail (Inv-2, §12.8)")
 
-    red = {n for n, v in spoken.items() if n in known and v != "pass"}
+    red = set(red_set(per_criterion, known))
     if verdict == Verdict.PASS and red:
         defects.append(f"verdict PASS contradicts the report's own evidence: {', '.join(sorted(red))} "
                        f"did not pass. A criterion is the obligation (§2) — ACCEPTED_RISKS (§9.2) holds "
@@ -263,7 +270,7 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
         defects.append("verdict FAIL but every criterion passed in the report's own evidence")
     if red != set(failed_criteria) & known or (set(failed_criteria) - known):
         defects.append(f"failed_criteria {sorted(set(failed_criteria))} ≠ the report's own non-pass "
-                       f"criteria {sorted(red)} — the issuer's FAIL payload must be the red set (Inv-3)")
+                       f"criteria {sorted(red)} — {RED_SET}")
 
     if require_probe:
         for e in per_criterion:

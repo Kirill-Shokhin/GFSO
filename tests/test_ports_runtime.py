@@ -226,7 +226,7 @@ def test_declared_switches_fill_gaps_but_never_override(tmp_path, monkeypatch):
     # untracked and machine-local: green on a fresh clone, red on any machine that had declared a
     # different registry for its own runs — a test whose verdict depends on the environment it
     # happens to run in tests the environment, not the code.
-    monkeypatch.setattr(serverctl, "home", lambda: tmp_path)
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path / "data"))
 
     env = {"GFSO_L2_GATE": "0"}                                # the deliberate one
     for key, value in declared().items():
@@ -392,7 +392,7 @@ def test_setup_says_one_line_of_desktop_and_prints_no_config(monkeypatch, capsys
     with Desktop on the machine, setup says one line and offers nothing to paste. The entry `--desktop` writes stays JSON-built."""
     monkeypatch.setenv("GFSO_HOME", str(tmp_path))
     monkeypatch.setattr(doctor, "port_state", lambda: ("free", "nothing is listening"))
-    monkeypatch.setattr(doctor, "webbrowser_open", lambda url: None)
+    monkeypatch.setattr(doctor, "open_outside", lambda url: None)
     monkeypatch.setattr(doctor.shutil, "which", lambda name: None)   # no claude CLI to register with
     monkeypatch.setattr(doctor, "desktop_config_path", lambda: tmp_path)   # Desktop "installed"
     monkeypatch.setattr("gfso.mcp.connect.ensure_correct", lambda *a, **k: {"action": "none"})

@@ -60,6 +60,9 @@ ALLOWED_PRIVATE: set[tuple[str, str]] = {
     # public surface for it. S8 removes them by publishing that surface; until then the ratchet
     # holds the count so a ninth cannot arrive unnoticed.
     ("gfso.delegate", "_dispatch_wake"),           # S8: the quiesce-end poke
+    # the one place the SDK answers `initialize` from: a session class of the door's own serves each client kind its
+    # instructions, pinned by tests/test_a_connection_names_its_client.py (the protocol has no other carrier)
+    ("gfso.mcp.server", "_received_request"),
 }
 
 # Duck-typed PRIVATE names — `getattr(obj, "_x", …)`. Same edge, different syntax, so it needs its
@@ -132,7 +135,7 @@ BASE_COUNT = {"private_reach": 2,   # ← `issuer_of` published (2026-08-22)
               # a private NAME imported from another module (`from gfso.x import _y`): the layering gate reads it as an
               # ordinary import, and nothing counted it (sync audit, D-F17, 2026-10-05) — measured, to fall from here;
               # 39 read as written, 53 resolved (relative imports: a package's own re-exports, gfso.engine's siblings)
-              "private_import": 50,   # ← stats.tag_stage published (D-F18); doctor's floor reads the execution's own
+              "private_import": 49,   # ← delegate reads the standing agent from config; ← stats.tag_stage published (D-F18); doctor's floor reads the execution's own
               "monkey_patch": 0, "foreign_path": 0,
               "duck_private": 0,
               # 2 (2026-09-03, S7): a `getattr` with a default over a DECLARED field says the
@@ -149,7 +152,8 @@ BASE_COUNT = {"private_reach": 2,   # ← `issuer_of` published (2026-08-22)
               # moved with every deletion and compared a thing to itself: deleting two entries left
               # the test green (measured). That is the third time in one session the same defect —
               # a guard whose own bookkeeping makes it blind — appeared inside these instruments.
-              "allowed_private": 27,
+              # 28: the SDK's `initialize` answer, the one carrier of a client kind's instructions (2026-11-15)
+              "allowed_private": 28,
               "allowed_duck": 12,
               "allowed_path": 3,
               "allowed_patch": 4}
@@ -205,9 +209,9 @@ BASE_LITERAL = {# 2 and 1: V's two values are `Verdict`, a StrEnum whose members
                 # 2: the single-project `/api/projects` answer asked `gfso.config.DEFAULT_PROJECT`
                 # instead of spelling the name a third time (2026-09-02)
                 "default": 2,
-                # 1: the agent's standing identity is `gfso.config.agent_id()`; what is left is the
-                # example that names its own actor in prose.
-                "agent": 1}
+                # 2: the person is `gfso.config.PERSON` and his name before 0.4.0 `gfso.config.AGENT`; what is left is the
+                # signer argument's name (`engine.moves.SIGNER`) — and `gfso agent <name>`, the command's own name.
+                "agent": 2}
 
 
 def test_no_new_private_reach():

@@ -36,13 +36,13 @@ def _delivered_internal_node(whose: dict):
     e.project_name = "mine"
     T.create_task(e, "p", {"description": "parent",
                            "criteria": [criterion("g", "G")],
-                           "accepted_risks": _RISK}, assignee="agent")
+                           "accepted_risks": _RISK}, assignee="user")
     T.decompose(e, "p", [{"task_id": "k", "spec": {"description": "kid",
-                           "criteria": [criterion("c", "C")]}, "assignee": "agent", "covers": ["g"]}], accepted_risks=REGISTER)
-    T.signal(e, "k", "ACCEPT", "agent")
+                           "criteria": [criterion("c", "C")]}, "assignee": "user", "covers": ["g"]}], accepted_risks=REGISTER)
+    T.signal(e, "k", "ACCEPT", "user")
     e._graph.authorized_validators = set(whose)
     e.workforce.publish_validator_projects(whose)
-    said = T.signal(e, "k", "DELIVER", "agent", result="v1").get("awaiting_verdict") or ""
+    said = T.signal(e, "k", "DELIVER", "user", result="v1").get("awaiting_verdict") or ""
     e.stop()
     return said
 

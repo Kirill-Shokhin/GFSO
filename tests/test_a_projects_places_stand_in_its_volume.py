@@ -26,7 +26,7 @@ import gfso.engine.findings as F
 import gfso.workspaces as WS
 from gfso.cli import _export_places
 from gfso.adapters.execution import STATE_INSIDE, ContainerExecution
-from gfso.core.types import PlaceUnavailable
+from gfso.core.types import PlaceUnavailable, nodes_root
 from tests.test_a_session_holds_only_its_own_place import IMAGE, _docker, _git, lay, made, project  # noqa: F401
 
 live = pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
@@ -235,8 +235,9 @@ def test_live_an_agents_links_in_a_left_place_arrive_as_links_and_its_conversati
     x = ContainerExecution(f"t{time.time_ns()}", IMAGE, None, str(tmp_path / "state"), str(base), "p")
     old = tmp_path / "state" / x.container
     key = lambda p: hashlib.sha1(os.path.normcase(p).encode()).hexdigest()[:12]      # …its old name
-    (old / "places" / key(x.own / "a") / "projects" / "-x").mkdir(parents=True)
-    (old / "places" / key(x.own / "a") / "projects" / "-x" / "s.jsonl").write_bytes(b"{}\n")
+    # …keyed by the place's path as it stood before the volume: beside the base, where it was left
+    (old / "places" / key(left) / "projects" / "-x").mkdir(parents=True)
+    (old / "places" / key(left) / "projects" / "-x" / "s.jsonl").write_bytes(b"{}\n")
     (old / "gfso-sessions").mkdir(parents=True)
     (old / "gfso-sessions" / "t.json").write_bytes(b"[]")
     try:
@@ -506,7 +507,7 @@ def test_live_a_projects_places_export_to_the_host_whole_its_clones_free_of_the_
         assert W.ensure(base, x.own / "a", "gfso/p/a", base, execution=x)
         x.session(str(x.own / "a")).run(["sh", "-c", "echo w > w.txt && ln -s w.txt l"], cwd=str(x.own / "a"),
                                         timeout=120).check_returncode()
-        W.commit_all(base, x.own / "a", "work", "agent", x)
+        W.commit_all(base, x.own / "a", "work", "user", x)
         _export(x, out)
         assert x.files.exists(str(x.own / "a" / ".git" / "objects" / "info" / "alternates")), "the place untouched"
     finally:
@@ -563,7 +564,7 @@ def _two_clones(tmp_path):
     for n in ("a", "b"):
         assert W.ensure(base, x.own / n, f"gfso/p/{n}", base, execution=x)
         x.session(str(x.own / n)).run(["sh", "-c", f"echo honest > {n}.txt"], cwd=str(x.own / n), timeout=120)
-        W.commit_all(base, x.own / n, "work", "agent", x)
+        W.commit_all(base, x.own / n, "work", "user", x)
     return x
 
 
@@ -680,7 +681,7 @@ def test_live_a_lost_state_volume_is_the_place_down_and_a_project_made_again_inh
 def _a_project_on_disk(tmp_path, monkeypatch, record: dict) -> None:
     """A server's data dir holding project `p`'s own file with `record` its settings, and the caller's roster and
     declarations naming no execution of it — as `python -m gfso.cli` is typed with PYTHONPATH alone."""
-    (data := tmp_path / "data").mkdir()
+    (data := tmp_path / "data").mkdir(exist_ok=True)      # …a base named first holds its places there already
     (tmp_path / "roster.json").write_text("{}")
     for k, v in (("GFSO_DATA_DIR", data), ("GFSO_AGENTS_PATH", tmp_path / "roster.json"),
                  ("GFSO_EXECUTIONS_PATH", tmp_path / "none.json")):
@@ -703,7 +704,7 @@ def test_export_places_exports_the_volume_the_projects_own_record_names_whatever
     places stand on this host already" of a project whose places were in a volume. The system's record decides."""
     base = tmp_path / "w" / "ws"
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path / "data"))       # …the volume's name carries this home
-    v = E.Volume(E.container_name("ex", "p"), "ex", base.parent / ".gfso-nodes-ws" / "p", base, "p")
+    v = E.Volume(E.container_name("ex", "p"), "ex", nodes_root(base) / "p", base, "p")
     record = {"volume:places": v.name, "volume:state": v.state, "volume:image": "img:1",
               **({f"place-made:{base.parent / '.gfso-nodes-ws' / 'p' / 'root'}": "1"} if legacy else
                  {"volume:base": str(base)})}

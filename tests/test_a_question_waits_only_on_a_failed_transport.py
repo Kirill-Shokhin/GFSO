@@ -10,6 +10,7 @@ import pytest
 import gfso.issuer as I
 from gfso.core.types import TaskId
 from tests.test_the_mode_decides_who_holds_what import _auto_goal, _sweeps
+from tests.support import issuer_sweep
 
 LIMIT = "rate_limit: You've hit your org's monthly spend limit · resets 3:50pm (UTC)"
 
@@ -20,11 +21,7 @@ def _waits(e, agents, settles, monkeypatch, settle=None) -> list:
     monkeypatch.setattr(I, "settle", settle or (lambda *a, **k: next(script)))
     ledger, cap = {}, threading.Semaphore(1)
     for _ in settles:
-        before = set(threading.enumerate())
-        I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
-        for th in set(threading.enumerate()) - before:
-            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
-                th.join(5)
+        issuer_sweep(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
         out.append(round(max(nb for _, nb, _ in ledger.values()) - time.monotonic()))
         ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
     return out

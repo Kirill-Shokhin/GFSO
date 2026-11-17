@@ -1,14 +1,16 @@
 """G = (N, E_D, E_Dep, sigma). Wraps StoragePort."""
 from __future__ import annotations
 
+import copy
 import dataclasses
 
 import json
+import math
 import time
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
-from gfso.config import default_deadline_s
+from gfso.config import BOUNDED_STATES, default_deadline_s, state_bound
 
 from gfso.core.types import (
     TaskId, AgentId, Task, State, Signal, Verdict,
@@ -216,6 +218,64 @@ def project_deadline_s(graph: "Graph") -> float:
     return float(v) if v is not None else default_deadline_s()
 
 
+def project_bounds(graph: Optional["Graph"]) -> dict:
+    """The per-state bounds this project sets for itself (`set_mode(bounds=)`), {STATE: seconds}; {} = the server's.
+
+    The bound values lie outside conformance (§12.16) and differ by who waits: a run's validator answers in minutes, a
+    person signing a stream answers in days — so they are the project's, as its deadline is, never the server's alone."""
+    raw = graph.setting("bounds") if graph is not None else None
+    try:
+        kept = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    return {str(k): s for k, v in (kept.items() if isinstance(kept, dict) else ()) if (s := bound_seconds(v)) is not None}
+
+
+def bound_seconds(v) -> Optional[float]:
+    """A bound as the clock reads it — finite seconds above 0 — or None: the one rule the door refuses by and the
+    reader keeps by, so no value the door took can stop the clock (Inv-5; critic: 10**400 killed the monitor)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    try:
+        s = float(v)
+    except OverflowError:
+        return None
+    return s if 0 < s <= MAX_BOUND_S else None
+
+
+#: a bound in deed, not only in letter (Inv-5): the longest a project's state may wait — a year
+MAX_BOUND_S = 365 * 86_400
+#: the most rework rounds a project's default may forecast: an estimate of rounds, not an open loop (§12.15)
+MAX_ITERATIONS_CEILING = 1_000
+
+
+def project_state_bound(graph: Optional["Graph"], state_name: str) -> float:
+    """One state's own bound (§12.2) in this project: its setting, else the server's (`state_bound`)."""
+    return project_bounds(graph).get(state_name) or state_bound(state_name)
+
+
+def bounds_refusal(bounds) -> Optional[str]:
+    """Why a project's bounds cannot stand, or None. Inv-5: every waiting state keeps a bound, so none is 0; the work
+    states run on the packet deadline (`deadline_s`), not a bound of their own; IDLE has no clock."""
+    if not isinstance(bounds, dict):
+        return f"bounds is {{STATE: seconds}}, got {bounds!r}"
+    for k, v in bounds.items():
+        if k not in BOUNDED_STATES:
+            return (f"{k!r} has no bound of its own: the bounded states are {', '.join(BOUNDED_STATES)}"
+                    + ("; EXECUTING and REWORKING run on the packet deadline — set `deadline_s`"
+                       if k in ("EXECUTING", "REWORKING") else ""))
+        if bound_seconds(v) is None:
+            return (f"{k}'s bound is seconds above 0 and at most a year, {MAX_BOUND_S} (Inv-5: a waiting state is never "
+                    f"unbounded), got {v!r}")
+    return None
+
+
+def project_max_iterations(graph: Optional["Graph"]) -> int:
+    """The rework bound a node issued here without one gets (§12.15): the project's setting, else the default."""
+    v = graph.setting("max_iterations") if graph is not None else None
+    return int(v) if v else DEFAULT_MAX_ITERATIONS
+
+
 class Graph:
     def __init__(self, storage: StoragePort):
         self._storage = storage
@@ -284,8 +344,7 @@ class Graph:
             stored = [e for e in stored if not e.closed]
         if not adopted:
             return declared + stored
-        live = {str(t.id) for t in self._storage.get_all_tasks()
-                if t.state not in (State.CANCELLING, State.ABANDONED)}
+        live = {i for i, t in self._storage.task_view().items() if t.state not in (State.CANCELLING, State.ABANDONED)}
         out = list(declared)
         waits = parent_waits(self)     # …a cycle through a parent's wait on its parts too (CHECK-2)
         for e in stored:
@@ -318,7 +377,7 @@ class Graph:
             # neither half — a later declaration does not make it "declared before any BLOCK named it" (§15.5)
             _discovered = {pair(e) for e in records if not e.declared_first}
             _out = {pair(e) for e in found if e.discovered and e.refuted and not e.declared_first}
-        tasks = {str(t.id): t for t in self._storage.get_all_tasks()}
+        tasks = self._storage.task_view()
         edges = [dataclasses.replace(e, discovered=pair(e) in _discovered) for e in found
                  if not e.discovered and not e.removed and str(e.to_id) in tasks
                  and (ever or tasks[str(e.to_id)].state not in (State.CANCELLING, State.ABANDONED))]  # §12.6
@@ -348,8 +407,12 @@ class Graph:
         Cancellation is excluded for the same reason `get_active_children` excludes it: a cancelled
         node persists as provenance but has left the decomposition.
         """
-        tasks = [t for t in self._storage.get_all_tasks()
-                 if t.state not in (State.CANCELLING, State.ABANDONED)]
+        return [copy.copy(t) for t in self.subtree_view(root_id)]
+
+    def subtree_view(self, root_id: Optional[TaskId] = None) -> list[Task]:
+        """`subtree` to READ, its nodes the store's own (`task_view`): a copy of every node at every call was the
+        quadratic of a large graph's every question (measured 2026-11-13)."""
+        tasks = [t for t in self._storage.task_view().values() if t.state not in (State.CANCELLING, State.ABANDONED)]
         if root_id is None:
             return tasks
         root, by_parent = str(root_id), {}
@@ -391,7 +454,9 @@ class Graph:
         (Del(child) = Del(parent)) is the agent's private decomposition: it SELF-verifies (DELIVER
         carries self_validation), and its guarantee is carried by the validation of the agent's
         public result (Thm 1's non-redundancy direction). A missing/unassigned parent reads as a seam
-        — fail-closed toward the stricter side."""
+        — fail-closed toward the stricter side. So does a self-assigned root, internal by the canon
+        («a root not self-assigned» is the seam): nothing above carries its verdict, and the product
+        puts its own check there (§10.2), a stricter admission §12.16 allows."""
         if task.parent_id is None:
             return True
         parent = self.get_parent(task.id)
@@ -617,7 +682,7 @@ def _live_waits(graph: Graph) -> tuple[list, list]:
     """(the discovered records that ASK, every live WAIT) — the population `dep_order_refutations` reads its cycles in."""
     adopted = graph.dep_edges(adopted=True)
     have = {(str(e.from_id), str(e.to_id)) for e in adopted}
-    live = {str(t.id): t for t in graph.subtree(None)}
+    live = {str(t.id): t for t in graph.subtree_view(None)}
     unfinished = {i for i, t in live.items() if t.state != State.DONE}
     asking = [e for e in graph.dep_edges()
               if (str(e.from_id), str(e.to_id)) not in have and str(e.from_id) in live and str(e.to_id) in live]
@@ -630,7 +695,7 @@ def parent_waits(graph: Graph) -> list:
     """(child → parent) for every live node under a parent: a parent waits on its parts, its PASS being their AND
     (Thm 1). Read beside E_Dep wherever a cycle of waits is asked — a Dep closing one through it is a wait no order
     ends (CHECK-2, §9.5)."""
-    live = {str(t.id): t for t in graph.subtree(None) if t.state not in (State.CANCELLING, State.ABANDONED)}
+    live = {str(t.id): t for t in graph.subtree_view(None) if t.state not in (State.CANCELLING, State.ABANDONED)}
     return [DepEdge(from_id=t.id, to_id=t.parent_id) for t in live.values()
             if t.parent_id is not None and str(t.parent_id) in live]
 
@@ -652,7 +717,7 @@ def start_waits(graph: Graph, unit: Callable[[Task], str]) -> tuple[dict, dict]:
     An inferred wait is not taken where it lies on a cycle of live unit waits — declared, parents', inferred, each
     while its producer is unfinished — since no order ends it. Every such wait is left out at once, not one chosen by
     an order, and returned with its cycle for the readers to say."""
-    live = {str(t.id): t for t in graph.subtree(None) if t.state not in (State.CANCELLING, State.ABANDONED)}
+    live = {str(t.id): t for t in graph.subtree_view(None) if t.state not in (State.CANCELLING, State.ABANDONED)}
     u = {i: unit(t) for i, t in live.items()}
 
     def chain(i: str) -> list[str]:
@@ -734,6 +799,19 @@ def _closes_cycle(edges: list, e) -> bool:
     return str(e.from_id) in _reach(adj, str(e.to_id))
 
 
+def cycle_stands_without(graph: Graph, refuted: list, gone: set, through: set) -> bool:
+    """Would one of the `refuted` records still close a cycle of live waits running through a node of `through`, once
+    the waits of the `gone` (producer, consumer) pairs are taken out?"""
+    adj: dict[str, list[str]] = {}
+    back: dict[str, list[str]] = {}
+    for w in _live_waits(graph)[1]:
+        if (p := str(w.from_id), c := str(w.to_id)) not in gone:
+            adj.setdefault(p, []).append(c)
+            back.setdefault(c, []).append(p)
+    return any((p := str(e.from_id), c := str(e.to_id)) not in gone and p in _reach(adj, c)
+               and _reach(adj, c) & _reach(back, p) & through for e in refuted)
+
+
 def cycle_children(graph: Graph, parent_id, refuted: list) -> list[list[str]]:
     """The parent's live children each refuted wait's cycle runs through — every child on a path of live waits from the
     consumer's child back to the producer's, the waits read between the children that contain their ends — grouped
@@ -780,8 +858,8 @@ def dep_scope(graph: Graph, root_id: TaskId) -> tuple[list, dict[str, object]]:
     population is the SUBTREE: at the root that is the whole relation, and below it the seams
     that decomposition owns. Reported at the node whose plan declares them.
     """
-    inside = {str(t.id): t for t in graph.subtree(root_id)}
-    known = {str(t.id) for t in graph.subtree(None)}
+    inside = {str(t.id): t for t in graph.subtree_view(root_id)}
+    known = {str(t.id) for t in graph.subtree_view(None)}
     edges = []
     for e in graph.dep_edges(adopted=True):
         ends = (str(e.from_id), str(e.to_id))

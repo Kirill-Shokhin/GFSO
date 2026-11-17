@@ -69,7 +69,7 @@ def test_a_ruling_on_the_users_own_goal_is_the_users_question(tmp_path):
     _auto_root(e)
     pid = _challenged_with_a_finding(e, "root", "g")
     llm = _ContactLLM({"decision": "accept", "justification": "not g", "retire_findings": [pid]}, ran={"Bash": 1})
-    out = I.answer_the_challenge(e, TaskId("root"), "agent", _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=str(tmp_path))
     assert out["status"] == "users" and e.graph.get_state("root").name == "CHALLENGED", out
     (step,) = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "root"]
     assert step["mine"] and "THE USER'S QUESTION" in step["directive"] and pid in step["directive"], step
@@ -77,7 +77,7 @@ def test_a_ruling_on_the_users_own_goal_is_the_users_question(tmp_path):
     # …and the node's read serves them: a ruling's picker reads its ids there (ui, 2026-10-26: it found none)
     assert [p["id"] for p in T.get_task(e, "root")["regression_probes"]["g"]] == [pid]
     # …and the user's own ruling there is his to make, through the door the mode otherwise locks
-    out = LOCKED["signal"](e, "root", "ACCEPT_CHALLENGE", "agent", retire_findings=[pid], justification="not my goal")
+    out = LOCKED["signal"](e, "root", "ACCEPT_CHALLENGE", "user", retire_findings=[pid], justification="not my goal")
     e.wait_idle()
     assert out["accepted"] and e.regression_probes(TaskId("root")) == {}, out
     e.stop()
@@ -103,9 +103,9 @@ def test_the_system_still_rejects_an_auto_roots_dispute_naming_a_finding(tmp_pat
     e = _engine(Mode.AUTO)
     _auto_root(e)
     pid = _challenged_with_a_finding(e, "root", "g", reason="{pid} cannot be fixed without JOIN support")
-    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "agent", "the system left the dispute to no one"
+    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "user", "the system left the dispute to no one"
     llm = _ContactLLM({"decision": "reject", "justification": "the goal asks for joins: implement them"}, ran={"Bash": 1})
-    out = I.answer_the_challenge(e, TaskId("root"), "agent", _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=str(tmp_path))
     e.wait_idle()
     assert out["status"] == "rejected" and e.graph.get_state("root").name == "EXECUTING", out
     assert [p["id"] for p in e.regression_probes(TaskId("root"))["g"]] == [pid], "a rejection retired the finding"
@@ -119,7 +119,7 @@ def test_a_rejection_with_a_stray_ruling_beside_it_is_still_the_rejection(tmp_pa
     _auto_root(e)
     pid = _challenged_with_a_finding(e, "root", "g", reason="{pid} cannot be fixed")
     llm = _ContactLLM({"decision": "reject", "justification": "implement it", "retire_findings": [pid]}, ran={"Bash": 1})
-    out = I.answer_the_challenge(e, TaskId("root"), "agent", _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=str(tmp_path))
     e.wait_idle()
     assert out["status"] == "rejected" and [p["id"] for p in e.regression_probes(TaskId("root"))["g"]] == [pid], out
     assert "without `retire_findings`" in I._USERS_DISPUTE        # what the machine is told when it would rule
@@ -130,8 +130,8 @@ def test_control_an_auto_roots_dispute_naming_no_finding_is_the_systems(tmp_path
     e = _engine(Mode.AUTO)
     _auto_root(e)
     _challenged_with_a_finding(e, "root", "g", reason="g cannot be decided as written")
-    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "agent"
-    out = LOCKED["signal"](e, "root", "REJECT_CHALLENGE", "agent", justification="it can")
+    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "user"
+    out = LOCKED["signal"](e, "root", "REJECT_CHALLENGE", "user", justification="it can")
     assert not out.get("accepted"), "the customer intervened in a dispute the system answers"
     e.stop()
 

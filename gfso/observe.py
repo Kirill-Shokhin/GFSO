@@ -9,9 +9,15 @@ cannot learn from the packet it buys turn by turn, every turn re-reading its who
 Nothing is built for the observation: a pin presupposes a build its procedure does not pin (docs/notes/
 VALIDATION_BY_CANON.md, "Where three rounds converged"), so a check over a program the tree has not built — or built
 from older sources — shows that, not the work. Hence an observation and never a verdict: the validator builds as the
-checks say and decides; the packet says so."""
+checks say and decides; the packet says so.
+
+The same runner reads a plan's pins once over the base before the go (`on_the_base`, `cannot_run`): a pin whose text
+bash refuses, or whose own fixture the place cannot lay by its name, decides nothing on any work (form item (1),
+§20.10) — found by running it
+where the checks run, a static imitation of bash's grammar having refused valid commands for five sessions."""
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 import uuid
@@ -20,10 +26,10 @@ from typing import Optional
 
 from dataclasses import replace
 
-from gfso.core.types import IN_THE_WORKS_PATH
+from gfso.core.types import IN_THE_WORKS_PATH, PlaceUnavailable
 from gfso.adapters.execution import ended_by_watch, past_disk
-from gfso.adapters.snapshots import WATCHED, snapshot, swap
-from gfso.core.protocol.procedure import (INPUTS_TOKEN, PROBE_S, materialize_inputs, probe_id, shows,
+from gfso.adapters.snapshots import WATCHED, changed_or_unknown, on_disk, snapshot, swap
+from gfso.core.protocol.procedure import (INPUTS_TOKEN, PROBE_S, contains, materialize_inputs, probe_id, shows,
                                          unsafe_input_paths)
 from gfso.workspaces import execution_of
 
@@ -68,18 +74,25 @@ def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None
     return seen
 
 
-def run_checks(ex, probes, place: str, tree: Optional[str], budget: float) -> list:
-    """[(key, {criterion, behaviour, command, expect, exact, rc, out, matched, note})] — each `(key, criterion, probe)`
-    of `probes` run in `tree`, a copy of `place`, with its inputs laid from the contract: each distinct
+def run_checks(ex, probes, place: str, tree: Optional[str], budget: float, touched: Optional[set] = None) -> list:
+    """[(key, {criterion, behaviour, command, expect, exact, rc, out, printed, matched, note})] — each `(key, criterion,
+    probe)` of `probes` run in `tree`, a copy of `place`, with its inputs laid from the contract: each distinct
     command once, PROBE_S at most and `budget` in all, matched by `printed`. [] where nothing can run: no copy, no shell,
     inputs that cannot be laid as pinned (refused at admission). The one runner of the system's own checks: before a
-    session (`observe_place`) and over a fresh copy of a delivery at its validation (`tools_llm._observe_exact`)."""
+    session (`observe_place`) and over a fresh copy of a delivery at its validation (`tools_llm._observe_pins`).
+    `touched`: gets the delivered files each check changed in its own copy — what a judge running it changes too."""
     if not (tree and probes and (bash := ex.shell())):
         return []
     crits = list({id(c): c for _, c, _ in probes}.values())
     if unsafe_input_paths(crits):                        # …refused at admission: nothing runs over a truncated corpus
         return []
     out, ran, t0, copying = [], {}, time.monotonic(), []
+    base = None
+    if touched is not None:          # …the delivered side, read once for every check's copy
+        try:
+            base = on_disk(tree, ex)
+        except Exception:            # noqa: BLE001 — unknown here, read per check as `changed` reads it
+            pass
     for key, c, p in probes:
         row = {"criterion": c.name, "behaviour": p.behaviour, "command": p.command, "expect": p.expect,
                "exact": p.exact}
@@ -89,7 +102,8 @@ def run_checks(ex, probes, place: str, tree: Optional[str], budget: float) -> li
             # …the copies' time not counted: a large delivered tree spent the budget copying, and its later checks —
             # the failing one among them — went unrun, the judge's word deciding (critic B8)
             left = budget - (time.monotonic() - t0 - sum(copying))
-            ran[once] = (_fresh_run(ex, bash, c, p, tree, min(PROBE_S, left), place, copying) if left >= 1
+            ran[once] = (_fresh_run(ex, bash, c, p, tree, min(PROBE_S, left), place, copying, touched,
+                                    base) if left >= 1
                          else {"note": "not run: the observation's time ran out"})
             # …not finished in the time it was given — its own bound, or what the observation's budget left it, or none
             # left at all —: it decided nothing in finite time, and the delivery's own code spends that budget, so a
@@ -102,11 +116,13 @@ def run_checks(ex, probes, place: str, tree: Optional[str], budget: float) -> li
         # once, and the second inherited the first's match (critic over 27de5f8)
         got = ran[once]
         out.append((key, {**row, **{k: v for k, v in got.items() if k not in ("stdout", "stderr")},
-                          **({"matched": printed(got, p.expect)} if "stdout" in got else {})}))
+                          **({"printed": _both(got), "matched": printed(got, p.expect, p.exact)}
+                             if "stdout" in got else {})}))
     return out
 
 
-def _fresh_run(ex, bash: str, c, p, tree: str, timeout: float, place: str, copying: list) -> dict:
+def _fresh_run(ex, bash: str, c, p, tree: str, timeout: float, place: str, copying: list,
+               touched: Optional[set] = None, base: Optional[tuple] = None) -> dict:
     """One check from what the system laid: the copy's container started anew — every process and file an earlier
     check left outside the copy gone with the last one (`release`) —, the pinned inputs laid afresh, as the system's,
     in a directory no earlier check could know the name of. A check runs the delivery's code, and what it left steered
@@ -151,16 +167,153 @@ def _fresh_run(ex, bash: str, c, p, tree: str, timeout: float, place: str, copyi
                 return {**got, "out": f"the check was ended: {past}"} if (past := past_disk(ex.session(own))) else got
             finally:
                 t0 = time.monotonic()
+                if touched is not None:
+                    touched.update(changed_or_unknown(tree, own, ex, base=base))
     finally:
         copying.append(time.monotonic() - t0)
 
 
-def printed(got: dict, expect: str) -> bool:
+#: Seconds one pin may run over the base before the go, and all of one authoring round's: the plan is on a person's
+#: path (a small task's whole run stated 10–27 min), and over no work a pin fails at once or is cut
+BASE_PIN_S, BASE_S = 20, 120
+
+
+def on_the_base(ex, probes, budget: float = BASE_S) -> dict:
+    """{(command, inputs): {rc, out, stdout, stderr} or {note}} — each distinct pin of `probes` [(criterion, probe)] run
+    once over a copy of the base `ex` imported (the person's committed tree, before any work), its inputs laid from the
+    contract and named `{inputs}` again in what it printed. ONE copy and one container for them all, where an exact check
+    of a delivery starts each from what the system laid (`_fresh_run`, 2.35 s a check): over no work, what one pin leaves
+    can hide a failure from a later one, never make one — the reader of these (`cannot_run`) only flags. Raises OSError
+    (or the execution's own refusal) where the base cannot be copied: then nothing ran."""
+    if not (probes and (bash := ex.shell())):
+        return {}
+    todo = {(p.command, p.inputs): replace(c, check=(p,)) for c, p in probes}
+    base, out = str(ex.base), {}
+    with ex.scratch("gfso-base-pins-", system=True) as root:
+        own = str(Path(root) / "copy")
+        with ex.system_writes(root):
+            ex.copy_tree(base, own)
+            dirs = _laid(ex, Path(root) / f"inputs-{uuid.uuid4().hex[:12]}", todo)
+        t0 = time.monotonic()
+        try:
+            for key, c in todo.items():
+                if isinstance(d := dirs[key], dict):
+                    out[key] = d
+                elif (left := budget - (time.monotonic() - t0)) < 1:
+                    out[key] = {"note": f"{NOT_RUN}the time for the plan's pins ran out"}
+                else:
+                    cmd = c.check[0].command
+                    text = swap(cmd.replace(INPUTS_TOKEN, d.as_posix()) if d else cmd, base, own)
+                    got = _run(ex, bash, text, own, min(BASE_PIN_S, left), base)
+                    if got.get("rc") == 2 and _SYNTAX.search(got.get("stderr") or ""):
+                        # …whose words: the pin's own text, or a shell the pin started (`bash -c "[[ $(…) == a ]]"`)
+                        got["bash_n"] = _parsed(ex, bash, text, own)
+                    out[key] = {k: v.replace(d.as_posix(), INPUTS_TOKEN) if d and isinstance(v, str) else v
+                                for k, v in got.items()}
+        finally:
+            ex.release(own)
+    return out
+
+
+#: the note of a pin whose OWN inputs could not be laid, laid alone — a result of the pin (`cannot_run`), not of the place
+NOT_LAID = "its inputs could not be laid"
+#: the head of a note of a pin that did not run for the round's reasons — its time, its place — retried by a later round
+NOT_RUN = "not run: "
+
+
+def ran(row: dict) -> bool:
+    """Did this row's pin run, or fail on what is its own (its inputs)? Else the place or the time stopped it: nothing
+    of the pin is known."""
+    return "rc" in row or str(row.get("note") or "").startswith(("did not finish", NOT_LAID))
+
+
+def _laid(ex, at: Path, todo: dict) -> dict:
+    """{key: its inputs' directory, None where it pins none, or {note} where they could not be laid} — every pin's in one
+    write (one call into the container: laid apart, 20 pins took 25 s, together 17 s, measured), each apart only where that
+    write failed, so one fixture that cannot be laid is said as its own and no other's. The place failing (`PlaceUnavailable`,
+    a write cut by its time) is no pin's: its rows are not run."""
+    def lay(cs, where: Path):
+        """{key: directory} of `cs`' inputs laid under `where`."""
+        got = materialize_inputs(cs, where, ex.files)
+        return {k: got.get(probe_id(c.name, c.check[0])) for k, c in todo.items() if c in cs}
+
+    def placed(e) -> dict:
+        """The row of a pin whose inputs the place, not the pin, failed to lay."""
+        return {"note": f"{NOT_RUN}the place could not lay its inputs ({e})"}
+    try:
+        return lay(list(todo.values()), at)
+    except (PlaceUnavailable, subprocess.TimeoutExpired) as e:
+        return {k: placed(e) for k in todo}
+    except (OSError, ValueError):
+        out = {}
+        for n, (k, c) in enumerate(todo.items()):
+            try:
+                out |= lay([c], Path(f"{at}-{n}"))     # …beside what the failed write left, never over it
+            except ValueError as e:                    # …a path the procedure refuses to lay: the pin's own name
+                out[k] = {"note": f"{NOT_LAID} ({e})"}
+            except (OSError, subprocess.TimeoutExpired) as e:
+                # …the pin's only where the place names its file's NAME (s16b's 300-byte fixture: tar's "File name too
+                # long"); no space, a cut exec, an absent daemon are the place's, whatever pin they met
+                out[k] = ({"note": f"{NOT_LAID} ({e})"} if not isinstance(e, PlaceUnavailable) and _NAME.search(str(e))
+                          else placed(e))
+        return out
+
+
+#: what the place says of a file NAME it cannot lay — the pin's own, where it lays that pin's inputs alone
+_NAME = re.compile(r"File name too long|ENAMETOOLONG")
+
+
+def _parsed(ex, bash: str, cmd: str, tree: str) -> Optional[int]:
+    """`bash -n`'s exit over the pin's text where it ran: 2 when bash refuses the text itself; None where it gave none.
+    extglob is on for the parse: a `shopt -s extglob` the run takes is off while bash -n reads the whole text, and a
+    sound pin using it with a nested shell over no work was refused by both halves of the rule (critic r4)."""
+    try:
+        return ex.session(tree).run([bash, "-O", "extglob", "-n", "-c", cmd], cwd=tree, timeout=10).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+#: bash's own refusal of a command's text — before any of it runs, whatever the work built
+_SYNTAX = re.compile(r"^bash: -c: line \d+: (?:syntax error|unexpected EOF)", re.M)
+#: …said in all bash's lines about the text: the error, and the line it was in
+_SAID = re.compile(r"^bash: -c: line \d+: .*$", re.M)
+#: bash's own word that a program it was told to start is not there or not runnable
+_NOT_FOUND = re.compile(r"^bash: (?:line \d+: )?(?P<program>[^:\n]+): (?:command not found|Permission denied)$", re.M)
+def cannot_run(row: dict) -> Optional[str]:
+    """The place's or bash's own message of a pin that can run on no work, as the tool itself says it — nothing read
+    into its output: its own input file the place refused to lay by its name, or its text that `bash -n` refuses
+    (`bash_n` 2) where the run ended 2 on bash's syntax line. Both, since either alone misreads: a shell the pin
+    started refuses ITS text over no work (`bash -c "[[ $(./wordtop) == a ]]"`, `bash -n` 0), and `bash -n` refuses a
+    text a run accepts (`shopt -s extglob` then `!(x)`, run 0). None for any other run: a pin is not expected to pass
+    over no work; a failed redirect, a missing program, are no such run — the pin may yet go on, or put the program
+    there (`missing_program`): three rounds of reading output flagged sound pins (critics)."""
+    note, err = str(row.get("note") or ""), (row.get("stderr") or "").replace(IN_THE_WORKS_PATH, "")
+    if note.startswith(NOT_LAID):
+        return note
+    if row.get("rc") == 2 and row.get("bash_n") == 2 and _SYNTAX.search(err):
+        return " ".join(_SAID.findall(err))[:400]
+    return None
+
+
+def missing_program(row: dict) -> Optional[str]:
+    """The program, named bare, that bash said is not there when the pin ended on it (126/127) — information for the
+    plan's reader, never a flag: over no work it may be one the work or the pin itself puts there."""
+    err = (row.get("stderr") or "").replace(IN_THE_WORKS_PATH, "")
+    if row.get("rc") in (126, 127):
+        return next((m["program"].strip() for m in _NOT_FOUND.finditer(err) if "/" not in m["program"]), None)
+    return None
+
+
+def printed(got: dict, expect: str, exact: bool = True) -> bool:
     """Does a run show `expect` as a reader of its terminal would: its standard output alone, or followed by its errors
     — a program's `Error: …` goes to stderr, and a validator's shell shows both (a false FAIL on correct work, critic
     over 38c16f9). Two separate pipes do not keep how the streams interleaved: an output that alternates them is
-    pinned with `2>&1` in its command."""
-    return shows(got["stdout"], expect) or shows(f"{got['stdout']}\n{got['stderr']}", expect)
+    pinned with `2>&1` in its command. `exact`: the whole of it (`shows`); else a part of it (`contains`)."""
+    return any((shows if exact else contains)(o, expect) for o in (got["stdout"], _both(got)))
+
+
+def _both(got: dict) -> str:
+    return f"{got['stdout']}\n{got['stderr']}"
 
 
 def _run(ex, bash: str, cmd: str, tree: str, timeout: float, place: str) -> dict:

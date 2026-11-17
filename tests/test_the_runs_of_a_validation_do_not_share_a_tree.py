@@ -100,18 +100,18 @@ class _Run:
             self.calls[-1]["stage"] = stage
 
 
-def _task(e, n: int):
+def _task(e, n: int, cmd: str = "rm -f app; echo ok"):
     T.create_task(e, "big", {"description": "criteria, one run each", "criteria": [
-        criterion(c, check=[{"behaviour": f"b{c}", "command": "make clean; ./app", "expect": "ok"}])
+        criterion(c, check=[{"behaviour": f"b{c}", "command": cmd, "expect": "ok"}])
         for c in ("one", "two")[:n]]}, "alice")
     T.signal(e, "big", "ACCEPT", "alice")
     T.signal(e, "big", "DELIVER", "alice", result="built it")
 
 
-def _validate(monkeypatch, at, n: int = 2, **run):
+def _validate(monkeypatch, at, n: int = 2, cmd: str = "rm -f app; echo ok", **run):
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "1" if n > 1 else "0")
     e = _eng()
-    _task(e, n)
+    _task(e, n, cmd)
     meet, seen = threading.Barrier(n), []
     out = TL.validate_result(e, "big", workdir=str(at), _llm=_Run(meet, seen, **run),
                              _spawn=lambda: _Run(meet, seen, **run))
@@ -221,17 +221,19 @@ def test_the_copy_is_made_and_removed_where_the_work_runs(monkeypatch, place):
             self.ops = []
 
         def copy_tree(self, src, dst):
-            self.ops.append("copy")
+            self.ops.append(("copy", dst))
             super().copy_tree(src, dst)
 
         def remove_tree(self, path):
-            self.ops.append("remove")
+            self.ops.append(("remove", path))
             super().remove_tree(path)
     ex = _Seen()
     monkeypatch.setattr(TL, "execution_of", lambda *_: ex)
     _, at = place
     e, out, _ = _validate(monkeypatch, at)
-    assert out["verdict"] == "PASS" and sorted(ex.ops) == ["copy"] * 2 + ["remove"] * 6, ex.ops   # …each copy, its place's index, each scratch's laid beside
+    judged = next(k for k, (_, at_) in enumerate(ex.ops) if "batch" in at_)     # …the judges', past the system's own checks
+    ops = sorted(op for op, _ in ex.ops[judged:])
+    assert out["verdict"] == "PASS" and ops == ["copy"] * 2 + ["remove"] * 6, ex.ops   # …each copy, its place's index, each scratch's laid beside
     e.stop()
 
 
@@ -241,6 +243,8 @@ def test_a_committed_file_a_run_changed_is_said_and_the_delivery_is_untouched(mo
     _, at = place
     e, out, _ = _validate(monkeypatch, at, edit=True)
     assert out["validator_edits"] == ["app", "main.c"]          # …the clean's deletion and the edit, not .gitignore
+    # …and its criteria stand: the system's own run of their pinned checks on the delivery decides them
+    assert out["verdict"] == "PASS", out
     assert (at / "main.c").read_text() == "int main(void) { return 0; }\n"
     e.stop()
 
@@ -279,15 +283,15 @@ def test_a_link_made_in_a_container_survives_its_copy_there(tmp_path):
     (base / "a.sh").write_text("echo hi\n", newline="\n")
     for args in (("init", "-q"), ("config", "core.symlinks", "false"), ("add", "-A"), ("commit", "-q", "-m", "s")):
         _git(base, *args)
-    place = root / ".gfso-nodes-base" / "proj" / "root"
     ex = ContainerExecution("snap", _image(), str(root / "env"), str(root / "state"), str(base), "proj")
+    place = ex.own / "root"                                    # the project's own directory, under the installation's places
     W.ensure(base, place, "gfso/proj/root", base, execution=ex)
     sh = lambda cmd, cwd: ex.run(["sh", "-c", cmd], cwd=str(cwd), timeout=60)
     try:
         sh("ln -s a.sh run.sh && echo built > out.bin", place)
-        W.commit_all(base, place, "delivery", "agent", ex)
+        W.commit_all(base, place, "delivery", "user", ex)
         head = sh("git rev-parse HEAD", place).stdout.strip()
-        at = root / ".gfso-nodes-base" / "proj" / ".gfso-scratch-root" / "r" / "batch1" / "delivery"
+        at = ex.own / ".gfso-scratch-root" / "r" / "batch1" / "delivery"
         ex.files.mkdir(str(at.parent.parent))
         ex.files.mkdir(str(at.parent))
         edits: list = []
@@ -297,7 +301,7 @@ def test_a_link_made_in_a_container_survives_its_copy_there(tmp_path):
             sh("rm out.bin && echo bye >> a.sh && touch run.sh && git commit -qam v && "
                "mkdir -p ro && touch ro/f && chmod a-w ro ro/f", c)
         assert edits == ["a.sh", "out.bin"] and not ex.files.exists(str(at))
-        assert not (root / ".gfso-nodes-base").exists(), "the place, its copy and its removal: all in the volume"
+        assert not ex.own.exists(), "the place, its copy and its removal: all in the volume"
         assert sh("git rev-parse HEAD", place).stdout.strip() == head                 # …the delivery's branch stays
         assert sh("test -L run.sh && echo LINK", place).stdout.strip() == "LINK"
         assert _git(base, "worktree", "list", "--porcelain").count("worktree ") == 1
@@ -433,7 +437,7 @@ def test_a_run_in_the_place_never_stands_beside_a_copy_being_taken(monkeypatch, 
     _, at = place
     ex = _Copies([], fail=(1,))
     e, out = _timed(monkeypatch, at, ex)
-    (copy,) = [x for x in ex.log if x[0] == "copy"]
+    (copy,) = [x for x in ex.log if x[0] == "copy" and "batch" in x[1]]   # …a judge's, not the system's own check
     (alone,) = [x for x in ex.log if x[0] == "run" and x[1] == str(at)]
     assert not _overlap(copy, alone), ex.log
     assert out["verdict"] == "PASS"
@@ -454,7 +458,7 @@ def test_the_runs_cap_is_read_once_its_copy_stands(monkeypatch, place):
                         lambda t, g: order.setdefault(threading.get_ident(), []).append("cap") or real(t, g))
     monkeypatch.setattr(TL, "execution_of", lambda *_: _Ex())
     e, out, _ = _validate(monkeypatch, at)
-    runs = [o for o in order.values() if "copy" in o]
+    runs = [o for o in order.values() if "cap" in o]       # …the judges', not the system's own checks
     assert len(runs) == 2 and all(o[:2] == ["copy", "cap"] for o in runs), order
     e.stop()
 
@@ -468,4 +472,23 @@ def test_an_unreadable_comparison_costs_no_finished_report(monkeypatch, place):
     monkeypatch.setattr(S, "changed", _boom)
     e, out, _ = _validate(monkeypatch, at, edit=True)
     assert out["verdict"] == "PASS" and "validator_edits" not in out
+    e.stop()
+
+
+def test_an_edit_in_the_copy_leaves_no_pass_the_systems_run_does_not_decide(monkeypatch, place):
+    """A pin that prints nothing decides nothing by a substring, so its criterion rests on the judge's word — and a judge
+    that changed a delivered file no pinned check changes observed a tree nobody delivered: ⊥ there, the instrument's
+    defect, not a FAIL. CONTROL: `_judged_elsewhere` returning [] — this goes red."""
+    _, at = place
+    e, out, _ = _validate(monkeypatch, at, cmd="rm -f app; true", edit=True)
+    assert out["verdict"] is None and "main.c" in out["verdict_defects"], out
+    assert "instrument's defect" in out["verdict_defects"] and "app," not in out["verdict_defects"], out
+    e.stop()
+
+
+def test_without_an_edit_a_pin_that_prints_nothing_stays_the_judges_word(monkeypatch, place):
+    """Correct work whose pinned check prints nothing is not ⊥ on every validation (an AUTO stall, each retry paid)."""
+    _, at = place
+    e, out, _ = _validate(monkeypatch, at, cmd="rm -f app; true")
+    assert out["verdict"] == "PASS", out
     e.stop()

@@ -46,7 +46,7 @@ def test_each_check_is_seen_as_it_prints_on_the_place(tmp_path):
     assert not (place / "made.txt").exists(), "the checks run in a copy: the session starts on the place as it was"
     text = _executor_packet(e, t, str(place), seen={"root": seen})
     assert "Your place as the system found it" in text and "not a verdict" in text and "no build step" in text
-    assert "`cat done.txt` → printed exactly what it must show" in text
+    assert "`cat done.txt` → printed what it must show" in text
     assert "`./tool` → exit" in text and "standing findings" in text, "the text says what it does not cover"
 
 
@@ -67,7 +67,7 @@ def test_a_place_holding_nothing_runs_no_check(tmp_path, monkeypatch):
 
 def test_a_place_with_nothing_built_reads_as_one_line(tmp_path):
     (tmp_path / "notes.txt").write_text("a place with no program in it")
-    e, t = _node(*({"behaviour": f"b{i}", "command": "./sql_database < q.sql", "expect": str(i)} for i in range(5)))
+    e, t = _node(*({"behaviour": f"b{i}", "command": "./sql_database < q.sql", "expect": f"value {i}"} for i in range(5)))
     seen = observe_place(e, [t], str(tmp_path))
     text = _executor_packet(e, t, str(tmp_path), seen=seen)
     assert "none of the 5 checks shows what it must" in text and text.count("./sql_database") <= 5 + 1
@@ -84,7 +84,7 @@ def test_a_check_past_its_time_is_named_and_the_rest_of_the_time_is_bounded(tmp_
 def test_a_project_that_says_no_observes_nothing_and_no_place_nothing(tmp_path):
     e, t = _node({"behaviour": "b", "command": "cat note.txt", "expect": "hi"})
     assert observe_place(e, [t], None) == {}
-    e.set_mode(Mode.SOLO, None, AgentId("agent"), settings={"observe": "0"})
+    e.set_mode(Mode.SOLO, None, AgentId("user"), settings={"observe": "0"})
     assert observe_place(e, [t], str(tmp_path)) == {}
     assert "Your place as the system found it" not in _executor_packet(e, t, str(tmp_path), seen={})
 

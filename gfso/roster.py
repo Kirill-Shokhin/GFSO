@@ -10,36 +10,20 @@ import sys
 import threading
 import time
 from pathlib import Path
-from gfso.config import MODEL_DEFAULT, agents_path, executions, project_made
+from gfso.config import MODEL_DEFAULT, agents_path, executions, project_made, write_atomic
 from gfso.places import cheap_to_ask, disk_place, same_place, text_place
 
 
 def _put_atomically(path: Path, text: str) -> None:
-    """Write beside, then move over — never truncate-then-fill in place.
-
-    Readers of the roster hold no lock (the `.lock` orders writers only), and a plain `write_text`
-    leaves the file EMPTY for as long as the write takes: 31% of concurrent reads saw a partial file
-    in a four-second write loop. In-process that costs a stale snapshot; a process killed mid-write
-    — and the shutdown path is `os._exit` a third of a second after the request — leaves the roster
-    truncated FOR GOOD, and every later load then reports "delegation is OFF" while every node
-    answers "Del is not a registered executor". `os.replace` is atomic on both platforms.
-
-    On Windows the move itself can be refused while a reader holds the destination open, so it is
-    retried briefly and then REFUSED OUT LOUD: trading a silent corruption for a silent failure to
-    register would be no repair. Nothing is written on that path and the old file stands.
-    """
-    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    for _ in range(25):
-        try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            time.sleep(0.02)
-    tmp.unlink(missing_ok=True)
-    raise OSError(f"could not put the roster in place: {path} stayed open for half a second of "
-                  f"retries. Nothing was written and nothing was damaged; the registration did not "
-                  f"happen and can be repeated.")
+    """The roster written whole (`write_atomic`): its readers hold no lock, and a plain `write_text` left it EMPTY for
+    as long as the write took — 31% of concurrent reads saw a partial file, and a process killed mid-write left it
+    truncated for good ("delegation is OFF" at every later load). A move the OS kept refusing is REFUSED OUT LOUD:
+    trading a silent corruption for a silent failure to register would be no repair."""
+    try:
+        write_atomic(path, text)
+    except PermissionError:
+        raise OSError(f"could not put the roster in place: {path} stayed open through the retries. Nothing was "
+                      f"written and nothing was damaged; the registration did not happen and can be repeated.")
 
 
 def _resolution_note(workdir: str) -> str:
@@ -112,8 +96,9 @@ class AgentRegistry:
     def _load_locked(self) -> bool:
         try:
             mtime = self._path.stat().st_mtime
-        except OSError:
-            return True                # no roster yet is the normal first-run state
+        except OSError:                # no roster yet is the normal first-run state — and one removed is an empty one
+            self._agents, self._mtime = {}, None
+            return True
         if self._mtime == mtime:
             return True
         # a FEW tries: the replace window is milliseconds, and the lock is held — a roster another program keeps locked
@@ -124,7 +109,8 @@ class AgentRegistry:
                 self._mtime = mtime
                 return True
             except FileNotFoundError:
-                return True           # no roster yet is the normal first-run state
+                self._agents, self._mtime = {}, None      # gone between the look and the read: empty, as above
+                return True
             except PermissionError:
                 time.sleep(0.02)      # Windows: the file is being replaced this instant (`_put`) — transient
             except Exception as ex:

@@ -29,6 +29,9 @@ import urllib.request
 from urllib.parse import quote
 
 from gfso.runtime import build_engine_from_env
+from gfso.config import CALLER, WRITTEN_IN_THE_CALL
+from gfso import signin
+from gfso.doctor import BY_HAND
 from gfso import tools as _T     # the verb surface
 from gfso.serverctl import UI_LINK_VERBS, ui_link
 from gfso.adapters.netrecord import said_apart
@@ -257,6 +260,7 @@ def _print_listing() -> None:
     rule for a server holding more than one graph is to pass it explicitly (measured on the human
     door 2026-09-01)."""
     print("gfso run — headless graph commands (the SAME surface as the MCP tools).")
+    print(BY_HAND)
     print("`gfso run <command> --help` prints what it DOES and the shape of every argument —")
     print("the names below are not the shapes: a nested one wants an object, not a word.")
     print("`project=<name>` rides on EVERY command and names the graph it runs against; without "
@@ -271,13 +275,11 @@ def _print_verb_help(name: str, fn) -> None:
     print(f"gfso run {name} " + " ".join(f"<{p}>" for p in _params(fn)) + " [project=<name>]\n")
     print(textwrap.dedent(fn.__doc__ or "(no description)").strip())
     if (who := [p for p in _params(fn) if p in _WHO_PARAMS]):
-        me = agent_id()
-        print(f"\nYOUR ID AT THIS DOOR IS `{me}`. That is the literal name the engine knows this "
-              f"terminal by, and\nthe name `auto_decompose` writes into every node it builds for "
-              f"you — so a node reported as\n`\"mine\": true` has Del=`{me}`, and `{who[0]}={me}` "
-              f"is what this verb wants for such a node.\nNaming yourself something else is real, "
-              f"and it is for a node you actually gave to that name\n(`create_task "
-              f"assignee=<name>`, `reassign`): the FSM checks the node's Del, not who typed.")
+        me = signin.local_principal().name
+        print(f"\nYOUR ID AT THIS DOOR IS `{me}`: your token's name (`GFSO_TOKEN`, from `gfso agent <name>`), "
+              f"else the\nstanding agent — the name `auto_decompose` writes into every node it builds for "
+              f"you, so a node\nreported as `\"mine\": true` has Del=`{me}`. A move is signed by that name; "
+              f"a signer argument\nnaming another is refused — a name is signed by its credential, never typed.")
     if name in _HELP_EXAMPLES:
         print("\n" + _HELP_EXAMPLES[name])
 
@@ -379,7 +381,16 @@ def status(argv: list[str]) -> int:
     # …what the system's own records say of this project: a person at the CLI was told COMPLETE and no word of it (critic)
     for line in said_apart(project or project_by_env() or DEFAULT_PROJECT):
         print(f"the records say: {line}")
+    print(page_line())
     return 0
+
+
+def page_line() -> str:
+    """How a page on this machine is the person: the live server's word, else what the installation declares."""
+    return ("page_auth key: the page signs in with `gfso ui` (`gfso up --no-protected` drops that)"
+            if serverctl.page_auth_in_force() == "key" else
+            "page_auth local-peer: the page is yours with no sign-in, from any process of your OS user "
+            "(`gfso up --protected` asks one)")
 
 
 def _frontier_line(nxt: dict) -> str:
@@ -432,7 +443,13 @@ def _locally(fn, project: str | None, pos: list, kw: dict):
     if project:
         select_project(project)
     engine = build_engine_from_env()
-    out = fn(engine, *pos, **kw)
+    # …signed as the server would sign it: by this console's token (`GFSO_TOKEN`), else as the standing agent
+    token, caller = WRITTEN_IN_THE_CALL.set(True), CALLER.set(signin.local_principal())
+    try:
+        out = fn(engine, *pos, **kw)
+    finally:
+        WRITTEN_IN_THE_CALL.reset(token)
+        CALLER.reset(caller)
     engine.wait_idle()
     return out
 
@@ -605,7 +622,7 @@ def _through_server(name, fn, pos: list, kw: dict, project: str | None):
     body.update(kw)
     url = f"{serverctl.BASE}/api/run/{name}" + (f"?project={quote(project)}" if project else "")
     req = urllib.request.Request(url, data=json.dumps(body, default=str).encode(),
-                                 headers={"Content-Type": "application/json"}, method="POST")
+                                 headers={"Content-Type": "application/json", **signin.credential_header()}, method="POST")
     stop, narrator = threading.Event(), None
     if name in _LONG_VERBS and narrate():
         narrator = threading.Thread(target=_narrate, args=(project, stop), daemon=True)

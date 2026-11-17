@@ -36,17 +36,17 @@ def _graph():
     e.start()
     T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
                               "criteria": [criterion("g", "G holds")]},
-                  assignee="agent")
+                  assignee="user")
     T.decompose(e, "root", [{"task_id": "A", "spec": {"description": "producer",
-                           "criteria": [criterion("a", "A holds")]}, "assignee": "agent", "covers": ["g"]},
+                           "criteria": [criterion("a", "A holds")]}, "assignee": "user", "covers": ["g"]},
         {"task_id": "B", "spec": {"description": "consumer",
-                           "criteria": [criterion("b", "B holds")]}, "assignee": "agent", "covers": ["g"]}], accepted_risks=REGISTER)
+                           "criteria": [criterion("b", "B holds")]}, "assignee": "user", "covers": ["g"]}], accepted_risks=REGISTER)
     return e
 
 
 def _delivered(e, node="B"):
-    T.signal(e, node, "ACCEPT", "agent")
-    T.signal(e, node, "DELIVER", "agent", result="something")
+    T.signal(e, node, "ACCEPT", "user")
+    T.signal(e, node, "DELIVER", "user", result="something")
 
 
 def test_a_node_left_holding_only_glue_cannot_be_passed():

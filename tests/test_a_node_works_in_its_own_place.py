@@ -19,14 +19,15 @@ from pathlib import Path
 
 import pytest
 
-from gfso import delegate, tools as T
+from gfso import delegate, tools as T, tools_llm as TL
 from gfso.adapters import worktrees as W
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.procedure import probe_id
-from gfso.core.types import PlaceUnavailable, State, TaskId
+from gfso.core.types import PlaceUnavailable, State, TaskId, nodes_root
 from gfso.delegate import Dispatcher, _auto_validate
+from gfso.engine.joins import NOT_ON_ITS_BRANCH, Joins
 from gfso.sessions import run_consent, run_executor
-from gfso.workspaces import _ensure_place, _workspace, node_workspace
+from gfso.workspaces import _ensure_place, _name_the_delivery, _workspace, delivered_ref, land_accepted, left_to_merge, node_workspace
 from gfso.roster import AgentRegistry
 from tests import test_one_session_carries_a_scope as S
 from tests.support import criterion, instrument_passes, make_engine, REGISTER
@@ -151,7 +152,8 @@ def test_two_parts_run_at_once_each_in_its_own_tree(tmp_path):
     meet = threading.Barrier(2)
     sessions = {"a": _Executor("a", {"a.c": "A\n"}, meet), "b": _Executor("b", {"b.c": "B\n"}, meet)}
     _run(e, agents, sessions, _in(e, "a", "b"))
-    places = tmp_path / ".gfso-nodes-ws" / "p"
+    places = nodes_root(base) / "p"
+    assert not (base.parent / ".gfso-nodes-ws").exists(), "nothing beside the user's repository"
     assert sessions["a"].cwd == str(places / "a") and sessions["b"].cwd == str(places / "b")
     assert "a.c" in sessions["a"].saw and "a.c" not in sessions["b"].saw, "a sibling's edit is not in my tree"
     assert "b.c" in sessions["b"].saw and "b.c" not in sessions["a"].saw
@@ -171,21 +173,40 @@ def test_a_nodes_validator_reads_that_nodes_own_tree(tmp_path):
     assert node_workspace(e, agents, "a") == sessions["a"].cwd
 
 
-def test_a_part_that_passed_joins_where_its_whole_works(tmp_path):
+def _as_it_stands(base: Path) -> dict:
+    """The user's repository as they hold it, read without git (a read of git's may refresh the index): the branch
+    checked out, its commit, the index's bytes and every file of the working tree."""
+    head = (base / ".git" / "HEAD").read_text()
+    branch = head.split("refs/heads/", 1)[1].strip()
+    return {"HEAD": head, "commit": (base / ".git" / "refs" / "heads" / branch).read_text(),
+            "index": (base / ".git" / "index").read_bytes(),
+            "tree": {str(p.relative_to(base)): p.read_bytes() for p in base.rglob("*")
+                     if p.is_file() and ".git" not in p.relative_to(base).parts}}
+
+
+def test_a_hosts_root_lands_as_its_accepted_branch_and_leaves_the_users_tree_as_it_was(tmp_path):
+    """An executor with no execution works on this host, and the base is the user's own repository: every node's work,
+    the root's too, stands in a place of the system's, and the root's PASS lands its accepted commit as the branch
+    `gfso/<project>/accepted` — their checked-out branch, its index and its tree as they were (the promise of
+    ORCHESTRATOR.md "Where it runs"; the root's merge into their branch held it by a line asking for `git switch`)."""
     e, agents, base = _plan(tmp_path, whole="exec-1")
+    before = _as_it_stands(base)
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}),
                 "par": _Executor("par", {"par.c": "the whole\n"})}
     _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)))
-    places = tmp_path / ".gfso-nodes-ws" / "p"
+    places = nodes_root(base) / "p"
     assert sessions["par"].cwd == str(places / "par")
     assert {"a.c", "b.c"} <= sessions["par"].saw, "the whole's session sees its parts, joined"
-    # the whole PASSed too, and joined the base, where every part now stands — and the joined places are gone
-    _until(lambda: (base / "par.c").exists() and not places.joinpath("par").exists())
-    assert all((base / f).exists() for f in ("a.c", "b.c", "par.c"))
-    assert {"gfso: a joins par", "gfso: b joins par", "gfso: par joins the base"} <= set(
-        _git(base, "log", "--format=%s").splitlines())
-    _until(lambda: _git(base, "branch", "--list", "gfso/*") == "")
+    _until(lambda: e.next_steps()["complete"] is True and not places.joinpath("par").exists())
+    assert _as_it_stands(base) == before, "the user's branch, index or tree was written"
+    tree, _ = e.accepted_delivery(TaskId("par"))
+    assert _git(base, "rev-parse", "gfso/p/accepted^{tree}") == tree
+    assert {_git(base, "show", f"gfso/p/accepted:{f}") for f in ("a.c", "b.c", "par.c")} == {"A", "B", "the whole"}
+    assert {"gfso: a joins par", "gfso: b joins par"} <= set(_git(base, "log", "--format=%s", "gfso/p/accepted").splitlines())
+    # …and the joined places go, their branches with them: what they held is on the accepted branch
+    _until(lambda: _git(base, "branch", "--list", "gfso/*") == "gfso/p/accepted")
     assert not any(places.joinpath(t).exists() for t in ("a", "b", "par"))
+    e.stop()
 
 
 class _Merger(_Executor):
@@ -290,14 +311,14 @@ def test_a_whole_that_does_not_merge_a_conflicting_part_is_not_delivered(tmp_pat
 
 def test_a_whole_that_merges_its_conflicting_part_is_delivered_with_both(tmp_path):
     """The control: the same plan, the whole's session merging what its packet names — DONE, and both parts' work
-    reach the base."""
+    reach the accepted branch."""
     e, agents, base, said, sessions = _conflicting(tmp_path, _Merger("par", {}))
     _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)))
-    _until(lambda: e.joins.joining_nodes() == [])
+    _until(lambda: e.next_steps()["complete"] is True)
     assert "Parts NOT joined into your workspace" in sessions["par"].packet
     assert not any("delivery held" in m for m in said)
     named = [b for b in ("gfso/p/a", "gfso/p/b") if f"on branch `{b}`" in sessions["par"].packet]
-    assert (base / "shared.c").read_text() == ("A\n" if named == ["gfso/p/a"] else "B\n")
+    assert _git(base, "show", "gfso/p/accepted:shared.c") == ("A" if named == ["gfso/p/a"] else "B")
     e.stop()
 
 
@@ -313,7 +334,7 @@ def test_a_directory_that_is_not_a_repository_is_shared_as_before(tmp_path):
     assert sessions["a"].cwd == sessions["b"].cwd == str(base) == where["a"] == where["b"]
     assert {"a.c", "b.c"} <= sessions["a"].saw
     assert sum("is not the top of a git repository" in m for m in said) == 1
-    assert not [p for p in (tmp_path / ".gfso-nodes-ws").glob("*/*") if not p.name.startswith(".gfso-scratch-")],         "no node's place: only the base's validation rounds, among its project's"
+    assert not [p for p in nodes_root(base).glob("*/*") if not p.name.startswith(".gfso-scratch-")],         "no node's place: only the base's validation rounds, among its project's"
 
 
 def test_a_scopes_session_and_its_validation_share_the_scopes_one_tree(tmp_path):
@@ -334,14 +355,14 @@ def test_a_scopes_session_and_its_validation_share_the_scopes_one_tree(tmp_path)
 
     executor, validator = _Session(S._delivered("root.a", "root.b", "root")), _Check(e)
     S._drive(e, S._dispatcher(e, agents, executor, validator, []), lambda: e.graph.get_state(TaskId("root")) == State.DONE)
-    place = tmp_path.parent / f".gfso-nodes-{tmp_path.name}" / "p" / "root"
+    place = nodes_root(tmp_path) / "p" / "root"
     assert where["session"] == str(place)
     assert where["validation"].endswith("delivery") and ".gfso-scratch-root" in where["validation"], where
     # one tree, a commit per node's delivery in build order; its parts join nothing (their whole works there), and
-    # the top, at its PASS, joins the base
-    _until(lambda: (tmp_path / "scope.c").exists() and not place.exists() and e.joins.joining_nodes() == [])
-    assert _git(tmp_path, "log", "-1", "--format=%s").splitlines() == ["gfso: root joins the base"]
-    assert _git(tmp_path, "log", "--format=%s", "-4", "HEAD^2").splitlines() == [
+    # the top, at its PASS, lands as the accepted branch, the user's own untouched
+    _until(lambda: not place.exists() and e.next_steps()["complete"] is True)
+    assert not (tmp_path / "scope.c").exists()
+    assert _git(tmp_path, "log", "--format=%s", "-4", "gfso/p/accepted").splitlines() == [
         "gfso: root delivery", "gfso: root.b delivery", "gfso: root.a delivery", "starter"]
 
 
@@ -362,14 +383,9 @@ def test_a_delivery_commits_no_cache_a_sibling_would_collide_on(tmp_path):
 def test_a_whole_is_not_validated_over_parts_still_joining(tmp_path, monkeypatch):
     """A part's join runs off the signal path; until it lands, its whole is not validated over a place without it, and
     the root's DONE is not `complete` until the base holds the root's result (critic r2, 2026-10-04)."""
-    gate, seen = threading.Event(), {}
-    real = W.merge
-
-    def held(base, into, branch, message, **_):
-        gate.wait(20)
-        return real(base, into, branch, message)
-    monkeypatch.setattr(W, "merge", held)
-    e, agents, base = _plan(tmp_path)                  # the whole is a person's: validated where the parts join
+    gate, real = threading.Event(), delegate.join_whole
+    monkeypatch.setattr(delegate, "join_whole", lambda *a: (gate.wait(20), real(*a))[1])
+    e, agents, base = _plan(tmp_path)                  # the whole is a person's
     T.signal(e, "par", "ACCEPT", "kirill")
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"})}
     d = _run(e, agents, sessions, _in(e, "a", "b"))
@@ -381,7 +397,7 @@ def test_a_whole_is_not_validated_over_parts_still_joining(tmp_path, monkeypatch
     _until(lambda: set(e.joins.joining_nodes()) == {"a", "b"})
     assert not d._children_settled(TaskId("par")), "a whole is not validated over parts still joining"
     gate.set()
-    _until(lambda: e.joins.joining_nodes() == [] and (base / "a.c").exists() and (base / "b.c").exists())
+    _until(lambda: e.joins.joining_nodes() == [])
     assert d._children_settled(TaskId("par"))
     e.stop()
 
@@ -407,13 +423,20 @@ def test_the_root_is_not_complete_while_its_result_is_joining_the_base():
     e.stop()
 
 
+def _accepted_checked_out(tmp_path, base) -> Path:
+    """The user works on `gfso/p/accepted` in a worktree of theirs: the system lands only on a branch nobody works on."""
+    _git(base, "branch", "gfso/p/accepted")
+    _git(base, "worktree", "add", "-q", str(wt := tmp_path / "users-wt"), "gfso/p/accepted")
+    return wt
+
+
 def test_a_root_whose_result_did_not_land_is_not_complete_until_it_does(tmp_path, monkeypatch):
-    """A refused merge is not a landed one: an untracked file in the base that the root's delivery would overwrite
-    aborts the join, and `complete` waits — named with the branch that holds the result, stuck, retried — until the
-    base takes it (critic r3, 2026-10-04: the refused join read as complete)."""
+    """A refused landing is not a landed one: the accepted branch checked out in a worktree of the user's refuses it,
+    and `complete` waits — named with the branch that holds the result, stuck, retried — until it lands (critic r3,
+    2026-10-04: the refused join read as complete)."""
     monkeypatch.setattr(delegate, "JOIN_RETRY_S", 0)    # the backoff has its own test
     e, agents, base = _plan(tmp_path, whole="exec-1")
-    (base / "par.c").write_text("a stray file nobody committed\n")
+    wt = _accepted_checked_out(tmp_path, base)
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}),
                 "par": _Executor("par", {"par.c": "the whole\n"})}
     d = _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)))
@@ -421,19 +444,20 @@ def test_a_root_whose_result_did_not_land_is_not_complete_until_it_does(tmp_path
     out = e.next_steps()
     assert out["complete"] is False and out["stuck"] is True and "did not land" in out["directive"], out
     assert "gfso/p/par" in out["directive"], "the branch that holds the result is named (critic r4)"
-    gate, real = threading.Event(), W.merge
-    monkeypatch.setattr(W, "merge", lambda *a, **k: (gate.wait(20), real(*a, **k))[1])
+    gate, real = threading.Event(), W.land
+    monkeypatch.setattr(W, "land", lambda *a, **k: (gate.wait(20), real(*a, **k))[1])
     d.dispatch_once()                                   # WHILE a retry runs, the refusal still stands (critic r4)
     _until(lambda: "par" in e.joins.joining_nodes())
     assert e.next_steps()["stuck"] is True, "a retry erased the refusal: the root read 'being joined'"
     gate.set()
     _until(lambda: not e.joins.joining_nodes())
-    monkeypatch.setattr(W, "merge", real)
+    monkeypatch.setattr(W, "land", real)
     assert e.next_steps()["stuck"] is True
-    (base / "par.c").unlink()                           # the base is cleared, by whoever holds it
+    _git(base, "worktree", "remove", str(wt))           # the branch is freed, by whoever holds it
     d.dispatch_once()
     _until(lambda: not e.joins.unjoined_roots() and not e.joins.joining_nodes())
-    assert (base / "par.c").read_text() == "the whole\n" and e.next_steps()["complete"] is True
+    assert _git(base, "show", "gfso/p/accepted:par.c") == "the whole" and e.next_steps()["complete"] is True
+    assert not (base / "par.c").exists()
 
 
 def test_a_held_whole_is_not_told_to_aggregate_over_parts_still_joining(tmp_path, monkeypatch):
@@ -460,17 +484,17 @@ def test_a_held_whole_is_not_told_to_aggregate_over_parts_still_joining(tmp_path
 
 
 def test_a_refused_root_join_is_retried_less_often_each_time(tmp_path, monkeypatch):
-    """Every try is a merge and an abort on the user's own base, and a refusal waits on a person: the retry backs off
+    """Every try is a landing in the user's own repository, and a refusal waits on a person: the retry backs off
     instead of spinning with the dispatch loop (critic r4, 2026-10-04: about four tries a second)."""
     e, agents, base = _plan(tmp_path, whole="exec-1")
-    (base / "par.c").write_text("a stray file nobody committed\n")
+    _accepted_checked_out(tmp_path, base)
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}),
                 "par": _Executor("par", {"par.c": "the whole\n"})}
     d = _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)))
     _until(lambda: "par" in e.joins.unjoined_roots() and not e.joins.joining_nodes())
     tries = []
-    real = W.merge
-    monkeypatch.setattr(W, "merge", lambda *a, **k: (tries.append(a[2]), real(*a, **k))[1])
+    real = W.land
+    monkeypatch.setattr(W, "land", lambda *a, **k: (tries.append(a[1]), real(*a, **k))[1])
     for _ in range(20):
         d.dispatch_once()
         time.sleep(0.01)
@@ -505,12 +529,13 @@ def test_a_root_is_complete_only_on_the_word_that_its_result_landed():
     e.stop()
 
 
-def test_a_held_whole_is_told_which_parts_did_not_merge_and_on_what_branch(tmp_path):
-    """A part whose merge was refused ends its join on its own branch; the whole's AGGREGATE step names it, since
-    integrating it is the whole's work (§8.7) — told only "all children passed", a holder aggregates without it
-    (critic r4, 2026-10-04)."""
+def test_a_held_whole_is_told_which_parts_to_merge_and_on_what_branch(tmp_path):
+    """A whole its holder performs in their own tree on this host has no place of the system's, and the system merges
+    nothing into the user's repository: each passed part ends its join on its own branch, and the whole's AGGREGATE step
+    names it with the commit to merge, since integrating it is the whole's work (§8.7) — told only "all children
+    passed", a holder aggregates without it (critic r4, 2026-10-04)."""
     e, agents, base = _plan(tmp_path)
-    (base / "a.c").write_text("a stray file nobody committed\n")
+    before = _as_it_stands(base)
     T.signal(e, "par", "ACCEPT", "kirill")
     _run(e, agents, {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"})}, _in(e, "a", "b"))
     for t in ("a", "b"):
@@ -518,9 +543,278 @@ def test_a_held_whole_is_told_which_parts_did_not_merge_and_on_what_branch(tmp_p
             instrument_passes(e, t, "validator")
             T.signal(e, t, "PASS", "kirill")
     e.wait_idle()
-    _until(lambda: not e.joins.joining_nodes() and (base / "b.c").exists())
-    step = e.next_step(TaskId("par")).get("directive", "")
-    assert "AGGREGATE" in step and "gfso/p/a" in step and "gfso/p/b" not in step, step
+    _until(lambda: not e.joins.joining_nodes() and "AGGREGATE" in e.next_step(TaskId("par")).get("directive", ""))
+    step = e.next_step(TaskId("par"))["directive"]
+    assert all(f"on `gfso/p/{t}`" in step and f"`git merge {_git(base, 'rev-parse', f'gfso/p/{t}')}`" in step
+               for t in ("a", "b")), step
+    assert _as_it_stands(base) == before, "the user's branch, index or tree was written"
+    e.stop()
+
+
+def test_a_held_whole_is_told_its_parts_to_merge_by_a_process_started_after_they_passed(tmp_path):
+    """What a held whole still has to merge is read from the record and git, not kept in memory: a server restarted
+    after its parts passed told it to aggregate with no part named (critic). A part its holder merged is named no more."""
+    e, agents, base = _plan(tmp_path)
+    T.signal(e, "par", "ACCEPT", "kirill")
+    _run(e, agents, {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"})}, _in(e, "a", "b"))
+    for t in ("a", "b"):
+        if e.graph.get_state(TaskId(t)) == State.VALIDATING:
+            instrument_passes(e, t, "validator")
+            T.signal(e, t, "PASS", "kirill")
+    e.wait_idle()
+    _until(lambda: not e.joins.joining_nodes() and e.graph.get_state(TaskId("b")) == State.DONE)
+    e.joins = Joins(e.graph)                            # …the process that passed them is gone
+    Dispatcher(e, agents, runner=lambda *a: None)
+    step = e.next_step(TaskId("par"))["directive"]
+    assert "AGGREGATE" in step and all(f"on `gfso/p/{t}`" in step for t in ("a", "b")), step
+    _git(base, "merge", "-q", "--no-edit", "gfso/p/a")  # …the holder's own move, in their own tree
+    step = e.next_step(TaskId("par"))["directive"]
+    assert "gfso/p/a" not in step and "on `gfso/p/b`" in step, step
+    e.stop()
+
+
+def test_a_part_whose_whole_works_over_another_repository_is_named_with_where_its_commit_is(tmp_path):
+    """Its accepted commit is in its own base alone: `git merge <sha>` where the whole works names an object that
+    repository does not have, so the base and the branch to fetch are named (critic)."""
+    e, agents, base = _plan(tmp_path, whole="exec-1")
+    other = _repo(tmp_path / "other")
+    agents.register("exec-1", "llm-executor", workdir=str(other), project="p")
+    sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}), "par": _Executor("par", {})}
+    _run(e, agents, sessions, _in(e, "a", "b", states=(State.DONE,)))
+    named = dict(left_to_merge(e, agents, e.graph.get_task(TaskId("par"))))
+    assert set(named) == {"a", "b"}, named
+    assert f"`git fetch {base} gfso/p/a`" in named["a"] and "git merge" in named["a"], named["a"]
+    # …and once merged where the whole works it is named no more (its AGGREGATE repeated it). CONTROL: test the
+    # part's own base instead of the whole's tree in `left_to_merge` and "a" stays named.
+    place = _workspace(e, agents, e.graph.get_task(TaskId("par")))[0]
+    for argv in (["fetch", str(base), "gfso/p/a"], ["merge", "--no-edit", "--allow-unrelated-histories", "FETCH_HEAD"]):
+        # …a merge makes a commit: an identity of its own — CI's Windows runner has none ("Committer identity unknown")
+        got = subprocess.run(["git", "-C", str(place), "-c", "user.name=t", "-c", "user.email=t@t", *argv],
+                             capture_output=True, text=True)
+        assert got.returncode == 0, (argv, got.stderr)
+    assert set(dict(left_to_merge(e, agents, e.graph.get_task(TaskId("par"))))) == {"b"}
+    e.stop()
+
+
+def test_a_whole_a_person_holds_under_a_system_root_joins_the_roots_result_with_its_parts(tmp_path, door):
+    """ONE rule, whatever performed a node: its delivered commit joins its whole's place. A whole the person holds in
+    their own tree, under a root the system holds, is named its parts to merge; its delivery — the commit its DELIVER
+    recorded — joins the root's place like any part's branch. It joined nothing, and the accepted result held only the
+    system's leaf and the root: the person's whole and both its parts dropped out (critic, a control at its parent)."""
+    base = _repo(tmp_path / "ws")
+    e = make_engine(llm=StubLLM(), validate_signals=True)
+    e.start()
+    e.project_name = "p"
+    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    for aid, kind in (("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("exec-3", "llm-executor"),
+                      ("exec-4", "llm-executor"), ("val-1", "llm-validator")):
+        agents.register(aid, kind, workdir=str(base), project="p")
+    T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]}, assignee="exec-1")
+    T.decompose(e, "root", [{"task_id": "c", "spec": {"description": "a leaf", "criteria": [criterion("c_ok")]},
+                             "assignee": "exec-4", "covers": ["g"]},
+                            {"task_id": "mid", "spec": {"description": "the person's whole", "criteria": [criterion("m")]},
+                             "assignee": "kirill", "covers": ["g"]}], accepted_risks=_RISK)
+    T.decompose(e, "mid", [{"task_id": t, "spec": {"description": f"part {t}", "criteria": [criterion(f"{t}_ok")]},
+                            "assignee": ex, "covers": ["m"]} for t, ex in (("a", "exec-2"), ("b", "exec-3"))],
+                accepted_risks=_RISK)
+    T.signal(e, "root", "ACCEPT", "exec-1")
+    T.signal(e, "mid", "ACCEPT", "kirill")
+    sessions = {t: _Executor(t, {f"{t}.c": f"{t.upper()}\n"}) for t in ("a", "b", "c", "root")}
+    d = _run(e, agents, sessions, lambda: _in(e, "a", "b")() and _in(e, "c", states=(State.DONE,))())
+    for t in ("a", "b"):
+        if e.graph.get_state(TaskId(t)) == State.VALIDATING:
+            instrument_passes(e, t, "validator")
+            T.signal(e, t, "PASS", "kirill")
+    e.wait_idle()
+    _until(lambda: not e.joins.joining_nodes() and len(left_to_merge(e, agents, e.graph.get_task(TaskId("mid")))) == 2)
+    for _, why in left_to_merge(e, agents, e.graph.get_task(TaskId("mid"))):   # …the person's own moves, in their tree
+        _git(base, "merge", "-q", "--no-edit", re.search(r"`git merge (\w+)`", why).group(1))
+    _by_hand(e, base, "mid", "kirill", {"mid.c": "MID\n"})
+    S._drive(e, d, lambda: e.next_steps()["complete"] is True, 300, pause=0.05)
+    assert e.next_steps()["complete"] is True, {t.id: t.state.name for t in e.all_tasks()}
+    assert _git(base, "ls-tree", "--name-only", "gfso/p/accepted").split() == [
+        "README", "a.c", "b.c", "c.c", "mid.c", "root.c"]
+    assert _git(base, "log", "-1", "--format=%s") == "mid by hand", "the system wrote the user's branch"
+    e.stop()
+
+
+@pytest.fixture
+def door(tmp_path, monkeypatch):
+    """The door a chat delivers through (`tools_llm.signal`) reads the process's roster: the test's own."""
+    monkeypatch.setenv("GFSO_AGENTS_PATH", str(tmp_path / "agents.json"))
+
+
+def _by_hand(e, repo: Path, tid, who, files: dict, apart: bool = False) -> str:
+    """A person performs `tid` in their own repository and delivers its committed HEAD through the door that records it
+    where the node's judge stands (`tools_llm.signal`) — `apart`: on a branch of theirs, their checked-out one restored."""
+    was = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    if apart:
+        _git(repo, "switch", "-q", "-c", f"{who}-{tid}")
+    for name, text in files.items():
+        (repo / name).write_text(text)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", f"{tid} by hand")
+    sha = _git(repo, "rev-parse", "HEAD")
+    out = TL.TOOLS["signal"](e, tid, "DELIVER", who, result="done")
+    assert out["accepted"] and "not_recorded" not in out, out
+    if apart:
+        _git(repo, "switch", "-q", was)
+    e.wait_idle()
+    return sha
+
+
+def _passed(e, *tids, by="kirill"):
+    for t in tids:
+        if e.graph.get_state(TaskId(t)) == State.VALIDATING:
+            instrument_passes(e, t, "validator")
+            T.signal(e, t, "PASS", by)
+    e.wait_idle()
+
+
+def test_a_root_the_person_holds_on_this_host_lands_as_its_accepted_branch(tmp_path, door):
+    """The container path names a chat root's recorded delivery `gfso/<project>/accepted`; on this host the same root
+    got no branch at all, though every user is promised it (ORCHESTRATOR "Where it runs", critic)."""
+    e, agents, base = _plan(tmp_path)
+    T.signal(e, "par", "ACCEPT", "kirill")
+    d = _run(e, agents, {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"})}, _in(e, "a", "b"))
+    _passed(e, "a", "b")
+    _until(lambda: not e.joins.joining_nodes() and len(left_to_merge(e, agents, e.graph.get_task(TaskId("par")))) == 2)
+    for _, why in left_to_merge(e, agents, e.graph.get_task(TaskId("par"))):
+        _git(base, "merge", "-q", "--no-edit", re.search(r"`git merge (\w+)`", why).group(1))
+    sha = _by_hand(e, base, "par", "kirill", {"par.c": "the whole\n"})
+    _passed(e, "par")
+    S._drive(e, d, lambda: subprocess.run(["git", "rev-parse", "-q", "--verify", "gfso/p/accepted"], cwd=base,
+                                          capture_output=True).returncode == 0, 100, pause=0.05)
+    assert _git(base, "rev-parse", "gfso/p/accepted") == sha == _git(base, "rev-parse", "HEAD")
+    assert json.loads(e.graph.setting("landed"))["branch"] == "gfso/p/accepted"
+    e.stop()
+
+
+def _by_hand_alone(tmp_path, judge: Path, project="p"):
+    """A root the person performs by hand, its judge standing in `judge` — registered under `project`."""
+    e = make_engine(llm=StubLLM(), validate_signals=True)
+    e.start()
+    e.project_name = "p"
+    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    agents.register("val-1", "llm-validator", workdir=str(judge), project=project)
+    T.create_task(e, "par", {"description": "the whole", "criteria": [criterion("g", "G holds")],
+                             "accepted_risks": _RISK}, assignee="kirill")
+    T.signal(e, "par", "ACCEPT", "kirill")
+    return e, agents
+
+
+@pytest.mark.parametrize("shape", ["an unscoped judge", "its judge moved after DELIVER"])
+def test_a_roots_delivery_lands_in_the_repository_its_deliver_recorded_it_in(tmp_path, door, shape):
+    """Where a chat's delivery was recorded is a fact of its DELIVER, kept in the log: read back from the project's
+    roles it was missed under a judge the roster falls back to (`validator_for`) and under one registered elsewhere
+    since, and the root landed nowhere, nothing said (critic)."""
+    base = _repo(tmp_path / "ws")
+    e, agents = _by_hand_alone(tmp_path, base, project=None if shape == "an unscoped judge" else "p")
+    sha = _by_hand(e, base, "par", "kirill", {"par.c": "the whole\n"})
+    if shape == "its judge moved after DELIVER":
+        agents.register("val-1", "llm-validator", workdir=str(_repo(tmp_path / "elsewhere")), project="p")
+    _passed(e, "par")
+    assert land_accepted(e, agents, e.graph.get_task(TaskId("par"))) is None
+    assert _git(base, "rev-parse", "gfso/p/accepted") == sha
+    e.stop()
+
+
+def test_a_roots_commit_recorded_with_no_repository_is_said_never_landed_unsaid(tmp_path):
+    """A delivery the log kept no repository for — recorded before it did — is a reason the Dispatcher says, not a
+    None it reads as landed."""
+    base = _repo(tmp_path / "ws")
+    e, agents = _by_hand_alone(tmp_path, base)
+    tree, sha, _ = W.record_head(base, delivered_ref(e, "par"))
+    assert T.signal(e, "par", "DELIVER", "kirill", result="done", _delivered=(tree, sha, None))["accepted"]
+    _passed(e, "par")
+    said = land_accepted(e, agents, e.graph.get_task(TaskId("par"))) or ""
+    assert sha[:12] in said, "landed unsaid"
+    assert NOT_ON_ITS_BRANCH in said, "…and the frontier says to deliver it again, never to merge a branch none names"
+    assert W.git(base, "rev-parse", "-q", "--verify", "refs/heads/gfso/p/accepted").returncode, "nothing named"
+    e.stop()
+
+
+def test_a_roots_delivery_recorded_before_the_log_named_its_repository_is_found_by_the_systems_own_ref(tmp_path):
+    """Under a container the base is known: the ref the system kept the delivery under, being the accepted commit
+    itself, names it (critic: it fell through to the volume's HEAD, which holds only the parts)."""
+    base = _repo(tmp_path / "ws")
+    e, agents = _by_hand_alone(tmp_path, base)
+    tree, sha, _ = W.record_head(base, delivered_ref(e, "par"))
+    assert T.signal(e, "par", "DELIVER", "kirill", result="done", _delivered=(tree, sha, None))["accepted"]
+    _passed(e, "par")
+    assert _name_the_delivery(e, e.graph.get_task(TaskId("par")), base) is None
+    assert W.git(base, "rev-parse", "refs/heads/gfso/p/accepted").stdout.strip() == sha
+    e.stop()
+
+
+def _all_by_hand(tmp_path, judge=None, b="anna"):
+    """A whole the person holds over two parts another person performs by hand: no place of the system's anywhere —
+    `b` a registered executor on the base instead."""
+    base = _repo(tmp_path / "ws")
+    e = make_engine(llm=StubLLM(), validate_signals=True)
+    e.start()
+    e.project_name = "p"
+    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    agents.register("val-1", "llm-validator", workdir=str(judge or base), project="p")
+    agents.register("exec-2", "llm-executor", workdir=str(base), project="p")
+    T.create_task(e, "par", {"description": "the whole", "criteria": [criterion("g", "G holds")]}, assignee="kirill")
+    T.decompose(e, "par", [{"task_id": t, "spec": {"description": f"part {t}", "criteria": [criterion(f"{t}_ok")]},
+                            "assignee": who, "covers": ["g"]} for t, who in (("a", "anna"), ("b", b))], accepted_risks=_RISK)
+    T.signal(e, "par", "ACCEPT", "kirill")
+    T.signal(e, "a", "ACCEPT", "anna")
+    if b == "anna":
+        T.signal(e, "b", "ACCEPT", "anna")
+    return e, agents, base
+
+
+def test_a_whole_whose_parts_another_person_performed_by_hand_is_named_each(tmp_path, door):
+    """Every part is placeless, recorded under `refs/gfso/<p>/delivered/<part>` where its judge stands: the whole was told
+    only "integrate them", its parts' commits read nowhere (critic)."""
+    e, agents, base = _all_by_hand(tmp_path)
+    shas = {t: _by_hand(e, base, t, "anna", {f"{t}.c": f"{t}\n"}, apart=True) for t in ("a", "b")}
+    _passed(e, "a", "b")
+    Dispatcher(e, agents, runner=lambda *a: None)
+    step = e.next_step(TaskId("par"))["directive"]
+    assert all(f"`git merge {shas[t]}`" in step for t in ("a", "b")), step
+    e.stop()
+
+
+def test_a_part_performed_by_hand_in_another_repository_is_named_there_with_no_tree_guessed(tmp_path, door):
+    """A whole with no place has no tree the system can read: each part is named in the repository its DELIVER was
+    recorded in, never told to be fetched into another part's repository taken for the whole's (critic)."""
+    other = _repo(tmp_path / "other")
+    e, agents, base = _all_by_hand(tmp_path, judge=other, b="exec-2")
+    sha = _by_hand(e, other, "a", "anna", {"a.c": "a\n"}, apart=True)
+    _passed(e, "a")
+    named = dict(left_to_merge(e, agents, e.graph.get_task(TaskId("par"))))
+    assert set(named) == {"a"} and str(other) in named["a"], named
+    assert f"`git merge {sha}`" in named["a"] and "git fetch" not in named["a"], named
+    e.stop()
+
+
+def test_a_whole_the_person_holds_under_a_declared_execution_is_named_its_parts_done_by_hand(tmp_path, door, monkeypatch):
+    """What a chat delivered is recorded in the user's repository on this host under either execution: a project whose
+    roles declare one named none of them to the whole its holder integrates (critic)."""
+    e, agents, base = _all_by_hand(tmp_path)
+    shas = {t: _by_hand(e, base, t, "anna", {f"{t}.c": f"{t}\n"}, apart=True) for t in ("a", "b")}
+    _passed(e, "a", "b")
+    monkeypatch.setenv("GFSO_EXECUTIONS_PATH", str(declared := tmp_path / "executions.json"))
+    declared.write_text(json.dumps({"docker": {"image": "gfso-agent:x"}}))
+    agents.register("exec-2", "llm-executor", workdir=str(base), project="p", execution="docker")
+    named = dict(left_to_merge(e, agents, e.graph.get_task(TaskId("par"))))
+    assert set(named) == {"a", "b"} and all(f"`git merge {shas[t]}`" in named[t] for t in named), named
+    e.stop()
+
+
+def test_a_part_whose_work_is_in_another_repository_never_holds_its_whole_back(tmp_path):
+    """A system's part placed over another repository than its whole's is named to it (`left_to_merge`), not listed as a
+    join its session must lift: listed so, the whole could never DELIVER, and lifting it grafted one repository's
+    history into another (critic: on main DONE in one session, so 2 sessions and 150 rounds EXECUTING)."""
+    e, agents, base = _plan(tmp_path, whole="exec-1")
+    other = _repo(tmp_path / "other")
+    agents.register("exec-2", "llm-executor", workdir=str(other), project="p")
+    sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}), "par": _Executor("par", {})}
+    _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)), rounds=150)
     e.stop()
 
 
@@ -538,7 +832,8 @@ def test_a_passed_part_joins_its_wholes_place_not_the_users_base(tmp_path):
     _until(lambda: e.next_steps()["complete"] is True)
     early = [s for s in seen if s[0] != State.DONE]
     assert early and not any(a or b for _, a, b in early), f"a part reached the base before the whole: {early}"
-    assert (base / "a.c").exists() and (base / "b.c").exists() and (base / "par.c").exists()
+    assert not any((base / f).exists() for f in ("a.c", "b.c", "par.c")), "the user's tree was written"
+    assert _git(base, "ls-tree", "--name-only", "gfso/p/accepted").split() == ["README", "a.c", "b.c", "par.c"]
     e.stop()
 
 

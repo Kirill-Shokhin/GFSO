@@ -35,7 +35,7 @@ def test_unset_the_server_decides(e, monkeypatch):
 def test_the_projects_own_choice_holds_whatever_the_server_says(e, monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "1")
     monkeypatch.setenv("GFSO_DEFAULT_DEADLINE_S", "86400")
-    rec = e.set_mode(Mode.AUTO, None, AgentId("agent"),
+    rec = e.set_mode(Mode.AUTO, None, AgentId("user"),
                      settings={"system_model": "claude-haiku-4-5", "l2_gate": "0", "deadline_s": 3600.0})
     assert rec["settings"]["system_model"] == "claude-haiku-4-5"
     assert e.system_model() == "claude-haiku-4-5" and not l2_gate_on(e.graph) and project_deadline_s(e.graph) == 3600

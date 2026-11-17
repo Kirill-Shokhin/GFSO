@@ -21,6 +21,11 @@ Verdict per parent criterion:
 Also report **conflicts**: pairs/sets of children whose criteria cannot all hold in the real world
 at once — the semantic FM-2 residue the formal CHECK-8 cannot see. Empty list when none.
 
+Where the level lists **splits deferred until a producer delivers**, report under **deferrals** each such part
+whose split could NOT change with what its named producers deliver — the part could be split now, so it only
+waits. Name the part and say why. Empty list when every deferral waits on something its split needs. This is
+reported to the plan's customer and judges no criterion.
+
 HARD RULES (a violation makes the output worthless):
 - Check ONLY the declared mapping. NEVER propose new subtasks, restructuring, wording changes or
   scope additions — "what is missing from the space" is the decomposer's question (refine), not yours.

@@ -251,9 +251,17 @@ def _record_the_session_fit(engine, d: dict, rid: TaskId, ns) -> None:
         engine.record_session_fit(rid, str(d.get("whole_volume", "")),
                                   bool(d.get("whole_fits_one_session")) if d.get("subtasks") else None)
     for c in d.get("subtasks", []):
-        if "fits_one_session" in c:
-            engine.record_session_fit(TaskId(ns(str(c["id"]))), str(c.get("volume", "")),
-                                      bool(c.get("fits_one_session")))
+        if "fits_one_session" in c or c.get("split_after"):
+            after, cid = c.get("split_after"), TaskId(ns(str(c["id"])))
+            try:
+                engine.record_session_fit(cid, str(c.get("volume", "")), bool(c.get("fits_one_session")),
+                                          {"producers": [ns(str(p)) for p in after.get("after") or ()],
+                                           "why": str(after.get("why") or "")} if after else None)
+            except ValueError as no:
+                # …the split stands admitted by now: a deferral the graph refuses (a producer settled since the spec
+                # was read) is taken back to its split owed now, said — raised here, it left the parts after it unrecorded
+                engine.record_session_fit(cid, str(c.get("volume", "")), False)
+                engine.emit_info("decompose", f"{cid}: its split is owed now, not deferred — {no}")
         # …and what its work touches, so a plan read back for a refine or a repair is checked as it was authored
         reads = {str(x.get("from")): list(x.get("reads") or []) for x in d.get("deps", [])
                  if str(x.get("to")) == str(c.get("id")) and "reads" in x}

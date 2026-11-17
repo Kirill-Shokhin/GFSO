@@ -12,12 +12,13 @@ import time
 import pytest
 
 from gfso import decompose as DEC, tools_llm as TL
+from gfso.adapters import children as CH
 from gfso.adapters import execution as E
 from gfso.adapters.llm import credentials, headless as H
 from gfso.adapters.llm.stats import refused_by_limit
 from gfso.core.types import TaskId
 from gfso.issuer import LIMIT_RETRY_S
-from tests.support import hold_a_credential, make_engine
+from tests.support import carried_by_the_system, hold_a_credential, make_engine, written
 
 #: the stream of a refused authentication (the validator's, tncfs1160, trimmed to its result)
 REFUSED_STREAM = [{"type": "result", "is_error": True, "subtype": "success", "terminal_reason": "api_error",
@@ -44,7 +45,7 @@ def _cli(monkeypatch, lines):
     monkeypatch.setattr(H.subprocess, "Popen", lambda args, **kw: _Proc(lines))
     monkeypatch.setattr(E.LocalExecution, "which", lambda self, program: program)   # …a machine with no CLI, as CI is
     for name in ("adopt", "kill_tree", "release"):
-        monkeypatch.setattr(E, name, lambda p: p)
+        monkeypatch.setattr(CH, name, lambda p: p)
 
 
 def test_the_cli_says_the_account_refused(monkeypatch, tmp_path):
@@ -56,7 +57,7 @@ def test_the_cli_says_the_account_refused(monkeypatch, tmp_path):
 
 
 def test_a_refused_account_stops_the_project_and_is_asked_again():
-    e = make_engine(llm=None)
+    e = carried_by_the_system(make_engine(llm=None))
     t0 = time.time()
     e.record_llm_usage("validator", [{"ended": "unauthorized", "error": "api_error: 403 Failed to authenticate"}],
                        TaskId("n"))
@@ -71,8 +72,8 @@ def _plan_refused(monkeypatch) -> tuple:
     """(the error `plan` answers, the stop it left) — a fresh user's first call, through the real provider."""
     monkeypatch.setattr(DEC, "_default_llm", lambda model, execution=None: H.ClaudeCodeProvider(model, execution=execution))
     _cli(monkeypatch, REFUSED_STREAM)
-    e = make_engine(llm=None)
-    out = TL.TOOLS["plan"](e, request="count the words of a file")
+    e = carried_by_the_system(make_engine(llm=None))
+    out = written(TL.TOOLS["plan"], e, request="count the words of a file")
     return str(out.get("error")), e.paused() or {}
 
 

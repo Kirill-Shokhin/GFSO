@@ -3,7 +3,7 @@ HEAD imported at the root's start by the user's own git (a bundle), cloned insid
 checked out LF — and the root's accepted result lands back in their repository as the branch `gfso/<project>/accepted`,
 by `git fetch` of a bundle alone: their working tree and their branches untouched (the author, 2026-10-28: «изоляция
 значит изоляция … бесшовно и одинаково в любой системе»; measured: Docker Desktop's host file sharing threw I/O errors
-for 35 min on bind mounts, and a row died). `in_chat` work, done on the host, is refused under a container execution."""
+for 35 min on bind mounts, and a row died). `in_chat` work, done on the host, is carried in to its judge and its parts' work carried back out as branches."""
 import json
 import subprocess
 import time
@@ -11,6 +11,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
+from pathlib import Path
 
 import gfso.adapters.execution as E
 import gfso.adapters.worktrees as W
@@ -19,6 +20,7 @@ from gfso.tools import TOOLS
 import gfso.tools_llm as TL
 import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution
+from gfso.adapters.snapshots import snapshot
 from gfso.core.types import PlaceUnavailable, State
 from tests.support import make_engine
 from tests.test_a_session_holds_only_its_own_place import IMAGE, _docker
@@ -94,7 +96,7 @@ def test_live_a_root_imports_the_users_head_lf_without_their_config_or_hooks_and
     branches = _inside(x, "for-each-ref", "--format=%(refname:short)", "refs/heads/").split()
     assert "gfso/p/old" in branches and "gfso/p/accepted" not in branches, \
         "the project's node branches left from before come in; an earlier root's accepted does not"
-    W.commit_all(x.base, a, "work", "agent", x, branch="gfso/p/a")
+    W.commit_all(x.base, a, "work", "user", x, branch="gfso/p/a")
     assert _inside(x, "rev-parse", "gfso/p/a") == W.head(a, x), "a delivery taken back into the base in the volume"
     assert x.session(str(a)).run(["git", "fsck", "--connectivity-only"], cwd=str(a), timeout=120).returncode == 0
     for c in [x.container, x.session(str(a)).container, x.session(str(x.base)).container]:
@@ -109,7 +111,7 @@ def _engine(x, *roots):
                                               get_task=lambda i: next((t for t in tasks + kept if t.id == i), None)),
                         project_name="p", all_tasks=lambda: tasks, tasks=tasks, kept=kept,
                         emit_info=lambda who, text: said.append(text), said=said, accepted=[None])
-    e.accepted_delivery = lambda task_id: (e.accepted[0], None)
+    e.accepted_delivery, e.accepted_repository = (lambda task_id: (e.accepted[0], None)), (lambda task_id: None)
     x.volume.root, x.volume.said = (lambda: WS.root_key(e)), (lambda text: said.append(text))
     return e
 
@@ -358,17 +360,13 @@ def test_live_a_project_from_before_keeps_its_clones_once_its_base_moves_in(tmp_
         x.volume.remove()
 
 
-def test_in_chat_is_refused_under_a_container_execution_with_what_lifts_it(monkeypatch):
-    """The user's own agent works on the host, where nothing of the project's places stands: what it did there would
-    never be what is judged (§11.3) — refused, both ways round, never left to fail later."""
+def test_in_chat_is_admitted_under_a_container_execution(monkeypatch):
+    """The user's own agent works on the host; its delivery is recorded there and taken into the base its judge copies
+    (`Volume.take_in`), its parts' joined work lands back as a branch (`workspaces._to_the_chat`) — so neither the mode
+    nor a role's execution is refused for it any more (it was, while nothing carried a chat's work to its judge)."""
     e = make_engine()
     monkeypatch.setattr(TL, "declaring_role", lambda engine, agents=None: {"execution": "e3-linux"})
-    got = TL.set_mode(e, "solo", perform="in_chat")
-    assert got["refused"] and "'e3-linux'" in got["error"] and 'perform="dispatch"' in got["error"]
-    assert TL.mode_staffing(e, "solo", "in_chat")["missing"] == got["error"], "the page reads the same rule"
-    monkeypatch.setattr(e, "mode", lambda: {"mode": "solo", "perform": "in_chat"})
-    got = TL.register_agent(e, "p-exec", "llm-executor", workdir=".", execution="e3-linux")
-    assert got["refused"] and "in_chat work is done on this host" in got["error"]
+    assert "e3-linux" not in str(TL.mode_staffing(e, "solo", "in_chat").get("missing"))
 
 
 def test_the_host_takes_only_a_bundle(tmp_path, monkeypatch):
@@ -441,3 +439,53 @@ def test_the_graph_says_where_the_result_lies(tmp_path, monkeypatch):
     assert TOOLS["get_graph"](e)["landed"] is None
     e.graph.store_setting(WS.LANDED, json.dumps({"branch": "gfso/p/accepted", "sha": "a" * 40, "path": "/r"}))
     assert TOOLS["get_graph"](e)["landed"]["branch"] == "gfso/p/accepted"
+
+
+@live
+def test_live_a_chats_delivery_is_taken_in_its_parts_land_back_and_its_pass_names_it(x, user, monkeypatch, tmp_path):
+    """in_chat under a container execution (IN_CHAT_MODE §0.1): the chat's delivery, recorded in the user's repository,
+    is taken into the base its judge copies; the parts joined in the volume land back as a branch for the chat to merge;
+    the root's PASS names the chat's own commit `accepted` — the user's branch, index and tree untouched throughout."""
+    monkeypatch.setattr(WS, "execution_of", lambda engine, agents=None: x)
+    monkeypatch.setattr(WS, "performer", lambda engine, agents, party: (None, None))
+    e = _engine(x)
+    main, status = _git(user, "rev-parse", "main"), _git(user, "status", "--porcelain")
+    joined = _joined(x)
+    assert WS._to_the_chat(e, None, SimpleNamespace(id="root", assignee="user"), x) is None, e.said
+    assert _git(user, "rev-parse", "gfso/p/joined/root") == joined and "git merge gfso/p/joined/root" in e.said[-1]
+    # …a part whose join a conflict refused lands as its own branch, the one the whole is told to merge (critic)
+    assert WS._to_the_chat(e, None, SimpleNamespace(id="root", assignee="user"), x, joined, "gfso/p/part") is None
+    assert _git(user, "rev-parse", "gfso/p/part") == joined and "did not join" in e.said[-1]
+    _git(user, "checkout", "-q", "-b", "chat")
+    (user / "c.txt").write_text("the chat's\n")
+    _git(user, "add", "c.txt")
+    _git(user, "commit", "-qm", "the chat's work")
+    ref = WS.delivered_ref(e, "root")
+    tree, commit, left = W.record_head(user, ref)
+    # …the fixture's hook runs where git runs a hook with no exec bit (Windows), not on Linux (red on CI's live leg)
+    assert set(left) == {"mine.txt", *(["HOOK-RAN"] if (user / "HOOK-RAN").exists() else [])}, \
+        "only what is committed is delivered; the rest is named"
+    status = _git(user, "status", "--porcelain")          # …the fixture's hook ran on this test's own checkout
+    E.take_in(x, ref)
+    assert _inside(x, "rev-parse", ref) == commit and _inside(x, "rev-parse", "HEAD") == joined, "taken in, nothing moved"
+    x.files.mkdir(str(round_ := x.own / ".gfso-scratch-ws" / "root_1"))
+    with snapshot(x.base, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")) as at:
+        assert x.files.read_bytes(str(Path(at) / "c.txt")) == b"the chat's\n"
+    e.accepted_delivery, e.accepted_repository = (lambda task_id: (tree, commit)), (lambda task_id: str(user))
+    assert WS.land_accepted(e, None, SimpleNamespace(id="root")) is None, e.said
+    assert _git(user, "rev-parse", "gfso/p/accepted") == commit
+    assert _git(user, "rev-parse", "main") == main and _git(user, "status", "--porcelain") == status
+    _git(user, "checkout", "-q", "gfso/p/accepted")
+    assert "is checked out there" in WS.land_accepted(e, None, SimpleNamespace(id="root")), "moved under a worktree"
+    _git(user, "checkout", "-q", "main")
+
+
+@live
+def test_live_a_chats_delivery_before_any_session_brings_the_place_up(x, user):
+    """Solo in_chat in a container project: the chat delivers before any session of the project started a container,
+    and `take_in` met a volume not made yet (live inchat-live-1113-200443) — it brings the place up, the base imported."""
+    _git(user, "add", "mine.txt")
+    _git(user, "commit", "-qm", "the chat's work")
+    tree, commit, _ = W.record_head(user, ref := "refs/gfso/p/delivered/root")
+    E.take_in(x, ref)
+    assert _inside(x, "cat-file", "-t", commit) == "commit", "the judge finds the delivery in the base"

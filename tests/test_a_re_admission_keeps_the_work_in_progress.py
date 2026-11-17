@@ -30,12 +30,12 @@ from gfso.core.types import CheckResult
 from tests.support import REGISTER, criterion, make_engine, reviewer_passes
 
 
-def _kid(k, covers, who="agent"):
+def _kid(k, covers, who="user"):
     return {"task_id": k, "spec": {"description": f"part {k}", "criteria": [criterion(f"{k}_ok", k)]},
             "assignee": who, "covers": covers}
 
 
-def _split(who="agent", kid_who=("agent", "bob")):
+def _split(who="user", kid_who=("user", "bob")):
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "goal", "criteria": [criterion("a", "A"), criterion("b", "B")]}, who)
@@ -68,8 +68,8 @@ def test_a_dropped_childs_settlement_does_not_stale_a_review_made_after_the_drop
 
 
 def test_a_split_sheds_a_child_with_no_new_one_and_the_work_in_progress_keeps_working():
-    e = _split(kid_who=("agent", "agent"))
-    T.signal(e, "k1", "ACCEPT", "agent")
+    e = _split(kid_who=("user", "user"))
+    T.signal(e, "k1", "ACCEPT", "user")
     e.wait_idle()
     T.edit_criteria(e, "root", [criterion("a", "A")])                  # k2 now addresses no criterion
     e.wait_idle()
@@ -100,14 +100,14 @@ def test_the_machine_issuers_reshape_does_not_dissolve_a_split():
 
 
 def test_a_re_admission_leaves_a_standing_child_it_names_unchanged():
-    e = _split(kid_who=("agent", "bob"))
-    T.signal(e, "k1", "ACCEPT", "agent")
+    e = _split(kid_who=("user", "bob"))
+    T.signal(e, "k1", "ACCEPT", "user")
     T.signal(e, "k2", "ACCEPT", "bob")
     e.wait_idle()
     T.signal(e, "k2", "DELIVER", "bob", result="done", self_validation="PASS")
     e.wait_idle()
     reviewer_passes(e, "k2")
-    T.signal(e, "k2", "PASS", "agent")
+    T.signal(e, "k2", "PASS", "user")
     e.wait_idle()
     T.edit_criteria(e, "root", [criterion("a", "A"), criterion("b", "B"), criterion("c", "C")])
     e.wait_idle()
@@ -129,15 +129,15 @@ def test_a_re_admission_leaves_a_standing_child_it_names_unchanged():
 
 
 def test_a_remap_onto_a_delivered_or_passed_child_keeps_its_work():
-    e = _split(kid_who=("agent", "bob"))
-    T.signal(e, "k1", "ACCEPT", "agent")
+    e = _split(kid_who=("user", "bob"))
+    T.signal(e, "k1", "ACCEPT", "user")
     T.signal(e, "k2", "ACCEPT", "bob")
     e.wait_idle()
-    T.signal(e, "k1", "DELIVER", "agent", result="done", self_validation="PASS")
+    T.signal(e, "k1", "DELIVER", "user", result="done", self_validation="PASS")
     T.signal(e, "k2", "DELIVER", "bob", result="done", self_validation="PASS")
     e.wait_idle()
     reviewer_passes(e, "k2")
-    T.signal(e, "k2", "PASS", "agent")
+    T.signal(e, "k2", "PASS", "user")
     T.edit_criteria(e, "root", [criterion("a", "A"), criterion("b", "B"), criterion("c", "C"), criterion("d", "D")])
     e.wait_idle()
     one = T.map_criterion(e, "root", "k1", "c")               # d still uncovered: the re-admission is refused whole
@@ -153,25 +153,25 @@ def test_a_remap_onto_a_delivered_or_passed_child_keeps_its_work():
 
 def test_the_plan_gates_hold_names_the_level_0_holes_while_they_stand(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "1")
-    e = _split(kid_who=("agent", "agent"))
+    e = _split(kid_who=("user", "user"))
     T.edit_criteria(e, "root", [criterion("a", "A"), criterion("b", "B"), criterion("c", "C")])
     e.wait_idle()
     held = e.execution_blocked_by(TaskId("k1"))
     assert "CHECK-1" in held["why"] and "decompose" in held["opens_with"]
-    out = T.signal(e, "k1", "ACCEPT", "agent")
+    out = T.signal(e, "k1", "ACCEPT", "user")
     assert out.get("accepted") is False and "Level-0 holes" in str(out.get("error"))
     e.stop()
 
 
 def test_a_relisted_child_keeps_the_spec_fields_left_out():
-    e = _split(kid_who=("agent", "agent"))
+    e = _split(kid_who=("user", "user"))
     T.decompose(e, "root", [{**_kid("k3", ["b"]), "spec": {"description": "part k3", "criteria": [criterion("k3_ok", "k3")],
                                                            "accepted_risks": REGISTER}}])
     e.wait_idle()
-    T.signal(e, "k3", "ACCEPT", "agent")
+    T.signal(e, "k3", "ACCEPT", "user")
     e.wait_idle()
     T.decompose(e, "root", [{"task_id": "k3", "spec": {"description": "part k3", "criteria": [criterion("k3_ok", "k3")]},
-                             "assignee": "agent", "covers": ["b"]}])          # no `accepted_risks`: its pre-fill stands
+                             "assignee": "user", "covers": ["b"]}])          # no `accepted_risks`: its pre-fill stands
     e.wait_idle()
     k3 = e.graph.get_task(TaskId("k3"))
     assert (k3.state, k3.revisions, len(k3.spec.accepted_risks)) == (State.EXECUTING, 0, len(REGISTER))
@@ -179,13 +179,13 @@ def test_a_relisted_child_keeps_the_spec_fields_left_out():
 
 
 def test_a_passed_child_named_with_its_spent_deadline_does_not_refuse_the_act():
-    e = _split(kid_who=("agent", "bob"))
+    e = _split(kid_who=("user", "bob"))
     T.signal(e, "k2", "ACCEPT", "bob")
     e.wait_idle()
     T.signal(e, "k2", "DELIVER", "bob", result="done", self_validation="PASS")
     e.wait_idle()
     reviewer_passes(e, "k2")
-    T.signal(e, "k2", "PASS", "agent")
+    T.signal(e, "k2", "PASS", "user")
     e.wait_idle()
     k2 = e.graph.get_task(TaskId("k2"))
     k2.deadline = datetime.now() - timedelta(minutes=5)                     # its deadline has gone by since it passed
@@ -202,7 +202,7 @@ def test_a_passed_child_named_with_its_spent_deadline_does_not_refuse_the_act():
 
 def test_a_re_admission_that_changes_nothing_leaves_the_review_standing(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "1")
-    e = _split(kid_who=("agent", "agent"))
+    e = _split(kid_who=("user", "user"))
     root = e.graph.get_task(TaskId("root"))
     e._storage.store_critique(TaskId("root"), json.dumps({"semantic_covered": True}))
     root.verified = True
@@ -217,7 +217,7 @@ def test_a_project_written_by_an_older_build_has_its_checks_recomputed_on_start(
     storage = MemoryStorage()
     e = make_engine(storage)
     e.start()
-    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("a", "A")]}, "agent")
+    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("a", "A")]}, "user")
     e.wait_idle()
     T.decompose(e, "root", [_kid("k1", ["a"])], accepted_risks=REGISTER)
     e.wait_idle()
@@ -249,22 +249,22 @@ def test_the_machine_issuer_maps_a_new_criterion_onto_a_delivered_child_keeping_
 
 
 def test_a_rebuild_reissues_a_child_for_its_contract_not_for_its_coverage():
-    e = _split(kid_who=("agent", "agent"))
+    e = _split(kid_who=("user", "user"))
     k1 = e.graph.get_task(TaskId("k1"))
     dropped: list = []
-    same = [(k1.id, k1.spec, AgentId("agent"))]
+    same = [(k1.id, k1.spec, AgentId("user"))]
     assert _children_that_changed(e, TaskId("root"), same, [CriterionMapping("b", k1.id)], dropped, {"k1": ()}) == []
     e.stop()
 
 
 def test_a_remap_that_covers_around_a_passed_child_consumes_it():
-    e = _split(kid_who=("agent", "bob"))
+    e = _split(kid_who=("user", "bob"))
     T.signal(e, "k2", "ACCEPT", "bob")
     e.wait_idle()
     T.signal(e, "k2", "DELIVER", "bob", result="done", self_validation="PASS")
     e.wait_idle()
     reviewer_passes(e, "k2")
-    T.signal(e, "k2", "PASS", "agent")
+    T.signal(e, "k2", "PASS", "user")
     e.wait_idle()
     k2 = e.graph.get_task(TaskId("k2"))
     assert not e.graph.is_consumed(k2)

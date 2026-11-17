@@ -73,7 +73,7 @@ def _disputed(e, *found, tid="root"):
     return ids
 
 
-def _rule(e, tmp_path, ids, tid=ROOT, actor="agent"):
+def _rule(e, tmp_path, ids, tid=ROOT, actor="user"):
     llm = _ContactLLM({"decision": "accept", "justification": "ran it: false on correct work", "retire_findings": ids},
                       ran={"Bash": 1})
     out = I.answer_the_challenge(e, tid, actor, _llm=llm, where=str(tmp_path))
@@ -128,7 +128,7 @@ def test_a_ruling_lifts_a_pin_under_the_criterion_it_names_and_for_as_long_as_it
     t = e.graph.get_task(ROOT)
     tightened = dc.replace(t.spec, criteria=tuple(dc.replace(c, description="G, as rewritten") if c.name == "g" else c
                                                   for c in t.spec.criteria))
-    e.revise(ROOT, tightened, AgentId("agent"), reason=RevisionReason.OTHER)
+    e.revise(ROOT, tightened, AgentId("user"), reason=RevisionReason.OTHER)
     e.wait_idle()
     assert _fails_seen(e) == {"g", "h"} and ids[0] in _standing(e), "a ruling outlived the text it ruled on"
     e.stop()
@@ -161,7 +161,7 @@ def test_a_dispute_of_the_plans_check_alone_asks_the_person_nothing_and_his_door
     ids = _disputed(e, ("g", _finding("g")), ("h", _finding("h")))
     (step,) = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "root"]
     assert "keep waiting" in step["directive"] and "THE USER'S QUESTION" not in step["directive"], step
-    out = LOCKED["signal"](e, "root", "ACCEPT_CHALLENGE", "agent", retire_findings=ids, justification="not my goal")
+    out = LOCKED["signal"](e, "root", "ACCEPT_CHALLENGE", "user", retire_findings=ids, justification="not my goal")
     e.wait_idle()
     assert out["accepted"] and _standing(e) == set() and STUB in _pins(e, "g"), "the person's ruling keeps the part's check"
     e.stop()
@@ -174,17 +174,17 @@ def test_a_plan_handed_in_is_never_changed_it_stops_with_the_signal(tmp_path):
     verbs = lambda answer: I.Verbs(llm=lambda m, **k: _ContactLLM(answer, ran={"Bash": 1}), busy=lambda *a: contextlib.nullcontext(),
                                    review=None, refine=None, place=lambda en, ag, n: str(tmp_path))
     ids = _disputed(e, ("g", _finding("g")), ("h", _finding("h")))
-    out = I.settle(e, _Roster(), ROOT, "dispute", "agent", verbs(answers[0]))
+    out = I.settle(e, _Roster(), ROOT, "dispute", "user", verbs(answers[0]))
     e.wait_idle()
     assert out["status"] == "applied" and not e.paused(), "a rejection is an answer: nothing stops"
     assert T.signal(e, "root", "CHALLENGE", str(e.graph.get_task(ROOT).assignee), reason=", ".join(ids))["accepted"]
     e.wait_idle()
-    out = I.settle(e, _Roster(), ROOT, "dispute", "agent", verbs({"decision": "accept", "justification": "false", "retire_findings": ids}))
+    out = I.settle(e, _Roster(), ROOT, "dispute", "user", verbs({"decision": "accept", "justification": "false", "retire_findings": ids}))
     e.wait_idle()
     assert out["status"] == "users" and e.paused() and "only the user changes a check" in out["why"], out
     assert _standing(e) == set(ids) and STUB in _pins(e, "g") and e.graph.get_state(ROOT) == State.CHALLENGED
     # …and even the person's own ruling on a finding leaves a check of his own plan to his re-plan
-    assert T.signal(e, "root", "ACCEPT_CHALLENGE", "agent", retire_findings=ids, justification="not my goal")["accepted"]
+    assert T.signal(e, "root", "ACCEPT_CHALLENGE", "user", retire_findings=ids, justification="not my goal")["accepted"]
     e.wait_idle()
     assert STUB in _pins(e, "g") and _standing(e) == set()
     e.stop()

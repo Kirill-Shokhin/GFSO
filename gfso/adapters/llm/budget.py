@@ -24,6 +24,8 @@ import time
 import uuid
 from dataclasses import dataclass, replace
 
+from gfso.adapters.llm.session_record import SessionRecord
+
 log = logging.getLogger(__name__)
 
 #: the note's sections, every one present, written `none` where it has nothing (Factory's anchored summary; the research)
@@ -63,6 +65,7 @@ HANDOVER = ("\n\n## Where an earlier session of this task stopped\nAn earlier se
             "where the work stands, then continue. The task goes on across as many sessions as it needs: do not stop "
             "early, and deliver only when the criteria hold.\n\n### Its note\n")
 STATE = "\n\n### The place as the system sees it now (machine state, not the note's word)\n"
+RECORD = "\n\n### What the last session did, from its own tool calls (the system's record, not the note's word)\n"
 #: what stops the project, not the run: the conversation is kept for after the lift, as a capped round's is
 STOPS = ("limit", "unavailable", "unauthorized")
 #: the ceiling's margin below the window: the close itself, and a turn that reads a large file, must still fit
@@ -176,8 +179,17 @@ def _reopen(p, user: str, s: _Session, written, handovers: int, sid: str) -> tup
     p.calls[-1]["handover"] = handovers
     p.forget(sid)
     state = (p.machine_state() or "") if p.machine_state else ""
+    done = p.session_record.render()
+    p.session_record = SessionRecord(p.session_record.place)     # the fresh session's own, from its first call
     fresh = _Session(s.budget, (written or "").strip() or "(the session left no note)")
-    return user + HANDOVER + fresh.note + (STATE + state if state else ""), fresh
+    return user + HANDOVER + fresh.note + (RECORD + done if done else "") + (STATE + state if state else ""), fresh
+
+
+def _opened(p, user: str, cwd) -> str:
+    """A budgeted run's first session opens on the packet: what a lost conversation reopens on, and an empty record of
+    what the session does to its place (`session_record`)."""
+    p.resume_fallback, p.session_record = user, SessionRecord(cwd or "")
+    return user
 
 
 def run(p, system: str, user: str, allowed_tools, cwd, timeout, max_turns, session) -> str:
@@ -187,7 +199,7 @@ def run(p, system: str, user: str, allowed_tools, cwd, timeout, max_turns, sessi
     never on the bare "continue" (`p.resume_fallback`)."""
     sid = session or f"budget-{uuid.uuid4().hex}"
     t0, used, handovers, s = time.monotonic(), 0, 0, _Session(p.context_budget)
-    prompt = p.resume_fallback = user
+    prompt = _opened(p, user, cwd)
     try:
         while True:
             left = _left(timeout, t0)
@@ -233,7 +245,7 @@ def run(p, system: str, user: str, allowed_tools, cwd, timeout, max_turns, sessi
             prompt, s = _reopen(p, user, s, written, handovers, sid)
             p.resume_fallback = prompt
     finally:
-        p.resume_fallback = None
+        p.resume_fallback = p.session_record = None
 
 
 #: what a hooked session's system prompt says before the hook speaks: a note arriving with a tool's result reads as the
@@ -251,8 +263,7 @@ def hooked(p, system: str, user: str, allowed_tools, cwd, timeout, max_turns, se
     read overshooting the line unseen."""
     sid = session or f"budget-{uuid.uuid4().hex}"
     t0, used, handovers, s = time.monotonic(), 0, 0, _Session(p.context_budget)
-    prompt, reopened = user, False
-    p.resume_fallback = user
+    prompt, reopened = _opened(p, user, cwd), False
     system += NOTICE if s.budget else ""
     try:
         while True:
@@ -289,4 +300,4 @@ def hooked(p, system: str, user: str, allowed_tools, cwd, timeout, max_turns, se
             prompt, s = _reopen(p, user, replace(s, peak=hook.get("peak")), written, handovers, sid)
             p.resume_fallback = prompt
     finally:
-        p.resume_fallback = None
+        p.resume_fallback = p.session_record = None

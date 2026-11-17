@@ -16,13 +16,12 @@ A number Docker did not give is None, never 0: a sum says how many it summed (`â
 import atexit
 import json
 import logging
-import os
 import re
 import subprocess
 import threading
 import time
 
-from gfso.adapters.children import adopt, release, run, spawn_kw
+from gfso.adapters.children import popen, release, run
 from gfso.adapters.execution import AGENT, HOME, ID, LABEL, NODE, PROJECT, ROLE, installation
 
 #: the processes a container that hosts calls holds while none runs: `--init` and the `sleep` it waits in â€” a door's
@@ -316,9 +315,7 @@ class Live:
 
 def _spawn(argv: list):
     """One of Docker's streams, its lines as text, no console window, ended with the server."""
-    return adopt(subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
-                                  errors="replace", **spawn_kw(),
-                                  **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {})))
+    return popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace")
 
 
 def _store(key: str, value) -> None:

@@ -35,7 +35,7 @@ def test_every_door_that_creates_a_node_uses_the_same_bound():
         # The engine's own convenience, which is also what authors a root. It hangs under `hand`
         # because a project has exactly one parentless node; the bound is a field of the CONTRACT
         # and does not depend on where in the tree the door was pointed.
-        e.assign_task("authored", e.graph.get_task("hand").spec, "agent", parent_id="hand", covers=("c",))
+        e.assign_task("authored", e.graph.get_task("hand").spec, "user", parent_id="hand", covers=("c",))
         e.wait_idle()
         for tid in ("hand", "split", "authored"):
             assert e.graph.get_task(tid).max_iterations == DEFAULT_MAX_ITERATIONS, (

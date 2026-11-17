@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import collections
+import contextlib
 import contextvars
 import inspect
 import json
 import os
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -13,10 +16,11 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from starlette.requests import HTTPConnection, Request
 
 from gfso import __version__
 from gfso.tools import PARAM_CHOICES, admission_of, graph_read as _graph_read, get_task as _get_task_tool
@@ -43,12 +47,13 @@ from gfso.tools_llm import validate_internal_on as _validate_internal_on, mode_s
 from gfso.adapters.children import end_this_process, reap as reap_children
 from gfso.adapters import resources as _resources
 from gfso.adapters.netrecord import said_apart
-from gfso import config as _config
+from gfso import config as _config, signin
 from gfso.adapters.llm import credentials as _credentials, registry as _providers
 from gfso.config import LOOPBACK as _LOOPBACK, DEFAULT_PROJECT
 from gfso.engine import Engine
 from gfso import tools_llm as _tools
 from gfso.tools import task_out
+from gfso.presence import working, gone, moved as _moved, page_gone, LISTENERS as WORKING_LISTENERS
 from gfso.inflight import in_flight, LISTENERS as INFLIGHT_LISTENERS  # the COMPLETE action surface (structural + LLM) — the HTTP mutation surface is generated from it
 
 from .models import (
@@ -177,6 +182,26 @@ def _tool_index() -> dict:
                    "every verb that is about a graph."}
 
 
+def _mount_wait(app, _e, _req_project, _scope_name) -> None:
+    """The one wait on a run, apart from the verbs: no verb holds a call for it."""
+    @app.post("/api/wait")
+    def wait(body: dict = Body(default={})):
+        """The one wait on a run (`tools_llm.wait_for_the_customer`): answers when the run needs the agent that gave
+        the go (`needs_you`), or after `seconds`. A sync route: one worker per waiting customer. `gfso wait` is its
+        transport; no MCP verb holds a call for it."""
+        body = dict(body or {})
+        if (_in_body := body.pop("project", None)):
+            _req_project.set(_in_body)
+        try:
+            e: Engine = _e()
+        except KeyError as ex:
+            raise HTTPException(404, f"no such project {ex.args[0]!r} — `gfso projects` lists them") from None
+        try:
+            return _naming_the_scope(_tools.wait_for_the_customer(e, **body), _scope_name())
+        except TypeError as ex:
+            raise HTTPException(422, str(ex))
+
+
 def _mount_acts(app, _e, _req_project, _scope_name) -> None:
     """The ACTS: the whole verb registry over HTTP, and the criteria suggester.
 
@@ -226,12 +251,14 @@ def _mount_acts(app, _e, _req_project, _scope_name) -> None:
                 if tool in _ELSEWHERE else
                 f"unknown tool '{tool}'. `GET /api/tools` lists every verb this door takes."))
         _refuse_bad_arguments(tool, fn, body)
+        reg = app.state.registry
+        # Only a verb that makes a project makes one, and only for a call some name signs: a read — a roster
+        # verb or `canon` included, whoever calls it — names an existing project or is answered 404, and a
+        # reader's refused move made and unmade a project first (critic)
+        create = _tools.may_make_a_project(tool)
+        made = bool(reg) and create and not reg.exists(_req_project.get())
         try:
-            # A ROSTER VERB IS NOT ABOUT A GRAPH. It still needs an engine object to be dispatched
-            # with, so it takes whichever one is at hand rather than refusing for a project that does
-            # not exist — the roster is one server-wide file and says so.
-            e: Engine = _e(create=tool in _tools.PROJECT_CREATING_VERBS
-                           or tool in _tools.PROJECTLESS_VERBS)
+            e: Engine = _e(create=create)
         except KeyError as ex:
             raise HTTPException(404, f"no such project {ex.args[0]!r} — `gfso projects` lists them; "
                                      f"`create_task` or `auto_decompose` starts a new one") from None
@@ -242,7 +269,7 @@ def _mount_acts(app, _e, _req_project, _scope_name) -> None:
         # A roster verb names none, because it is about no graph (`PROJECTLESS_VERBS`).
         scope = None if tool in _tools.PROJECTLESS_VERBS else _scope_name()
         try:
-            out = fn(e, **body)
+            out = reg.kept_if_done(made, e, lambda: fn(e, **body)) if reg else fn(e, **body)
             # A REFUSAL KEEPS ITS STATUS AND ITS SHAPE. The verbs answer rather than raise (one
             # wrapper over the registry, `tools_llm._answering`) so that the MCP and CLI doors get
             # structure instead of an exception — but HTTP has a status code for "I understood you
@@ -260,6 +287,8 @@ def _mount_acts(app, _e, _req_project, _scope_name) -> None:
                 return JSONResponse(status_code=500 if out.get("unexpected") else 422,
                                     content=json.loads(json.dumps(_naming_the_scope(out, scope),
                                                                   default=str)))
+            if body.get("task_id") and not _tools.is_refusal(out):
+                _page_moved(app.state, e, str(body["task_id"]))
             return _naming_the_scope(out, scope)
         except TypeError as ex:
             # A call that does not fit the verb is answered in the verb's OWN terms. Python says
@@ -279,7 +308,8 @@ def _mount_acts(app, _e, _req_project, _scope_name) -> None:
 
     @app.post("/api/suggest-criteria", response_model=SuggestCriteriaResponse)
     def suggest_criteria_endpoint(req: SuggestCriteriaRequest):
-        """Criteria the engine would suggest for a description — a read, it authors nothing."""
+        """Criteria the engine would suggest for a description — it authors nothing in a graph, but it runs a model on
+        the person's account, so it is a move: a reader through a front or the LAN would spend it at will (critic)."""
         e: Engine = _e()
         results = suggest_criteria(req.description, e._llm)
         return SuggestCriteriaResponse(
@@ -408,6 +438,13 @@ def _mount_plan_reads(app, _e) -> None:
         ctx = e.graph.build_context(TaskId(task_id))
         return SolverOut(recommendations=[SolverItem(**f) for f in solver_findings(ctx)])
 
+    @app.get("/api/plan")
+    def get_plan():
+        """The plan file last written for this project (`plan` / `refine_plan`), as the page shows it before the go:
+        its goal, parts, what its review leaves open, what its repair took back, what the go would refuse, its notes;
+        `{}` when none was written."""
+        return _tools.written_plan(_e().project_name)
+
     @app.get("/api/holes")
     def get_holes(root_id: Optional[str] = None):
         """Every unmet structural check across the graph (or a subtree) — the whole-graph gap list."""
@@ -533,6 +570,7 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
         # the node as the tool door reads it (what blocks it, the findings a ruling names), so the panel and an agent
         # read one node
         return {**_get_task_tool(e, task_id),
+                "split_after": _split_after(e, TaskId(task_id)),
                 "closure": e.closure_of(TaskId(task_id)),
                 "checks": [CheckResultOut.of(c).model_dump() for c in checks],
                 "recommendation": {"suggestions": list(rec.suggestions)} if rec else None,
@@ -680,6 +718,13 @@ def _told_resources(app, loop, q):
     return on_resources
 
 
+def _told_list(loop, q, kind: str, field: str):
+    """A server-wide list changed — the work in flight, the nodes a live party works: the whole list after it, every
+    project's (the page keeps its own and marks the busy ones in its project list). It had polled `/api/runtime` every
+    5 s for the first."""
+    return lambda now: loop.call_soon_threadsafe(q.put_nowait, {"type": kind, field: now})
+
+
 def _socket_engine(app, query) -> "Engine | None":
     """The graph a socket watches: none for the list of projects; else the tab's, which rides the url (the middleware
     covers HTTP only) and, like every read, names an EXISTING project: opening a page on a mistyped name created that
@@ -738,33 +783,29 @@ def _mount_events(app) -> None:
 
         def on_info(source, message):
             """What a running verb reports about its own progress, tagged with the stage that said
-            it. Not a graph change: nothing here means the graph moved."""
-            loop.call_soon_threadsafe(q.put_nowait, {
-                "type": "pipeline", "source": source, "msg": message,
-            })
+            it. Not a graph change: nothing here means the graph moved. A plan written is a frame of its own
+            (`plan_written`): the page reads the plan again on it (`GET /api/plan`)."""
+            loop.call_soon_threadsafe(q.put_nowait, {"type": "plan_written", "msg": message} if source == "plan_written"
+                                      else {"type": "pipeline", "source": source, "msg": message})
 
-        def on_inflight(now):
-            """A process of this server started or ended: the whole list after it, every project's (the page keeps
-            its own and marks the busy ones in its project list) — it had polled `/api/runtime` every 5 s for this."""
-            loop.call_soon_threadsafe(q.put_nowait, {"type": "inflight", "in_flight": now})
-
-        on_resources = _told_resources(app, loop, q)
+        server_wide = ((INFLIGHT_LISTENERS, _told_list(loop, q, "inflight", "in_flight")),
+                       (WORKING_LISTENERS, _told_list(loop, q, "working", "working")),
+                       (_resources.LISTENERS, _told_resources(app, loop, q)))
         if eng is not None:
             eng.on_transition(on_transition)
             eng.on_reject(on_reject)
             eng.on_info(on_info)
-        INFLIGHT_LISTENERS.append(on_inflight)
-        _resources.LISTENERS.append(on_resources)
+        for subs, cb in server_wide:
+            subs.append(cb)
         try:
             await websocket.accept()
-            while True:
-                event = await q.get()
-                await websocket.send_json(event)
+            with _a_page_open(app.state):
+                await _pushed(websocket, q)
         except WebSocketDisconnect:
             pass
         finally:
             app.state.ws_clients.discard(q)
-            for subs, cb in ((INFLIGHT_LISTENERS, on_inflight), (_resources.LISTENERS, on_resources),
+            for subs, cb in (*server_wide,
                              *(() if eng is None else ((eng._events._on_transition, on_transition),
                                                        (eng._events._on_reject, on_reject),
                                                        (eng._events._on_info, on_info)))):
@@ -993,6 +1034,8 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
                 # …and each piece of that work with the project and node it is on, which is what
                 # lets a reader count ITS OWN project's work rather than the server's.
                 "in_flight": work,
+                # …and the nodes a live party works itself, at the MCP door: no process here runs that work
+                "working": working(),
                 "with_mcp": _config.with_mcp(),
                 "autoexit": _config.autoexit(),
                 # THE EFFECTIVE VALUES, read from the code that obeys them — not from the
@@ -1003,9 +1046,14 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
                 # inseparable by construction.
                 "validate_internal": _validate_internal_on(),
                 "l2_gate": _l2_gate_on(),
+                # …and whether this process may put anything on the person's screen: `up` compares it with the knob the
+                # session exports, else a server started without it opens the page at a go the session ran under it
+                "no_windows": not _config.windows_allowed(),
                 # …and whether this host runs the work the system dispatches (`config.local_agents`): a restart that lost
                 # the word stopped every project with no container execution
                 "local_agents": _config.local_agents(),
+                # …and what a page needs to be the person (`config.page_auth`): `key` once `--protected` declared it
+                "page_auth": _config.page_auth(),
                 # …AND HOW MUCH OF ONE VERDICT RUNS AT ONCE. Acceptance is 65-70% of a run's spend on
                 # every measurement taken, and this dial is what decides how much of it happens in
                 # parallel — so a cost measured without it recorded is a cost measured against an
@@ -1044,9 +1092,9 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
     statements; the routes it registers are unchanged.
     """
     app.state.leases = {}
+    app.state.lease_holders = {}          # lease id → the principal its bridge declared
     app.state.exit_fn = end_this_process
 
-    LEASE_GRACE = 12.0
 
     def _live_leases() -> list[str]:
         """Leases that have heartbeated recently. Expiry belongs HERE, not in the reaper.
@@ -1061,15 +1109,21 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
         for k, ts in list(app.state.leases.items()):
             if now - ts > LEASE_GRACE:
                 app.state.leases.pop(k, None)
+        _holders_kept(app.state)
         return list(app.state.leases)
+    app.state.live_leases = _live_leases
 
     @app.post("/api/lease")
     async def renew_lease(body: dict = Body(...)):
         """Heartbeat one session's claim on this process (`id` in the body), good for about twelve
         seconds. Everything that could interrupt somebody — `/api/shutdown`, the reaper, a
         reconcile — counts these leases, so a client that stops calling is what makes the server
-        free to restart."""
-        app.state.leases[str(body.get("id", "?"))] = time.monotonic()
+        free to restart. The lease is held by the name its call's credential signs as (`signin.principal_of`), never a
+        name in its body: its work is seen while one of its leases lives."""
+        with _HOLDERS:
+            app.state.leases[k := str(body.get("id", "?"))] = time.monotonic()
+            if _config.CALLER.get().signs_as:         # …a caller signed by no one holds no presence
+                app.state.lease_holders[k] = _config.caller_id()
         return {"ok": True, "sessions": len(_live_leases())}
 
     @app.delete("/api/lease/{lease_id}")
@@ -1122,16 +1176,18 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
 
 #: The names this door answers to: loopback, the host the one server is configured on, and `config.allowed_hosts()`.
 def _door_hosts() -> frozenset:
+    """The names the door answers to as its own: the address the server holds, never a loopback name of one it does
+    not — `localhost` and `::1` name [::1] too, which another account may bind while this server holds 127.0.0.1 alone,
+    and a page it served there read and moved as the person once the browser fell back here."""
     configured = urlparse(_serverctl.BASE).hostname or _LOOPBACK
-    return frozenset({_LOOPBACK, "localhost", "::1", configured.lower(), *_config.allowed_hosts()})
+    return frozenset({_config.bound_address(), configured.lower(), *_config.allowed_hosts()})
 
 
 def _door_origins() -> tuple:
-    """The page's own origins: the one server's port, and 8080 for a UI served from a dev static host beside it.
-    The port comes from `serverctl` (whose single knob is GFSO_SHARED_URL) — a literal 8000 here allowed the page
-    and its API to disagree about which server they are."""
-    return tuple(f"http://{h if ':' not in h else f'[{h}]'}:{p}" for h in sorted(_door_hosts())
-                 for p in dict.fromkeys((_serverctl.PORT, 8080)))
+    """The page's own origins: the one server's port, at each of its loopback names. The port comes from `serverctl`
+    (whose single knob is GFSO_SHARED_URL) — a literal 8000 here allowed the page and its API to disagree about which
+    server they are. No other port: any account may bind one, and a dev static host's 8080 read every project back."""
+    return tuple(f"http://{h if ':' not in h else f'[{h}]'}:{_serverctl.PORT}" for h in sorted(_door_hosts()))
 
 
 #: What the page may load and do, a second layer under its escaping: what the agents write is shown on it, and a script of
@@ -1144,6 +1200,93 @@ _PAGE_POLICY = [
                                  b"form-action 'self'; frame-ancestors 'none'"),
     (b"x-content-type-options", b"nosniff"),
 ]
+
+
+#: the page's shell — what a stranger is served: it holds no data, and says why the rest is refused; and `/signin`, which
+#: trades only a code the person minted, so a front run by the system opens a session at its own name
+_SHELL = frozenset({"/", "/tokens.css", "/gfso.css", "/icon.svg", "/signin"})
+
+
+def _the_shell(scope) -> bool:
+    return (scope["type"] == "http" and scope.get("method") in ("GET", "HEAD")
+            and (scope["path"] in _SHELL or scope["path"].startswith("/js/")))
+
+
+class _Signed:
+    """Every call this door serves runs under the principal its credential resolves to (`signin.principal_of`) — the one
+    resolver every door asks — for the whole call: its signer, its default names, its lease, its wait. A stranger
+    (`signin.STRANGER`: no credential, from a port forwarder — a container — or, under `--protected`, from anything not the person's own process) is served the page's shell alone: every other read, a
+    move and a socket are refused."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        if (p := signin.principal_of(HTTPConnection(scope))) is signin.STRANGER and not _the_shell(scope):
+            if scope["type"] == "websocket":
+                return await send({"type": "websocket.close", "code": 4403})
+            body = {"refused": True, "error": p.lift, "page_auth": _config.page_auth()}
+            return await JSONResponse(body, status_code=403)(scope, receive, send)
+        token = _config.CALLER.set(p)
+        try:
+            return await self.app(scope, receive, send)
+        finally:
+            _config.CALLER.reset(token)
+
+
+#: what a call no credential signs may send: the verbs, whose own door tells a read from a move (`tools_llm._signed`),
+#: and the routes that write nothing — every other route that is not a GET changes something, and is a move
+_OPEN_SENDS = frozenset({"/api/run/{tool}", "/api/admission", "/api/verdicts", "/api/signout"})
+#: …and the reads that are not the graph but the person's own setup — which credentials they hold, by name — read
+#: only by a call some name signs: what was opened is the graph (critic, 2026-11-16)
+_OWN_READS = frozenset({"/api/credentials"})
+
+
+def _a_move(conn: HTTPConnection) -> None:
+    """A route that changes what a party answers for is refused to a call no credential signs (`Principal.lift`) — held
+    for the whole app, so a route added later is a move until it is named a read here (critic, 2026-11-16: the guard
+    stood on each route by hand, and a new one would have been open to any reader)."""
+    method, path = conn.scope.get("method"), conn.scope["route"].path   # a socket has no method: it is served reads
+    if (method in (None, "GET", "HEAD", "OPTIONS") and path not in _OWN_READS) or path in _OPEN_SENDS:
+        return
+    if not (p := _config.CALLER.get()) or not p.signs_as:
+        what = "the person's own setup" if path in _OWN_READS else "a move"
+        raise HTTPException(403, f"{what}, and this call is signed by no one: {p.lift if p else 'sign in: run `gfso ui`'}")
+
+
+def _mount_sign_in(app) -> None:
+    """Who the page is: `whoami`, the one-time code `gfso ui` opens it on, and signing out."""
+    @app.get("/api/whoami")
+    def page_whoami(project: str | None = None):
+        """`{name, kind, how, signs_as}` of this call's credential: `name` signs where a move names no one, `signs_as`
+        every name it may sign as — the page's "mine" is a view over these, signing nothing; `lift`, for a page about
+        `project`, opens that project's page."""
+        return signin.whoami(project)
+
+    @app.get("/signin")
+    def page_signs_in(request: Request, code: str = "", next_: str = Query("/", alias="next")):
+        """Open a page session on a one-time code `gfso ui` wrote, and go to the page; the code is spent."""
+        # …back where it was asked from (`gfso ui <project>`): a path of this page only, never another origin
+        back = next_ if next_.startswith("/") and not next_.startswith(("//", "/\\")) else "/"
+        out = RedirectResponse(back, status_code=303)
+        host = (request.url.hostname or "").lower()
+        if host in _config.LOOPBACK_NAMES and _config.page_auth() == "local-peer":
+            return out          # …the page is the person here as it is: a loopback cookie would reach every port of it
+        if (session := signin.redeem(code, host)) is None:
+            raise HTTPException(403, "this sign-in code is spent, expired or unknown: run `gfso ui` again")
+        secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+        out.set_cookie(signin.COOKIE, session, httponly=True, samesite="strict", secure=secure)
+        return out
+
+    @app.post("/api/signout")
+    def page_signs_out(request: Request):
+        """End this page's session."""
+        signin.sign_out(request.cookies.get(signin.COOKIE) or "")
+        out = JSONResponse({"signed_out": True})
+        out.delete_cookie(signin.COOKIE)
+        return out
 
 
 class _DoorGuard:
@@ -1162,8 +1305,10 @@ class _DoorGuard:
         host = urlparse("//" + headers.get(b"host", b"").decode("latin-1")).hostname or ""
         origin = headers.get(b"origin", b"").decode("latin-1")
         # …by either scheme: a name of its own served through a TLS proxy in front (`tailscale serve`) is the same page
-        own = (not origin or origin in _door_origins()
-               or origin in (f"{s}://{headers.get(b'host', b'').decode('latin-1')}" for s in ("http", "https")))
+        # …and the page's own origin is the very one the request asked, scheme, name and port: another loopback name or
+        # port is another site — another account's page on 127.0.0.1:8080 or [::1]:<port> opened the person's socket,
+        # a browser sending no Sec-Fetch-Site on a socket's handshake (critic)
+        own = not origin or origin in (f"{s}://{headers.get(b'host', b'').decode('latin-1')}" for s in ("http", "https"))
         read = scope["type"] == "http" and scope.get("method") in ("GET", "HEAD", "OPTIONS")
         # …and nothing at all a browser marks as sent from another site — an image tag sends no Origin, and a read with
         # `?project=` wakes that project's engine and its clock (`Sec-Fetch-Site`: every current browser, every request)
@@ -1183,6 +1328,84 @@ class _DoorGuard:
                                                           b"add a name in GFSO_ALLOWED_HOSTS (SECURITY.md)"})
 
 
+#: how long a party's door may go quiet and stay alive: a bridge between two heartbeats, a page between its sockets
+#: (a reload, a project switch, a reconnect)
+LEASE_GRACE = 12.0
+_HOLDERS = threading.Lock()
+
+
+def _page_person() -> str | None:
+    """The person a page's call is signed in as — a page session's — else None."""
+    p = _config.CALLER.get()
+    return p.person if p is not None and p.a_page and p.signs_as else None
+
+
+async def _pushed(websocket, q) -> None:
+    """Send what the page is told until it closes — read as it closes, not at the next frame sent to it: a closed tab
+    stayed seen at work until a resources tick reached it, up to a minute, where a bridge's lease ends in seconds."""
+    async def closed():
+        """Until the page closes; then the push ends."""
+        while (await websocket.receive())["type"] != "websocket.disconnect":
+            pass
+        q.put_nowait(None)
+    reader = asyncio.ensure_future(closed())
+    try:
+        while (event := await q.get()) is not None:
+            await websocket.send_json(event)
+    finally:
+        reader.cancel()
+
+
+@contextlib.contextmanager
+def _a_page_open(state):
+    """While a signed-in person's page is open. Their last one closing ends what they worked from a page once no page
+    of theirs has opened for a bridge's grace: a reload, a project switch or a reconnect closes one socket before the
+    next opens, and ended it for the rest of the work while the console's bridge rode out the same gap (critic)."""
+    if (person := _page_person()) is None:
+        yield
+        return
+    state.pages[person] += 1
+    state.closed.pop(person, None)
+    try:
+        yield
+    finally:
+        state.pages[person] -= 1
+        if not state.pages[person]:
+            state.closed[person] = time.monotonic()   # …ended by the leases' own expiry (`_holders_kept`)
+
+
+def _page_moved(state, engine, task_id: str) -> None:
+    """A move from a person's open page leaves the node seen worked as an MCP move does (`presence.moved`), while one
+    of their pages stays open: the same act, read the same whichever door it came through (JOINT in-work, 2026-11-15)."""
+    t = engine.graph.get_task(TaskId(task_id)) if (person := _page_person()) and state.pages[person] else None
+    if t is not None and str(t.assignee) in _config.CALLER.get().signs_as:
+        _moved(engine, task_id, str(t.assignee), via="page", person=person)
+
+
+def _holders_kept(state) -> None:
+    """Forget the holders of leases no longer held; a principal left with none has no live party at the door, so what it
+    worked is no longer seen worked. Read against `leases` whoever pruned them — the reaper prunes too. A person whose
+    last page closed a grace ago is the same: one expiry for both doors."""
+    with _HOLDERS:
+        hs = state.lease_holders
+        lost = {hs.pop(k) for k in [k for k in hs if k not in state.leases]}
+        gone(lost - set(hs.values()))
+        for person in [p for p, at in state.closed.items() if time.monotonic() - at > LEASE_GRACE]:
+            del state.closed[person]
+            page_gone(person)
+
+
+async def _expiring(app, every: float = 3.0) -> None:
+    """Expire leases on the server's own clock: a console that died unannounced must stop being seen at work though
+    nobody reads `/api/runtime`."""
+    while True:
+        await asyncio.sleep(every)
+        try:
+            app.state.live_leases()
+        except Exception as e:       # one failed pass must not end expiry for the server's life (critic)
+            print(f"gfso: a pass of lease expiry failed ({type(e).__name__}: {e})", file=sys.stderr, flush=True)
+
+
 def _lifespan(mcp):
     """The app's lifespan: hold the MCP session manager open for as long as the sub-app is mounted
     (the streamable transport needs it running), and end the server's children when it stops.
@@ -1190,7 +1413,8 @@ def _lifespan(mcp):
     period; on SIGTERM it then re-raises the default action, which would kill with no reap."""
     @asynccontextmanager
     async def lifespan(_app):
-        """Run the app; reap the server's children however it stops."""
+        """Run the app, expiring leases on its own clock; reap the server's children however it stops."""
+        beat = asyncio.create_task(_expiring(_app))
         try:
             if mcp is None:
                 yield
@@ -1198,8 +1422,16 @@ def _lifespan(mcp):
                 async with mcp.session_manager.run():
                     yield
         finally:
+            beat.cancel()
             reap_children()
     return lifespan
+
+
+def _split_after(e: Engine, task_id: TaskId) -> Optional[dict]:
+    """A split deferred until named parts deliver (FM-6's remedy, §8.6): the engine's own record — the parts it names, its
+    reason — and those whose results do not stand yet; the panel says "split after" from it (ON_THE_FLY §5 item 5)."""
+    after = (e.session_fit(task_id) or {}).get("after")
+    return after and {**after, "waits_on": e.split_waits_on(task_id)}
 
 
 def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI:
@@ -1211,10 +1443,12 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     """
     mcp, mcp_asgi = _build_mcp(registry or engine) if with_mcp else (None, None)
 
-    app = FastAPI(title="GFSO", version=__version__, lifespan=_lifespan(mcp))
+    app = FastAPI(title="GFSO", version=__version__, lifespan=_lifespan(mcp), dependencies=[Depends(_a_move)])
     app.state.engine = engine
     app.state.registry = registry
-    app.state.ws_clients = set()      # one asyncio.Queue per live WS — for GLOBAL broadcasts (project list)
+    # one asyncio.Queue per live WS — for GLOBAL broadcasts (project list); person → their open pages, while one of
+    # which a page move's presence lives
+    app.state.ws_clients, app.state.pages, app.state.closed = set(), collections.Counter(), {}
     app.state.loop = None
     if registry is not None:
         # A new project is a REGISTRY event, not a per-project transition — so it rides no single WS. Push it
@@ -1264,10 +1498,12 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     # its DNS re-points at 127.0.0.1 is same-origin to the browser and passes CORS untouched, and a
     # socket is outside CORS altogether — so the door itself refuses a Host it does not own, and a browser
     # Origin it does not own on anything but a read (the /mcp door has had this from its SDK).
+    app.add_middleware(_Signed)
     app.add_middleware(_DoorGuard)
 
     # === Static UI ===
     _mount_pages(app)
+    _mount_sign_in(app)
 
     # === Task CRUD (create/mutate = /api/run/<tool>; reads stay bespoke) ===
     # ONE owner for "whose graph is this about", built here and handed down: the acts stamp it on
@@ -1275,6 +1511,7 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     # disagree about which project a caller is standing in.
     _scope_name = _scope_namer(app, _req_project)
     _mount_reads(app, _e, _req_project, _scope_name)
+    _mount_wait(app, _e, _req_project, _scope_name)
 
     # === Lifecycle: session leases + self-shutdown (the shared-server automation) ===
     # Every connect.py bridge (one per Claude session) heartbeats a lease. Under GFSO_AUTOEXIT=1 the

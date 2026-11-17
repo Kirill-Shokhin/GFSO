@@ -84,7 +84,7 @@ def test_an_input_that_would_land_outside_its_directory_is_refused_at_admission(
         assert unsafe_input_paths(crit) == {"c": [bad]}
         out = T.create_task(e, f"leaf{i}", {"description": "a leaf", "accepted_risks": REGISTER,
             "criteria": [{"name": "c", "description": "compiles",
-                          "check": [_probe(**{bad: "int x;"}).to_dict()]}]}, assignee="agent")
+                          "check": [_probe(**{bad: "int x;"}).to_dict()]}]}, assignee="user")
         assert "outside" in str(out).lower(), out
         assert e.graph.get_task(f"leaf{i}") is None
         with pytest.raises(ValueError):            # and never laid down in part
@@ -127,7 +127,7 @@ def test_what_the_executor_wrote_cannot_stand_in_for_the_pinned_corpus(tmp_path)
                               "criteria": [{"name": "c", "description": "compiles",
                                             "check": [probe.to_dict()]}],
                               "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     e.wait_idle()
     packet = packets._validator_packet(e, e.graph.get_task(TaskId("leaf")), "built it", str(delivery),
                                   str(tmp_path / "scratch"))
@@ -148,7 +148,7 @@ def test_the_by_hand_door_lays_the_corpus_down_too():
                               "criteria": [{"name": "c", "description": "compiles",
                                             "check": [_probe().to_dict()]}],
                               "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     e.wait_idle()
     out = T.probe_inputs(e, "leaf")
     (one,) = out["probes"]
@@ -165,7 +165,7 @@ def test_the_validator_is_handed_the_laid_down_directory_not_the_delivery(tmp_pa
                               "criteria": [{"name": "c", "description": "compiles",
                                             "check": [_probe().to_dict()]}],
                               "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     e.wait_idle()
     packet = packets._validator_packet(e, e.graph.get_task(TaskId("leaf")), "built it", ".", str(tmp_path))
     laid = tmp_path / "probe_inputs"
@@ -184,7 +184,7 @@ def test_the_executor_reads_the_inputs_its_contract_will_be_run_over(tmp_path):
                               "criteria": [{"name": "c", "description": "compiles",
                                             "check": [_probe(**{"sub/a.c": "int main(){return 0;}"}).to_dict()]}],
                               "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     e.wait_idle()
     work = tmp_path / "work"
     crits = packets._executor_packet(e, e.graph.get_task(TaskId("leaf")), str(work)).split("## Inputs")[0]

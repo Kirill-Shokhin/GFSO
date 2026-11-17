@@ -29,13 +29,14 @@ import uuid
 from pathlib import Path
 
 from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, WORK_PATH, ExecutionPort,
-                             FilesPort, PlaceUnavailable, base_named, nodes_dir, place_name)
-from gfso.config import (CONTAINER_LOG, DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
-                         memory_ceiling, network_record_off, new_flows, HELD_FLOWS, node_disk, executions, executions_path, host_env, subprocess_env)
+                             FilesPort, PlaceUnavailable, base_named, base_of_nodes, nodes_dir, nodes_root, place_name)
+from gfso.config import (for_the_hands, CONTAINER_LOG, DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
+                         memory_ceiling, network_record_off, new_flows, HELD_FLOWS, node_disk, executions, executions_path, host_env, subprocess_env,
+                         write_atomic)
 from gfso.adapters import door, egress, lfs, shell
 from gfso.adapters.records import append, said_of
 from gfso.places import same_place
-from gfso.adapters.children import adopt, at_exit, kill_tree, release, run, run_printing, spawn_kw
+from gfso.adapters.children import at_exit, end, popen, run, run_printing
 
 log = logging.getLogger(__name__)
 
@@ -206,22 +207,36 @@ def refused_docker(version: str, platform: str) -> "str | None":
             f"not hold — update to 25.0.5 or later")
 
 
+#: seconds `docker version` may take to say whether Docker's engine answers
+DOCKER_ASK = 60
+
+
+def docker_server() -> tuple[str, str]:
+    """THE question whether Docker's engine answers: (what it is — `engine <version> (<platform>)`, '' where it did not
+    answer; why it carries no work — '' where it does): not run, not answering — in the daemon's own words, Docker
+    Desktop not running reads "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine …" — or
+    a version no boundary holds on (`refused_docker`)."""
+    try:
+        got = run(["docker", "version", "--format", "{{.Server.Version}}|{{.Server.Platform.Name}}"], timeout=DOCKER_ASK,
+                  text=True, encoding="utf-8", errors="replace")
+    except subprocess.TimeoutExpired:
+        return "", f"Docker did not answer within {DOCKER_ASK} s"
+    except OSError as e:
+        return "", f"Docker could not be run ({e})"
+    if got.returncode:
+        return "", (got.stderr or "").strip() or f"docker version exited {got.returncode}"
+    engine, _, platform = got.stdout.strip().partition("|")
+    return f"engine {engine}" + (f" ({platform})" if platform else ""), refused_docker(engine, platform) or ""
+
+
 def _unavailable(ex, storage: bool):
-    """Why `ex` cannot start a call (`ExecutionPort.unavailable`): the daemon's own words where it does not answer —
-    Docker Desktop not running reads "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
-    …" — else, with `storage`, the storage's: the base read through the running project container's OWN mount (a fresh
-    mount of it passed while the standing ones threw I/O errors, engineering 2026-10-28, row 2: the daemon answering,
+    """Why `ex` cannot start a call (`ExecutionPort.unavailable`): Docker's, where its engine carries no work
+    (`docker_server`) — else, with `storage`, the storage's: the base read through the running project container's OWN
+    mount (a fresh mount of it passed while the standing ones threw I/O errors, engineering 2026-10-28, row 2: the daemon answering,
     every session dying, the probe saying "up" for 35 min); and, by a container of its own, a file written, read and
     removed in the project's places volume where it is made, its base read there — else None."""
-    try:
-        got = run(["docker", "version", "--format", "{{.Server.Version}}|{{.Server.Platform.Name}}"], timeout=60, text=True)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return str(e)
-    if got.returncode:
-        return (got.stderr or "").strip() or f"docker version exited {got.returncode}"
-    engine, _, platform = got.stdout.strip().partition("|")
-    if refused := refused_docker(engine, platform):
-        return refused
+    if why := docker_server()[1]:
+        return why
     if not storage:
         return None
     p = ex.project if isinstance(ex, PlaceContainer) else ex
@@ -1115,6 +1130,12 @@ for f in /tmp/in/lfs/*; do
 done
 for kv in "$fc" "$fs"; do g config "${kv%%=*}" "${kv#*=}" || exit 1; done
 g checkout -q -f -B "$(cat /tmp/in/branch)" "$c" && g clean -q -ffdx && read_copy'''
+#: `Volume.take_in` inside: the bundle on stdin fetched into the base at /to/$1 as the ref $2, every object checked
+_TAKE_IN = r'''d=/to/$1 r=$2
+cat > /tmp/in.bundle || exit 1
+GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c safe.directory='*' -c core.hooksPath=/dev/null \
+  -c core.fsmonitor=false -c transfer.fsckObjects=true -c fetch.fsckObjects=true -C "$d" \
+  fetch -q --no-tags /tmp/in.bundle "+$r:$r" </dev/null'''
 #: what the docker client says where the daemon does not answer — the place down (`PlaceUnavailable`)
 _DOWN = re.compile(r"failed to connect to the docker API|Cannot connect to the Docker daemon|error during connect", re.I)
 #: …and where the container is gone or stopped under a live server — started again, once
@@ -1172,7 +1193,13 @@ def scratch_of(place, project) -> Path:
     p = Path(place)
     if p.parent.parent.name.startswith(NODES):
         return p.parent / f"{SCRATCH}{p.name}"
-    return p.parent / nodes_dir(p.name) / component(project or DEFAULT_PROJECT) / f"{SCRATCH}.{place_name(p.name)}"
+    return nodes_root(p) / component(project or DEFAULT_PROJECT) / f"{SCRATCH}.{place_name(p.name)}"
+
+
+def _places(base) -> Path:
+    """Where the projects' own directories of `base` stand on this host (`nodes_root`'s parent) — the seam a test of
+    another platform's paths replaces, as it does `_real`."""
+    return _real(nodes_root(base).parent)
 
 
 def _real(path) -> Path:
@@ -1180,16 +1207,19 @@ def _real(path) -> Path:
     return Path(path).resolve()
 
 
-def _host_paths(parents, mounts) -> re.Pattern:
-    """A mounted directory under a parent, in any spelling a path may arrive in — each of `parents` (as given and as
-    resolved: a link in it); on Windows C:\\ or C:/, either drive case, a doubled backslash too (a path inside JSON),
-    caseless; a POSIX path exactly, not inside a longer one — and the rest of that path, up to a list's separator, in
-    `rest`. Never a parent alone: a root's or a drive's maps nothing else of it."""
-    win = bool(parents[0].drive)
+def _host_paths(under) -> re.Pattern:
+    """A mounted directory under its parent, in any spelling a path may arrive in — `under` pairs each parent (as given
+    and as resolved: a link in it) with the mounts standing under IT, so no parent maps another's mount (the base under
+    its parent, the project's own directory under the places); on Windows C:\\ or C:/, either drive case, a doubled
+    backslash too (a path inside JSON), caseless; a POSIX path exactly, not inside a longer one — and the rest of that
+    path, up to a list's separator, in `rest`. Never a parent alone: a root's or a drive's maps nothing else of it."""
+    win = bool(under[0][0].drive)
     sep, stop = (r"[\\/]{1,2}", r"\s\"'`<>|*?;") if win else ("/", r"\s\"'`<>|*?:")
+    mount = lambda ms: "|".join(sep.join(map(re.escape, Path(m).parts)) for m in ms)
+    # …each head only where one of its own mounts follows it
     heads = dict.fromkeys((re.escape(p.drive[:1]) + ":" if win else "") + "".join(sep + re.escape(q) for q in p.parts[1:])
-                          for p in parents if p.is_absolute())
-    mounted = "|".join(sep.join(map(re.escape, Path(m).parts)) for m in mounts)
+                          + "(?=" + sep + "(?:" + mount(ms) + "))" for p, ms in under if p.is_absolute())
+    mounted = mount([m for _, ms in under for m in ms])
     return re.compile(("" if win else r"(?<![\w.~/-])") + "(?:" + "|".join(heads) + ")(?P<rest>" + sep + "(?:" + mounted
                       + r")(?:" + sep + "[^" + stop + r"]*)?)(?![\w.-])", re.IGNORECASE if win else 0)
 
@@ -1227,15 +1257,16 @@ class LocalExecution(ExecutionPort):
 
     def agents_refused(self):
         """Unattended work runs in a container; this host runs it only on its user's word, given where the server
-        starts (`config.local_agents`) — no session can give it. Work a person does in their own chat, and what judges
-        it, runs here as before: it is attended."""
+        starts (`config.local_agents`). The user's own agent runs as the user and could write that word too — the
+        system cannot tell the two apart — so the refusal is the person's to read: it names the choice, addressed to
+        them. Work a person does in their own chat, and what judges it, runs here as before: it is attended."""
         if local_agents():
             return None
-        return ("this host runs no dispatched work unattended: an executor's commands would run as you, on your "
-                "machine, with nothing between them and the rest of it. Run the project in a container (its executor "
-                "registered with `execution=\"default\"`, which `gfso setup` declares, or another of "
-                "data/executions.json), or allow it on this host: "
-                "\"GFSO_LOCAL_AGENTS\": \"allow\" in data/serve.json, then `gfso up`")
+        return ("this host runs no dispatched work unattended: an executor's commands would run as the person, on "
+                "their machine, with nothing between them and the rest of it. Run the project in a container (its "
+                "executor registered with `execution=\"default\"`, which `gfso setup` declares). Running it on this "
+                "host instead is the PERSON's choice, never an agent's — their `GFSO_LOCAL_AGENTS` word in "
+                "data/serve.json: tell them, and leave it to them (SECURITY.md, \"Unattended work runs in a container\")")
 
     def unavailable(self, storage: bool = False):
         # …so a project this refusal stopped stays stopped until the word is given or an execution is declared
@@ -1245,15 +1276,10 @@ class LocalExecution(ExecutionPort):
         return shutil.which(program)
 
     def popen(self, args, *, env, cwd, **pipes):
-        # Windows: a console child ALLOCATES ITS OWN console when the parent has none (the shared server is spawned
-        # detached) — every agent run popped an empty `claude` window on top of the user's screen, accidentally
-        # closable (= killing the run). CREATE_NO_WINDOW suppresses the console; all real I/O rides the pipes.
-        no_window = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-        return adopt(subprocess.Popen(args, env=env, cwd=cwd, **pipes, **no_window, **spawn_kw()))
+        return popen(args, env=env, cwd=cwd, **pipes)
 
     def end(self, proc) -> None:
-        kill_tree(proc)
-        release(proc)
+        end(proc)
 
     def temp_root(self):
         return tempfile.gettempdir()
@@ -1837,12 +1863,11 @@ class Volume:
                 run(["docker", "volume", "create", *[a for k, x in labels.items() for a in ("--label", f"{k}={x}")],
                      v], timeout=60).check_returncode()
         self.require(both)
-        user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
         got = self._one_shot(image, [*[a for p, at in ((host, "/from"), (old, "/old")) if p.is_dir()
                                        for a in ("--mount", f"type=bind,{_mount_field('src', str(p))},dst={at},readonly")],
                                      "--mount", f"type=volume,src={self.name},dst=/to",
                                      "--mount", f"type=volume,src={self.state},dst=/state"],
-                             [_BRING_IN, "sh", user or "0", *[x for k, v in places.items() for x in (k, v)]],
+                             [_BRING_IN, "sh", _image_user(image) or "0", *[x for k, v in places.items() for x in (k, v)]],
                              "bring-in", text=True)
         if got.returncode:
             raise OSError(f"{self.name}: the volume could not take its places ({(got.stderr or '').strip()[-300:]})")
@@ -1879,12 +1904,10 @@ class Volume:
         root = self.root()
         with tempfile.TemporaryDirectory(prefix="gfso-import-") as d:
             commit, carried, notes = _carried_in(self.base, self.project, Path(d))
-            user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60,
-                       text=True).stdout.strip()
             with open(carried, "rb") as stream:
                 got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/to"],
                                      [_IMPORT, "sh", commit or "", BASE_DIR, self.project,
-                                      *lfs.filter_args(ContainerExecution.python)[1::2]], "import", user or "0",
+                                      *lfs.filter_args(ContainerExecution.python)[1::2]], "import", _image_user(image) or "0",
                                      stdin=stream, interactive=True)
         if got.returncode:
             raise OSError(f"{self.name}: the base could not be imported, whole history asked: a shallow clone wants `git fetch --unshallow` "
@@ -1899,13 +1922,17 @@ class Volume:
     def read_again(self, image: str) -> None:
         """The copy of the base sessions read, made or brought to the base's HEAD (`_READ_COPY`), by git under no config
         of a repository's."""
-        user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
         got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/to"],
                              [_READ_AGAIN, "sh", BASE_DIR, *lfs.filter_args(ContainerExecution.python)[1::2]], "read",
-                             user or "0")
+                             _image_user(image) or "0")
         if got.returncode:
             raise OSError(f"{self.name}: the base's read copy could not be brought up "
                           f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
+
+    def fetch_in(self, bundle, ref: str) -> subprocess.CompletedProcess:
+        """`_TAKE_IN` over the base: the git bundle read from `bundle` fetched as `ref`, every object checked."""
+        return self._one_shot(self.image, ["--mount", f"type=volume,src={self.name},dst=/to"], [_TAKE_IN, "sh", BASE_DIR, ref],
+                              "take", _image_user(self.image) or "0", stdin=bundle, interactive=True)
 
     def land_tree(self, image: str, to: Path) -> list:
         """A base with no git as it stands in the volume, written to the host directory `to` in place of what stood
@@ -1923,11 +1950,10 @@ class Volume:
     def _read_out(self, image: str, script: list, role: str, to: Path):
         """(the run of `script` over the places, read-only and as the image's user; what it printed): a tar stream, in a
         file on the disk it is about to land on, gone after: all a project holds passes through no process's memory."""
-        user = run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
         to.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryFile(dir=to.parent) as held, tempfile.TemporaryFile(dir=to.parent) as said:
             got = self._one_shot(image, ["--mount", f"type=volume,src={self.name},dst=/from,readonly"], script, role,
-                                 user or "0", stdout=held, stderr=said)
+                                 _image_user(image) or "0", stdout=held, stderr=said)
             # …its last megabyte: what tar says of each file it cannot read is of a size the session chose (critic, ran)
             said.seek(max(0, said.seek(0, os.SEEK_END) - 2 ** 20))
             got.stderr = said.read()
@@ -2011,7 +2037,7 @@ class Volume:
             raise LookupError(f"the project's record names no image, and its execution {execution!r} is declared "
                               f"nowhere here ({executions_path()})")
         b, name = Path(base), component(project)
-        v = cls(container_name(execution, project), execution, b.parent / nodes_dir(b.name) / name, b, name)
+        v = cls(container_name(execution, project), execution, nodes_root(b) / name, b, name)
         v.record = (record.get, None)     # …asked against the record: a base that names another volume, refused
         return v, image
 
@@ -2032,7 +2058,7 @@ def _base_of_places(record: dict) -> str | None:
     for k in record:
         if k.startswith(MADE):
             p = Path(k[len(MADE):])
-            return str(p.parents[2] / base_named(p.parents[1].name))
+            return str(base_of_nodes(p.parents[1]))
     return None
 
 
@@ -2148,6 +2174,39 @@ def _left_inert(to: Path) -> list:
 NO_LAZY_FETCH = {"GIT_NO_LAZY_FETCH": "1"}
 
 
+def take_in(ex, ref: str) -> None:
+    """The commit `ref` names in the user's repository, fetched into the base of `ex`'s volume under the same ref —
+    a chat's delivery for its judge, who copies the base (`snapshots._checkout`). Bundled on the host by their own
+    git of what the base's import lacks, carried in through the port, fetched inside with every object checked
+    (`fsckObjects`), under no config nor hook of a repository's; no checkout, no branch of the base moved. The
+    mirror of `worktrees.land`."""
+    if not isinstance(ex, ContainerExecution):
+        return                                   # …this host's base IS the user's repository: nothing to take
+    # …its place up first, the base imported: a solo chat delivers before any session of the project ever started a
+    # container, and its volume was not made yet (live inchat-live-1113-200443)
+    ex.start()
+    v = ex.volume
+    git, since = _host_git(v.base), json.loads(v.record[0](VOLUME + IMPORTED) or "{}").get("commit")
+    sha = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").stdout.strip()
+    if not sha:
+        raise OSError(f"{v.base}: {ref} names no commit")
+    if sha == since:
+        return
+    nots = [f"^{since}"] if since and git("merge-base", "--is-ancestor", since, sha).returncode == 0 else []
+    with tempfile.TemporaryDirectory(prefix="gfso-take-") as d, v.writes(v.base):
+        if (got := git("bundle", "create", "-q", str(b := Path(d) / "in.bundle"), ref, *nots)).returncode:
+            raise OSError(f"{v.base}: {ref} could not be bundled ({got.stderr.strip()[-300:]})")
+        with open(b, "rb") as stream:
+            if (got := v.fetch_in(stream, ref)).returncode:
+                raise OSError(f"{v.name}: the delivery {sha[:12]} could not be taken into the base "
+                              f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
+
+
+def _image_user(image: str) -> str:
+    """The user `image` names to run as; '' for none."""
+    return run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
+
+
 def _host_git(base: Path, **env):
     """git over the user's repository at `base`, run on the host by their own git: text out, or bytes fed `input`."""
     def git(*a, input=None):
@@ -2182,11 +2241,12 @@ def _no_places(base: Path) -> str | None:
         return why + "It lies inside a repository's own `.git` directory: register that repository's top as the workdir"
     if top is not None and top.returncode == 0 and (at := top.stdout.strip()):
         if same_place(at, base):
-            return why + "It has no commit yet: `git add -A` and `git commit -m start` there"
+            return why + f"It has no commit yet: {for_the_hands('git add -A && git commit -m start')} there"
         return why + (f"It lies inside the repository {at}: register that top as the workdir if the work is "
-                      f"that repository's, else make this directory one of its own (`git init`, `git add -A`, "
-                      f"`git commit -m start` there)")
-    return why + "Make it one (`git init`, `git add -A`, `git commit -m start` there), then start the project again"
+                      f"that repository's, else make this directory one of its own: "
+                      f"{for_the_hands('git init && git add -A && git commit -m start')} there")
+    return why + (f"Make it one: {for_the_hands('git init && git add -A && git commit -m start')} there, then start the "
+                  f"project again")
 
 
 
@@ -2239,18 +2299,39 @@ def left_out(base: Path) -> list[str]:
 
 
 def _left_out(base: Path, git, no_object: list) -> list[str]:
-    changed = [x for x in git("status", "--porcelain", "-z").stdout.split("\0") if x.strip()]
+    # …`matching`: an ignored directory said once, never walked (7 s against 51 ms on a 450k-file tree — critic)
+    status = [x for x in git("status", "--porcelain", "--ignored=matching", "-z").stdout.split("\0") if x.strip()]
+    # …the ignored ones apart: data and configs a .gitignore keeps out reached the agents as silently as a build's output
+    # (the author, 2026-11-12: agents got a copy without the data and nobody told them) — named, what any checkout
+    # regenerates counted only, else the caches sorted first filled the line and hid `data/` (critic)
+    ignored = sorted((x[3:] for x in status if x.startswith("!! ") and not _regenerated(x[3:])),
+                     key=lambda p: not p.endswith("/"))           # …directories first: data lives in them
+    changed = [x for x in status if not x.startswith("!! ")]
     links = [e for e in git("ls-tree", "-r", "-z", "HEAD").stdout.split("\0") if e.startswith("160000 ")]
     missing = _missing(git)
     return [n for n, on in (
         (_unfetched(base, missing), missing),
         (f"{len(changed)} changed or untracked files of {base} are not in the agents' copy - commit them and start "
          f"again for the agents to see them", changed),
+        (f"{len(ignored)} paths of {base} ignored by its .gitignore are not in the agents' copy "
+         f"({', '.join(ignored[:8])}{', ...' if len(ignored) > 8 else ''}) - if the work needs any of them (data, "
+         f"configuration), commit it or say where the agents get it", ignored),
         (f"{len(links)} submodules of {base} stand empty in the agents' copy: their files are not part of the commit",
          links),
         (f"{len(no_object)} files tracked by Git LFS have no object in {base} and stand as pointers in the agents' copy"
          f" - fetch them (`git lfs fetch`) and start again ({', '.join(no_object[:3])}"
          f"{', ...' if len(no_object) > 3 else ''})", no_object)) if on]
+
+
+#: what a checkout regenerates by convention — caches, environments, build output, editors' state: not the work's inputs
+_REGENERATED = {"__pycache__", ".venv", "venv", "env", "node_modules", "build", "dist", ".idea", ".vscode", ".tmp",
+                ".DS_Store", ".tox", ".nox", ".eggs", "htmlcov", ".coverage"}
+
+
+def _regenerated(path: str) -> bool:
+    name = path.rstrip("/").rsplit("/", 1)[-1]
+    return (name in _REGENERATED or name.endswith((".egg-info", ".pyc", ".pyo"))
+            or name.startswith(".") and name.endswith("_cache"))
 
 
 def _unfetched(base: Path, missing: list) -> str:
@@ -2345,9 +2426,7 @@ def stored_on_host(base: Path, want: dict, read) -> list[str]:
         if (data := read(oid, size)) is None or not lfs.is_object(data, oid, size):
             lost.append(path)
             continue
-        at.parent.mkdir(parents=True, exist_ok=True)
-        (tmp := at.with_name(f"{oid}.gfso-{uuid.uuid4().hex}")).write_bytes(data)
-        os.replace(tmp, at)
+        write_atomic(at, data)
     return lost
 
 
@@ -2479,14 +2558,16 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         if network is not None:
             self.switch(network)
         self.mounts = [b, f"{nodes_dir(b)}/{self.project_name}"]
-        self.own = self.parent / self.mounts[1]
+        self.nparent = _places(self.base)     # …the project's own under the places; side by side inside, as before
+        self.own = self.nparent / self.mounts[1]
         self.volume = Volume(container_name(name, project), name, self.own, self.base, self.project_name, image)
         # dotted, as no node's key is (`component`): the system's own among the project's places — the copies and
         # checks no session but the one handed a copy reaches; THE CLI'S STATE THE PROJECT'S, each place's under it
         # (`PlaceContainer`): shared by an execution's projects, every E3 row (all at /gfso-place/ws) read and appended
         # to another row's conversation (critic over d5c8f7a, measured on two containers)
         self.tmp, self.sys, self.state = self.own / ".gfso-tmp", self.own / ".gfso-sys", self.own / STATE_DIR
-        self._host = _host_paths((self.parent, type(self.base)(base).parent), self.mounts)
+        self._host = _host_paths([(self.nparent, self.mounts[1:])]          # …the narrower first: it may lie in the base
+                                 + [(p, self.mounts[:1]) for p in (self.parent, type(self.base)(base).parent)])
 
     def switch(self, network) -> None:
         """Turn the container's way out (`WayOut.switch`); a turn ends the running container at once, every call in it
@@ -2505,9 +2586,10 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
 
     def to_outside(self, text: str) -> str:
         """`text` with every container path spelled as the host sees it (forward slashes: valid inside JSON too)."""
-        root = self.parent.as_posix().rstrip("/")           # …a root's or a drive's parent: `/a`, not `//a`
+        # …the project's own directory back under the places; a root's parent `/a`, not `//a`
+        side = lambda m: (self.nparent if m.string.startswith("/" + NODES, m.end()) else self.parent).as_posix()
         return re.sub(re.escape(INSIDE) + r"(?![\w.-])",
-                      lambda m: root if m.string.startswith("/", m.end()) else self.parent.as_posix(), text)
+                      lambda m: side(m).rstrip("/") if m.string.startswith("/", m.end()) else side(m), text)
 
     def _inside_cwd(self, cwd: str) -> str:
         """The container's path of a place the call runs in — inside what it mounts, else refused: the agent would
@@ -2515,7 +2597,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         here = _real(cwd)
         if not any(here.is_relative_to(src) for src, _ in self._mounts()):
             raise ValueError(f"{cwd} is not inside {self.container}'s mounts ({', '.join(self.mounts)} of {self.parent})")
-        return INSIDE + "/" + here.relative_to(self.parent).as_posix()
+        return INSIDE + "/" + here.relative_to(self.nparent if here.is_relative_to(self.own) else self.parent).as_posix()
 
     def run_args(self) -> list[str]:
         """`docker run` for this project's container: sealed (`--init`, its own mounts only, no new privileges, its way
@@ -2536,7 +2618,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
 
     def _mounts(self) -> list:
         """(directory, read-only?) for each directory the container holds: the base and the project's own, both writable."""
-        return [(self.parent / m, False) for m in self.mounts]
+        return [(self.parent / self.mounts[0], False), (self.own, False)]
 
     def _mount(self, src: Path, ro: bool, dst: str | None = None) -> list[str]:
         """`--mount` of one directory at `dst`, else where the system's name of it maps inside (`Volume.mount`)."""
@@ -2903,7 +2985,7 @@ def _volume_ready(ex) -> None:
         if why := p.unavailable():
             raise PlaceUnavailable(p.name, why)
         try:
-            p.volume.ready(p.image, p.own, p.way.home / p.container, *_left(p))
+            p.volume.ready(p.image, p.parent / p.mounts[1], p.way.home / p.container, *_left(p))
         except PlaceUnavailable:
             raise
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
@@ -2912,12 +2994,15 @@ def _volume_ready(ex) -> None:
 
 def _left(ex) -> tuple:
     """What the host's leftover of the project's directory holds: ({a place's key in the per-project CLI state of
-    before the volume: its name in `.gfso-state`} for the base and every place there, [each place and round there])."""
+    before the volume: its name in `.gfso-state`} for the base and every place there, [each place and round there]).
+    A leftover stands where the places stood before the volume — beside the base (`ex.parent`), never under the
+    installation's places, where nothing was ever laid on this host."""
+    own = ex.parent / ex.mounts[1]
     rels = [(d.name, *([x.name] if d.name.startswith(".") else [])) for d in
-            (ex.own.iterdir() if ex.own.is_dir() else ()) if d.is_dir()
+            (own.iterdir() if own.is_dir() else ()) if d.is_dir()
             for x in (d.iterdir() if d.name.startswith(".") else [d]) if x.is_dir()]
-    return ({hashlib.sha1(os.path.normcase(ex.own.joinpath(*r) if r else ex.base).encode()).hexdigest()[:12]:
-             "+" + "+".join(r) for r in [(), *rels]}, [ex.own.joinpath(*r) for r in rels])
+    return ({hashlib.sha1(os.path.normcase(own.joinpath(*r) if r else ex.base).encode()).hexdigest()[:12]:
+             "+" + "+".join(r) for r in [(), *rels]}, [own.joinpath(*r) for r in rels])
 
 
 def _writable_root(cwd: Path, project: "ContainerExecution") -> Path:
@@ -2926,14 +3011,16 @@ def _writable_root(cwd: Path, project: "ContainerExecution") -> Path:
     or one entry of a dotted directory, the system's (no key starts with a dot): a round of the scratch it stands in
     (`scratch_of`/<round>, an issuer's contact whole) — one batch of it, where it stands in one (`<round>/batch<N>`:
     a process one batch's validator left behind reaches no other's copy) —, a temp of its own, a copy."""
-    rel = cwd.relative_to(project.parent).parts if cwd.is_relative_to(project.parent) else ()
-    if rel[:1] == (project.mounts[0],):
-        return project.base
-    if rel[:2] != Path(project.mounts[1]).parts:
+    # …the project's own directory first: under the installation's places, which may stand inside the base (a source
+    # checkout working on its own repository), where reading the base first gave every place the base whole (critic)
+    if not cwd.is_relative_to(project.own):
+        if cwd.is_relative_to(project.base):
+            return project.base
         raise ValueError(f"{cwd} is not inside {project.container}'s mounts ({', '.join(project.mounts)})")
-    dotted = len(rel) > 2 and rel[2].startswith(".")
-    batch = dotted and rel[2].startswith(SCRATCH) and len(rel) > 4 and rel[4].startswith(BATCH)
-    return project.parent.joinpath(*rel[:3 + dotted + batch])
+    rel = cwd.relative_to(project.own).parts
+    dotted = len(rel) > 0 and rel[0].startswith(".")
+    batch = dotted and rel[0].startswith(SCRATCH) and len(rel) > 2 and rel[2].startswith(BATCH)
+    return project.own.joinpath(*rel[:1 + dotted + batch])
 
 
 def _scratch_above(rw: Path) -> "Path | None":

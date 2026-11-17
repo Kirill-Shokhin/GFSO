@@ -13,6 +13,7 @@ import sys
 import traceback
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from importlib.resources import files
@@ -22,15 +23,16 @@ from gfso.adapters import resources
 from gfso.adapters.execution import component, end_leftovers, export_places, file_record_path, watch_ceiling, watch_disk
 from gfso.adapters.netrecord import record_path, said_apart
 from gfso.adapters.records import hold_the_home
+from gfso.adapters.storage import person
 from gfso.adapters.storage.sqlite import settings_of
 from gfso.adapters.llm import credentials, headless, registry
 from gfso.adapters.llm.conformance import assess, report
-from gfso import __version__, serverctl
-from gfso.config import LOOPBACK, admit_host, db_path, install_mcp_env, install_serve_env, mark_the_server
-from gfso import serverctl
-from gfso.doctor import claude_cli, console_script, doctor, kept_where, setup, sign_in, sign_in_here, wait_signed_in, what_for
+from gfso import __version__, serverctl, signin
+from gfso.config import (LOOPBACK, PERSON, UVICORN, admit_host, bind, data_dir, db_path, install_mcp_env,
+                         install_serve_env, mark_the_server)
+from gfso.doctor import (BY_HAND, JUST_INSTALLED, claude_cli, console_script, doctor, kept_where, setup, sign_in, sign_in_here,
+                         wait_signed_in, what_for)
 from gfso.examples import DEMOS, NEEDS_MODEL
-from gfso.runtime import data_dir
 
 
 def main():
@@ -73,6 +75,7 @@ def main():
             for a in sys.argv[1:]]
     args = build_parser().parse_args(argv)
     if args.command is None:
+        print(JUST_INSTALLED + "\n")          # the first line an agent reads after `pipx install gfso`
         build_parser().print_help()
         sys.exit(1)
 
@@ -103,15 +106,30 @@ def _add_projects_parser(sub) -> None:
 
 
 
+#: the first line of `gfso` and `gfso --help`: one command installs, and what it prints leads to everything after it
+
+
 def build_parser() -> argparse.ArgumentParser:
     """THE command line, as an object. Separated from `main` so that it can be ASKED whether a
     command line is valid without running it — `gfso.mcp.connect` builds a `gfso serve …` argv for
     the process it spawns, and nothing could check the two agreed. They stopped agreeing: a flag
     renamed here left the launcher passing a spelling `serve` no longer had, so every start died
     instantly with a usage message into `server.log` while the launcher reported only a timeout."""
-    parser = argparse.ArgumentParser(prog="gfso", description="GFSO Protocol Engine")
+    parser = argparse.ArgumentParser(prog="gfso", description=JUST_INSTALLED + "\n\nGFSO Protocol Engine",
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", action="version", version=f"gfso {__version__}")
     sub = parser.add_subparsers(dest="command")
+    # …FIRST, for the one reading this right after `pipx install gfso`: pipx says nothing of what comes next, and
+    # `setup` stood seventh of sixteen (a tester on a clean install, 2026-11-13)
+    setupp = sub.add_parser("setup", help="One command after installing: register the agent door "
+                                          "with Claude Code, bring the server up, open the UI, and "
+                                          "report what it found. Idempotent — safe to re-run.")
+    setupp.add_argument("--desktop", action="store_true",
+                        help="Also write the entry into Claude Desktop's claude_desktop_config.json "
+                             "(a backup is kept; restart Desktop afterwards). Only if the person names Desktop: another application's config is "
+                             "not edited unless you ask for it by name.")
+    _add_protected(setupp)
+
 
     serve = sub.add_parser("serve", help="Run the server IN THIS PROCESS (the primitive; `gfso up` "
                                         "is the everyday command — it decides whether to start or "
@@ -156,7 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # `run` = the headless CLI mirror (drive/inspect a graph, same surface as MCP). Logic lives in gfso.driver;
     # this is only the wiring — cli.py stays the high-level launcher, not a home for low-level tool commands.
-    runp = sub.add_parser("run", help="Drive/inspect a graph headless (same commands as the MCP tools)")
+    runp = sub.add_parser("run", help="Drive/inspect a graph headless (same commands as the MCP tools). " + BY_HAND)
     runp.add_argument("args", nargs=argparse.REMAINDER, help="<tool> [args…]  (run `gfso run` alone to list)")
 
     # The MCP door an agent client is registered against: `claude mcp add --scope user gfso -- gfso connect`.
@@ -175,17 +193,10 @@ def build_parser() -> argparse.ArgumentParser:
                           "Without this, a stale server with someone else on it is reported and "
                           "left alone: restarting ends their run, and the model subprocesses it "
                           "spawned outlive it.")
+    _add_protected(upp)
 
     sub.add_parser("down", help="Stop the shared server (code update: the next session reconnect "
                                 "auto-spawns a fresh one)")
-
-    setupp = sub.add_parser("setup", help="One command after installing: register the agent door "
-                                          "with Claude Code, bring the server up, open the UI, and "
-                                          "report what it found. Idempotent — safe to re-run.")
-    setupp.add_argument("--desktop", action="store_true",
-                        help="Also write the entry into Claude Desktop's claude_desktop_config.json "
-                             "(a backup is kept; restart Desktop afterwards). Only if the person names Desktop: another application's config is "
-                             "not edited unless you ask for it by name.")
 
     sub.add_parser("doctor", help="What this installation is and whether it can work: version, "
                                   "where state lives, who holds the port, whether the Claude Code "
@@ -199,7 +210,106 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_status_parser(sub)
     _add_projects_parser(sub)
+    _add_sign_in_parsers(sub)
 
+    _add_watch_parsers(sub)
+
+    return parser
+
+
+
+def _add_protected(p) -> None:
+    p.add_argument("--protected", action=argparse.BooleanOptionalAction, default=None,
+                   help="the page signs in with `gfso ui` as well as coming from a process of your OS user; kept in "
+                        "data/serve.json for every later start (`--no-protected`: back to no sign-in, the default)")
+
+
+def _protected(args) -> None:
+    """`--protected` / `--no-protected` declared for the installation (`config.page_auth`); neither keeps what it is."""
+    if args.protected is not None:
+        serverctl.declare("GFSO_PAGE_AUTH", "key" if args.protected else "local-peer")
+
+
+def _add_sign_in_parsers(sub) -> None:
+    """Who you are on the page and at a console: the page opened signed in, and a name's token issued."""
+    uip = sub.add_parser("ui", help="Open the page signed in: a one-time code opens a session there, which signs your "
+                                    "moves as any name you own. Never handed to an agent: the page link an agent gives "
+                                    "you reads, and a move asks you to sign in here.")
+    uip.add_argument("project", nargs="?", default=None, help="open that project's page, not the list of them")
+    uip.add_argument("--host", default=None, help="a front this server is reached through (`tailscale serve`, "
+                                                  "`GFSO_ALLOWED_HOSTS`), opened there; it must keep the Host header")
+    agp = sub.add_parser("agent", help="Issue a token for a name you own (`engineering`, a console's name) and print the "
+                                       "console's launch line: the console signs as that name. Refused for the system's "
+                                       "names (an executor's, a validator's).")
+    agp.add_argument("name")
+    agp.add_argument("--revoke", action="store_true", help="revoke every token for the name")
+    sub.add_parser("migrate", help="Write the person as `user` where a database of this home from before 0.4.0 says "
+                                   "`agent`: once, recorded in each database it rewrote. `serve` does it at its start.")
+
+
+def _ui(args) -> int:
+    """Open the page on a one-time code written to this installation's state; the server spends it and sets the session.
+    The code is said to no one: the browser opens on it."""
+    if (rt := serverctl.runtime()) is None:
+        print(f"no server answering at {serverctl.BASE} — `gfso up` first, then `gfso ui`")
+        return 2
+    base = (args.host if "://" in args.host else f"https://{args.host}") if args.host else serverctl.BASE
+    if not args.host and serverctl.page_auth_in_force(rt) == "local-peer":
+        # …no session to open: here the page is the person as it is, and a loopback cookie reaches every port of it
+        open_outside(serverctl.ui_link(args.project))
+        print(f"the page opens at {serverctl.ui_link(args.project)}")
+        return 0
+    back = f"&next={urllib.parse.quote('/?project=' + args.project, safe='')}" if args.project else ""
+    link = f"{base.rstrip('/')}/signin?code={urllib.parse.quote(signin.code())}{back}"
+    if args.host:
+        # …a front's name is for another device (a phone through `tailscale serve`): opened here, this browser spent the
+        # code and the device had no way in (critic) — the link is said, for the device to open
+        print(f"open this on the device that reaches {base.rstrip('/')}/ — good for {signin.CODE_S // 60} minutes, once:\n"
+              f"{link}")
+        return 0
+    open_outside(link)
+    print(f"the page opens signed in at {base.rstrip('/')}/ (its code is good for {signin.CODE_S // 60} minutes, once)")
+    return 0
+
+
+def _agent(args) -> int:
+    """Issue `args.name` a token, or revoke its tokens; the token is printed once, in the launch line."""
+    if args.revoke:
+        print(f"{signin.revoke(args.name)} token(s) for {args.name} revoked")
+        return 0
+    try:
+        tid, token = signin.issue(args.name)
+    except ValueError as ex:
+        print(f"gfso agent: {ex}", file=sys.stderr)
+        return 2
+    print(f"a token for {args.name} ({tid}), shown this once. Launch the console that signs as {args.name} with it:",
+          f"  GFSO_TOKEN={token} claude              # bash, zsh",
+          f"  $env:GFSO_TOKEN='{token}'; claude     # PowerShell",
+          f"`gfso agent {args.name} --revoke` revokes it.", sep="\n")
+    return 0
+
+
+def _migrate(args) -> int:
+    """The person's rename (`signin.rename_the_person`) run on this home, what it wrote said per database."""
+    try:
+        done = signin.rename_the_person()
+    except person.TwoParties as ex:
+        print(f"gfso migrate: {ex}", file=sys.stderr)
+        return 2
+    refused = {db: r["refused"] for db, r in done.items() if "refused" in r}
+    for db, rows in done.items():
+        if db not in refused:
+            print(f"{db}: " + ", ".join(f"{k} {n}" for k, n in sorted(rows.items())))
+    for db, why in refused.items():
+        print(f"gfso migrate: {db} left as it is — {why}", file=sys.stderr)
+    n = len(done) - len(refused)
+    print(f"the person is written `{PERSON}` in {n} database(s) rewritten now" if n else
+          f"nothing rewritten now in {data_dir()}")
+    return 1 if refused else 0
+
+
+def _add_watch_parsers(sub) -> None:
+    """The two ways to watch a run without driving it: its log, and a wait that ends when the run needs you."""
     logp = sub.add_parser("log", help="The log in the terminal — same persisted lines "
                                       "the UI panel shows (per project)")
     logp.add_argument("--project", default=None,
@@ -208,8 +318,11 @@ def build_parser() -> argparse.ArgumentParser:
     logp.add_argument("-n", type=int, default=40, help="lines to show (default 40)")
     logp.add_argument("-f", "--follow", action="store_true", help="keep polling for new lines")
 
-    return parser
-
+    waitp = sub.add_parser("wait", help="Wait for a project's run to need you — run it in the background: it asks only "
+                                        "the live server and exits when the root is settled, a move is yours, or the run "
+                                        "stopped")
+    waitp.add_argument("--project", default=None, help="project name (default: the active one); `project=<name>` too")
+    waitp.add_argument("--hours", type=float, default=24.0, help="give up after this long (default 24)")
 
 
 def _add_provider_parser(sub) -> None:
@@ -281,6 +394,7 @@ def _dispatch(args) -> None:
             # as well was tried and removed — `verbose` already emits the identical line, so the
             # door said everything twice and the drift three times, and silencing `verbose` to stop
             # that also swallowed the "did not come up, retrying" progress lines.
+            _protected(args)
             _out = ensure_correct(force=args.force)
             sys.exit(1 if _out["action"] == "left-alone" else 0)
         except RuntimeError as ex:      # the server did not come up: say so, do not throw a stack
@@ -291,18 +405,15 @@ def _dispatch(args) -> None:
         _projects(args)
     elif args.command == "log":
         _log(args)
+    elif args.command in _EXITS:
+        sys.exit(_EXITS[args.command](args))
     elif args.command == "setup":
+        _protected(args)
         sys.exit(setup(desktop=args.desktop))
     elif args.command == "doctor":
         sys.exit(doctor())
     elif args.command == "demo":
         sys.exit(_demo(args.name))
-    elif args.command == "provider-check":
-        sys.exit(_provider_check(args))
-    elif args.command == "credential":
-        sys.exit(_credential(args))
-    elif args.command == "export-places":
-        sys.exit(_export_places(args))
     elif args.command == "network":
         print(record_path(args.project))
         print(*said_apart(args.project), sep="\n")
@@ -471,11 +582,44 @@ def _log(args):
         printed = {(x["ts"], x["message"]) for x in last}
         for r in rows:
             if not args.follow or (r["ts"], r["message"]) not in printed:
-                print(f"{r['ts']} [{r['source']}] {r['message']}")
+                # a follower read through a pipe (`| grep --line-buffered`) gets each event as it lands
+                print(f"{r['ts']} [{r['source']}] {r['message']}", flush=args.follow)
         if not args.follow:
             return
         last = rows
         time.sleep(2)
+
+
+def _wait(args) -> int:
+    """Monitoring, not work: the agent that gave the go runs this in the background and stays free for the person,
+    woken when it exits — a `next_steps(wait=600)` once held over MCP kept the client's session busy for ten minutes a
+    call. It asks ONLY the live server: a run lives there, and the local path `gfso run` falls back to would build an
+    engine of its own here, with no container and no branch (11-09). The transport of the server's one wait (`POST
+    /api/wait`), whose `needs_you` decides. Exit 0: the run needs its customer; 2: no server answering, or the wait
+    refused; 3: still running at `--hours`."""
+    url = f"{serverctl.BASE}/api/wait"
+    ask = json.dumps({"project": args.project} if args.project else {}).encode()
+    end = time.monotonic() + args.hours * 3600
+    while time.monotonic() < end:
+        try:
+            req = urllib.request.Request(url, data=ask, method="POST",
+                                         headers={"Content-Type": "application/json", **signin.credential_header()})
+            out = json.loads(urllib.request.urlopen(req, timeout=900).read() or b"null") or {}
+        except urllib.error.HTTPError as e:      # the server answered: the call was wrong, not the server down
+            print(f"the server refused the wait ({e.code}): {e.read().decode('utf-8', 'replace')[:300]}", flush=True)
+            return 2
+        except Exception as e:
+            print(f"no server answering ({type(e).__name__}) — nothing was waited on; the run, if any, is on the "
+                  f"server: `gfso up`, then wait again", flush=True)
+            return 2
+        if why := out.get("needs_you"):
+            print(f"{why} — read it with `next_steps` and `get_verdict` over MCP; the page: "
+                  f"{serverctl.ui_link(args.project)}", flush=True)
+            for s in [s for s in out.get("steps") or () if s.get("mine") and not s.get("optional")][:3]:
+                print(f"- {s.get('task_id')}: {s.get('directive', '')[:400]}", flush=True)
+            return 0
+    print(f"still running after {args.hours:g} h — wait again", flush=True)
+    return 3
 
 
 def _down():
@@ -499,7 +643,7 @@ def _down():
 
 def _mcp(args):
     bind_this_process()          # the stdio server spawns `claude` children too
-    install_mcp_env(db_path=args.db_path, llm=args.llm, model=args.model)
+    install_mcp_env(db_path=args.db_path, llm=args.llm, model=args.model, declared=serverctl.declared())
     # LEFT: `gfso.mcp.stdio` needs the optional `mcp` SDK, and importing it raises the whole HTTP
     # stack (fastapi + uvicorn + `gfso.api.server`) that the other subcommands do not pay for.
     from gfso.mcp.stdio import main as mcp_main
@@ -537,6 +681,15 @@ def _serve(args):
             f"gfso: could not read the declared server config ({ex})"))
 
     admit_host(args.host)            # the page this opens is served under that name
+    bind(args.host)                  # …and past loopback no Host header vouches for a local caller
+    try:
+        done = signin.rename_the_person()   # …and the person written `user` where a graph from before 0.4.0 says `agent`
+    except person.TwoParties as ex:
+        sys.exit(f"gfso serve: {ex}")      # the sign-in state names `user` as another party: every project shares it
+    for db, r in done.items():
+        if "refused" in r:                 # one graph's conflict or failed write refuses that graph alone
+            print(f"gfso serve: {db} is not opened — {r['refused']}", file=sys.stderr)
+    signin.ready()                   # …and every party already in the graphs keeps a mover
     if not args.no_browser:
         threading.Timer(1.5, lambda: open_outside(f"http://{args.host}:{args.port}")).start()
 
@@ -567,7 +720,7 @@ def _serve(args):
             loop="none",
             reload=args.reload,
             reload_dirs=["gfso"] if args.reload else None,
-            timeout_graceful_shutdown=_GRACE_S,
+            timeout_graceful_shutdown=_GRACE_S, **UVICORN,
         )
         loop = asyncio.SelectorEventLoop()
         asyncio.set_event_loop(loop)
@@ -584,7 +737,7 @@ def _serve(args):
             log_level=args.log_level.lower(),
             reload=args.reload,
             reload_dirs=["gfso"] if args.reload else None,
-            timeout_graceful_shutdown=_GRACE_S,
+            timeout_graceful_shutdown=_GRACE_S, **UVICORN,
         )
     finally:
         _end_with_the_children()
@@ -606,6 +759,11 @@ def _end_with_the_children():
     if code and not isinstance(exc, SystemExit):
         traceback.print_exc()
     end_this_process(code)
+
+
+#: the commands that are one function of their arguments, exiting with what it returns
+_EXITS = {"wait": _wait, "ui": _ui, "agent": _agent, "provider-check": _provider_check, "credential": _credential,
+          "export-places": _export_places, "migrate": _migrate}
 
 
 if __name__ == "__main__":

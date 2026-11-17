@@ -94,3 +94,75 @@ def test_runs_is_judged_where_a_part_declares_it():
     assert len(seam_problems(s)) == 1
     del s["subtasks"][1]["runs"]
     assert seam_problems(s) == []
+
+
+def _probing(parts: dict, deps=()):
+    """Parts as {id: (writes, runs, command)}: one pinned check each, `runs` left out where None."""
+    return {"subtasks": [{"id": i, "writes": w, **({} if r is None else {"runs": r}),
+                          "criteria": [{"name": "c", "check": [{"command": cmd, "expect": "ok"}]}]}
+                         for i, (w, r, cmd) in parts.items()],
+            "deps": [{"from": f, "to": t, "glue": "g"} for f, t in deps]}
+
+
+def test_a_check_running_what_another_part_writes_is_its_seam():
+    """§2.7, read off the checks: B's probe runs `./c_compiler`, which A writes; `runs: []` does not hide it."""
+    s = _probing({"a": (["c_compiler.c"], [], "make -s c_compiler && ./c_compiler -v"),
+                  "b": (["Makefile"], [], "T=$(mktemp -d); ./c_compiler {inputs}/m.c -o $T/m && echo ok")})
+    found = seam_problems(s)
+    assert len(found) == 1 and found[0].startswith("b's probes run the code of a")
+    assert seam_problems({**s, "deps": [{"from": "a", "to": "b", "glue": "g"}]}) == []
+
+
+def test_the_whole_program_runs_what_every_other_part_probing_it_says():
+    """GF_cc_full1: plumbing wrote the Makefile, said `runs: []` and probed `./c_compiler`, which no part writes and
+    which codegen and float said runs the front end; it waited on none and stood BLOCKED five hours."""
+    cc = "./c_compiler {inputs}/m.c -o $T/m"
+    s = _probing({"lexer": (["lexer.c"], [], "make -s tests/lex && ./tests/lex x"),
+                  "codegen": (["codegen.c"], ["lexer"], cc), "float": (["float.c"], ["root.lexer", "root.codegen"], cc),
+                  "plumbing": (["Makefile"], [], cc)}, [("lexer", "codegen"), ("codegen", "float")])
+    found = seam_problems(s)
+    assert len(found) == 1 and found[0].startswith("plumbing's probes run the code of codegen, lexer,")
+    assert seam_problems({**s, "deps": s["deps"] + [{"from": "codegen", "to": "plumbing", "glue": "g"}]}) == []
+
+
+def test_the_first_of_a_chain_building_one_program_is_not_judged_by_its_successors():
+    cc = "./cc -o x m.c"
+    assert seam_problems(_probing({"s1": (["lex.c"], [], cc), "s2": (["expr.c"], ["s1"], cc),
+                                   "s3": (["stmt.c"], ["s1", "s2"], cc)}, [("s1", "s2"), ("s2", "s3")])) == []
+
+
+def test_a_program_no_part_claims_anything_of_is_not_judged():
+    """The base may hold it: parts each extending a program the repository already has say `runs: []`."""
+    assert seam_problems(_probing({"a": (["a.c"], [], "./prog a"), "b": (["b.c"], [], "./prog b")})) == []
+
+
+def test_runs_named_by_its_namespaced_id_is_read():
+    """The c_compiler plan's float-types said `runs: ["root.lexer", …]`; read as no part, it went unjudged."""
+    assert seam_problems(_runs({"base": [], "lexer": ["root.parser"], "parser": []}))[0].startswith(
+        "lexer's probes run the code of parser")
+
+
+def _pinned(parts: dict, deps=()):
+    """Parts as {id: (writes, runs, pin body)}: one check each running a pinned file."""
+    return {"subtasks": [{"id": i, "writes": w, "runs": r, "criteria": [{"name": "c", "check": [
+                {"command": "python {inputs}/pin.py", "expect": "ok", "inputs": {"pin.py": body}}]}]}
+                         for i, (w, r, body) in parts.items()],
+            "deps": [{"from": f, "to": t, "glue": "g"} for f, t in deps]}
+
+
+def test_a_pin_importing_what_a_later_part_writes_is_a_finding_whatever_runs_says():
+    """A regex engine's plan: the parser's pins ran `import myre; myre.compile`, the package api writes and api comes
+    last (parser → engine → api); `runs: []` hid it and the plan read clean."""
+    s = _pinned({"parser": (["myre/parser.py"], [], "import myre\nprint(myre.compile('a'))"),
+                 "engine": (["myre/engine.py"], ["root.parser"], "from myre import search\nprint(search('a', 'a'))"),
+                 "api": (["myre/__init__.py"], ["parser", "engine"], "import myre")},
+                [("parser", "engine"), ("engine", "api")])
+    found = seam_problems(s)
+    assert [f.split("'")[0] for f in found] == ["parser", "engine"] and all("of api" in f for f in found)
+
+
+def test_a_pin_importing_its_own_module_or_what_it_waits_on_is_none():
+    s = _pinned({"parser": (["src/myre/parser.py"], [], "from myre.parser import parse\nimport re, sys"),
+                 "engine": (["src/myre/engine.py"], ["parser"], "import myre.parser; import myre.engine")},
+                [("parser", "engine")])
+    assert seam_problems(s) == []

@@ -79,7 +79,7 @@ def test_an_independent_validator_that_does_not_reproduce_a_finding_ends_its_dem
     assert e.claim_drift(ROOT)["narrowed"] is None
     t = e.graph.get_task(ROOT)      # …said of the criterion as written: a later act rewriting it ends that, as it ends a ruling
     e.revise(ROOT, dc.replace(t.spec, criteria=tuple(dc.replace(c, description="G, rewritten") for c in t.spec.criteria)),
-             AgentId("agent"), reason=RevisionReason.OTHER)
+             AgentId("user"), reason=RevisionReason.OTHER)
     e.wait_idle()
     assert _standing(e) == {f["id"]}, "said of a criterion no longer written"
     e.stop()

@@ -1,8 +1,7 @@
 ﻿"""Provider-agnostic structured-output machinery — OURS, not the transport's.
 
 No provider is trusted to enforce a schema: the instruction appends the JSON schema to the user
-content, and `parse` validates the reply (fenced block preferred, strict=False tolerates literal
-control chars inside strings — the dominant LLM-JSON defect). Every LLMProviderPort adapter
+content, and `parse` validates the reply (fenced block preferred, read by `_loads`). Every LLMProviderPort adapter
 (headless Anthropic, generic OpenAI-compatible) composes these same three pieces, which is what
 makes the one-shot layer provider-portable by construction.
 """
@@ -17,25 +16,58 @@ import re
 # silently fails closed. Blocks are tried in order; the first that satisfies the schema wins.
 FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
+#: a backslash and the character after it, read in pairs as JSON's own lexer reads them
+_ESCAPE = re.compile(r"\\(.)", re.S)
+
+
+def kept_escapes(raw: str) -> str:
+    """`raw` with every escape JSON does not have written so it reads as its two literal characters — a model quoting
+    `\\xNN` in prose made a whole report unread (s18b2). It changes no valid document: there every backslash starts an
+    escape JSON has."""
+    return _ESCAPE.sub(lambda m: m[0] if m[1] in "\"\\/bfnrtu" else "\\\\" + m[1], raw)
+
+
+def _loads(raw: str, **kw):
+    """`json.loads` as every structured reply is read — control characters inside strings kept, an escape JSON does not
+    have kept as written (`kept_escapes`)."""
+    try:
+        return json.loads(raw, strict=False, **kw)
+    except json.JSONDecodeError as e:
+        if e.msg != "Invalid \\escape":
+            raise
+    return json.loads(kept_escapes(raw), strict=False, **kw)
+
+
 RETRY_SUFFIX = ("\n\nYour previous output could not be parsed against the schema "
                 "(missing required keys or invalid JSON). Re-emit the ONE fenced json "
                 "object, complete and valid.")
 
-def retry_suffix(text: str, schema: dict) -> str:
-    """The retry, with WHAT failed in the reply: the JSON error and where, with the text around it, or the required keys
-    it lacks. Told only "could not be parsed", a model re-emitted the same reply — a plan's fold dropped the closers
-    after every probe carrying `inputs`, six calls of six (E3 c_compiler, own plan, 2026-10-23)."""
-    blocks = [m.group(1) for m in FENCED.finditer(text or "")] or [(text or "").strip()]
-    raw = max(blocks, key=len)
+
+def why_unread(text: str, schema: dict) -> str:
+    """What the parser met in a reply it could not read — the JSON error and where, with the text around it, or the
+    required keys it lacks — '' where it met nothing wrong. One reading for the retry that tells the model and the
+    record that tells the issuer: the record held only the text's last 400 characters, which ended a valid object, and
+    the cause of a stranger's unread report (s17c) was lost with the text before them."""
+    # …in the candidate the parser tried: the fenced block, else the object after the prose, else from its first brace
+    t = (text or "").strip()
+    blocks = [m.group(1) for m in FENCED.finditer(t)] or _bare_objects(t) or [t[t.find("{"):] if "{" in t else t]
     try:
-        obj = json.loads(raw, strict=False)          # as the parser it explains reads
+        obj = _loads(max(blocks, key=len))          # as the parser it explains reads
     except json.JSONDecodeError as e:
-        near = raw[max(0, e.pos - 160):e.pos + 60]
-        return (RETRY_SUFFIX + f"\nThe JSON is invalid: {e.msg} at line {e.lineno} column {e.colno}, here:\n"
-                f"…{near}…\nA common cause is a closing `]` or `}}` left out after a nested list (a probe's `inputs`, "
-                f"a criterion's `check`): close every array and object you open.")
+        return (f"The JSON is invalid: {e.msg} at line {e.lineno} column {e.colno}, here: "
+                f"{json.dumps(e.doc[max(0, e.pos - 160):e.pos + 60], ensure_ascii=False)}")
     missing = [k for k in (schema or {}).get("required", ()) if not isinstance(obj, dict) or k not in obj]
-    return RETRY_SUFFIX + (f"\nThe object lacks the required keys: {', '.join(missing)}." if missing else "")
+    return f"The object lacks the required keys: {', '.join(missing)}." if missing else ""
+
+
+def retry_suffix(text: str, schema: dict) -> str:
+    """The retry, with WHAT failed in the reply (`why_unread`). Told only "could not be parsed", a model re-emitted the
+    same reply — a plan's fold dropped the closers after every probe carrying `inputs`, six calls of six (E3 c_compiler,
+    own plan, 2026-10-23)."""
+    why = why_unread(text, schema)
+    return RETRY_SUFFIX + (f"\n{why}" if why else "") + (
+        "\nA common cause is a closing `]` or `}` left out after a nested list (a probe's `inputs`, a criterion's "
+        "`check`): close every array and object you open." if why.startswith("The JSON is invalid") else "")
 
 
 #: The retry when the first answer was CUT at the output limit (`stop_reason == "max_tokens"`): asked again for the
@@ -99,7 +131,7 @@ def holds_an_object(text: str) -> bool:
     """Does the text carry a JSON object — the shape every structured answer of this system takes?"""
     for cand in _bare_objects(text or ""):
         try:
-            if isinstance(json.loads(cand), dict):
+            if isinstance(_loads(cand), dict):
                 return True
         except ValueError:
             continue
@@ -135,7 +167,7 @@ def parse_structured(text: str, schema: dict):
 
 def _parsed(raw: str):
     try:
-        return json.loads(raw, strict=False)
+        return _loads(raw)
     except ValueError:
         return None
 
@@ -226,7 +258,7 @@ def _closed(raw: str, schema: dict, rounds: int = 200):
                 twice.append(d)
             return d
         try:
-            obj = json.loads(raw, strict=False, object_pairs_hook=_pairs)
+            obj = _loads(raw, object_pairs_hook=_pairs)
         except ValueError:
             obj = None
         if obj is not None:

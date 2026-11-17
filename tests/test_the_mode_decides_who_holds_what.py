@@ -27,7 +27,7 @@ from gfso.sessions import run_consent
 from gfso.roster import AgentRegistry
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import register_of, AgentId, Criteria, Mode, Probe, Register, Signal, SignalData, State, TaskId
-from tests.support import DENIAL_ENTRY, criterion, instrument_passes, make_engine, REGISTER
+from tests.support import issuer_sweep, DENIAL_ENTRY, criterion, instrument_passes, make_engine, REGISTER
 
 _RISK = REGISTER
 
@@ -38,7 +38,7 @@ def _engine(mode=None, boundary=None):
     e.project_name = "p"
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p", "elsewhere": "other-project"})
     if mode is not None:
-        e.set_mode(mode, boundary, AgentId("agent"))
+        e.set_mode(mode, boundary, AgentId("user"))
     return e
 
 
@@ -61,11 +61,17 @@ def _goal(e):
     return e.graph.get_task(TaskId("root")), e.graph.get_task(TaskId("kid"))
 
 
+#: `h`'s pin (`pinned("h")`) shown without the work.
+_DERIVED_H = {"criterion": "h", "probe": "check h", "derived_by": "echo it holds"}
+
+
 def _uncarried(e, issuer):
     """A plan question the canon's way: the admitted root revised by its plan's issuer to add `h`, which no child
-    carries — a hole after admission is a flag on the plan (§12.10), never a refused admission (§11.5)."""
+    carries — a hole after admission is a flag on the plan (§12.10), never a refused admission (§11.5). Under AUTO its
+    pin is derived without the work (`off_the_goal`)."""
     ok, why = I.apply_move(e, TaskId("root"), "plan", issuer, {"move": "add_criterion", "justification": "goal",
-                                                                "criteria": [criterion("h", "H holds")]})
+                                                                "criteria": [criterion("h", "H holds")],
+                                                                "derivations": [_DERIVED_H]})
     assert ok, why
     e.wait_idle()
 
@@ -73,8 +79,8 @@ def _uncarried(e, issuer):
 def test_with_no_mode_nothing_changes():
     e = _engine()
     root, kid = _goal(e)
-    assert (str(root.assignee), str(kid.assignee)) == ("agent", "agent")
-    assert str(e.graph.issuer_of(TaskId("root"))) == "agent"
+    assert (str(root.assignee), str(kid.assignee)) == ("user", "user")
+    assert str(e.graph.issuer_of(TaskId("root"))) == "user"
 
 
 def test_auto_hands_every_node_to_the_system_and_keeps_the_customer_as_the_roots_issuer():
@@ -82,7 +88,7 @@ def test_auto_hands_every_node_to_the_system_and_keeps_the_customer_as_the_roots
     root, kid = _goal(e)
     assert str(root.assignee) == "exec-1"
     assert str(kid.assignee) == "exec-2", "a child under its own parent's executor would have no seam"
-    assert str(e.graph.issuer_of(TaskId("root"))) == "agent", \
+    assert str(e.graph.issuer_of(TaskId("root"))) == "user", \
         "the root's executor would be its own issuer — answering its own disputes (§10.3)"
     assert "elsewhere" not in {str(a) for a in e.workforce.executor_pool()}, "another project's executor"
 
@@ -95,14 +101,14 @@ def test_auto_refuses_the_customers_moves_on_the_work():
     # the refusal must not hand the customer the mode as ITS way out: measured live, the AUTO customer
     # read "To take control back, set_mode(...)", switched the mode itself and held the project
     assert "set_mode" not in out["error"] and "ask" in out["error"], out
-    out = TL.TOOLS["signal"](e, "root", "CANCEL", "agent", reason="I changed my mind")
+    out = TL.TOOLS["signal"](e, "root", "CANCEL", "user", reason="I changed my mind")
     assert out.get("error") and "AUTO" in out["error"], "the customer's own signal is a move on the work"
 
 
 def test_semi_leaves_the_holder_its_issuer_moves_and_takes_the_childrens_splits():
     e = _engine(Mode.SEMI)
     root, kid = _goal(e)
-    assert (str(root.assignee), str(kid.assignee)) == ("agent", "exec-1")
+    assert (str(root.assignee), str(kid.assignee)) == ("user", "exec-1")
     # the child's CONTRACT is the holder's (it is the child's issuer) …
     out = TL.TOOLS["edit_criteria"](e, "kid", [criterion("k", "K, stated sharper")])
     assert not out.get("error") or "SEMI" not in str(out.get("error")), out
@@ -117,7 +123,7 @@ def test_a_name_that_contradicts_the_mode_is_refused_not_obeyed():
     T.TOOLS["create_task"](e, "root", {"description": "g", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "G")]})
     out = T.TOOLS["create_task"](e, "kid", {"description": "part", "criteria": [criterion("k", "K")]},
-                                 parent_id="root", assignee="agent")
+                                 parent_id="root", assignee="user")
     assert out.get("error") and "only the user changes it" in out["error"], out
 
 
@@ -147,7 +153,7 @@ class _FakeLLM:
 def test_under_auto_the_system_answers_the_roots_questions_and_may_not_narrow_its_criteria():
     e = _engine(Mode.AUTO)
     root, _ = _goal(e)
-    assert I.system_mover(e, _Roster(), TaskId("root"), "escalation") == "agent", \
+    assert I.system_mover(e, _Roster(), TaskId("root"), "escalation") == "user", \
         "under AUTO the system moves for the customer"
     spec = I.spec_with(root, [{"name": "g", "description": "G, loosened", "check": [
         {"behaviour": "b", "command": "test -d . && echo 0", "expect": "0"}]}])
@@ -181,7 +187,7 @@ def test_under_auto_an_accepted_dispute_re_pins_a_root_probe_and_keeps_the_users
                     # the 6 the user's own text gives, computed without the work (`underived_at_the_root`)
                     "derivations": [{"criterion": "g", "probe": probe["command"], "derived_by": "expr 2 \\* 3"},
                                     {"criterion": "g", "probe": "check g", "derived_by": "expr 2 \\* 3"}]})
-    out = I.answer_the_challenge(e, TaskId("root"), "agent", _llm=llm)
+    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm)
     e.wait_idle()
     t = e.graph.get_task("root")
     assert out["status"] == "accepted", out
@@ -191,7 +197,7 @@ def test_under_auto_an_accepted_dispute_re_pins_a_root_probe_and_keeps_the_users
     assert g.description == "G holds", "the user's word stands, whatever the answer says"
     assert [p.command for p in h.check] == stored_h, "a criterion nobody disputed keeps its probes"
     # a re-issue answers no dispute: it re-pins nothing at the root
-    ok, why = I._reassign(e, t, "agent", {"criteria": [{"name": "g", "description": "G holds", "check": [
+    ok, why = I._reassign(e, t, "user", {"criteria": [{"name": "g", "description": "G holds", "check": [
         {"behaviour": "b", "command": "test -d . && echo ok", "expect": "ok"}]}]}, "re-issue", None)
     assert [p.command for p in e.graph.get_task("root").spec.criteria[0].check] == [probe["command"]], (ok, why)
 
@@ -203,7 +209,7 @@ def test_a_challenge_after_a_fail_questions_the_criteria_that_fail_cited():
     _admit(e, "root", _kid("kid", ["Comment handling in lexical analysis", "other"], criterion("k", "K")))
     T.signal(e, "root", "ACCEPT", "exec-1")
     T.signal(e, "root", "DELIVER", "exec-1", result="r")
-    T.signal(e, "root", "FAIL", "agent", failed_criteria=["Comment handling in lexical analysis"])
+    T.signal(e, "root", "FAIL", "user", failed_criteria=["Comment handling in lexical analysis"])
     T.signal(e, "root", "CHALLENGE", "exec-1", reason="the comment handling probe contradicts the lexer's")
     e.wait_idle()
     assert I.questioned(e, e.graph.get_task("root")) == {"Comment handling in lexical analysis"}
@@ -274,7 +280,7 @@ def test_with_no_mode_the_system_answers_only_the_disputes_it_always_answered():
     e = _engine()
     _goal(e)
     _admit(e, "root", {**_kid("seam", ["g"], criterion("s", "S holds")), "assignee": "exec-1"})
-    assert I.system_mover(e, _Roster(), TaskId("seam"), "dispute") == "agent"
+    assert I.system_mover(e, _Roster(), TaskId("seam"), "dispute") == "user"
     assert I.system_mover(e, _Roster(), TaskId("kid"), "dispute") is None, "the system answered its holder's own dispute"
     assert I.system_mover(e, _Roster(), TaskId("seam"), "escalation") is None,         "a solo user's escalation is theirs to decide; the system must not write or close their contract"
 
@@ -282,15 +288,15 @@ def test_with_no_mode_the_system_answers_only_the_disputes_it_always_answered():
 def test_a_holder_cannot_take_a_system_node_back_by_reassigning_it():
     e = _engine(Mode.SEMI)
     _goal(e)
-    out = TL.TOOLS["reassign"](e, "kid", "agent")
+    out = TL.TOOLS["reassign"](e, "kid", "user")
     assert out.get("error") and "only the user changes it" in out["error"], out
 
 
 def test_a_switched_and_restored_mode_leaves_a_different_record():
     e = _engine(Mode.AUTO)
     first = e.mode()
-    e.set_mode(Mode.SOLO, None, AgentId("agent"))
-    e.set_mode(Mode.AUTO, None, AgentId("agent"))
+    e.set_mode(Mode.SOLO, None, AgentId("user"))
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
     assert e.mode() != first and e.mode()["seq"] == first["seq"] + 2
 
 
@@ -344,7 +350,8 @@ def test_a_plan_repair_does_not_spend_the_re_issue_budget():
     ok, why = I.apply_move(e, TaskId("root"), "plan", "exec-1", {
         "move": "add_criterion", "justification": "the goal also needs H",
         "criteria": [{"name": "h", "description": "H holds", "check": [
-            {"behaviour": "b", "command": "test -d . && echo 0", "expect": "0"}]}]})
+            {"behaviour": "b", "command": "test -d . && echo 0", "expect": "0"}]}],
+        "derivations": [{"criterion": "h", "probe": "test -d . && echo 0", "derived_by": "echo 0"}]})
     assert ok, why
     assert I.extensions_granted(e, TaskId("root")) == 0, "a repair is not a re-issue of the contract"
 
@@ -453,11 +460,7 @@ def _sweeps(e, agents, settles, monkeypatch):
     monkeypatch.setattr(I, "settle", lambda *a, **k: next(script))
     ledger, cap = {}, threading.Semaphore(1)
     for _ in settles:
-        before = set(threading.enumerate())
-        I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
-        for th in set(threading.enumerate()) - before:
-            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
-                th.join(5)
+        issuer_sweep(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
         e.wait_idle()
         ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
     return ledger
@@ -503,12 +506,7 @@ def _served(e, agents, settles, monkeypatch, closes_after=(), waits=None, settle
     ledger, cap, served = {}, threading.Semaphore(1), []
     for k in range(len(settles)):
         reads["left"] = 2 if len(served) in closes_after else -1
-        before = set(threading.enumerate())
-        got = I.answer_open_questions(e, agents, lambda key: True, lambda *a, **kw: None, cap, None, ledger)
-        served += got
-        for th in set(threading.enumerate()) - before:
-            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
-                th.join(5)
+        served += issuer_sweep(e, agents, lambda key: True, lambda *a, **kw: None, cap, None, ledger)
         if waits is not None:
             waits.append(max(0, round(max(nb for _, nb, _ in ledger.values()) - time.monotonic())))
             ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
@@ -576,25 +574,25 @@ def test_a_semi_goal_with_no_split_is_not_delivered_by_its_holder():
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
-    out = TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
+    out = TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
     assert out.get("error") and "split it first" in out["error"], "refused only at DELIVER, the work was all done"
     solo = _engine(Mode.SOLO)
     T.TOOLS["create_task"](solo, "root", {"description": "the goal", "accepted_risks": _RISK,
                                           "criteria": [criterion("g", "G holds")]})
     solo.wait_idle()
-    TL.TOOLS["signal"](solo, "root", "ACCEPT", "agent")
-    assert not TL.TOOLS["signal"](solo, "root", "DELIVER", "agent", result="mine").get("error")
+    TL.TOOLS["signal"](solo, "root", "ACCEPT", "user")
+    assert not TL.TOOLS["signal"](solo, "root", "DELIVER", "user", result="mine").get("error")
 
 
 def test_the_split_the_semi_refusal_asks_for_is_reachable_by_the_holders_own_call():
     """The refusal of a childless semi ACCEPT names its lift: split it. Measured live, the holder then called
-    `auto_decompose(executor="agent")`, was refused with `set_mode` as the way out — the user's choice, not
+    `auto_decompose(executor="user")`, was refused with `set_mode` as the way out — the user's choice, not
     its own move — asked to switch to solo and stopped. The refusal must name the holder's own lift."""
     e = _engine(Mode.SEMI)
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
-    out = TL.TOOLS["auto_decompose"](e, "split the goal", root_id="root", executor="agent")
+    out = TL.TOOLS["auto_decompose"](e, "split the goal", root_id="root", executor="user")
     assert out.get("error") and "without `executor`" in out["error"], out
     assert "set_mode" not in out["error"], "the lift is the holder's own call, not the user's mode"
 
@@ -610,9 +608,9 @@ def test_the_machine_issuer_may_not_dispute_a_finding_already_disputed():
     r.verified = True
     e._graph.save_task(r)
     (first, *_) = e.open_l2_findings(TaskId("root"))
-    assert I.apply_move(e, TaskId("root"), "plan", "agent", {"move": "dispute", "criterion": first,
+    assert I.apply_move(e, TaskId("root"), "plan", "user", {"move": "dispute", "criterion": first,
                                                               "justification": "wrong"})[0]
-    done, why = I.apply_move(e, TaskId("root"), "plan", "agent", {"move": "dispute", "criterion": first,
+    done, why = I.apply_move(e, TaskId("root"), "plan", "user", {"move": "dispute", "criterion": first,
                                                                    "justification": "wrong again"})
     assert not done and "already disputed" in why, why
 
@@ -631,9 +629,9 @@ def test_a_finding_already_disputed_is_not_disputed_again_under_another_spelling
     r.verified = True
     e._graph.save_task(r)
     f1, f2 = e.open_l2_findings(TaskId("root"))
-    assert I.apply_move(e, TaskId("root"), "plan", "agent", {"move": "dispute", "criterion": f1,
+    assert I.apply_move(e, TaskId("root"), "plan", "user", {"move": "dispute", "criterion": f1,
                                                               "justification": "wrong"})[0]
-    done, why = I.apply_move(e, TaskId("root"), "plan", "agent", {"move": "dispute", "criterion": f1,
+    done, why = I.apply_move(e, TaskId("root"), "plan", "user", {"move": "dispute", "criterion": f1,
                                                                    "justification": "wrong again"})
     assert not done and "already disputed" in why, why
     assert e.open_l2_findings(TaskId("root")) == [f2], "the other finding took a dispute written for this one"
@@ -645,11 +643,11 @@ def test_the_builder_does_not_take_a_semi_goal_it_did_not_split(monkeypatch):
     the holder was refused only at DELIVER, the whole work done first (critic round 7)."""
     monkeypatch.setenv("GFSO_L2_GATE", "0")
     e = _engine(Mode.SEMI)
-    e.record_root_issuer(TaskId("root"), AgentId("agent"))
+    e.record_root_issuer(TaskId("root"), AgentId("user"))
     build_graph_live({"name": "g", "subtasks": [], "mappings": [], "deps": [], "accepted_risks": _RISK,
                       "root_criteria": [{"name": "g", "description": "G holds", "check": [
                           {"behaviour": "b", "command": "test -d . && echo 0", "expect": "0"}]}]},
-                     "the goal", e, "root", assignee="agent", child_assignee="exec-1")
+                     "the goal", e, "root", assignee="user", child_assignee="exec-1")
     e.wait_idle()
     assert e.graph.get_state(TaskId("root")) == State.OFFERED, "taken with nothing below it"
 
@@ -660,9 +658,9 @@ def test_a_node_the_semi_holder_holds_below_the_root_is_not_taken_without_a_spli
     e = _engine(Mode.SEMI, 2)
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G")]})
     _admit(e, "root", _kid("kid", ["g"], criterion("k", "K"), description="the whole thing"))
-    assert str(e.graph.get_task(TaskId("kid")).assignee) == "agent"
-    assert not TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("error"), "the root has its split"
-    out = TL.TOOLS["signal"](e, "kid", "ACCEPT", "agent")
+    assert str(e.graph.get_task(TaskId("kid")).assignee) == "user"
+    assert not TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("error"), "the root has its split"
+    out = TL.TOOLS["signal"](e, "kid", "ACCEPT", "user")
     assert out.get("error") and "split it first" in out["error"], out
 
 
@@ -672,11 +670,11 @@ def test_work_taken_before_semi_was_chosen_is_not_refused_below_its_boundary():
     (critic round 8). The rule reads whether the MODE holds the node, not only whose name it carries."""
     e = _engine(Mode.SOLO)
     _goal(e)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
-    assert TL.TOOLS["signal"](e, "kid", "ACCEPT", "agent").get("accepted"), "the leaf taken in SOLO"
-    e.set_mode(Mode.SEMI, None, AgentId("agent"))
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    assert TL.TOOLS["signal"](e, "kid", "ACCEPT", "user").get("accepted"), "the leaf taken in SOLO"
+    e.set_mode(Mode.SEMI, None, AgentId("user"))
     assert not e.held_by_the_user_agent(e.depth_of(TaskId("kid")))
-    out = TL.TOOLS["signal"](e, "kid", "DELIVER", "agent", result="done")
+    out = TL.TOOLS["signal"](e, "kid", "DELIVER", "user", result="done")
     assert not out.get("error"), out
 
 
@@ -695,15 +693,15 @@ def test_a_held_node_whose_split_was_cancelled_is_told_to_split_not_to_deliver()
     under another mode's name; the step and the engine both say split (critic rounds 9, 13)."""
     e = _engine(Mode.SEMI)
     _goal(e)
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
-    TL.TOOLS["signal"](e, "kid", "CANCEL", "agent", reason="not needed")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
+    TL.TOOLS["signal"](e, "kid", "CANCEL", "user", reason="not needed")
     e.send_signal_sync(SignalData(signal=Signal.CONFIRM_CANCEL, task_id=TaskId("kid"), in_flight="nothing begun",
                                   source=e.graph.get_task(TaskId("kid")).assignee))   # settled: out of the plan (§12.6)
     e.wait_idle()
     assert not e.graph.get_active_children(TaskId("root"))
     step = TL.TOOLS["next_step"](e)
     assert step.get("action") == "revise" and "split it first" in step.get("directive", ""), step
-    out = TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="mine")
+    out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="mine")
     assert out.get("error") and "split it first" in out["error"], out
 
 
@@ -715,11 +713,11 @@ def test_work_taken_before_semi_is_handed_in_whatever_its_depth():
                                        "criteria": [criterion("g", "G holds"), criterion("h", "H holds")]})
     _admit(e, "root", *(_kid(kid, [c], criterion(kid, "it holds")) for kid, c in (("a", "g"), ("b", "h"))))
     _admit(e, "a", _kid("a1", ["a"], criterion("x", "X"), description="deeper"))
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
-    assert TL.TOOLS["signal"](e, "b", "ACCEPT", "agent").get("accepted")
-    e.set_mode(Mode.SEMI, None, AgentId("agent"))
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    assert TL.TOOLS["signal"](e, "b", "ACCEPT", "user").get("accepted")
+    e.set_mode(Mode.SEMI, None, AgentId("user"))
     assert e.held_by_the_user_agent(e.depth_of(TaskId("b"))), "b lies above the moved boundary"
-    out = TL.TOOLS["signal"](e, "b", "DELIVER", "agent", result="done")
+    out = TL.TOOLS["signal"](e, "b", "DELIVER", "user", result="done")
     assert not out.get("error"), out
 
 
@@ -728,7 +726,7 @@ def test_a_reassign_the_mode_refuses_names_a_lift_the_caller_can_make():
     (critic round 10). It names the executors the mode would accept."""
     e = _engine(Mode.SEMI)
     _goal(e)
-    out = TL.TOOLS["reassign"](e, "kid", "agent")
+    out = TL.TOOLS["reassign"](e, "kid", "user")
     assert out.get("error") and "exec-2" in out["error"], out
 
 
@@ -761,11 +759,11 @@ def test_a_mode_record_from_before_log_at_honours_earlier_consent():
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
-    e.set_mode(Mode.SEMI, None, AgentId("agent"))
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    e.set_mode(Mode.SEMI, None, AgentId("user"))
     rec = {k: v for k, v in e.mode().items() if k != "log_at"}
     e._graph._storage.store_setting("mode", json.dumps(rec))
-    assert not TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="done").get("error")
+    assert not TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="done").get("error")
 
 
 def test_a_held_node_is_not_handed_in_over_a_split_that_has_not_worked():
@@ -774,16 +772,16 @@ def test_a_held_node_is_not_handed_in_over_a_split_that_has_not_worked():
     The delivery is the aggregate of the children, so it waits for them."""
     e = _engine(Mode.SEMI)
     _goal(e)
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
-    out = TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="I wrote it all myself")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
+    out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="I wrote it all myself")
     assert out.get("error") and "have not passed" in out["error"], out
     assert e.graph.get_state(TaskId("root")) == State.EXECUTING
-    cancelled = TL.TOOLS["signal"](e, "kid", "CANCEL", "agent", reason="not needed")
+    cancelled = TL.TOOLS["signal"](e, "kid", "CANCEL", "user", reason="not needed")
     e.send_signal_sync(SignalData(signal=Signal.CONFIRM_CANCEL, task_id=TaskId("kid"), in_flight="nothing begun",
                                   source=e.graph.get_task(TaskId("kid")).assignee))   # settled: out of the plan (§12.6)
     e.wait_idle()
     assert "execute it directly" not in json.dumps(cancelled, default=str), "advice the engine refuses"
-    assert "split it first" in TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="mine").get("error", "")
+    assert "split it first" in TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="mine").get("error", "")
 
 
 def test_a_revision_of_work_taken_before_semi_is_consented_again():
@@ -793,12 +791,12 @@ def test_a_revision_of_work_taken_before_semi_is_consented_again():
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
-    e.set_mode(Mode.SEMI, None, AgentId("agent"))
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    e.set_mode(Mode.SEMI, None, AgentId("user"))
     TL.TOOLS["edit_criteria"](e, "root", [criterion("g", "G holds"), criterion("h", "H holds")])
     e.wait_idle()
     assert e.graph.get_state(TaskId("root")) == State.OFFERED
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
 
 
 def _run_child(e, kid):
@@ -820,14 +818,14 @@ def test_work_taken_before_semi_and_then_split_waits_for_its_children(monkeypatc
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
-    e.set_mode(Mode.SEMI, None, AgentId("agent"))
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    e.set_mode(Mode.SEMI, None, AgentId("user"))
     _admit(e, "root", _kid("kid", ["g"], criterion("k", "K holds"), description="a part"))
-    out = TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="all mine")
+    out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="all mine")
     assert out.get("error") and "have not passed" in out["error"], out
     rec = {k: v for k, v in e.mode().items() if k != "log_at"}          # a record older than `log_at`
     e._graph._storage.store_setting("mode", json.dumps(rec))
-    assert "have not passed" in TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="mine").get("error", "")
+    assert "have not passed" in TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="mine").get("error", "")
 
 
 def test_a_revision_of_work_taken_before_semi_is_handed_in_after_its_re_consent():
@@ -837,12 +835,12 @@ def test_a_revision_of_work_taken_before_semi_is_handed_in_after_its_re_consent(
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
-    e.set_mode(Mode.SEMI, None, AgentId("agent"))
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    e.set_mode(Mode.SEMI, None, AgentId("user"))
     TL.TOOLS["edit_criteria"](e, "root", [criterion("g", "G holds"), criterion("h", "H holds")])
     e.wait_idle()
-    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "agent").get("accepted")
-    assert not TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="done").get("error")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
+    assert not TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="done").get("error")
 
 
 def test_a_held_root_in_rework_is_not_told_to_fix_it_by_hand(monkeypatch):
@@ -851,20 +849,20 @@ def test_a_held_root_in_rework_is_not_told_to_fix_it_by_hand(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "0")
     e = _engine(Mode.SEMI)
     _goal(e)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
     _run_child(e, "kid")
-    assert not TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="aggregate").get("error")
+    assert not TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="aggregate").get("error")
     e.record_exec_verdict(TaskId("root"), "FAIL", ["g"], "validate_result",
                           per_criterion=[{"criterion": "g", "verdict": "fail", "evidence": "g broke"}])
-    TL.TOOLS["signal"](e, "root", "FAIL", "agent", failed_criteria=["g"])
+    TL.TOOLS["signal"](e, "root", "FAIL", "user", failed_criteria=["g"])
     T.TOOLS["create_task"](e, "fix", {"description": "repair g", "criteria": [criterion("f", "F holds")]},
                            parent_id="root", covers=["g"])
     e.wait_idle()
     for s in TL.TOOLS["next_steps"](e).get("steps", []):
         assert not (s.get("task_id") == "root" and "DELIVER" in (s.get("directive") or "")), s
-    assert "DELIVER" not in TL.TOOLS["available_actions"](e, "root", "agent").get("actions", [])
+    assert "DELIVER" not in TL.TOOLS["available_actions"](e, "root", "user").get("actions", [])
     _run_child(e, "fix")
-    assert not TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="aggregate").get("error")
+    assert not TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="aggregate").get("error")
 
 
 def test_the_actions_offered_on_a_held_node_are_the_ones_the_engine_admits():
@@ -872,7 +870,7 @@ def test_the_actions_offered_on_a_held_node_are_the_ones_the_engine_admits():
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "accepted_risks": _RISK,
                                        "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
-    out = TL.TOOLS["available_actions"](e, "root", "agent")
+    out = TL.TOOLS["available_actions"](e, "root", "user")
     assert "ACCEPT" not in out.get("actions", []), out
 
 
@@ -883,12 +881,12 @@ def test_a_held_node_is_not_handed_in_while_its_split_leaves_a_criterion_uncarri
     monkeypatch.setenv("GFSO_L2_GATE", "0")
     e = _engine(Mode.SEMI)
     _goal(e)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
     _run_child(e, "kid")
     TL.TOOLS["edit_criteria"](e, "root", [criterion("g", "G holds"), criterion("h", "H holds")])
     e.wait_idle()
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
-    out = TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="aggregate + H written by me")
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="aggregate + H written by me")
     assert out.get("error") and "does not carry its contract" in out["error"], out
     step = TL.TOOLS["next_step"](e)
     assert step.get("task_id") == "root" and "COVER THE PLAN" in step.get("directive", ""), step
@@ -899,25 +897,25 @@ def test_moving_semis_boundary_does_not_turn_semi_consent_into_consent_before_th
     the holder could cancel its split and deliver alone (critic round 17)."""
     e = _engine(Mode.SEMI)
     _goal(e)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
-    e.set_mode(Mode.SEMI, 1, AgentId("agent"), said="keep semi, the root is mine")
-    TL.TOOLS["signal"](e, "kid", "CANCEL", "agent", reason="not needed")
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    e.set_mode(Mode.SEMI, 1, AgentId("user"), said="keep semi, the root is mine")
+    TL.TOOLS["signal"](e, "kid", "CANCEL", "user", reason="not needed")
     e.send_signal_sync(SignalData(signal=Signal.CONFIRM_CANCEL, task_id=TaskId("kid"), in_flight="nothing begun",
                                   source=e.graph.get_task(TaskId("kid")).assignee))   # settled: out of the plan (§12.6)
     e.wait_idle()
-    assert "split it first" in TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="all mine").get("error", "")
+    assert "split it first" in TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="all mine").get("error", "")
 
 
 def test_after_a_root_fail_the_held_holder_is_told_to_re_aggregate_not_to_fix_by_hand(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "0")
     e = _engine(Mode.SEMI)
     _goal(e)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "agent")
+    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
     _run_child(e, "kid")
-    TL.TOOLS["signal"](e, "root", "DELIVER", "agent", result="aggregate")
+    TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="aggregate")
     e.record_exec_verdict(TaskId("root"), "FAIL", ["g"], "validate_result",
                           per_criterion=[{"criterion": "g", "verdict": "fail", "evidence": "g broke"}])
-    TL.TOOLS["signal"](e, "root", "FAIL", "agent", failed_criteria=["g"])
+    TL.TOOLS["signal"](e, "root", "FAIL", "user", failed_criteria=["g"])
     T.TOOLS["create_task"](e, "fix", {"description": "repair g", "criteria": [criterion("f", "F holds")]},
                            parent_id="root", covers=["g"])
     e.wait_idle()
@@ -989,12 +987,12 @@ def test_a_plan_built_before_semi_is_handed_over_below_the_boundary_not_worked(b
     take the leaf and executed it with no refusal (critic round 18). Below the boundary it hands it over."""
     e = _engine(built_under)
     _goal(e)
-    assert str(e.graph.get_task(TaskId("kid")).assignee) == "agent"
-    e.set_mode(Mode.SEMI, None, AgentId("agent"), said="semi please")
-    assert "ACCEPT" not in TL.TOOLS["available_actions"](e, "kid", "agent").get("actions", [])
+    assert str(e.graph.get_task(TaskId("kid")).assignee) == "user"
+    e.set_mode(Mode.SEMI, None, AgentId("user"), said="semi please")
+    assert "ACCEPT" not in TL.TOOLS["available_actions"](e, "kid", "user").get("actions", [])
     steps = [s for s in TL.TOOLS["next_steps"](e).get("steps", []) if s.get("task_id") == "kid"]
     assert steps and "HAND OVER" in steps[0]["directive"], steps
-    assert "hand it over" in TL.TOOLS["signal"](e, "kid", "ACCEPT", "agent").get("error", "")
+    assert "hand it over" in TL.TOOLS["signal"](e, "kid", "ACCEPT", "user").get("error", "")
     out = T.TOOLS["reassign"](e, "kid", "exec-1", reason="other")
     assert not (out or {}).get("error"), out
     assert str(e.graph.get_task(TaskId("kid")).assignee) == "exec-1"
@@ -1006,9 +1004,9 @@ def test_moving_the_boundary_up_hands_a_held_node_over_rather_than_admitting_it(
     e = _engine(Mode.SEMI, 2)
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
     _admit(e, "root", _kid("mid", ["g"], criterion("m", "M holds")))
-    assert "split it first" in TL.TOOLS["signal"](e, "mid", "ACCEPT", "agent").get("error", "")
-    e.set_mode(Mode.SEMI, 1, AgentId("agent"), said="the root is enough for me")
-    assert "hand it over" in TL.TOOLS["signal"](e, "mid", "ACCEPT", "agent").get("error", "")
+    assert "split it first" in TL.TOOLS["signal"](e, "mid", "ACCEPT", "user").get("error", "")
+    e.set_mode(Mode.SEMI, 1, AgentId("user"), said="the root is enough for me")
+    assert "hand it over" in TL.TOOLS["signal"](e, "mid", "ACCEPT", "user").get("error", "")
 
 
 def test_a_reshape_never_dissolves_the_split(monkeypatch):
@@ -1050,9 +1048,9 @@ def test_a_node_below_the_boundary_is_told_to_hand_over_whatever_is_under_it(mon
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
     _admit(e, "root", _kid("mid", ["g"], criterion("m", "M holds")))
     _admit(e, "mid", _kid("leaf", ["m"], criterion("l", "L holds")))
-    e.set_mode(Mode.SEMI, 1, AgentId("agent"), said="the root is mine")
+    e.set_mode(Mode.SEMI, 1, AgentId("user"), said="the root is mine")
     mid = e.graph.get_task(TaskId("mid"))
-    assert str(mid.assignee) == "agent" and not e.held_by_the_user_agent(e.depth_of(TaskId("mid")))
+    assert str(mid.assignee) == "user" and not e.held_by_the_user_agent(e.depth_of(TaskId("mid")))
     assert e.frontier.steps._held_step_verb(mid, e.graph.get_active_children(TaskId("mid"))) == "HAND OVER"
 
 
@@ -1187,7 +1185,8 @@ def test_two_holes_one_revision_opened_are_lifted_by_one_reshape(monkeypatch):
     e.wait_idle()
     root = e.graph.get_task(TaskId("root"))
     actor = str(root.assignee)
-    assert I.MOVES["add_criterion"](e, root, actor, {"criteria": [criterion("h", "H holds")]}, "the goal grew", None)[0]
+    assert I.MOVES["add_criterion"](e, root, actor, {"criteria": [criterion("h", "H holds")],
+                                                       "derivations": [_DERIVED_H]}, "the goal grew", None)[0]
     e.wait_idle()
     holes = {h["check"].split(":")[0] for h in T.list_holes(e, "root")["holes"]}
     assert {"CHECK-1", "CHECK-4"} <= holes, holes
@@ -1232,11 +1231,7 @@ def test_a_dispute_rejected_without_contact_is_not_a_reason_to_close_the_node(tm
                     place=lambda engine, agents, node: str(tmp_path))
     ledger, cap = {}, threading.Semaphore(1)
     for _ in range(4):
-        before = set(threading.enumerate())
-        I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, verbs, ledger)
-        for th in set(threading.enumerate()) - before:
-            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
-                th.join(10)
+        issuer_sweep(e, agents, lambda k: True, lambda *a, **k: None, cap, verbs, ledger)
         e.wait_idle()
         ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})     # past the backoff
     assert e.graph.get_state(TaskId("kid")) == State.CHALLENGED, "the dispute still stands, the node is not closed"
@@ -1337,7 +1332,7 @@ def test_an_obligation_is_disputed_below_the_root_only_by_naming_a_check_that_st
     e._graph._storage.store_critique(k.id, json.dumps({
         "semantic_covered": False, "undecided_obligations": [{"obligation": "no shelling out", "admits": "a disguise"}]}))
     move = {"move": "dispute", "criterion": "undecided: no shelling out"}
-    done, why = I.apply_move(e, k.id, "plan", "agent", {**move, "justification": "residue of NO_SUCH_CHECK"})
+    done, why = I.apply_move(e, k.id, "plan", "user", {**move, "justification": "residue of NO_SUCH_CHECK"})
     assert not done and "naming the pinned check" in why, why
-    assert I.apply_move(e, k.id, "plan", "agent", {**move, "justification": f"residue of {probe_id('reads', probe)}"})[0]
+    assert I.apply_move(e, k.id, "plan", "user", {**move, "justification": f"residue of {probe_id('reads', probe)}"})[0]
     assert e.open_l2_findings(k.id) == []

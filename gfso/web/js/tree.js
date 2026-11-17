@@ -3,8 +3,13 @@
 export const isRoot = t => !t.parent_id;
 export const rootOf = nodes => nodes.find(isRoot);
 export const childrenOf = (nodes, id) => nodes.filter(t => t.parent_id === id);
-export const ancestorsIn = nodes => { const up = Object.fromEntries(nodes.map(t => [t.id, t.parent_id]));
-    return id => { const out = []; for (let x = up[id]; x; x = up[x]) out.push(x); return out; }; };
+// …kept per list of nodes: a part's view asked it once a node, and each call built the whole plan's map again (a move
+// between parts spent a quarter of a second there on 446 nodes); a list's parents never change under it
+const kept = new WeakMap();
+export const ancestorsIn = nodes => { if (kept.has(nodes)) return kept.get(nodes);
+    const up = Object.fromEntries(nodes.map(t => [t.id, t.parent_id]));
+    const f = id => { const out = []; for (let x = up[id]; x; x = up[x]) out.push(x); return out; };
+    kept.set(nodes, f); return f; };
 export function depths(nodes) {
     const by = Object.fromEntries(nodes.map(n => [n.id, n])), d = {};
     const of = id => d[id] ??= by[id]?.parent_id ? of(by[id].parent_id) + 1 : 0;

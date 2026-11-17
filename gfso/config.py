@@ -16,10 +16,14 @@ its point of enforcement on purpose, where the code that obeys it is the code th
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
 import re
+import threading
+import time
+import typing
 from pathlib import Path
 
 # The installation root — the package's parent, used when the checkout itself is the home.
@@ -90,6 +94,7 @@ DEFAULT_EXECUTION = "default"
 #: The loopback host. One server, one address (§ the product's own rule) — spelled in six modules
 #: before this, which is five chances for the page and its API to disagree about who they are.
 LOOPBACK = "127.0.0.1"
+LOOPBACK_NAMES = (LOOPBACK, "localhost", "::1")
 
 #: The DEFAULT model tier, per door rather than one global value — the doors are deliberately
 #: different, and the MCP schema shows its default to the agent reading it. Collapsing them into one
@@ -125,9 +130,44 @@ DEFAULT_PROJECT = "default"
 # spellings. Read at CALL time (never snapshotted at import): a test that sets the variable after
 # importing the module must be obeyed, which is how the gate's own probes work.
 
-def _flag(name: str, default: str = "0") -> bool:
-    """An on/off switch, read the way the product has always read them: anything but "" and "0"."""
-    return os.environ.get(name, default) not in ("", "0")
+#: the words of an on/off switch; any other is refused by name — read as either, `GFSO_NO_WINDOWS=on` opened windows
+_ON, _OFF = ("1", "true", "yes", "on"), ("0", "false", "no", "off", "")
+
+
+def flag(name: str, default: bool = False, env=None) -> bool:
+    """THE reading of an on/off switch `name` — of this process's environment, or of `env` (a declaration read as
+    one): unset is `default`."""
+    if (v := (os.environ if env is None else env).get(name)) is None:
+        return default
+    if (v := str(v).strip().lower()) in _ON + _OFF:
+        return v in _ON
+    raise ValueError(f"{name}={v!r} is no on/off switch: it reads 1/true/yes/on or 0/false/no/off")
+
+
+def write_atomic(path, data: str | bytes, mode: int | None = None) -> None:
+    """`data` in `path` whole or not at all: written beside it, then moved over — a reader never sees it half written,
+    nor a writer killed midway leaves it empty. `mode`: the file's, born with it (a secret readable by its owner alone);
+    none given, an existing file keeps its own.
+    The move is retried for 2 s and then raised: on Windows a reader holding the old file for an instant refuses it."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    raw = data.encode("utf-8") if isinstance(data, str) else data
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | (os.O_BINARY if os.name == "nt" else 0)
+    with os.fdopen(os.open(tmp, flags, 0o666 if mode is None else mode), "wb") as f:
+        f.write(raw)
+    if mode is not None:
+        os.chmod(tmp, mode)
+    elif path.exists():                  # …an existing file keeps its mode: replaced, a 0600 file came back 0644
+        os.chmod(tmp, path.stat().st_mode & 0o7777)
+    for left in range(200, -1, -1):
+        try:
+            return os.replace(tmp, path)
+        except PermissionError:
+            if not left:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.01)
 
 
 def allowed_hosts() -> list[str]:
@@ -138,8 +178,41 @@ def allowed_hosts() -> list[str]:
 
 def admit_host(host: str) -> None:
     """The name a server was started on (`serve --host`) joins the names its door answers to — its own page included."""
-    if host and host.lower() not in (LOOPBACK, "localhost", "::1", *allowed_hosts()):
+    if host and host.lower() not in (*LOOPBACK_NAMES, *allowed_hosts()):
         os.environ["GFSO_ALLOWED_HOSTS"] = ",".join([*allowed_hosts(), host.lower()])
+
+
+def bind(host: str) -> None:
+    """The address this process serves on (`serve --host`), for `bound_beyond_loopback`."""
+    os.environ["GFSO_BIND"] = host
+
+
+def bound_address() -> str:
+    """The address this server listens on (`serve --host`, `GFSO_BIND`), loopback by default."""
+    return os.environ.get("GFSO_BIND", LOOPBACK).lower()
+
+
+def opens_the_page() -> bool:
+    """Whether the go opens the project's page itself: on a server on the person's own machine (loopback), unless
+    `GFSO_OPEN_PAGE=0` — told in words to write the link, a fresh client wrote it only at the end (s16a, 2026-11-16)."""
+    return flag("GFSO_OPEN_PAGE", True) and not bound_beyond_loopback()
+
+
+def bound_beyond_loopback() -> bool:
+    """Whether this server listens past loopback (`serve --host`, `GFSO_BIND`): there a Host header naming loopback is
+    any client's word, so it vouches for no local caller."""
+    return bound_address() not in LOOPBACK_NAMES
+
+
+def windows_allowed() -> bool:
+    """Whether gfso may put anything on the person's screen — a page, a console, an app (`GFSO_NO_WINDOWS=1`: no, said
+    instead: a machine whose owner is using its screen, a measurement, a box with no one at it)."""
+    return not flag("GFSO_NO_WINDOWS")
+
+
+def browser() -> str:
+    """What the person said opens links (`BROWSER`, as `webbrowser` reads it); empty: the system's default."""
+    return os.environ.get("BROWSER", "")
 
 
 def shared_url() -> str:
@@ -147,11 +220,124 @@ def shared_url() -> str:
     return os.environ.get("GFSO_SHARED_URL", f"http://{LOOPBACK}:8000/mcp")
 
 
+#: the local person's name in every graph, log and page — "the user", whom the user-agents serve; written `agent`
+#: before 0.4.0 and rewritten once where it stood (`adapters.storage.person`)
+PERSON = "user"
+#: the person's name before 0.4.0 — and the kind `whoami` names a call by that is no person's page: an agent acting
+#: for him
+AGENT = "agent"
+#: the person's names, now and before 0.4.0: no role, console or token is born under either
+PERSONS_NAMES = frozenset({AGENT, PERSON})
+
+
+def reserved_refusal(name) -> str | None:
+    """Why `name` cannot be born as a role's, a console's or a token's name, or None: it is the person's."""
+    if str(name) not in PERSONS_NAMES:
+        return None
+    return (f"{str(name)!r} is reserved: it names this installation's person (`{PERSON}`; `agent` before 0.4.0), "
+            f"never a role, a console or a token. Choose a name of its own (`<project>-exec`, `engineering`).")
+
+
 def agent_id() -> str:
-    """The calling agent's standing identity. Identity is TRANSPORT-derived, not configured: this is
-    the agent's own door, so an omitted assignee can only mean the agent itself. `GFSO_AGENT_ID`
-    merely RENAMES it (the multi-agent future); it is never required."""
-    return os.environ.get("GFSO_AGENT_ID") or "agent"
+    """The user's standing agent, the name a call signs as where its credential names no other: the person's own
+    (`PERSON`), read in the background by the engine as the user's (§10.1); a call's own signer is `caller_id`."""
+    return PERSON
+
+
+#: set by the CLI's direct path (no server): its process ends with the call, so a plan is written in the call
+WRITTEN_IN_THE_CALL = contextvars.ContextVar("gfso_written_in_the_call", default=False)
+
+PRINCIPAL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+#: the one variable a console's credential comes from, read by its bridge and its CLI alike (`gfso agent <name>`)
+TOKEN_ENV = "GFSO_TOKEN"
+
+
+def launch_token() -> str | None:
+    """The token this process was launched with (`GFSO_TOKEN`), set outside the agent; None when none was."""
+    return os.environ.get(TOKEN_ENV) or None
+
+
+def closed_launch_name() -> str | None:
+    """A name this process was launched under by `GFSO_AGENT_ID`, which signs nothing now: said, so a console launched
+    the old way is told what to run instead of being taken for the standing agent."""
+    return os.environ.get("GFSO_AGENT_ID") or None
+
+
+class Principal(typing.NamedTuple):
+    """Who a call comes from, as its door resolved it (`signin.principal_of`): `name` signs where a move names no one,
+    `signs_as` every name it may sign as (none: every move is refused, `lift` says how to sign in), `via` the credential
+    the record keeps beside the name (`session`, `local-peer`, a token's id, `default`), `how` what `whoami` says of it."""
+    name: str
+    signs_as: tuple
+    via: str
+    how: str
+    person: str | None = None
+    lift: str = ""
+
+    def signing(self, name: str) -> "Principal":
+        """This principal, signing as `name` — one of `signs_as` — for the move under way."""
+        return self._replace(name=name)
+
+    @property
+    def a_page(self) -> bool:
+        """Whether this is a person's page: signed in, or admitted as this machine's user (`signin.principal_of`)."""
+        return self.via in ("session", "local-peer")
+
+
+#: the one local person, owner of every name on this machine
+LOCAL_PERSON = "local"
+#: a local client that is no browser, with no credential: the standing agent, the local person's (`signin.principal_of`)
+STANDING = Principal(PERSON, (PERSON,), "default", "default", LOCAL_PERSON)
+
+
+#: the principal of the call being served, set by its door for that call only
+CALLER: contextvars.ContextVar = contextvars.ContextVar("gfso_caller", default=None)
+#: the header a bridge names its connection's client kind by — `GFSO_CLIENT` of the door's entry, set outside the agent
+CLIENT_HEADER = "X-GFSO-Client"
+#: `code`: a shell and files on the person's machine, and a background command whose exit wakes the model (Claude Code);
+#: `chat`: only the gfso verbs (Claude Desktop, claude.ai)
+CLIENT_KINDS = ("code", "chat")
+#: the client kind of the connection whose call is being served, set by the MCP door for that call only
+CLIENT: contextvars.ContextVar = contextvars.ContextVar("gfso_client", default=None)
+
+
+def launch_client() -> str | None:
+    """The client kind this bridge was launched under (`GFSO_CLIENT`), set outside the agent; None when none was."""
+    return os.environ.get("GFSO_CLIENT") or None
+
+
+def client_kind() -> str | None:
+    """The kind of the connection whose call is being served (`CLIENT_KINDS`); None outside an MCP connection."""
+    return CLIENT.get()
+
+
+def how_it_is_waited(project, what: str = "the run needs you") -> str:
+    """How the agent learns that `what` happened, by its client's kind. A client with a wake runs `gfso wait` in the
+    background, its exit the wake. A chat client has none and no call of it is held: polling in its turn is its one free
+    move left, so the move is said — it hands the turn back and reads again when the person asks."""
+    if client_kind() == "chat":
+        return "Hand the turn back to the person now: read the run again when they ask."
+    return f"`gfso wait project={project or '<project>'}` in the background exits when {what}."
+
+
+def for_the_hands(cmd: str) -> str:
+    """A command said to whoever has the hands to run it: the agent of a client with a shell, or a person at the CLI;
+    the person, in a terminal, for a chat client's agent, which has none."""
+    return f"the person runs `{cmd}` in a terminal" if client_kind() == "chat" else f"run `{cmd}`"
+
+
+def caller_id() -> str:
+    """Who signs the call being served: its principal's name, else the standing agent. Apart from `agent_id`, which the
+    engine reads in the background as the user's standing agent (§10.1 roles by Del): a caller's name read there would
+    class one party two ways, by whichever thread asked."""
+    p = CALLER.get()
+    return p.name if p is not None else agent_id()
+
+
+def caller_via() -> str | None:
+    """The credential the call being served came through (`Principal.via`), None outside a door's call."""
+    p = CALLER.get()
+    return p.via if p is not None else None
 
 
 #: where the server remembers which project it was pointed at, so a RESTART does not silently
@@ -166,6 +352,17 @@ def project_by_env() -> str:
     return os.environ.get("GFSO_PROJECT", "")
 
 
+def install_spec(version: str) -> str:
+    """What `gfso setup`, run from a throwaway environment (`pipx run gfso setup`, `uvx gfso setup`), installs to stay:
+    this very release, or `GFSO_INSTALL_SPEC` (a wheel's path, for a rehearsal of an unpublished build)."""
+    return os.environ.get("GFSO_INSTALL_SPEC") or f"gfso=={version}"
+
+
+def asks_for_releases() -> bool:
+    """May this installation ask PyPI whether a newer gfso is out (`gfso.updates`)? `GFSO_NO_UPDATE_CHECK=1` says no."""
+    return not flag("GFSO_NO_UPDATE_CHECK")
+
+
 #: Set by `gfso serve` alone: this process is THE server of its data dir, and the projects that stood when it started
 #: stay stopped until their Start (`runtime.ProjectRegistry`); a reload worker inherits it, a stdio MCP process does not.
 SERVES_ENV = "GFSO_SERVES"
@@ -173,7 +370,7 @@ SERVES_ENV = "GFSO_SERVES"
 
 def serves() -> bool:
     """Is this process the server of its data dir (`mark_the_server`)? Not inherited by anything it runs."""
-    return os.environ.get(SERVES_ENV) == "1"
+    return flag(SERVES_ENV)
 
 
 def mark_the_server() -> None:
@@ -240,6 +437,8 @@ _STATE_BOUND_DEFAULTS = {
     # own decision.
     "CANCELLING": 120.0, "ESCALATED": 86_400.0,
 }
+#: the states that carry a bound of their own; a project may set any of them (`project_state_bound`)
+BOUNDED_STATES = tuple(_STATE_BOUND_DEFAULTS)
 
 
 def state_bound(state_name: str) -> float:
@@ -327,6 +526,27 @@ def local_agents(declared: str = "") -> bool:
     container (the author, 2026-10-27: autonomous runs only in a container, Local only with a person).
     `declared`: the value a server spawned from here takes where none is exported (`install_spawned_server_env`)."""
     return (os.environ.get("GFSO_LOCAL_AGENTS") or declared).strip().lower() == "allow"
+
+
+#: how every server of this package is run by uvicorn: its client the connection's real other end, never a forwarding
+#: header's word — uvicorn rewrites it from `X-Forwarded-For` by default for 127.0.0.1, and the door asks the OS who
+#: owns that end (`peer.ours`); a front is told by its headers (`signin.principal_of`)
+UVICORN = {"proxy_headers": False}
+
+
+def page_auth(declared: str = "") -> str:
+    """What a page on a loopback server needs to be the person: `local-peer` (the default), that its connection's other
+    end is a process of this server's OS user (`peer.ours`); `key` (`gfso up --protected`), a session from `gfso ui` as
+    well. `declared` as in `local_agents`. Past a loopback bind always `key`: there a loopback name is any client's word,
+    and a page opened at one with no session could never move (critic)."""
+    return "key" if protected(declared) or bound_beyond_loopback() else "local-peer"
+
+
+def protected(declared: str = "") -> bool:
+    """Whether the installation was closed by the person's word (`gfso up --protected`): then reading too waits on a
+    session. A bind past loopback alone does not close reading — the graph is open to read by default (the author,
+    2026-11-16: «чтение графа и даже проектов по дефолту может быть открыто на локалке»); moving always needs a name."""
+    return (os.environ.get("GFSO_PAGE_AUTH") or declared).strip().lower() == "key"
 
 
 #: Model sessions one server runs at once (`max_sessions`).
@@ -516,18 +736,18 @@ def reconcile_allowed() -> bool:
     and left one homed in a tempdir behind it, twice killing a paid measurement run mid-flight. The
     flag rides the environment because the reconciler is reached through a spawned CLI, where an
     argument cannot go."""
-    return not _flag("GFSO_NO_RECONCILE")
+    return not flag("GFSO_NO_RECONCILE")
 
 
 def seed_demo() -> bool:
     """Seed the demo graph into a fresh engine (`GFSO_SEED`) — opt-in, always."""
-    return _flag("GFSO_SEED")
+    return flag("GFSO_SEED")
 
 
 def serving() -> bool:
     """Is this process the gfso server (`GFSO_SERVING`)? Set by the server itself and inherited by a
     `--reload` worker, which uvicorn starts in a fresh interpreter."""
-    return _flag("GFSO_SERVING")
+    return flag("GFSO_SERVING")
 
 
 def mark_serving() -> None:
@@ -545,22 +765,22 @@ def validate_internal() -> bool:
     not bypass the system"; what SOLO lacked was a validation at each κ-scope, not one per piece, and a
     validation per piece is what turned a 2.6-minute task into 39 and 70 (§10.2 permits a check on every
     delivery; it does not require one)."""
-    return _flag("GFSO_VALIDATE_INTERNAL", "0")
+    return flag("GFSO_VALIDATE_INTERNAL")
 
 
 def with_mcp() -> bool:
     """Mount the MCP transport inside the HTTP server."""
-    return _flag("GFSO_WITH_MCP")
+    return flag("GFSO_WITH_MCP")
 
 
 def autoexit() -> bool:
     """Let the server exit when the last session's lease lapses."""
-    return _flag("GFSO_AUTOEXIT")
+    return flag("GFSO_AUTOEXIT")
 
 
 def ui_enabled() -> bool:
     """Serve the page from the standalone MCP process (default ON)."""
-    return _flag("GFSO_MCP_UI", "1")
+    return flag("GFSO_MCP_UI", True)
 
 
 def ui_address() -> tuple[str, int]:
@@ -584,7 +804,7 @@ def narrate() -> bool:
     merges the two streams gets prose in front of the payload and a JSONDecodeError at column 3
     (measured on the human door 2026-08-22, one burnt review round). Silence is one variable away.
     """
-    return not _flag("GFSO_QUIET")
+    return not flag("GFSO_QUIET")
 
 
 # HOW MANY READINGS THE LEVEL-2 CHECKER TAKES on the FIRST check of a node. Same rationale as
@@ -632,14 +852,13 @@ def sufficiency_at_authoring() -> bool:
     `GFSO_SUFFICIENCY_AT_AUTHORING=0` turns it off — the measurement arm needs to be able to author a
     plan the gate has NOT already pre-repaired, or the two halves of the experiment collapse.
     """
-    return os.environ.get("GFSO_SUFFICIENCY_AT_AUTHORING", "1") not in ("0", "false", "no")
+    return flag("GFSO_SUFFICIENCY_AT_AUTHORING", True)
 
 
-# THE BLOCKING WAIT on the frontier verb. Every tester of waves 18-19 wrote the same poll loop by
-# hand and spent 8-15 minutes of their run inside it: a graph that is working looks exactly like one
-# that is stuck from a single call away. The ceiling exists because a call that never returns is a
-# worse surface than one that says "nothing yet", and because every transport has a ceiling of its
-# own that would cut it less politely.
+# THE ONE WAIT ON A RUN (`tools_llm.wait_for_the_customer`, `POST /api/wait`). Every tester of waves 18-19 wrote the same
+# poll loop by hand and spent 8-15 minutes of their run inside it: a graph that is working looks exactly like one that is
+# stuck from a single call away. The ceiling exists because a call that never returns is a worse surface than one that
+# says "nothing yet", and because every transport has a ceiling of its own that would cut it less politely.
 WAIT_MAX_SECONDS = 600.0
 WAIT_POLL_SECONDS = 2.0
 
@@ -717,11 +936,13 @@ def subprocess_env(*, credential: dict | None = None, extra: dict | None = None)
     return env
 
 
-def install_mcp_env(*, db_path: str | None, llm: str, model: str) -> None:
-    """The environment the stdio MCP door runs under — the same act as `install_serve_env`.
+def install_mcp_env(*, db_path: str | None, llm: str, model: str, declared: dict) -> None:
+    """The environment the stdio MCP door runs under — the same act as `install_serve_env`: the installation's
+    declaration fills its gaps too (a page it serves under `--protected` asked no sign-in otherwise, critic).
 
     A third door turning its arguments into the variables the app reads, spelled a third time.
     """
+    os.environ.update(fill_env_gaps(declared))
     os.environ["GFSO_DB_PATH"] = db_path or str(data_dir() / "gfso.db")
     os.environ["GFSO_LLM"] = llm
     os.environ["GFSO_MODEL"] = model
@@ -732,8 +953,10 @@ def spawned_server_popen_env() -> dict:
 
     `GFSO_AUTOEXIT` defaults to off for the same reason as `install_spawned_server_env`: a server
     raised for somebody's session is a background service, not that session's property.
+    Nor its credential: a console's token is its connection's (`TOKEN_ENV`), never the server's.
     """
-    return dict(os.environ, GFSO_AUTOEXIT=os.environ.get("GFSO_AUTOEXIT", "0"))
+    return {**{k: v for k, v in os.environ.items() if k != TOKEN_ENV},
+            "GFSO_AUTOEXIT": os.environ.get("GFSO_AUTOEXIT", "0")}
 
 #: The longest a question — and a project the account's limit stopped with no lift time said (`Engine.stop_for_the_limit`)
 #: — waits while the account's usage limit refuses every call: the limit lifts at a time of day, so probing it costs a

@@ -2,7 +2,6 @@
 import socket
 import threading
 import time
-from pathlib import Path
 
 import anyio
 import pytest
@@ -10,6 +9,7 @@ import uvicorn
 from mcp import ClientSession
 from mcp.server.fastmcp import FastMCP
 
+from gfso.mcp import protocol as P
 from gfso.mcp import connect as C
 
 
@@ -148,15 +148,29 @@ def test_a_call_past_the_ceiling_is_answered_on_a_live_session(monkeypatch):
     assert late == ["call"]
 
 
-def test_the_whole_path_stands_where_the_client_does_not_cut_the_instructions():
+#: what a fresh agent of either kind must read before its first call
+_BOTH = ("auto_decompose(plan=path)", "its `say` asks",
+         "never ask its value in chat", "protocol(section)",
+         # …and where the agent finds what stands behind the product when the person asks (the author, 11-15)
+         "https://github.com/Kirill-Shokhin/GFSO/tree/main/docs", "THEORY.md", "applied_gfso_v4_en.md", "Lean 4",
+         "never route around a rule", "You speak for GFSO", "canon(section)",
+         # …and the one rule a host executor rests on, which stood under the cut (critic, 11-15)
+         "GFSO_LOCAL_AGENTS", "never set it yourself")
+#: what one kind's agent must read and the other's must not: a wake or a shell it lacks, it would act on
+_ONLY = {"code": ("gfso wait project=<project>", "`gfso doctor`. No Docker", "git init", "`path` if none"),
+         "chat": ("are theirs, in a terminal", "gfso setup --desktop", "the person opens `path`",
+                  "hand the turn back to the person")}
+
+
+@pytest.mark.parametrize("kind", sorted(_ONLY))
+def test_the_whole_path_stands_where_the_client_does_not_cut_the_instructions(kind):
     """Claude Code cut the server's instructions at 4096 characters ("never dec… [truncated]"): the link at the go, the
-    wait and the report of the end stood past it, and no fresh agent read them (critic, measured)."""
-    text = (Path(C.__file__).parent / "ORCHESTRATOR.md").read_text(encoding="utf-8")
-    seen = text[:4000]
-    assert text.index("## An executor on this host") < 4000
-    # a heading under the cut proved nothing of its body: the host executor's `git switch` stood past it (audit, 11-07)
-    # …and where it can fire: the executors are known after `set_mode`, so the check stands in the go's step
-    assert seen.index("git switch -c work/<project>") > seen.index("set_mode(")
-    for said in ("git switch -c work/<project>", "not in thinking", "auto_decompose(plan=path)", "next_steps(wait=600)",
-                 "its `say` asks", "never ask its value in chat"):
+    wait and the report of the end stood past it, and no fresh agent read them (critic, measured). Each kind's text is
+    whole under the cut, and holds nothing its client cannot do (the author, 2026-11-15)."""
+    seen = P.BY_KIND[kind]
+    # …4096 whether the client counts characters or UTF-8 bytes, a little short of it
+    assert len(seen) <= 4080 and len(seen.encode("utf-8")) <= 4080, (len(seen), len(seen.encode("utf-8")))
+    for said in _BOTH + _ONLY[kind]:
         assert said in seen, said
+    for said in _ONLY["chat" if kind == "code" else "code"] + ("<!--", "If your session has no shell", "never waiting"):
+        assert said not in seen, said

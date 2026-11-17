@@ -12,12 +12,12 @@ from gfso.adapters import worktrees as W
 from gfso.adapters.worktrees import base_of
 from gfso.adapters.netrecord import forget
 from gfso.adapters.execution import (IMPORTED, ContainerExecution, LocalExecution, component, node_key, drop_volumes,
-                                     held_as_tree, network_of, stricter)
+                                     held_as_tree, network_of, scratch_of, stricter)
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task, grounds_key, root_of
-from gfso.core.types import HOST, MADE, NODES, THIS_HOST, VOLUME, PlaceUnavailable, Signal, TaskId, State, base_named, hold_places, nodes_dir
+from gfso.core.types import HOST, MADE, NODES, SCRATCH, THIS_HOST, VOLUME, PlaceUnavailable, Signal, TaskId, State, base_named, base_of_nodes, hold_places, nodes_root, PLACES
 from gfso.core.protocol.procedure import round_of
 from gfso.engine.findings import record_round
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
@@ -63,11 +63,18 @@ def _workspace(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | 
 def _place_of(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | None:
     """(base, place, branch) as `_workspace` derives them, asking git nothing — so a caller that must not wait on a
     subprocess (the transition bus) can ask whether a place was ever made (`made`)."""
-    base = (performer(engine, agents, task.assignee)[1] or {}).get("workdir") if task is not None else None
+    role = (performer(engine, agents, task.assignee)[1] or {}) if task is not None else {}
+    base = role.get("workdir")
     if not base:
         return None
     key, proj = node_key((session_scope(engine, agents, task) or task).id), component(engine.project_name or DEFAULT_PROJECT)
-    return base, str(Path(base).parent / nodes_dir(Path(base).name) / proj / key), f"gfso/{proj}/{key}"
+    place = nodes_root(base) / proj / key
+    # …a host place made beside its base before the places moved into the installation's own state goes on where it
+    # stands (a stat, no subprocess); a role whose execution is declared works in a volume, where its place is a name
+    # (`made` reads its record by the old one) and what stands beside the base is no place of it (critic)
+    if not role.get("execution") and (old := _laid_out_before(place)) != place and HOST.is_dir(str(old)):
+        place = old
+    return base, str(place), f"gfso/{proj}/{key}"
 
 
 
@@ -82,7 +89,8 @@ def made(engine, place: str) -> bool:
     nothing of the protocol."""
     if (got := engine.graph.setting(MADE + place)) is not None or (
             got := engine.graph.setting(MADE + _spelled(place))) is not None or (   # …as a copy-in carried it
-            got := engine.graph.setting(MADE + _named_as_before(place))) is not None:
+            got := engine.graph.setting(MADE + _named_as_before(place))) is not None or (
+            got := engine.graph.setting(MADE + str(_laid_out_before(place)))) is not None:   # …recorded beside its base
         return got == "1"
     # …a place made before the record was kept: asked once (once per process where it is not made), then recorded —
     # the record decides from there on. On this host, never by a call into a container from the transition bus: until
@@ -105,6 +113,26 @@ def _named_as_before(place: str) -> str:
     return str(Path(*(NODES + base_named(x) if x.startswith(NODES) else x for x in Path(place).parts)))
 
 
+def _laid_out_before(place) -> Path:
+    """A place under the installation's places (`nodes_root`) as it was named beside its base before 2026-11-15: the
+    record of a project made then keys its places so; any other path as it is."""
+    p = Path(place)
+    nodes = next((a for a in p.parents if a.name.startswith(NODES)), None)
+    if nodes is None or nodes.parent.parent.name != PLACES:
+        return p
+    return base_of_nodes(nodes).parent / nodes.name / p.relative_to(nodes)
+
+
+def _laid_out_now(place) -> str:
+    """A place or round laid out beside its base before 2026-11-15, as it is named now under the installation's places
+    (`nodes_root`) — `_laid_out_before` read the other way; any other path as it is."""
+    p = Path(place)
+    nodes = next((a for a in p.parents if a.name.startswith(NODES)), None)
+    if nodes is None or nodes.parent.parent.name == PLACES:
+        return str(p)
+    return str(nodes_root(base_of_nodes(nodes)) / p.relative_to(nodes))
+
+
 def _spelled(place) -> str:
     """One spelling of a place, whichever it arrived in — what a copy-in records it by (`_carried`)."""
     return os.path.normcase(os.path.abspath(place))
@@ -113,7 +141,7 @@ def _spelled(place) -> str:
 def _carried(engine, dirs) -> None:
     """The places and rounds a copy-in carried into the project's volume, recorded as made — before their host copy
     is consumed, which the record of places made before it was kept fell back on (`made`, `round_stands`)."""
-    for d in map(str, dirs):
+    for d in map(_laid_out_now, dirs):        # …carried in from beside the base, recorded by the names they now stand by
         if round_of(d):
             record_round(engine.graph, d, True)
         elif not Path(d).parent.name.startswith("."):
@@ -132,14 +160,39 @@ def node_workspace(engine, agents: "AgentRegistry", task_id) -> str | None:
     return w[1] if w is not None and made(engine, w[1]) else None
 
 
-def _where_it_joins(engine, agents: "AgentRegistry", task, w: tuple) -> str | None:
+def _where_it_joins(engine, agents: "AgentRegistry", task, w: tuple | None) -> str | None:
     """Where the node's result joins the whole: its parent's workspace in the same repository once the parent has
-    one, else the base. None inside its own scope, whose place is the parent's too."""
+    one, else the base. None inside its own scope, whose place is the parent's too, and for a node with no place
+    (`w` None, its holder's own tree) whose whole has none either."""
     parent = engine.graph.get_parent(task.id)
     pw = _workspace(engine, agents, parent) if parent is not None else None
-    if pw is not None and pw[2] == w[2]:
+    if pw is not None and w is not None and pw[2] == w[2]:
         return None
-    return pw[1] if pw is not None and same_place(pw[0], w[0]) and made(engine, pw[1]) else w[0]
+    if pw is not None and (w is None or same_place(pw[0], w[0])) and made(engine, pw[1]):
+        return pw[1]
+    return w[0] if w is not None else None
+
+
+def _work_of(engine, agents: "AgentRegistry", node, ex) -> tuple | None:
+    """(repository, commit or branch, its name there) of a node's delivered work, WHATEVER PERFORMED IT — what every
+    join, merge and naming of a node's result reads. A node with a place of the system's: on its branch in the base,
+    taken back at DELIVER (`W.commit_all`) — the commit its PASS accepted when DONE (`_accepted_ref`), else the branch
+    (a replaced node's work carried on). A DONE node its holder performed in their own tree: the commit its DELIVER
+    recorded (`worktrees.record_head`, kept under `delivered_ref`) in the repository THE LOG names for it
+    (`Engine.accepted_repository`) — a fact of the DELIVER, never read back from a roster that moves on. None: nothing
+    delivered to join; (repository or None, None, why): its accepted work is not there to join."""
+    if (w := _workspace(engine, agents, node)) is not None:
+        if not _has_branch(w, ex):
+            return None
+        ref, why = _accepted_ref(engine, node, w, ex) if node.state == State.DONE else (w[2], None)
+        return w[0], ref, (w[2] if ref else why)
+    if node.state != State.DONE or not (sha := engine.accepted_delivery(node.id)[1]):
+        return None
+    if not (repo := engine.accepted_repository(node.id)):
+        return None, None, f"its delivered commit {sha[:12]} was recorded before the log named its repository"
+    if not (cheap_to_ask(repo) and W.git(repo, "cat-file", "-e", f"{sha}^{{commit}}", execution=ex).returncode == 0):
+        return repo, None, f"its delivered commit {sha[:12]} is no longer in {repo}, where its delivery was recorded"
+    return repo, sha, delivered_ref(engine, node.id)
 
 
 def _before_a_part_joins(engine, whole, base, into, execution) -> None:
@@ -185,34 +238,114 @@ def _accepted_ref(engine, node, w: tuple, execution) -> tuple[str | None, str | 
 def join_whole(engine, agents: "AgentRegistry", task_id) -> str | None:
     """A part joins the whole when it PASSes: its delivery's branch merged `--no-ff` where its parent works. None
     when joined or nothing to join; else why not. A conflict is aborted and the branch left as it is: the whole's
-    integration is the whole's work (§8.7, the glue), and the parent's packet names the branch (`_enter_workspace`)."""
+    integration is the whole's work (§8.7, the glue), and the parent's packet names the branch (`_enter_workspace`).
+    ONE RULE, whatever performed the node (`_work_of`): its delivered commit joins its whole's place of the system's;
+    a whole with none — its holder's own tree — is named every part to merge (`left_to_merge`); and a root's result
+    lands as a branch of the user's (`land_accepted`). On this host no merge of the system's writes the user's
+    repository itself — their checked-out branch, its index or its tree."""
     t = engine.graph.get_task(TaskId(task_id))
-    w = _workspace(engine, agents, t) if t is not None and t.state == State.DONE else None
-    if w is None or not _has_branch(w, execution_of(engine, agents)):
+    if t is None or t.state != State.DONE:
         return None
-    parent = engine.graph.get_parent(t.id)
+    parent, ex = engine.graph.get_parent(t.id), execution_of(engine, agents)
+    w, pw = _workspace(engine, agents, t), _workspace(engine, agents, parent) if parent is not None else None
+    if (work := _work_of(engine, agents, t, ex)) is None:
+        return None
+    base, ref, name = work
     # …WHERE ITS WHOLE WILL WORK, made now if the whole's session has not started yet: joined straight into the base,
     # the parts stood in the user's tree before any seam passed the whole — a whole that then failed left them there,
     # and a NOT DONE row scored work no root verdict covered (critic r5, 2026-10-04)
-    if parent is not None and (pw := _workspace(engine, agents, parent)) is not None and same_place(pw[0], w[0]):
+    if over := pw is not None and base is not None and same_place(pw[0], base):
         _ensure_place(engine, agents, parent, pw)
-    if (into := _where_it_joins(engine, agents, t, w)) is None:
+    # …a holder's own work joins only a place over the repository it was recorded in; anywhere else it is named
+    if (into := _where_it_joins(engine, agents, t, w)) is None or w is None and not over:
         return None
-    ex = execution_of(engine, agents)
-    ref, why = _accepted_ref(engine, t, w, ex)
     if ref is None:         # the accepted work is gone from its branch: nothing to merge, and nobody is told to
-        why = f"{why} - {NOT_ON_ITS_BRANCH}: DO NOT merge that branch; its work has to be delivered again (reopen it)"
+        why = f"{name} - {NOT_ON_ITS_BRANCH}: DO NOT merge that branch; its work has to be delivered again (reopen it)"
         if engine.say_once(f"lost:{t.id}:{generation_of_task(t)}"):
             engine.emit_info("delegate", f"{t.id}: PASSED, and {why}")
         return why
+    if not isinstance(ex, ContainerExecution) and same_place(into, base):
+        return None             # …the user's repository: a root lands (`land_accepted`), a part is named (`left_to_merge`)
     if parent is not None:
-        _before_a_part_joins(engine, parent, w[0], into, ex)
-    why = W.merge(w[0], into, ref, f"gfso: {t.id} joins {parent.id if parent else 'the base'}", execution=ex)
+        _before_a_part_joins(engine, parent, base, into, ex)
+    why = W.merge(base, into, ref, f"gfso: {t.id} joins {parent.id if parent else 'the base'}", execution=ex)
+    if parent is not None:
+        # …joined: the base's HEAD for the chat; refused by a conflict: the part's own branch, which the whole is told
+        # to merge (critic: named, it stood only in the volume)
+        why = (_to_the_chat(engine, agents, parent, ex) if not why else
+               _to_the_chat(engine, agents, parent, ex, ref, name) or why)
     if why and engine.say_once(f"unjoined:{t.id}:{generation_of_task(t)}"):
-        engine.emit_info("delegate", f"{t.id}: PASSED, and its branch `{w[2]}` did not join {into} ({why}) - "
+        engine.emit_info("delegate", f"{t.id}: PASSED, and its branch `{name}` did not join {into} ({why}) - "
                                      f"{'' if why == W.MERGE_STANDS else 'the merge was aborted and '}the branch stands unmerged; integrating it is the work "
                                      f"of {'`' + str(parent.id) + '`, whose packet names it' if parent else 'its owner'}")
     return why
+
+
+def left_to_merge(engine, agents: "AgentRegistry", whole) -> list[tuple[str, str]]:
+    """[(part, why)] — `join_whole`'s rule where the system merges nothing: ON THIS HOST THE BASE IS THE USER'S
+    REPOSITORY, and a passed part whose whole has no place of the system's over the repository its work is in —
+    performed in its holder's own tree, or over another repository — is named for that whole to merge, whatever
+    performed the part (`_work_of`), while the tree the whole is performed in lacks its commit — with no place for the
+    whole, the part's own repository: no tree is guessed for it. A part a chat delivered is named under a container
+    execution too: its commit is where its DELIVER recorded it, on this host. Derived from the record
+    and git, never held in memory: a process started since names them as the one that passed them did (critic: a
+    restart told the holder to aggregate with no part named)."""
+    # …asked by the frontier: read without starting any execution — this host's git over what a chat's DELIVER recorded
+    # here, the same under either execution; a place of the system's in a volume joins there (`join_whole`)
+    ex, pw, out = LocalExecution(), _workspace(engine, agents, whole), []
+    held_off = declaring_role(engine, agents) is not None or bool(engine.graph.setting(VOLUME + "places"))
+    if held_off and pw is not None:
+        return []
+    for k in engine.graph.get_active_children(whole.id):
+        if held_off and _workspace(engine, agents, k) is not None or (work := _work_of(engine, agents, k, ex)) is None:
+            continue
+        base, ref, name = work
+        if pw is not None and base is not None and same_place(pw[0], base):
+            continue                    # …joined where the whole works (`join_whole`), or said there
+        if ref is None:
+            out.append((str(k.id), f"{name} - {NOT_ON_ITS_BRANCH}: nothing of it to merge; it has to be delivered again (reopen it)"))
+        # …while the tree the whole works in lacks it: once merged there it is named no more (a whole over another
+        # repository was told to merge a part it already had, its AGGREGATE repeating it; an object that repository
+        # does not hold yet is not its ancestor either)
+        elif W.git(pw[0] if pw is not None else base, "merge-base", "--is-ancestor", ref, "HEAD",
+                   execution=ex).returncode:
+            out.append((str(k.id), f"the system merges nothing into {base}, the user's own repository: its accepted "
+                                   f"commit {ref} stands on `{name}` there - " + (
+                f"merge it where {whole.id} is performed (`git merge {ref}`)" if pw is None else
+                # …another repository than the whole's: the commit's objects are in that one alone
+                f"fetch it into {pw[0]}, where {whole.id} works (`git fetch {base} {name}`), then `git merge {ref}`")))
+    return out
+
+
+def delivered_ref(engine, task_id) -> str:
+    """The ref of the user's repository the system keeps a chat's delivery of the node under (`worktrees.record_head`)."""
+    return f"refs/gfso/{component(engine.project_name or DEFAULT_PROJECT)}/delivered/{node_key(TaskId(task_id))}"
+
+
+def joined_ref(engine, whole) -> str:
+    """The branch of the user's repository a whole performed in its chat finds its joined parts on."""
+    return f"gfso/{component(engine.project_name or DEFAULT_PROJECT)}/joined/{node_key(whole.id)}"
+
+
+def _to_the_chat(engine, agents: "AgentRegistry", whole, ex, rev: str = "HEAD", branch: str | None = None) -> str | None:
+    """A part joined the base in the volume under a whole its holder performs in its own chat, in the user's
+    repository: the base's HEAD, its parts in, lands there as the branch `joined_ref` (`W.land`) for the chat to merge
+    as its integration — or, `branch`, a part's own `rev` its join refused, as that branch — no working tree nor branch
+    of theirs written. Why not, else None; nothing where the whole's session is the system's or the base is the user's
+    repository itself."""
+    if not isinstance(ex, ContainerExecution) or performer(engine, agents, whole.assignee)[0] is not None:
+        return None
+    ref = branch or joined_ref(engine, whole)
+    try:
+        sha = W.land(ex.base, f"refs/heads/{ref}", ex, json.loads(engine.graph.setting(VOLUME + IMPORTED) or "{}").get("commit"),
+                     rev=rev)
+    except OSError as e:
+        return f"its joined work did not land in {ex.base} as branch `{ref}`: {e}"
+    what = "a part that did not join is" if branch else "its parts joined so far are"
+    engine.emit_info("landed", f"{whole.id}: {what} on branch `{ref}` ({sha[:12]}) of {ex.base} - "
+                               f"written by unattended sessions: read it before you run any of it here, then merge it "
+                               f"into your tree (`git merge {ref}`) before you deliver {whole.id}")
+    return None
 
 
 def held_off_the_host(engine, ex):
@@ -231,9 +364,21 @@ def _ensure_place(engine, agents: "AgentRegistry", task, w: tuple) -> None:
     if parent is not None and (pw := _workspace(engine, agents, parent)) is not None and pw[2] != w[2] \
             and same_place(pw[0], w[0]):
         _ensure_place(engine, agents, parent, pw)
-    W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=execution_of(engine, agents),
-             ground=lambda: parent is not None and json.loads(engine.graph.setting(grounds_key(parent.id)) or "{}").get(str(task.id)))
+    ex = execution_of(engine, agents)
+    W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=ex,
+             ground=lambda: _had(engine, task, w, ex) or parent is not None and json.loads(
+                 engine.graph.setting(grounds_key(parent.id)) or "{}").get(str(task.id)))
     _record(engine, w[1], True)
+
+
+def _had(engine, task, w: tuple, ex) -> str | None:
+    """The work a node had, for a place made again once its branch went with the clearing at the root's PASS: its last
+    delivery's commit, which the base still holds. A reopen re-earns the verdict over that work (§12.14); started from its
+    whole's ground, or the user's HEAD for a root on this host, a reopened root dropped its parts' work and the poorer
+    result passed and moved the accepted branch (critic). Asked by `W.ensure` only where the branch is gone."""
+    sha = next((e.commit for e in reversed(engine.audit_log(task.id))
+                if e.signal == Signal.DELIVER and not e.rejected and e.commit), None)
+    return sha if sha and W.git(w[0], "cat-file", "-e", f"{sha}^{{commit}}", execution=ex).returncode == 0 else None
 
 
 def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tuple:
@@ -254,26 +399,58 @@ def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tup
     inside = {str(m.id) for m in members}
     parts, kept = parts_of(engine, members)
     unjoined = []
+    ex = execution_of(engine, agents)
     for x in parts.values():
-        xw = (_workspace(engine, agents, x) if x is not None and str(x.id) not in inside
-              and (x.state == State.DONE or str(x.id) in kept) else None)
-        if xw is None or xw[2] == branch or not same_place(xw[0], base) or not _has_branch(xw, execution_of(engine, agents)):
+        if x is None or str(x.id) in inside or not (x.state == State.DONE or str(x.id) in kept):
             continue
-        ex = execution_of(engine, agents)
-        ref, why = _accepted_ref(engine, x, xw, ex) if x.state == State.DONE else (xw[2], None)
+        xw = _workspace(engine, agents, x)
+        if xw is not None and xw[2] == branch or (work := _work_of(engine, agents, x, ex)) is None \
+                or not (work[0] and same_place(work[0], base)):
+            continue
+        _, ref, name = work
         if ref is None:     # the accepted work is gone from its branch: no merge of what no PASS accepted is asked for
-            if engine.say_once(f"lost:{x.id}:{why}"):
-                engine.emit_info("delegate", f"{x.id}: {why} - it does not join {top.id}")
+            if engine.say_once(f"lost:{x.id}:{name}"):
+                engine.emit_info("delegate", f"{x.id}: {name} - it does not join {top.id}")
             continue
         if engine.graph.get_parent(x.id) is not None and engine.graph.get_parent(x.id).id == top.id:
             _before_a_part_joins(engine, top, base, place, ex)
         if (why := W.merge(base, place, ref, f"gfso: {x.id} joins {top.id}", execution=ex)):
-            unjoined.append((str(x.id), xw[2], why, ref))   # …and the accepted commit: what it merges, held on
-            try:
-                W.bring(base, place, xw[2], execution=ex)    # …named in its own repository, as its packet says
+            unjoined.append((str(x.id), name, why, ref))    # …and the accepted commit: what it merges, held on
+            try:                                             # …a branch named in its own repository, as its packet says;
+                if xw is not None:                           # a holder's recorded commit its objects already reach
+                    W.bring(base, place, name, execution=ex)
             except OSError as e:                             # …not carried: the session starts, its packet says why
-                unjoined[-1] = (str(x.id), xw[2], f"{why}; {e}", ref)
+                unjoined[-1] = (str(x.id), name, f"{why}; {e}", ref)
     return place, unjoined, w
+
+
+def parts_not_there(engine, agents: "AgentRegistry", members: list, place) -> list[tuple]:
+    """[(part, [files], from, to, {file: the commit that changed it last})] — the accepted parts joined into `place` whose own change is no longer all there in its tree:
+    each part's delivery from where its join met the whole to its accepted commit (`W.change_not_there`). A merge lost
+    a part's code, and it surfaced only at the whole's validation, a round later (GB_c_compiler_toccc3884). Read-only."""
+    ex, out, inside = execution_of(engine, agents), [], {str(m.id) for m in members}
+    if not place or (mw := _workspace(engine, agents, members[0])) is None:
+        return []
+    # …the joins in the place's history: {part's commit: the whole's commit it was merged onto}
+    onto = {p[1]: p[0] for ln in W.git(place, "log", "--merges", "--format=%P", "HEAD", execution=ex).stdout.splitlines()
+            if len(p := ln.split()) >= 2}
+    for x in parts_of(engine, members)[0].values():
+        if x is None or str(x.id) in inside or x.state != State.DONE \
+                or (work := _work_of(engine, agents, x, ex)) is None or work[1] is None \
+                or not same_place(work[0], mw[0]):
+            continue
+        # …named in the base, as its join named it (`W.merge`): the place's own repository holds no other node's branch
+        sha = W.git(work[0], "rev-parse", "--verify", "--quiet", f"{work[1]}^{{commit}}", execution=ex).stdout.strip()
+        if sha not in onto:
+            continue                                # …not joined here: an unjoined part's packet section says so
+        met = W.git(place, "merge-base", onto[sha], sha, execution=ex).stdout.strip()
+        if files := W.change_not_there(place, met, sha, execution=ex):
+            # …and what changed each last: a later part's legitimate edit and a lost merge read alike (critic); along the
+            # join's ancestry, else git's simplification drops the very merge that kept the whole's side
+            by = {f: W.git(place, "--literal-pathspecs", "log", "-1", "--ancestry-path", "--format=%h %s", f"{sha}..HEAD", "--", f,
+                           execution=ex).stdout.strip() for f in files}
+            out.append((str(x.id), files, met, sha, by))
+    return out
 
 
 def parts_of(engine, members: list) -> tuple[dict, dict]:
@@ -431,10 +608,10 @@ def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:
     `gfso/<project>/accepted` (`W.land`), the LFS objects its new pointers name written into their LFS store
     (`W.land_lfs`) — a file whose object could not be carried, said: never their working tree nor their branches; a
     base with no git lands its tree in `<parent>/.gfso-accepted-<base>/<project>/` beside it. On this host the base
-    IS the user's repository: nothing to land."""
+    IS the user's repository, and the root worked in a place of the system's (`_land_from_its_place`)."""
     ex = execution_of(engine, agents)
     if not isinstance(ex, ContainerExecution):
-        return None
+        return _land_from_its_place(engine, agents, root, ex)
     rec = json.loads(engine.graph.setting(VOLUME + IMPORTED) or "{}")
     if rec.get("commit") == "tree":
         to = ex.parent / f".gfso-accepted-{ex.base.name}" / ex.project_name
@@ -446,7 +623,9 @@ def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:
         engine.emit_info("landed", f"{root.id}: its accepted result is in {to}"
                                      + (f" (not written as it stood: {'; '.join(notes[:5])})" if notes else ""))
         return None
-    ref = f"gfso/{ex.project_name}/accepted"
+    if (said := _name_the_delivery(engine, root, ex.base)) is not False:
+        return said         # …the base's HEAD holds only its parts
+    ref = accepted_branch(engine)
     try:
         sha = W.land(ex.base, f"refs/heads/{ref}", ex, rec.get("commit"), engine.accepted_delivery(root.id)[0])
     except OSError as e:
@@ -455,11 +634,63 @@ def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:
         lost = W.land_lfs(ex.base, sha, rec.get("commit"), ex)
     except OSError as e:
         lost = [f"(its LFS pointers could not be read: {e})"]
-    engine.graph.store_setting(LANDED, json.dumps({"branch": ref, "sha": sha, "path": str(ex.base)}))
-    engine.emit_info("landed", f"{root.id}: its accepted result {sha[:12]} is on branch `{ref}` of {ex.base}" + (
+    return _landed(engine, root, ref, sha, ex.base, (
         f"; {len(lost)} files tracked by Git LFS have no object carried into its LFS store and read as pointers there "
         f"({', '.join(lost[:5])}{', ...' if len(lost) > 5 else ''})" if lost else ""))
-    return None
+
+
+def accepted_branch(engine) -> str:
+    """The branch of the user's repository a root's accepted result lands on."""
+    return f"gfso/{component(engine.project_name or DEFAULT_PROJECT)}/accepted"
+
+
+def _land_from_its_place(engine, agents: "AgentRegistry", root, ex) -> str | None:
+    """The root's accepted commit — in the user's repository under the root's own branch since its DELIVER
+    (`W.commit_all`) — named `accepted_branch` there (`W.land`: a ref alone, the tree its PASS accepted checked), merged
+    into no branch of theirs. A root held in its holder's chat has no place: the commit it delivered is named so, as
+    under a container (`_name_the_delivery`); one with a commit recorded and no repository is said, never landed unsaid."""
+    if (w := _workspace(engine, agents, root)) is None:
+        if (said := _name_the_delivery(engine, root)) is not False:
+            return said
+        sha = engine.accepted_delivery(root.id)[1]
+        return (f"its accepted commit {sha[:12]} was recorded before the log named its repository - {NOT_ON_ITS_BRANCH}: "
+                f"reopen the root and deliver its work again" if sha else None)
+    sha, why = _accepted_ref(engine, root, w, ex)
+    if sha is None:
+        return why
+    ref = accepted_branch(engine)
+    try:
+        sha = W.land(w[0], f"refs/heads/{ref}", ex, None, engine.accepted_delivery(root.id)[0], rev=sha)
+    except OSError as e:
+        return f"its accepted result did not land in {w[0]} as branch `{ref}`: {e}"
+    return _landed(engine, root, ref, sha, w[0])
+
+
+def _name_the_delivery(engine, root, base=None):
+    """A root its holder performed in their own chat: what its PASS accepted is the commit its DELIVER recorded
+    (`worktrees.record_head`) in the user's repository the log names (`Engine.accepted_repository`) — there already,
+    named `accepted_branch` by one ref, their checked-out branch untouched. None when named, why not, or False: no
+    commit was recorded in a repository. A delivery recorded before the log named its repository is found in `base` by the
+    ref the system kept it under, where that ref is the accepted commit itself."""
+    sha, repo = engine.accepted_delivery(root.id)[1], engine.accepted_repository(root.id)
+    if sha and not repo and base is not None and cheap_to_ask(base) and W.git(
+            base, "rev-parse", "--verify", "-q", delivered_ref(engine, root.id)).stdout.strip() == sha:
+        repo = base
+    if not (sha and repo):
+        return False
+    if not (cheap_to_ask(repo) and W.git(repo, "cat-file", "-e", f"{sha}^{{commit}}").returncode == 0):
+        return f"its accepted result {sha[:12]} is no longer in {repo}, where its delivery was recorded"
+    if W.checked_out(repo, f"refs/heads/{(ref := accepted_branch(engine))}"):
+        return f"`{ref}` is checked out there (in a worktree of it), and the system lands only on a branch nobody works on: check out another branch"
+    if W.git(repo, "update-ref", "-m", "gfso: a root's accepted result", f"refs/heads/{ref}", sha).returncode:
+        return f"its accepted result {sha[:12]} could not be named `{ref}` in {repo}"
+    return _landed(engine, root, ref, sha, repo)
+
+
+def _landed(engine, root, ref: str, sha: str, base, note: str = "") -> None:
+    """The root's result on `ref` of the user's repository at `base`: kept for whoever reads the graph, and said."""
+    engine.graph.store_setting(LANDED, json.dumps({"branch": ref, "sha": sha, "path": str(base)}))
+    engine.emit_info("landed", f"{root.id}: its accepted result {sha[:12]} is on branch `{ref}` of {base}{note}")
 
 
 def node_temp(engine, task) -> str:
@@ -511,9 +742,29 @@ def conversation_of(engine, task_id, executor_id, role: str) -> str:
     return session_key(engine.project_name, task_id, first, executor_id, role)
 
 
-def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
-    """At the root's PASS every joined part is in the base: its worktree, branch and executor's conversation go (a node's tree is a whole
-    checkout, so kept they cost the base's size each), and what did not join stays where it is, named."""
+def _clear_what_nothing_reads(engine, ex, base) -> list:
+    """At the close, with no node open and no validation running (`_clear_places`), the project's validation and contact
+    rounds and its temp serve nothing: each removed, every round out of the record of the rounds standing — a finding's
+    files the record kept (`findings.keep_files`) re-lay them. Kept: the base and its read copy, unjoined places, the
+    sessions' state. Returns what could not be removed."""
+    own, left = scratch_of(base, engine.project_name).parent, []
+    if not ex.files.is_dir(str(own)):
+        return left
+    temp = [ex.tmp] if isinstance(ex, ContainerExecution) else []
+    for d in [own / s for s in ex.files.listdir(str(own)) if s.startswith(SCRATCH)] + temp:
+        try:
+            for r in ex.files.listdir(str(d)) if ex.files.is_dir(str(d)) else []:
+                ex.remove_tree(str(d / r))
+                record_round(engine.graph, str(d / r), False)
+            ex.remove_tree(str(d))
+        except OSError:
+            left.append(f"{d.name} (rounds and temp)")
+    return left
+
+
+def _remove_joined_places(engine, agents: "AgentRegistry") -> list:
+    """Every node's place whose work the base holds removed, with its branch and its sessions' conversations; the
+    names of those that did not join, kept."""
     left, seen, llm = [], set(), llm_factory(MODEL_DEFAULT, execution=where_it_runs(engine, agents))   # its conversations live where it ran
     for t in engine.all_tasks():
         for role in CONVERSING_ROLES:          # the work its conversations served is settled
@@ -523,11 +774,78 @@ def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
             continue
         seen.add(w[2])
         ex = execution_of(engine, agents)
-        if not (W.settled(*w, execution=ex) and W.remove(*w, execution=ex)):
+        # …on this host the root's result is a branch of the user's repository, its HEAD theirs (`_land_from_its_place`)
+        acc = f"refs/heads/{accepted_branch(engine)}"
+        onto = acc if not isinstance(ex, ContainerExecution) and W.git(
+            w[0], "rev-parse", "--verify", "--quiet", acc, execution=ex).returncode == 0 else "HEAD"
+        if not (W.settled(*w, execution=ex, onto=onto) and W.remove(*w, execution=ex, onto=onto)):
             left.append(f"{w[1]} (`{w[2]}`)")
         else:
             _record(engine, w[1], False)
-    where_it_runs(engine, agents).stop()        # the goal is settled: its project's container goes too
+    return left
+
+
+def clear_workspaces(engine, agents: "AgentRegistry", root) -> None:
+    """At the root's PASS every joined part is in where its result landed: its worktree, branch and executor's conversation go (a node's tree is a whole
+    checkout, so kept they cost the base's size each), and what did not join stays where it is, named."""
+    try:                                         # …the stop below is owed however the clearing ends (a place gone mid-way)
+        left = _remove_joined_places(engine, agents)
+        ex = execution_of(engine, agents)
+        # …the base the root's holder works over, else the one its execution holds: a root held by the person has none
+        base = at[0] if (at := _place_of(engine, agents, root)) is not None else \
+            ex.base if isinstance(ex, ContainerExecution) else None
+        if base is not None and (kept := _clear_what_nothing_reads(engine, ex, str(base))):
+            engine.emit_info("delegate", f"{root.id}: DONE - not removed, a file in them held: {'; '.join(kept)}")
+    finally:
+        where_it_runs(engine, agents).stop()    # the goal is settled: its project's container goes too
     if left:
         engine.emit_info("delegate", f"{root.id}: DONE - node workspaces not joined into the base are kept: "
                                      f"{'; '.join(left)}")
+
+
+#: characters of the producers' delivered files a deferred split is handed — its author reads text, not a tree
+SPLIT_CONTACT_MAX = 120_000
+
+
+def results_a_split_waits_on(engine, agents: "AgentRegistry", task_id) -> str:
+    """What the results a deferred split waited on (`Engine.split_waits_on`) turned out to be, for the round that makes
+    it: each named part's contract, its verdict criterion by criterion, and the files it wrote as its accepted delivery
+    holds them — read by git at that delivery's commit in the place it was made, so a sibling mid-edit is not what is
+    read. The split's author is a zero-tool completion: handed "the parser passed", it would split as blind as before
+    the result came, which is what deferring was for (FM-6, §8.6). '' where the node defers nothing."""
+    ex, out, room = execution_of(engine, agents), [], SPLIT_CONTACT_MAX
+    for p in engine.split_waits_on(TaskId(task_id), standing=True):
+        t = engine.graph.get_task(TaskId(p))
+        if t is None or t.state != State.DONE:   # …a part replaced or cancelled since delivered nothing to split on
+            continue
+        rec = engine.get_exec_verdict(t.id) or {}
+        per = "\n".join(f"- {c.get('criterion')}: {c.get('verdict')} — {str(c.get('evidence') or c.get('reason') or '')[:300]}"
+                        for c in rec.get("per_criterion") or ())
+        commit = next((a.commit for a in reversed(engine.audit_log(t.id))
+                       if a.signal == Signal.DELIVER and not a.rejected and a.commit), None)
+        files = []
+        parent = engine.graph.get_parent(t.id)
+        place = node_workspace(engine, agents, t.id) or (node_workspace(engine, agents, parent.id) if parent else None)
+        if commit and place:
+            for w in engine.seam_claim(t.id).get("writes") or ():
+                listed = W.git(place, "ls-tree", "-r", "-z", "--name-only", commit, "--", str(w).rstrip("/"),
+                               execution=ex)
+                for path in ([x for x in listed.stdout.split(chr(0)) if x] if listed.returncode == 0 else ()):  # a name with a space
+                    if room <= 0:
+                        break
+                    shown = W.git(place, "show", f"{commit}:{path}", execution=ex)
+                    if shown.returncode == 0 and "\0" not in shown.stdout:
+                        files.append(f"### {path}\n\n{shown.stdout[:room]}")
+                        room -= len(files[-1])
+        out.append(f"## {t.id} — {t.spec.name or t.spec.description[:80]} ({t.state.name}, verdict {rec.get('verdict')})\n"
+                   + (f"Its criteria as its validator found them:\n{per}\n" if per else "")
+                   + (f"Its delivery: commit {commit}\n" if commit else "")
+                   + ("\n".join(files) if files else "(its files could not be read from its place)"))
+        # …said where the person reads the run: that the split waited, and on what it is made
+        engine.emit_info("decompose", f"{task_id}: its split is made with what {t.id} delivered — " + (
+            f"{len(files)} file(s), {sum(map(len, files))} chars at {commit[:12]}" if files else
+            "its verdicts only: its files could not be read from its place"))
+    return ("# THE RESULTS THIS SPLIT WAITED ON — the contact that makes it definable (FM-6, §8.6)\n"
+            "Split this node over what these parts actually delivered: their interfaces, files and verdicts below, "
+            "not over what the plan guessed they would be. They are inputs to the split, not requirements of this node: "
+            "its criteria are its contract above.\n\n" + "\n\n".join(out)) if out else ""

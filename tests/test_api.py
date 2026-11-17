@@ -44,7 +44,7 @@ def test_list_tasks():
     # One root, and the second node under it: a project has exactly one parentless node.
     a = c.post("/api/run/create_task", json={"spec": {"description": "a", "criteria": [criterion("c", "C")]}, "assignee": "d1"}).json()
     c.post("/api/run/create_task", json={"spec": {"description": "b", "criteria": [criterion("c", "C")]}, "assignee": "d2",
-                                         "parent_id": a["id"]})
+                                         "parent_id": a["id"], "agent": "d1"})
     r = c.get("/api/tasks")
     assert len(r.json()) == 2
 
@@ -88,7 +88,7 @@ def test_upper_authoring_endpoints():
                "accepted_risks": [{"item": "out of scope", "p": 0.01, "impact": "the run stops and is resumed", "justification": "no precedent in this environment", "invalidation_condition": "one occurs"}]}, "agent": "alice"})
     assert r.status_code == 200 and r.json()["description"] == "node2"
 
-    r = c.post("/api/run/reassign", json={"task_id": "n", "assignee": "bob"})
+    r = c.post("/api/run/reassign", json={"task_id": "n", "assignee": "bob", "agent": "alice"})
     assert r.status_code == 200 and r.json()["assignee"] == "bob"
 
 
@@ -185,7 +185,7 @@ def test_decompose():
     c = _client()
     c.post("/api/run/create_task", json={"task_id": "p", "spec": {"description": "parent", "criteria": [criterion("perf", "fast")]}, "assignee": "pm"})
     r = c.post("/api/run/decompose", json={
-        "parent_id": "p",
+        "parent_id": "p", "agent": "pm",
         "children": [
             {"task_id": "c1", "spec": {"description": "child 1", "criteria": [criterion("c", "C")]}, "assignee": "dev1"},
             {"task_id": "c2", "spec": {"description": "child 2", "criteria": [criterion("c", "C")]}, "assignee": "dev2"},
@@ -226,7 +226,7 @@ def test_the_verdict_reads_the_same_through_either_door():
     c.post("/api/run/signal", json={"task_id": "t1", "signal": "DELIVER", "source": "dev",
                                     "result": "did it"})
     c.post("/api/run/record_verdict", json={"task_id": "t1", "verdict": "PASS",
-                                            "reviewer": "someone-else",
+                                            "reviewer": "alice",
                                             # …naming the procedure the contract pins: a note that
                                             # does not say what was run is ⊥, not a PASS (§2.3).
                                             "observed": {"c1": {
@@ -300,7 +300,7 @@ def test_a_refusal_is_a_refusal_over_both_doors():
     # …and the DOORS answer different questions on purpose: this one is about the call (processed,
     # so 200 with the answer inside), the CLI's exit code is about the act (1, it did not happen).
     r = _client().post("/api/run/record_verdict",
-                       json={"task_id": "nope", "verdict": "PASS", "reviewer": "someone"})
+                       json={"task_id": "nope", "verdict": "PASS", "reviewer": "dev"})
     assert r.status_code == 200 and T.is_refusal(r.json())
 
 
@@ -378,7 +378,7 @@ def test_the_http_door_lists_the_verbs_it_takes():
     d = c.get("/api/tools").json()
     assert d["count"] == len(TL.TOOLS)
     sig = next(t for t in d["tools"] if t["tool"] == "signal")
-    assert sig["required"] == ["task_id", "signal", "source"]   # the one a tester found by trial
+    assert sig["required"] == ["task_id", "signal"]   # …and no signer: the call's credential signs it
     assert sig["post"] == "/api/run/signal" and sig["project"] is True
     roster = next(t for t in d["tools"] if t["tool"] == "list_agents")
     assert roster["project"] is False, "the roster is server-wide and says so"

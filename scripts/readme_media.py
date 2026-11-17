@@ -36,6 +36,8 @@ SCALE = 16 / 9                                  # files 2560×1600: the page's s
 TZ = os.environ.get("MEDIA_TZ", "Asia/Bangkok")  # the zone the default run's stamps were written in (UTC+7)
 
 # What the README shows. `film` = one frame per state change of the run, the last held; `still` = the run's last moment.
+# The film carries what is in work (the strip's count and chips, frame by frame) over a growing timeline; the still is a
+# node's panel at the end, its criteria's rounds whole.
 SHOTS = {
     "hero.gif":        {"film": True,  "tab": "timeline", "deck": 290},
     "ui-panel.png":    {"film": False, "tab": "timeline", "deck": 290, "task": "root.select"},
@@ -66,6 +68,19 @@ def cut(src: Path, dst: Path, T: str) -> None:
     for table, at in (("audit_log", T.replace(" ", "T")), ("pipeline_log", T), ("llm_usage", T)):
         c.execute(f"delete from {table} where ts > ?", (at,))
     c.execute("delete from tasks where created_at > ?", (T.replace(" ", "T"),))
+    # …and a node's kept verdict, its checks and its delivered result, which carry no row stamp of their own: a verdict
+    # stamped after T is gone with its checks, a result no DELIVER by T handed in is gone (a still at a mid-run moment
+    # showed a part «Not started» beside its PASS of hours later)
+    for tid, vj in c.execute("select task_id, verdict_json from exec_verdicts").fetchall():
+        if str(json.loads(vj).get("ts", "")) > T:
+            c.execute("delete from exec_verdicts where task_id=?", (tid,))
+            c.execute("delete from check_results where task_id=?", (tid,))
+    # …a node keeps one delivered result, its last: where the run delivered it again after T, that one is not T's (critic)
+    later = {r[0] for r in sqlite3.connect(f"file:{src.as_posix()}?mode=ro", uri=True).execute(
+        "select distinct task_id from audit_log where signal='DELIVER' and rejected=0 and ts > ?", (T.replace(" ", "T"),))}
+    c.execute("delete from deliver_results where task_id not in (select task_id from audit_log where signal='DELIVER' "
+              "and rejected=0)")
+    c.executemany("delete from deliver_results where task_id=?", [(t,) for t in later])
     for (tid,) in c.execute("select id from tasks").fetchall():
         row = c.execute("select new_state from audit_log where task_id=? and rejected=0 and new_state is not null "
                         "order by ts desc, id desc limit 1", (tid,)).fetchone()
@@ -121,11 +136,16 @@ def frame(src: Path, T: str, shot: dict, png: Path) -> None:
     from playwright.sync_api import sync_playwright
     from gfso.api.server import create_app
     from gfso.runtime import ProjectRegistry
+    from gfso import signin
+    # …the picture is the person's own page on this machine: in process there is no socket for the OS to name its owner, so
+    # the door took the page for a reader and drew it read-only; the connection is said to be the person's here, only here
+    signin.peer_is_ours = lambda *_: True
 
     reg = ProjectRegistry(default_storage="sqlite", default_llm="stub", seed=False)
     app = TestClient(create_app(reg.engine("default"), registry=reg),   # no `with`: its loops and clocks never start
                      base_url="http://127.0.0.1")   # a name the door answers to
     live = running(src, T, name)
+    refused: list[str] = []
 
     def fix(o):
         if isinstance(o, dict):
@@ -145,12 +165,23 @@ def frame(src: Path, T: str, shot: dict, png: Path) -> None:
         path = u[len("http://gfso.media"):]
         if r.request.method != "GET" and not any(k in path for k in ("next_steps", "tech_reports")):
             return r.abort()                                          # a picture changes nothing
-        res = app.request(r.request.method, path, content=r.request.post_data_buffer,
-                          headers={"content-type": r.request.headers.get("content-type", "application/json")})
+        # …the browser's own headers, its cookie and Origin with them, so the door resolves this page as it would on the
+        # server: signed in by its session (the Host is the door's own name, not the picture's)
+        sent = {k: v for k, v in r.request.headers.items() if k.lower() != "host"}
+        sent.update({k: v.replace("http://gfso.media", "http://127.0.0.1") for k, v in sent.items()
+                     if k.lower() in ("origin", "referer")})          # …its own page, as the door checks a move's origin
+        res = app.request(r.request.method, path, content=r.request.post_data_buffer, headers=sent, follow_redirects=False)
         body, kind = res.content, res.headers.get("content-type", "")
+        if path.startswith("/api/") and res.status_code >= 400 and "/tasks/" not in path:   # a node's own read may 404
+            refused.append(f"{r.request.method} {path} {res.status_code}")  # a read the door refused leaves the picture short
         if path.startswith("/api/") and "json" in kind:
             body = json.dumps(fix(res.json())).encode()
-        r.fulfill(status=res.status_code, content_type=kind or "application/octet-stream", body=body)
+        # …the session's cookie handed to the browser; the door's redirect after a sign-in is not followed (a fulfilled
+        # redirect's target is not routed here), the frame goes to its project itself
+        back = {k: v for k, v in res.headers.items() if k.lower() == "set-cookie"}
+        if 300 <= res.status_code < 400:
+            return r.fulfill(status=200, content_type="text/html", body=b"", headers=back)
+        r.fulfill(status=res.status_code, content_type=kind or "application/octet-stream", body=body, headers=back)
 
     # T is the run's wall clock in the zone it ran in; the page reads the same zone (MEDIA_TZ), so its dates are the run's
     from zoneinfo import ZoneInfo
@@ -166,6 +197,8 @@ def frame(src: Path, T: str, shot: dict, png: Path) -> None:
         pg.add_init_script(f"localStorage.setItem('gfso.deck', JSON.stringify({{h: {shot['deck']}}}))")
         errors = []
         pg.on("pageerror", lambda e: errors.append(str(e)))
+        # SIGNED IN, by the real path a person takes (`gfso ui`: a one-time code the door spends and answers with the session)
+        pg.goto(f"http://gfso.media/signin?code={signin.code()}")
         pg.goto(f"http://gfso.media/?project={name}" +(f"&task={shot['task']}" if shot.get("task") else ""))
         # the page's reads answer on their own time: a frame is shot once the deck's strip is drawn, not after a fixed
         # wait (one frame of the run came out with an empty strip)
@@ -176,12 +209,16 @@ def frame(src: Path, T: str, shot: dict, png: Path) -> None:
                 break
         else:
             raise SystemExit(f"{png.name}: the deck was never drawn {errors}")
-        if shot["tab"] != "timeline":                                 # the deck opens on it; pressing it folds the deck
+        if not pg.locator(f'.dk-tab.on[data-view="{shot["tab"]}"]').count():   # pressing the open tab folds the deck
             pg.locator(f'.dk-tab[data-view="{shot["tab"]}"]').click()
             pg.clock.run_for(1500)
+        if pg.locator(".hd-signin").count():
+            raise SystemExit(f"{png.name}: the page is not signed in")
         pg.wait_for_timeout(300)
         if errors:
             raise SystemExit(f"{png.name}: the page failed {errors}")
+        if refused:
+            raise SystemExit(f"{png.name}: the door refused the page {refused}")
         pg.screenshot(path=str(png))
         b.close()
     shutil.rmtree(home, ignore_errors=True)
@@ -205,12 +242,13 @@ def refusal() -> tuple[dict, dict]:
     sys.path.insert(0, str(ROOT))
     from gfso.runtime import ProjectRegistry
     from gfso.tools import TOOLS
+    from gfso.config import PERSON
 
     e = ProjectRegistry(default_storage="sqlite", default_llm="stub", seed=False).engine("default")
     TOOLS["create_task"](e, "build", GATE_CONTRACT)
-    TOOLS["signal"](e, "build", "ACCEPT", "agent")
-    delivered = TOOLS["signal"](e, "build", "DELIVER", "agent", self_validation="PASS", result=GATE_DONE)
-    refused = TOOLS["signal"](e, "build", "PASS", "agent")
+    TOOLS["signal"](e, "build", "ACCEPT", PERSON)
+    delivered = TOOLS["signal"](e, "build", "DELIVER", PERSON, self_validation="PASS", result=GATE_DONE)
+    refused = TOOLS["signal"](e, "build", "PASS", PERSON)
     if not delivered["accepted"] or refused["accepted"] or GATE_CUT not in refused["error"] or GATE_HEAD not in refused["error"]:
         raise SystemExit(f"gate.png: the engine no longer answers as the picture says: {refused}")
     return delivered, refused
@@ -220,14 +258,16 @@ def gate(out: Path) -> None:
     from html import escape
     from playwright.sync_api import sync_playwright
 
+    from gfso.config import PERSON
+
     delivered, refused = refusal()
     error = refused["error"]
     error = f"{escape(error[:error.index(GATE_HEAD) + len(GATE_HEAD)])} … <b>{escape(GATE_CUT)}</b> …"
     page = f"""<!doctype html><meta charset="utf-8"><body><main>
       <h1>Self-approval, rejected</h1>
-      <p><i>$</i> gfso run signal build DELIVER agent PASS result="{GATE_DONE}"</p>
+      <p><i>$</i> gfso run signal build DELIVER {PERSON} PASS result="{GATE_DONE}"</p>
       <p class="out">{{"accepted": {str(delivered["accepted"]).lower()}, "state": "{delivered["state"]}", …}}</p>
-      <p><i>$</i> gfso run signal build PASS agent <em># the executor signs off its own work</em></p>
+      <p><i>$</i> gfso run signal build PASS {PERSON} <em># the executor signs off its own work</em></p>
       <p class="no">{{"accepted": <b>{str(refused["accepted"]).lower()}</b>, "state": "{refused["state"]}",<br>
       "error": "{error}"}}</p></main>"""
     style = """body { margin: 0; padding: 28px; width: max-content; background: var(--bg); }

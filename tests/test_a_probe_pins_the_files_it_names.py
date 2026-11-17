@@ -23,6 +23,19 @@ def test_globs_variables_and_pinned_directories_name_no_missing_file():
         assert inputs_named_not_pinned([_c(cmd, {"sub/x.c": "int main(){}", "bad_1.c": "x"})]) == {}, cmd
 
 
+def test_a_path_is_read_as_the_path_it_names():
+    """Stranger run s17b: `python exts.py {inputs}/fixture/.` with files pinned under `fixture/` was refused twice, so
+    the plan's core criterion left it. `fixture/.` is the directory `fixture`; a missing file stays refused."""
+    pins = {"fixture/a.txt": "1", "./fixture/b.py": "2", "data.csv": "3"}
+    for cmd in ("python exts.py {inputs}/fixture/.", "ls {inputs}/./fixture/a.txt", "cat {inputs}/fixture/b.py",
+                "cat {inputs}//data.csv", "ls {inputs}/fixture/"):
+        assert inputs_named_not_pinned([_c(cmd, pins)]) == {}, cmd
+    # a critic's: each fails on Linux, so each would FAIL every delivery — a file is no directory, `..` climbs
+    for cmd in ("cat {inputs}/fixture/gone.txt", "cat {inputs}/other/.", "cat {inputs}/fixture/../x",
+                "cat {inputs}/nopin/../data.csv", "ls {inputs}/data.csv/.", "ls {inputs}/fixture/a.txt/."):
+        assert inputs_named_not_pinned([_c(cmd, pins)]), cmd
+
+
 def test_a_file_the_probe_itself_makes_there_is_no_input_to_pin():
     """A redirect's or an `-o`'s target under {inputs} is the probe's own output — refused as unpinned, a closed plan
     with `python {inputs}/t.py > {inputs}/got.txt && diff …` was refused outright (critic)."""

@@ -26,13 +26,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from gfso.config import LIMIT_RETRY_S, data_dir
+from gfso.config import LIMIT_RETRY_S, data_dir, write_atomic
 
 KINDS = ("token", "api")
 #: the variable a Claude client authenticates by, per kind — read by the provider and by a harness starting the CLI itself
 CLAUDE_ENV = {"token": "CLAUDE_CODE_OAUTH_TOKEN", "api": "ANTHROPIC_API_KEY"}
 _LOCK = threading.Lock()
-#: how many times a read or a rename is tried again past the instant another process holds the file (10 ms apart)
+#: how many times a read is tried again past the instant another process holds the file (10 ms apart)
 _TRIES = 200
 #: a lock older than this was left by a process that died holding it
 _STALE_S = 15
@@ -102,22 +102,10 @@ def _settle(p: dict) -> None:
 
 
 def _write(every: dict) -> None:
-    p = where()
-    p.parent.mkdir(parents=True, exist_ok=True)
     # …whole or not at all: rewritten in place, a call starting mid-write read it empty and ran on the host's login
-    # (critic: 520 of 10 653 reads under one writer) — a new file, then one rename over the old
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}")
-    # born readable by its owner alone: a write-then-chmod leaves the new file open to everyone between the two
-    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
-        f.write(json.dumps(every, indent=1))
-    os.chmod(tmp, 0o600)
-    for left in range(_TRIES, -1, -1):
-        try:
-            return os.replace(tmp, p)
-        except PermissionError:            # Windows: a reader holds the old one open for an instant
-            if not left:
-                raise
-            time.sleep(0.01)
+    # (critic: 520 of 10 653 reads under one writer); born readable by its owner alone: a write-then-chmod leaves the
+    # new file open to everyone between the two
+    write_atomic(where(), json.dumps(every, indent=1), 0o600)
 
 
 def _live(p: dict, name: str, now: float) -> bool:

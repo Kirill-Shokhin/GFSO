@@ -23,7 +23,7 @@ class _Works(Exception):
 def _dispatcher(monkeypatch, states, joining=(), unjoined=(), landed=True):
     e, stops, running = make_engine(), [], []
     tasks = [N(id=f"t{i}", state=s, iteration=0, reopens=0, revisions=0, done_reason=None, false_positive=False,
-               assignee="agent")
+               assignee="user")
              for i, s in enumerate(states)]
     monkeypatch.setattr(e, "all_tasks", lambda: tasks)
     monkeypatch.setattr(e.joins, "joining_nodes", lambda: list(joining))
@@ -59,13 +59,28 @@ def test_a_goal_over_ends_its_containers_once(monkeypatch):
 
 
 def test_what_may_still_run_keeps_them(monkeypatch):
-    """A parent's acceptance settles none of its children (§11.3); a result landing, or not landed, is still the run's."""
+    """A parent's acceptance settles none of its children (§11.3); a result landing is still the run's."""
     for states, joining, unjoined in (([State.DONE, State.EXECUTING], (), ()), ([State.DONE], ("t0",), ()),
-                                      ([State.DONE], (), ("t0",)), ([], (), ())):
+                                      ([State.DONE, State.EXECUTING], (), ("t0",)), ([], (), ())):
         d, _, stops = _dispatcher(monkeypatch, states, joining, unjoined)
         d._rejoined_once = True
         d.dispatch_once()
         assert stops == [], (states, joining, unjoined)
+
+
+def test_a_root_that_never_lands_holds_them_only_while_it_tries(monkeypatch):
+    """A root whose result does not land is tried again for as long as its cause stands (the person's branch checked
+    out): its containers stood idle all that while. Ended between tries, once; a try running holds them, and its end
+    ends them again — each try starts what it needs (`ExecutionPort.stop`)."""
+    d, _, stops = _dispatcher(monkeypatch, [State.DONE], unjoined=("t0",), landed=False)
+    d._rejoined_once = True
+    d.dispatch_once(), d.dispatch_once()
+    assert stops == [1]
+    d.running.append({"project": d._engine.project_name or DG.DEFAULT_PROJECT})
+    d.dispatch_once()
+    d.running.clear()
+    d.dispatch_once()
+    assert stops == [1, 1]
 
 
 def test_clearing_the_places_is_work_still_running(monkeypatch):

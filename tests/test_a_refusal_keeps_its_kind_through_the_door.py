@@ -32,11 +32,11 @@ def _root(state: str):
     e.start()
     T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
                               "criteria": [criterion("g", "G holds")]},
-                  assignee="agent")
+                  assignee="user")
     if state != "OFFERED":
-        T.signal(e, "root", "ACCEPT", "agent")
+        T.signal(e, "root", "ACCEPT", "user")
     if state == "VALIDATING":
-        T.signal(e, "root", "DELIVER", "agent", result="the aggregate")
+        T.signal(e, "root", "DELIVER", "user", result="the aggregate")
     return e
 
 
@@ -46,7 +46,7 @@ def _root(state: str):
 @pytest.mark.parametrize("state", ["OFFERED", "EXECUTING", "VALIDATING"])
 def test_the_door_reports_the_kind_the_engine_computed(state: str) -> None:
     direct = _root(state).refusal_of(TaskId("root"), Signal.ASSIGN, None).as_dict()
-    through = T.signal(_root(state), "root", "ASSIGN", "agent")
+    through = T.signal(_root(state), "root", "ASSIGN", "user")
 
     assert direct["refused_by"] == "guard", direct
     assert through["refused_by"] == direct["refused_by"], (
@@ -64,14 +64,14 @@ def test_a_rule_refusal_is_still_a_rule_refusal() -> None:
     A PASS on a delivered seam with no verdict is refused by `validate_signal` — a rule above the
     FSM, and the kind the whole distinction exists to name."""
     e = _root("VALIDATING")
-    out = T.signal(e, "root", "PASS", "agent")
+    out = T.signal(e, "root", "PASS", "user")
     assert out["refused_by"] == "rule", out
     assert "independent verdict" in out["error"]
 
 
 def test_a_signal_the_state_does_not_admit_is_a_state_refusal() -> None:
     """And the third kind, so all three are held by this file rather than two of them."""
-    out = T.signal(_root("OFFERED"), "root", "PASS", "agent")
+    out = T.signal(_root("OFFERED"), "root", "PASS", "user")
     assert out["refused_by"] == "state", out
     assert "not admitted by state OFFERED" in out["error"]
 
@@ -83,7 +83,7 @@ def test_a_signal_on_a_node_that_is_not_there_still_says_why() -> None:
     with `entry=None` AND no state — and an earlier spelling let the reason fall through as None,
     which `SignalOutcome.as_dict` renders as `error: ""`. A typo'd task id on any door is the most
     ordinary way to reach a refusal in this product, and it answered with an empty string."""
-    out = T.signal(_root("OFFERED"), "ghost", "PASS", "agent")
+    out = T.signal(_root("OFFERED"), "ghost", "PASS", "user")
 
     assert out["refused_by"] == "state", out
     assert out["error"], "a refusal with an empty reason is the silence `refusal_of` exists to end"

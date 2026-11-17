@@ -13,15 +13,16 @@ name = "gfso"
 dynamic = ["version"]
 description = "GFSO: a task said in words becomes a plan whose checks are fixed first, run by agents in Docker and signed by someone other than the executor. With Claude Code: `pipx install gfso`, then `gfso setup` does the rest and says what is left."
 readme = "README.md"
-# The cap is exactly what the matrix tests and the classifiers claim — 3.11 through 3.13. It had
+# The cap is exactly what the matrix tests and the classifiers claim — 3.11 through 3.14. It had
 # been one version wider than both, which for permanent metadata is a promise about a Python nobody
 # ran: `uvicorn[standard]` pulls compiled dependencies (httptools, uvloop, watchfiles) whose wheels
 # lag a new CPython by months, and a user without a compiler would read that failure as ours.
-# Raise the cap and the classifier together when the matrix does.
-requires-python = ">=3.11,<3.14"
+# 3.14 entered once every compiled dependency shipped a cp314 (or abi3) wheel for Linux and Windows
+# and the suite passed on it. Raise the cap and the classifier together when the matrix does.
+requires-python = ">=3.11,<3.15"
 license = "MIT"
 authors = [{ name = "Kirill Shokhin", email = "kashokhin@gmail.com" }]
-keywords = ["task-graph", "decomposition", "mcp", "agents", "verification", "protocol"]
+keywords = ["ai-agents", "claude-code", "mcp", "mcp-server", "llm-agents", "task-graph", "decomposition", "agents", "verification", "protocol"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -29,6 +30,8 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Quality Assurance",
     "Typing :: Typed",
 ]
@@ -52,6 +55,9 @@ dependencies = [
     # published version's metadata cannot be corrected, only superseded.
     # <2: the surface is `mcp.server.fastmcp.FastMCP`, which the 2.x line removed.
     "mcp>=1.19,<2",
+    # The door asks the OS who owns a loopback connection's other end (`gfso.peer`): one call on Windows and Linux,
+    # a process's own sockets on macOS. >=6: `Process.net_connections`.
+    "psutil>=6.0,<8",
 ]
 
 [project.urls]

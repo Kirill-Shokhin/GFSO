@@ -114,12 +114,12 @@ def test_replacing_the_criteria_says_what_it_left_uncovered():
     e.start()
     T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C")],
                               "accepted_risks": REGISTER},
-                  assignee="agent")
-    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K")]}, "assignee": "agent", "covers": ["c"]}], accepted_risks=REGISTER)
+                  assignee="user")
+    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "k", "criteria": [criterion("k1", "K")]}, "assignee": "user", "covers": ["c"]}], accepted_risks=REGISTER)
 
     out = T.edit_criteria(e, "root", [criterion("c", "C"),
                                       criterion("d", "a new obligation")],
-                          agent="agent")
+                          agent="user")
     # …and only the NEW one: a criterion whose name survives the replacement keeps its mapping,
     # which is more than the wave's report assumed and is worth pinning as the actual behaviour.
     assert out["still_uncovered"] == ["d"]

@@ -10,6 +10,7 @@ import sys
 
 import pytest
 
+from gfso.adapters import children as CH
 from gfso.adapters import execution as E
 from gfso.adapters.llm import budget as B
 from gfso.adapters.llm import handover_hook as K
@@ -177,9 +178,9 @@ def cli(tmp_path, monkeypatch):
     monkeypatch.setattr(H.ClaudeCodeProvider, "_read_stream", lambda self, proc, t0, cap: (
         {"result": "REPORT", "num_turns": 1, "modelUsage": {"m": {"costUSD": 1, "contextWindow": 200_000}}}, [], 0))
     for f in ("adopt",):
-        monkeypatch.setattr(E, f, lambda p: p)
-    monkeypatch.setattr(E, "kill_tree", lambda p: None)
-    monkeypatch.setattr(E, "release", lambda p: None)
+        monkeypatch.setattr(CH, f, lambda p: p)
+    monkeypatch.setattr(CH, "kill_tree", lambda p: None)
+    monkeypatch.setattr(CH, "release", lambda p: None)
     llm = H.ClaudeCodeProvider()
     llm._cmd = "claude"
     return llm, seen, tmp_path

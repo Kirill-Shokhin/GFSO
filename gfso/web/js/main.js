@@ -1,14 +1,15 @@
 // Wiring: the page's start, its refresh policy, and the one dispatch from `data-action` controls and
 // live messages to the units that own them. No unit imports another's handlers; they meet here.
-import {$, ages, phone} from './dom.js';
-import {PROJECT, TASK, GOAL, getJSON, singleFlight} from './api.js';
-import {S, myRole, rememberedRole, rememberRole, procs} from './state.js';
+import {$, esc, coded, ages, phone} from './dom.js';
+import {PROJECT, TASK, GOAL, FOCUS, getJSON, singleFlight, whenMoved, movedBy, pushStep} from './api.js';
+import {S, kept, keep, signsAs, hereIn, mineShown, procs, inView, inside, goTo, goUp as up} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap, terminal, FM} from './vocab.js';
 import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
+import {isHidden} from './fold.js';
 import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
-import {drawHeader, drawQuality, toggleReports, stopRun, startRun} from './header.js';
-import {refreshProjects, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject, listOnly} from './projects.js';
+import {drawHeader, drawQuality, toggleReports, stopRun, startRun, setMode} from './header.js';
+import {refreshProjects, offerNew, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject, listOnly} from './projects.js';
 import {selectTask, panelOpened, closeSidebar, resign, openReader, closeReader} from './panel.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
 import * as author from './author.js';
@@ -25,8 +26,39 @@ import {said} from './run.js';
 // THE REFRESHES, each a read of the page's model (model.js) and then the drawing of what it read. SERIALISED (api.js
 // singleFlight): a WebSocket transition and an ordinary refresh interleaving cleared the canvas under each other.
 let graphRead = () => {};
+// WHO THIS PAGE IS — its credential's names (`/api/whoami`), read once: signing in opens the page anew (`gfso ui`). «Mine»
+// is a view over them: the toggle where there is a name, the choice of one where there are several, remembered per
+// project — a person holds different names in different graphs; it signs nothing.
+// A SERVER THAT IS NOT THIS ACCOUNT'S answers every read with a refusal (its door asks the OS whose process is on the other
+// end of the socket): the page is that one state, in the door's own sentence — no sign-in, which cannot help here
+const refusedPage = line => { if (document.querySelector('.refused-state')) return;   // …once: a tab come back to asks again (critic)
+    document.body.classList.add('refused');
+    document.body.prepend(Object.assign(document.createElement('div'), {className: 'refused-state', innerHTML: coded(hereIn(line || 'This gfso refuses this browser.'))})); };
+async function whoAmI() {
+    try { S.me = await getJSON('/api/whoami'); } catch (e) { S.me = null; }   // not heard: signed as no one, moves hidden
+    if (S.me?.refused) return refusedPage(S.me.error);
+    const names = signsAs(), pick = $('mine-name');
+    const chosen = kept(`gfso.mine:${S.project}`) || '';
+    S.mineName = chosen === '*' || names.includes(chosen) ? chosen : '';
+    pick.innerHTML = `<option value="*">all my names</option>` + names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    pick.value = mineShown();
+    $('queue-toggle').hidden = !names.length;
+    S.mineOnly = !!names.length && kept(`gfso.mineOnly:${S.project}`) === '1';
+    $('queue-toggle').classList.toggle('active', S.mineOnly);
+    offerNew();
+    pick.closest('.mine-as').hidden = names.length < 2;
+}
 const refreshGraph = singleFlight(async () => {
-    try { const ok = await loadGraph(); graphRead(); rebuildRun(); await drawGraph(ok); } catch (e) { console.error('refreshGraph:', e); } });
+    try { const ok = await loadGraph(); $('mine-name').value = mineShown(); graphRead(); rebuildRun(); await drawGraph(ok); } catch (e) { console.error('refreshGraph:', e); } });
+// A MOVE DOWN OR UP is drawn from what the page holds, no read: the new part's graph framed anew, its figures, its header;
+// a chosen node outside the new part lets its panel go
+const moveTo = singleFlight(async () => {
+    // …nor the node gone into: its panel stood over the part it opened, its link dead (critic)
+    if (focus().select && (!inView(focus().select) || focus().select === FOCUS)) point('select', null);
+    untip(); rebuildRun(); $('mine-name').value = mineShown(); await drawGraph(true, true);   // «Mine» follows the view's top
+    if (focus().select && isHidden(focus().select)) point('select', null);   // …nor one folded away in the part come to (critic)
+    paintDeck(); drawHeader(); });
+whenMoved(moveTo, inside);
 const refreshHeader = singleFlight(async () => { await loadFrontier(); await loadReports(); await drawHeader(); });
 const refreshQuality = singleFlight(async () => { await loadMetrics(); drawQuality(); });
 const runRead = singleFlight(loadRun);
@@ -110,13 +142,21 @@ async function applyInFlight(list) {
     if (here() !== was) { await S.reload(); refreshDeck().then(afterDeck); }
     if (S.runState?.state === 'stopping') refreshHeader();   // until the last session the stop let finish has ended
 }
-const readInFlight = () => getJSON('/api/runtime').then(r => applyInFlight(r.in_flight))
+// …and who works what through a live console, pushed the same way (`working`)
+// …an open panel too: its node's word (In progress / Accepted) is read from the same presence
+const applyWorking = list => { const was = JSON.stringify(S.working); S.working = list || [];
+    if (JSON.stringify(S.working) === was) return;
+    rebuildRun(); onInflight(); annotate(); if (focus().select) selectTask(focus().select); };
+const readInFlight = () => getJSON('/api/runtime').then(r => { applyWorking(r.working); return applyInFlight(r.in_flight); })
     .catch(() => { /* the strip keeps its last count; the socket banner says when the server is gone */ });
 
 const ACT = {
     'run-stop': async () => { if (await stopRun() === '') await refreshHeader(); },
     'run-start': async () => { if (await startRun() === '') await refreshHeader(); },
-    close: () => point('select', null), select: d => point('select', d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip'), d.to),
+    // …the popover it was pressed in closes first: the question stood under it, its «Change» out of reach (probe)
+    'set-mode': async (d, b) => { const pop = b.closest('.hd-quality'); pop?.classList.remove('open'); pop?.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', 'false');
+        if (await setMode(d) === '') { await S.reload(); await refreshHeader(); } },
+    close: () => point('select', null), select: d => point('select', d.id), view: d => goTo(d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip'), d.to),
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
@@ -135,7 +175,10 @@ document.addEventListener('keydown', e => { if (e.key !== 'Escape' || WATCHES) r
     const over = document.querySelector('.hd-quality.open') || $('reader')?.hidden === false || $('goal-panel')?.hidden === false;
     document.querySelectorAll('.hd-quality.open').forEach(p => { p.classList.remove('open'); p.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', false); });
     closeReader(); goal.closeGoal(); closeProjects();
-    if (!over && focus().select) point('select', null); });
+    if (!over && focus().select) point('select', null);
+    else if (!over && FOCUS) up(); });                // …and with nothing open, up a level
+// Backspace goes up a level too, as a file browser's does — never while a field is typed in
+document.addEventListener('keydown', e => { if (e.key === 'Backspace' && FOCUS && !e.target.closest?.('input, textarea, select, [contenteditable]')) { e.preventDefault(); up(); } });
 document.addEventListener('click', e => {
     const b = e.target.closest('[data-action]'), mine = e.target.closest('.hd-quality');
     // one popover at a time: a click anywhere else, or on a link inside one, closes the open ones
@@ -152,7 +195,17 @@ $('goal-panel').addEventListener('input', goal.recheck);
 $('goal-panel').addEventListener('click', goal.recheck);   // a row removed by its ×
 $('pl-search').addEventListener('input', searchProjects);
 // …AND THE BAR IS ASKED AGAIN: the frontier's `mine` is computed FOR the identity in the box.
-$('current-role').addEventListener('input', () => { rememberRole(myRole()); if (S.mineOnly) applyMineDim(); refreshHeader(); });
+$('mine-name').addEventListener('change', e => { S.mineName = e.target.value; keep(`gfso.mine:${S.project}`, S.mineName);
+    if (S.mineOnly) applyMineDim(); refreshHeader(); });
+// …and read again when the tab is come back to: a sign-in made in another tab (`gfso ui`) left this one saying «sign in»
+// until a reload by hand (critic) — what it offers follows the answer, its header and its open panel
+document.addEventListener('visibilitychange', async () => {
+    if (document.hidden) return;
+    const was = JSON.stringify(signsAs());
+    await whoAmI();
+    if (JSON.stringify(signsAs()) === was || !PROJECT) return;   // …the list needs no more than whoAmI's own (critic 3)
+    goal.labelGoalButton(); refreshProjects(); refreshHeader(); if (focus().select) selectTask(focus().select);
+});
 watch((st, key) => { if (key === 'select') st.select ? selectTask(st.select) : closeSidebar(); });
 // ON A PHONE THE BROWSER'S BACK IS THE WAY OUT A HAND REACHES FOR: it closes what is open, topmost first — a tip, a popover, the reader,
 // a panel, the deck — and with nothing open says once that the next one leaves (the author, 2026-10-31: «интуитивно жмешь кнопку назад
@@ -174,6 +227,7 @@ const closeTop = () => {
     if ($('goal-panel') && !$('goal-panel').hidden) return goal.closeGoal(), true;
     if (PROJECT && $('project-panel') && !$('project-panel').hidden) return closeProjects(), true;
     if (focus().select) return point('select', null), true;
+    if (FOCUS) return up(), true;
     return !!PROJECT && foldDeck();
 };
 // A hand, not a width: a phone held sideways has one too. Back is not a history trick: Chrome's Back skips any entry a page laid without a gesture,
@@ -193,8 +247,8 @@ if (WATCHES) {
     arm();
     addEventListener('pointerup', () => { if (!w) arm(); }, true);
 } else if (hand()) {
-    addEventListener('pointerup', () => { const n = history.state?.gfsoSteps || 0; if (n < STEPS) history.pushState({gfsoSteps: n + 1}, ''); }, true);
-    addEventListener('popstate', () => { if (closeTop()) return;
+    addEventListener('pointerup', () => { const n = history.state?.gfsoSteps || 0; if (n < STEPS) pushStep({gfsoSteps: n + 1}); }, true);   // …each a place of its own in the tab's history (api.js)
+    addEventListener('popstate', e => { if (movedBy(e) || closeTop()) return;
         if (Date.now() - warned < 3000) return history.go(-(history.state?.gfsoSteps || 0) - 1);
         say(); });
 }
@@ -222,7 +276,10 @@ const LIVE = {
     // this tab's own project came to exist while the feed was refused: nothing of it was pushed here, so read it all
     async reopened() { await S.reload(); await readInFlight(); refreshDeck().then(afterDeck); },
     inflight: d => applyInFlight(d.in_flight),         // a process of the server started or ended
+    working: d => applyWorking(d.working),             // a party's console took a node in work, or left it
     opened: () => readInFlight(),
+    // a plan was written or refined for this project: the canvas shows it until the go
+    async plan_written() { await S.reload(); drawPlanning(); },
     // the feed was lost and is back: what happened meanwhile reached no one, so read it all once
     async resync() { await readInFlight(); await S.reload(); refreshDeck().then(afterDeck); rereadResources(); if (!FM.loaded) loadCheckMap(); },
     async transition(d) {
@@ -240,7 +297,7 @@ const LIVE = {
 
 async function init() {
     mountHints();
-    if (!PROJECT) return listOnly();
+    if (!PROJECT) { await whoAmI(); return S.me?.refused || listOnly(); }   // the list too: who it is, read by the one owner
     // THE PAGE MUST FAIL LOUDLY, NOT BLANKLY: the graph library is a remote script, and with the CDN
     // unreachable a first-time user saw a toolbar over an empty page and no error (2026-09-02).
     if (!window.cytoscape || !window.dagre) {
@@ -251,14 +308,10 @@ async function init() {
             + 'prints the same graph in a terminal with no browser at all.</div>';
         return refreshHeader();                        // …and the header still comes: it is a local read
     }
-    // YOUR OWN ID IS THE SERVER'S, not the placeholder `pm` registered nowhere — and what you typed wins.
-    const asked = getJSON('/api/runtime'), checks = loadCheckMap();
-    try {
-        const rt = await asked, box = $('current-role');
-        S.agentId = rt?.agent_id || '';
-        if (rt && rt.agent_id && (!box.value || box.value === 'pm')) box.value = rt.agent_id;
-        box.value = rememberedRole() || box.value;
-    } catch (e) { /* the box keeps what it had; the engine still refuses a stranger */ }
+    // WHO THIS PAGE IS comes before anything it offers: every panel and the header draw its moves by it
+    const checks = loadCheckMap();
+    await whoAmI();
+    if (S.me?.refused) return;
     await checks;
     mountDeck();
     // A DISPLAY CLOCK, not a poll: while something runs, the ages it shows ("validating · 2m") and the open bars grow
@@ -270,7 +323,7 @@ async function init() {
     setInterval(ages, 1e3);
     await initGraph();
     await firstLoad();
-    if (GOAL && !S.tasks.length) goal.openGoal();     // a new project's first act: its goal
+    if (GOAL && !S.tasks.length && signsAs().length) goal.openGoal();     // a new project's first act: its goal
     // the picker's name is its own read, so a feed that cannot open does not leave it blank
     projects();
     connectWS(LIVE);

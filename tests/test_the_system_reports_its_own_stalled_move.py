@@ -7,6 +7,7 @@ import threading
 import gfso.issuer as I
 from gfso.core.types import TaskId
 from tests.test_the_mode_decides_who_holds_what import _auto_goal
+from tests.support import issuer_sweep
 
 
 def _sweeper(e, agents, monkeypatch, status):
@@ -17,11 +18,7 @@ def _sweeper(e, agents, monkeypatch, status):
     ledger, owed, cap = {}, {}, threading.Semaphore(1)
 
     def sweep():
-        before = set(threading.enumerate())
-        I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger, owed)
-        for th in set(threading.enumerate()) - before:
-            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
-                th.join(5)
+        issuer_sweep(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger, owed)
         ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})   # every sweep runs past the wait
     return sweep, q, owed
 
@@ -77,11 +74,7 @@ def test_control_without_the_monitor_nothing_is_said(tmp_path, monkeypatch):
     monkeypatch.setattr(I, "settle", lambda *a, **k: {"status": "noop"})
     ledger, cap = {}, threading.Semaphore(1)
     for _ in range(I.STUCK_ANSWERS + 3):
-        before = set(threading.enumerate())
-        I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
-        for th in set(threading.enumerate()) - before:
-            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
-                th.join(5)
+        issuer_sweep(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
         ledger.update({g: (w, 0.0, n) for g, (w, _, n) in ledger.items()})
     assert not _stuck(e)
 

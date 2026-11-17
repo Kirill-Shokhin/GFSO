@@ -12,7 +12,7 @@ import threading
 import uvicorn
 
 from gfso.api.server import create_app
-from gfso.config import ui_address, ui_enabled
+from gfso.config import UVICORN, ui_address, ui_enabled
 from gfso.mcp.server import create_server
 from gfso.runtime import ProjectRegistry
 
@@ -24,7 +24,7 @@ def _serve_ui(registry, host: str, port: int) -> None:  # pragma: no cover
     # with_mcp=False — the MCP surface is this stdio process; the app is UI-only
     app = create_app(registry.engine(), registry=registry)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning",
-                            access_log=False, log_config=None)  # log_config=None → root logger (stderr)
+                            access_log=False, log_config=None, **UVICORN)  # log_config=None → root logger (stderr)
     threading.Thread(target=uvicorn.Server(config).run, daemon=True).start()
     print(f"[gfso mcp] UI live at http://{host}:{port}", file=sys.stderr)
 

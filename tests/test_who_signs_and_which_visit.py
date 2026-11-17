@@ -25,9 +25,9 @@ def _kid(k, covers, who):
 def test_a_cascade_reaches_a_grandchild_under_a_settled_child_signed_by_its_own_issuer():
     e = make_engine()
     e.start()
-    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("a", "A")]}, "agent")
+    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("a", "A")]}, "user")
     e.wait_idle()
-    T.signal(e, "root", "ACCEPT", "agent")
+    T.signal(e, "root", "ACCEPT", "user")
     T.decompose(e, "root", [_kid("k1", ["a"], "bob")], accepted_risks=REGISTER)
     e.wait_idle()
     T.signal(e, "k1", "ACCEPT", "bob")
@@ -37,7 +37,7 @@ def test_a_cascade_reaches_a_grandchild_under_a_settled_child_signed_by_its_own_
     T.signal(e, "k1", "DELIVER", "bob", result="built k1 by hand")
     e.wait_idle()
     reviewer_passes(e, TaskId("k1"), "rev")
-    T.signal(e, "k1", "PASS", "agent")
+    T.signal(e, "k1", "PASS", "user")
     e.wait_idle()
     assert e.graph.get_state(TaskId("k1")).name == "DONE"
     T.signal(e, "root", "CANCEL", str(e.graph.issuer_of(TaskId("root"))), reason="goal gone")
@@ -51,7 +51,7 @@ def test_a_new_version_is_a_new_visit_so_the_old_ones_timeout_moves_nothing():
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "goal", "criteria": [criterion("a", "A")], "accepted_risks": REGISTER},
-                  "agent")
+                  "user")
     e.wait_idle()
     t0 = e.graph.get_task(TaskId("root"))
     old = (t0.state, t0.state_entered_at)
@@ -69,9 +69,9 @@ def test_no_re_issue_out_of_escalated_is_counted_below_the_auto_root():
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "goal", "criteria": [criterion("a", "A")], "accepted_risks": REGISTER},
-                  "agent")
+                  "user")
     e.wait_idle()
-    e.workforce.publish_executor_pool({"agent": None})
+    e.workforce.publish_executor_pool({"user": None})
     issuer = str(e.graph.issuer_of(TaskId("root")))
     for _ in range(MAX_EXTENSIONS + 1):
         t = e.graph.get_task(TaskId("root"))

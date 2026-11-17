@@ -69,7 +69,7 @@ def _sh(ex, cwd, command):
 @live
 def test_live_a_place_that_is_not_there_does_not_stand(project):
     _places(project)
-    nodes, scratch = project.parent / ".gfso-nodes-ws/p", project.parent / ".gfso-nodes-ws/p/.gfso-scratch-a"
+    nodes, scratch = project.own, project.own / ".gfso-scratch-a"
     assert project.files.exists(str(nodes / "a")) and not project.files.exists(str(nodes / "gone"))
     pruned = scratch / "a_1700000000" / "hh3.c"            # …a finding's file in a round the rotation pruned
     assert not project.files.exists(str(pruned)) and not project.files.exists(str(pruned.parent))
@@ -81,7 +81,7 @@ def test_live_a_place_that_is_not_there_does_not_stand(project):
 @live
 def test_live_a_link_flipped_out_of_a_place_never_leads_the_system_into_another(project):
     _places(project)
-    a, b = project.parent / ".gfso-nodes-ws/p/a", project.parent / ".gfso-nodes-ws/p/b"
+    a, b = project.own / "a", project.own / "b"
     project.files.write_bytes(str(b / "secret"), b"SECRET-B\n")
     project.files.write_bytes(str(a / "ok"), b"benign\n")
     inside = project.to_inside(str(b / "secret"))
@@ -103,11 +103,11 @@ def test_live_a_link_flipped_out_of_a_place_never_leads_the_system_into_another(
 @live
 def test_live_a_copys_git_reaches_no_other_place_through_its_agents_links(project):
     _places(project)
-    a, b = project.parent / ".gfso-nodes-ws/p/a", project.parent / ".gfso-nodes-ws/p/b"
+    a, b = project.own / "a", project.own / "b"
     project.files.write_bytes(str(b / "secret"), b"SECRET-B\n")
     _sh(project, a, f"mkdir -p x && printf 'gitdir: x\\n' > .git && printf '.\\n' > x/commondir && "
                     f"ln -s {project.to_inside(str(b))} x/loot")
-    round_ = project.parent / ".gfso-nodes-ws/p/.gfso-scratch-a/a_1700000001"
+    round_ = project.own / ".gfso-scratch-a/a_1700000001"
     project.files.mkdir(str(round_))
     project.copy_tree(str(a), str(round_ / "delivery"))
     _own_git(a, round_ / "delivery", project)
@@ -124,7 +124,7 @@ def test_a_call_that_did_not_run_is_no_absence(project, monkeypatch):
             return subprocess.CompletedProcess(args, rc, b"", err.encode())
         return subprocess.CompletedProcess(args, 0, "" if kw.get("text") else b"", "" if kw.get("text") else b"")
     monkeypatch.setattr(E, "run", _docker_client)
-    root = str(project.parent / ".gfso-nodes-ws/p")
+    root = str(project.own)
     answers[:] = [(1, "")]
     assert project.files.exists(root) is False, "the operation's own no"
     answers[:] = [(126, "OCI runtime exec failed")]
@@ -154,7 +154,7 @@ def test_an_io_error_stops_the_place_only_where_the_systems_own_probe_fails(proj
     monkeypatch.setattr(E, "run_printing", lambda args, **kw: _docker_client(args, text=True, **kw))
     monkeypatch.setattr(ContainerExecution, "unavailable", lambda self, storage=False, _said=storage: _said if storage
                         else None)
-    where = str(project.parent / ".gfso-nodes-ws/p")
+    where = str(project.own)
     if storage:
         with pytest.raises(PlaceUnavailable, match="does not answer"):
             project.files.read_bytes(where)

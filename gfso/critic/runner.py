@@ -54,6 +54,10 @@ CHECKER_SCHEMA = {
             "properties": {"between": {"type": "array", "items": {"type": "string"}},
                            "why": {"type": "string"}},
             "required": ["between", "why"]}},
+        "deferrals": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"part": {"type": "string"}, "why": {"type": "string"}},
+            "required": ["part", "why"]}},
     },
     "required": ["criteria"],
 }
@@ -358,7 +362,13 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
          + [f"[undecided by {nid}'s criteria or its split's pinned checks] {g.get('obligation')} — "
             f"admits: {g.get('admits')}" for g in short])
         + [f"[reported, not gating — one side is settled] {', '.join(c.get('between', ()))} — {c.get('why')}"
-           for c in reported])
+           for c in reported]
+        # …a deferral whose producers' results cannot change the part's split is the plan's defect, for its customer to
+        # read (a plan may defer too much: it only waits); never the gate's, which reads whether the criteria entail
+        + [f"[reported, not gating — a split deferred on nothing it needs] {d.get('part')} — {d.get('why')}"
+           for d in parsed.get("deferrals") or ()
+           # …only a part that does defer: a reading naming another reported a deferral the plan does not hold
+           if engine.split_waits_on(TaskId(_side(str(d.get("part")))), standing=True)])
     return NodeCritique(nid, gate_passed=True, semantic_covered=covered,
                         semantic_findings=findings, criteria_verdicts=verdicts, conflicts=conflicts,
                         undecided_obligations=short, goal_read=True)
@@ -552,7 +562,7 @@ def _read_the_plan(llm, user: str, system: str, first_pass: bool, decided: Optio
 
     Returns (first parsed answer, per-criterion verdicts with every reading's doubts folded in,
     conflicts)."""
-    parsed, conflicts, gaps, answered = None, (), {}, {}
+    parsed, conflicts, gaps, answered, groundless = None, (), {}, {}, {}
     decided = decided or {}
     texts = readings(llm, max(1, CHECKER_READINGS) if first_pass else 1,
                      lambda: llm.complete(prompt=user + schema_instruction(CHECKER_SCHEMA), context=system),
@@ -571,8 +581,11 @@ def _read_the_plan(llm, user: str, system: str, first_pass: bool, decided: Optio
             if v.get("verdict") != CriticVerdict.SUFFICIENT and name not in gaps:
                 gaps[name] = v
         conflicts += tuple(c for c in (one.get("conflicts") or ()) if c not in conflicts)
+        # …and a deferral ANY reading found groundless, by part, as a doubt any reading raises is one to answer
+        groundless.update({str(x.get("part")): x for x in one.get("deferrals") or () if isinstance(x, dict)})
     if parsed is None:
         return None, (), ()
+    parsed = {**parsed, "deferrals": list(groundless.values())}
     # …OVER EVERY CRITERION ANY READING ANSWERED, not the first reading's list: a doubt reading 2 raised on a criterion
     # reading 1 left out was dropped, and once the criterion left out is asked for by name, one "sufficient" opened the
     # gate over it (critic over 184dff5)
@@ -818,6 +831,12 @@ def _deciders(engine, task) -> list[str]:
     An obligation once decided stays decided while every one of these still stands: a pin added decides more, never
     less. One gone or changed — a child dropped or unmapped, a pin rewritten — may have been what decided it."""
     return sorted(hashlib.sha256(b.encode()).hexdigest()[:16] for b in _blocks(task.spec.criteria) + _split_blocks(engine, task))
+
+
+def undecided_of(engine, task, llm, obligations) -> tuple[dict, ...]:
+    """Of `obligations` — a reading the node's record does not hold, such as what a customer's notes on a plan require —
+    those no pinned check of the node's criteria or its split probes, decided as the gate decides the goal's own."""
+    return _still_undecided(engine, task, llm, tuple(obligations))
 
 
 def goal_obligations(llm, goal: str) -> list:

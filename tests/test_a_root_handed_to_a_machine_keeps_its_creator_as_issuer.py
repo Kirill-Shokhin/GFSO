@@ -23,10 +23,10 @@ def test_a_root_reassigned_to_a_machine_keeps_its_creator_as_issuer():
     T.TOOLS["reassign"](e, "root", "exec-1", reason="capability_mismatch")
     T.signal(e, "root", "ACCEPT", "exec-1")
     T.signal(e, "root", "CHALLENGE", "exec-1", reason="g is unmeetable")
-    assert e.graph.issuer_of(TaskId("root")) == AgentId("agent")
+    assert e.graph.issuer_of(TaskId("root")) == AgentId("user")
     # with no mode the system answers a dispute at a seam — in the ISSUER's name, never in the disputant's own
-    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "agent"
-    out = TL.TOOLS["signal"](e, "root", "REJECT_CHALLENGE", "agent", reason="the goal stands")
+    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "user"
+    out = TL.TOOLS["signal"](e, "root", "REJECT_CHALLENGE", "user", reason="the goal stands")
     assert "error" not in str(out).lower()[:200], out
     assert e.graph.get_task(TaskId("root")).state == State.EXECUTING
     e.stop()

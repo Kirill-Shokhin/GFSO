@@ -30,7 +30,7 @@ def _engine(mode=None):
     e.project_name = "p"
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
     if mode is not None:
-        e.set_mode(mode, None, AgentId("agent"))
+        e.set_mode(mode, None, AgentId("user"))
     return e
 
 
@@ -54,10 +54,10 @@ def test_a_revision_that_empties_the_contract_is_refused_and_one_that_keeps_a_cr
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")],
                                        "accepted_risks": REGISTER})
     e.wait_idle()
-    out = TL.TOOLS["edit_criteria"](e, "root", [], "agent")
+    out = TL.TOOLS["edit_criteria"](e, "root", [], "user")
     assert out.get("error") and "§2.2" in out["error"], out
     assert [c.name for c in e.graph.get_task(TaskId("root")).spec.criteria] == ["g"]
-    out = TL.TOOLS["edit_criteria"](e, "root", [criterion("h", "H holds")], "agent")
+    out = TL.TOOLS["edit_criteria"](e, "root", [criterion("h", "H holds")], "user")
     assert not out.get("error"), out
     assert [c.name for c in e.graph.get_task(TaskId("root")).spec.criteria] == ["h"]
     e.stop()
@@ -68,8 +68,8 @@ def test_a_raw_assign_lands_nowhere_over_no_criteria():
     e = _engine()
     for crit, lands in (((), False), ((Criteria("g", "G holds", check=pinned("g")),), True)):
         tid = TaskId("bare" if not crit else "kept")
-        e.send_signal_sync(SignalData(signal=Signal.ASSIGN, task_id=tid, source=AgentId("agent"),
-                                      assignee=AgentId("agent"), spec=Spec("the goal", crit)))
+        e.send_signal_sync(SignalData(signal=Signal.ASSIGN, task_id=tid, source=AgentId("user"),
+                                      assignee=AgentId("user"), spec=Spec("the goal", crit)))
         e.wait_idle()
         assert (e.graph.get_task(tid) is not None) is lands, (crit, lands)
         if lands:
@@ -256,10 +256,10 @@ def test_a_contract_of_seams_alone_is_refused_and_one_with_its_own_criterion_is_
     e = make_engine()
     e.start()
     _a_producer_and_a_consumer(e)
-    out = TL.TOOLS["edit_criteria"](e, "root.cons", [], "agent")
+    out = TL.TOOLS["edit_criteria"](e, "root.cons", [], "user")
     assert out.get("error") and "§2.2" in out["error"], out
     assert any(not c.depends_on for c in e.graph.get_task(TaskId("root.cons")).spec.criteria)
-    out = TL.TOOLS["edit_criteria"](e, "root.cons", [criterion("own", "its own result holds")], "agent")
+    out = TL.TOOLS["edit_criteria"](e, "root.cons", [criterion("own", "its own result holds")], "user")
     assert not out.get("error"), out
     assert {c.name for c in e.graph.get_task(TaskId("root.cons")).spec.criteria} == {"own"}
     assert [str(x.from_id) for x in e.graph.declared_edges(TaskId("root.cons"))] == ["root.prod"]
@@ -299,7 +299,7 @@ def _settled_seams_only(done: bool):
     _a_producer_and_a_consumer(e)
 
     def sig(tid, s, **kw):
-        e.send_signal_sync(SignalData(signal=s, task_id=TaskId(tid), source=AgentId("agent"), **kw))
+        e.send_signal_sync(SignalData(signal=s, task_id=TaskId(tid), source=AgentId("user"), **kw))
         e.wait_idle()
     for tid in ("root.prod", "root.cons"):
         sig(tid, Signal.ACCEPT)

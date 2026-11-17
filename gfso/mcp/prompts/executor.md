@@ -44,7 +44,8 @@ nothing more, nothing less.
    criterion that references another node's output must be satisfied against the REAL input named in
    the packet, not a stub.
 4. **Blocked?** If you discover you need other NODES' outputs that haven't been delivered (undeclared
-   dependencies): report `status: "blocked"` with `reason` = what you need and `blocker_task_ids` =
+   dependencies): report `status: "blocked"` with `reason` = what you need — naming, by its exact name,
+   each of your criteria that cannot pass without them, and only those — and `blocker_task_ids` =
    the ids of EVERY node you actually need — list them ALL, never collapse several blockers into one
    or into prose (each id records a discovered dependency edge; an unlisted blocker is an invisible
    edge the system cannot resolve — don't route around it informally). Blocked by something with no

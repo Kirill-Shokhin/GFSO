@@ -20,6 +20,7 @@
 import {esc} from './dom.js';
 import {dur, hm, hms, usd, money, NOT_REPORTED, tok, pct, cap, plural} from './fmt.js';
 import {S, agentName} from './state.js';
+import {TOP_WORD} from './api.js';
 import {statesIn, label, TOKENS, WRITES, nameOf} from './vocab.js';
 
 // ── the renderers ──
@@ -37,9 +38,13 @@ export const meterAt = (label, share, figure, at) => `${meter(label, share, figu
 const row = r => { if (!r.startsWith(METER)) return `<div class="tt-row">${esc(r)}</div>`;
     const [label, share, figure, at] = r.slice(1).split('\t'), p = pct(+share), over = at && +share > +at;
     return `<div class="tt-meter"><span>${esc(label)}</span><i><b${over ? ' class="over"' : ''} style="width:${p}"></b>${at ? `<u style="left:${pct(+at)}"></u>` : ''}</i><em>${esc(figure || p)}</em></div>`; };
+// A TIP STAYS ON THE SCREEN: a list longer than a tip can hold says its first rows and how many more — a header chip's 105
+// rows stood 5600 px tall, off the window both ways (critic, 2026-11-13); the whole list is where the chip leads
+const TIP_ROWS = 16;
+const shortened = rs => rs.length <= TIP_ROWS ? rs : [...rs.slice(0, TIP_ROWS - 1), `… and ${rs.length - TIP_ROWS + 1} more`];
 export const card = (head, rows = [], badge = '') => { const [h, figure] = head.split('\t');
     return `${h ? `<div class="tt-name${figure ? ' tt-split' : ''}"><span>${esc(h)}</span>${figure ? `<b>${esc(figure)}</b>` : ''}</div>` : ''}${badge}`
-        + lines(rows).map(row).join(''); };
+        + shortened(lines(rows)).map(row).join(''); };
 // a popover: its title and the caption saying what it lists, set apart from the items; an item is a heading (a glyph
 // before it, a value and a tag after it, a link at its end) and what it means; `group` starts a new group of items
 const item = it => it.group ? `<div class="hp-group">${esc(it.group)}</div>`
@@ -67,14 +72,14 @@ const KEY = [
     {group: 'The graph'},
     {glyph: '<i class="lg-split"></i>', head: 'Split into its parts', means: 'from a node to each of its parts'},
     {glyph: '<i class="lg-dep"></i>', head: 'Uses the result of', means: 'the node using it waits until its producer passes (Dep)'},
-    {glyph: '<i class="cy-live"></i>', head: 'At work', means: 'counted in the deck as «N at work»; a parent only waiting on its parts is not'},
-    {glyph: '<i class="cy-live on"></i>', head: 'Running on this server now', means: 'a process of this server works on it'},
+    {glyph: '<i class="cy-live"></i>', head: 'In work', means: 'taken by its holder, by the log — counted in the deck as «N in work»; a parent only waiting on its parts is not'},
+    {glyph: '<i class="cy-live on"></i>', head: 'Acted on now', means: 'a process of this server works on it, or its holder works it through a live console'},
     // one mark, the round count; its accent is a state of it, not a second mark (the author: «почему это две разные и одинаковой иконкой»)
     {glyph: '<span class="kb">3</span>', head: 'Delivery rounds', means: 'from the second on; in the accent while the last one failed'},
     {glyph: '<svg class="glyph" width="22" height="11" viewBox="0 0 22 11"><rect class="tl-exec" x="0" y="3" width="22" height="5" rx="1.5"/><line class="tl-hand" x1="11" x2="11" y1="1" y2="10"/></svg>',
      head: 'Session passed on', means: 'on the timeline: its context reached the budget, a fresh session went on from its note'},
-    {glyph: '<span class="cy-fold kf"><span class="tally"><b>12</b><i>parts</i></span></span>', head: 'Parts folded inside', means: 'on a plan too large to read whole: a part\'s own parts. A press on the tag unfolds them and folds them back; in the accent if any of them asks'},
-    {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'a node frames it · the background shows the plan as first drawn'},
+    {glyph: '<span class="cy-fold kf"><span class="tally"><b>12</b><i>parts</i></span></span>', head: 'Parts folded inside', means: 'on a plan too large to read whole: a part\'s own parts. A press on the tag, a double-click on the node (with a mouse) or «Open its N parts ↓» in its panel goes down into the part; Back, Esc or the path above go up. In the accent if any of them asks'},
+    {glyph: '<b class="kt">2×</b>', head: 'Double-click', means: 'with a mouse: a node with parts goes down into it · the top of a part goes up · a leaf is framed · the background frames the whole view'},
     {group: 'Verdicts'},
     {glyph: svg('<circle class="mk-pass" cx="0" cy="0" r="3.5"/>'), head: 'PASS', means: 'in a criterion\'s row, on the timeline, on a progress track'},
     {glyph: svg('<path class="mk-fail" d="M-3.5,-3.5l7,7m0,-7l-7,7"/>'), head: 'FAIL'},
@@ -89,13 +94,13 @@ const KEY = [
     {group: 'Nodes'},
     node('done', 'Closed, passed', ''),
     {glyph: '<i class="kn kn-done kn-x"></i>', head: 'Closed by FAIL', means: 'closed on its FAIL; the cross is the FAIL mark of every view'},
-    node('busy', 'In work', 'busy'),
+    node('busy', 'Taken, not closed', 'busy', 'pulsing while worked now'),
     node('attend', 'Handed over, not taken yet', 'attend'),
     node('pathology', 'Waits on a decision', 'pathology'),
     node('quiet', 'Not handed over yet', 'quiet'),
     node('cancelled', 'Cancelled', '', 'kept for its history'),
     node('contested', 'PASS contested', '', 'its own record contradicts it, or a hand overruled an instrument'),
-    node('byhand', 'Closed by hand', '', 'on a person\'s word, not an instrument\'s check'),
+    node('byhand', 'Closed by hand', '', 'on a person\'s word where the system holds the node and an instrument was to check it; on parts people hold every PASS is by hand and is not marked'),
     {glyph: '<b class="kt">Del</b>', head: 'Its executor', means: 'the one accountable party; it may run many sessions at once'},
 ];
 export const keyPop = () => pop('How to read the page', 'Each mark means one thing in every view.', KEY.map(it => it.group ? it : {...it, key: true}));
@@ -107,8 +112,8 @@ export const CELLS = [['done', 'part done'], ['open', 'part open'], ['rework', '
 const FRAME = {
     projects: ['Projects', 'Find a run by its goal, when it ran, where it stands'],
     goal: ['Pose the goal', 'A project is one goal: you state it, the system plans its parts'],
-    mine: ['Mine only', 'Dim every node the name in «acting as» does not hold'],
-    actingAs: ['Acting as', "The name this page signs your moves with — the server's own agent unless you name yourself"],
+    mine: ['Mine only', 'Dim every node none of your names holds — or only the one chosen beside it'],
+    mineName: ['Mine as', 'Which of your names «Mine only» and the red «for …» count show: a view, it signs nothing — a move is signed by the name its role needs'],
     help: ['How to read the page'],
     close: ['Close', 'Esc'],
     grip: ['Drag to resize'],
@@ -116,7 +121,7 @@ const FRAME = {
     unfold: ['Unfold the deck', 'Any tab unfolds it too'],
     dismiss: ['Click to dismiss'],
     deadline: ['Deadline', 'When this part is due — before its parent is'],
-    deleteProject: ['Delete this project', 'Offered only for a project that never ran: no model call, nothing spent',
+    deleteProject: ['Delete this project', 'Offered only for a project that never ran: no model call, nothing spent, no move made in it',
                     'Irreversible — its database goes with its whole history; asks for its name'],
 };
 export const frame = k => hover(...FRAME[k]);
@@ -127,6 +132,7 @@ export function mountHints() {
 }
 // a deck tab is named by the question it answers: the hover asks it, the tab's name is not said again
 export const TAB = {
+    'in work': hover('What is in work, by stream', 'From the log: who holds each node and since when; lit where someone acts on it now'),
     timeline: hover('Which nodes ran when, and at once'),
     progress: hover("How the goal's criteria came to pass"),
     spend: hover('Where the money and session time went', 'By node, by level of the plan, by role and by assignee'),
@@ -140,6 +146,23 @@ export const PLAN = {
     title: 'The plan is being authored',
     starting: 'starting',
     since: t => hover(`Since\t${t}`),
+    written: 'The plan',
+    when: t => `written ${t}`,
+    doc: path => `the document it names: ${path}`,
+    docs: 'the documents it names, as they stood when the goal was set',
+    parts: n => `It splits into ${n} part${n === 1 ? '' : 's'}`,
+    after: ids => `split once ${ids.join(', ')} ${ids.length > 1 ? 'are' : 'is'} accepted`,
+    // …the review's own words: the go may run as it stands, the root's checks still decide, a failure there names no part
+    open: 'What its review leaves open — the go may still be given; a failure there will name no part',
+    // …as the authoring said it: a criterion back to an earlier text, a part's deferral refused, a demand dropped
+    takenBack: "What its repair changed or gave up while it was written",
+    building: 'The go is given: the project is being built from this plan',
+    host: "Its parts will run outside Docker, on the computer gfso serves from",
+    answer: 'Its answer:',
+    refused: 'The go refuses it as it stands',
+    notes: 'Notes and their answers',
+    undecided: n => `${n} of what the goal asks no check decides yet`,
+    go: 'A note or the go is given in the client the plan was asked in',
 };
 
 // ── resources: what Docker holds for this installation (`GET /api/resources`) ──
@@ -166,7 +189,13 @@ export const RES = {
 
 // ── the header ──
 export const H = {
-    root: full => hover(full),
+    // …and the goal as the person gave it, where the root's own words are the client's restatement (INSTRUCTION_AUDIT row 8)
+    root: (full, given) => hover(full, given ? ['As given', given] : []),
+    // WHERE THE WORK RUNS, said where the person reads the run (row 5): an executor with no container works on this machine
+    // …said of the server's computer, true from wherever the page is read (a phone reads it through a front)
+    host: hover('Outside Docker', 'The executors run on the computer gfso serves from, not in a container: what they do reaches that computer, and their work stays off your branches'),
+    // …the server's own sentences, each a kind of what the copy lacks with its count (execution.py `left_out`)
+    notImported: lines => hover("Not in the agents' copy", lines),
     landed: l => l.branch ? hover(`The result, on branch ${l.branch}`, `Of the repository ${l.path}`, `Commit ${l.sha.slice(0, 12)}`, 'Your own branches and working tree are untouched')
         : hover('The result, as files', l.path, 'Your own directory is untouched'),
     // one chip per kind of call on a person: the hover says why it calls and on which nodes; the chip already says how many
@@ -176,16 +205,22 @@ export const H = {
         stuck: 'Nothing can move', stalled: 'Stalled: the goal is open and nothing has happened',
     }[kind] || 'Your moves, as the engine names them', rows),
     stuck: 'No actionable node and the root is not DONE',
-    stalled: 'Nobody owes a move the engine names, nothing is at work — a run that stopped without an end; Events shows its last act',
+    stalled: 'Nobody owes a move the engine names, and no one acts on any node — a run that stopped without an end; Events shows its last act',
     stop: hover('Stop the run', 'Nothing new starts: no executor, validator or issuer session, no timeout',
                 'The sessions running now finish and their signals land'),
     start: hover('Start the run again', 'The time it stood stopped is left off every deadline and timeout'),
     stopping: (by, at, why, working) => hover(`By ${by}\t${at}`, why, `${working.length} still at work; each finishes and its signal lands:`, working),
     stopped: (by, at, why) => hover(`By ${by}\t${at}`, why, 'Nothing runs and no timeout fires until it is started again'),
+    // …on a graph people hold the system runs nothing there: the switch holds its clock alone, and people's moves land
+    clockStart: hover('Start the clock again', 'The time it stood is left off every deadline and timeout'),
+    clockStopped: (by, at, why) => hover(`By ${by}\t${at}`, why, 'No deadline or timeout runs on; every person\'s move still lands'),
     // the mode: the three modes as items, this project's marked, then how this project's was set
-    mode: (doc, mode, set) => pop('Who holds the work', 'The mode is set once per project; it decides which nodes a person holds and which the system does.',
+    mode: (doc, mode, set, change = []) => pop('Who holds the work', "It decides which nodes a person holds and which the system does; once the project has work, only the person's page changes it.",
         [...Object.entries(doc).map(([m, text]) => ({head: cap(m), tag: m === mode ? 'this project' : '', on: m === mode, means: text})),
-         ...set.length ? [{group: 'How it was set'}, ...set.map(([head, v]) => ({head, val: `<span class="hq-kv">${esc(v)}</span>`}))] : []]),
+         ...set.length ? [{group: 'How it was set'}, ...set.map(([head, v]) => ({head, val: `<span class="hq-kv">${esc(v)}</span>`}))] : [],
+         // …and the change itself, the person's own once the project has work (set_mode refuses an agent then)
+         ...change.length ? [{group: 'Change it'}, {head: 'To', val: `<span class="hq-modes">${change.join('')}</span>`,
+             means: 'It governs nodes issued after it; a node already issued keeps its holder'}] : []]),
     reports: rs => pop('Tech reports', 'What the system reported about itself — a check contradicting its contract, a tool that cannot run. '
         + 'A report stops and moves nothing. Newest first.', rs),
     quality: rows => pop('Quality', 'How far the plan and its validation can be trusted, each figure with how far it goes.', rows),
@@ -214,12 +249,13 @@ export const KIND = {
 // a role's sessions counted in words — «46 executions», «9 issuer turns» — so a count needs no line explaining it
 export const sessionsOf = (kind, n) => plural(n, KIND[kind]?.count || kind);
 // the tree's levels by what they are: the goal (the root), its parts, then parts of parts, one level down each time
-export const levelName = d => +d === 0 ? 'the goal' : +d === 1 ? 'its parts' : `parts, level ${d}`;
+export const levelName = d => +d === 0 ? TOP_WORD : +d === 1 ? 'its parts' : `parts, level ${d}`;
 export const roundsLine = rs => !rs.length ? '' : plural(rs.length, 'round')
     + (rs.some(r => r.verdict === 'FAIL') ? `, ${rs.filter(r => r.verdict === 'FAIL').length} failed` : '');
 // What a node waits on (run.js waits), for every view that says it: "Floor compiler", "its 2 parts", "the executor".
-export const waitWords = (w, name) => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')
-    : w.parts.length ? `its ${plural(w.parts.length, 'open part')}` : w.owes ? `the ${w.owes}` : '—';
+// …the role's holder named beside it: «the issuer» alone read as the person looking (critic, 2026-11-16)
+export const waitWords = (w, name, who = '') => !w ? '—' : w.deps.length ? w.deps.map(name).join(', ')
+    : w.parts.length ? `its ${plural(w.parts.length, 'open part')}` : w.owes ? `the ${w.owes}${who ? ` (${who})` : ''}` : '—';
 // What a FAIL named (run.js failedOf): the node's own criteria, and the bare Dep edges an older engine judged — in one
 // line, or one criterion a row for a tip (names carry commas of their own, and joined they read as more)
 export const EDGE_NOTE = 'a Dep edge with no check, judged by an older engine — no criterion now';
@@ -248,12 +284,16 @@ export const STRIP = {
     onIssuer: n => `${n} wait${n > 1 ? '' : 's'} on the issuer`, sentBack: n => `${n} sent back`,
     issuer: (n, rows) => hover(STRIP.onIssuer(n), rows),
     back: rows => hover(STRIP.sentBack(rows.length), rows, 'Their last round failed'),
-    more: rows => hover(`${rows.length} more at work`, rows),
+    more: rows => hover(`${rows.length} more in work`, rows),
+    // held in the log with no one acting on it this minute: still in work, its pulse dark
+    held: (holder, word, at) => `${word}${holder ? ` by ${holder}` : ''}${at ? `, since ${at}` : ''}; no one acts on it this minute`,
+    list: hover('In work', 'What the log holds in work, by stream: who holds it and since when. Lit: someone acts on it now'),
     // what the chip does not say: where the session runs and since when — its act is the chip's own words (critic, 2026-11-01:
     // «auto_decompose — a session…» beside «planning» named one act two ways)
     running: (at, model, what) => `${cap(what)}: ${model ? 'a session of this server' : "the server's own step, no model"}, since ${at}`,
     carried: (top, act) => `Carried by the session on ${top}, ${act}`,
     idle: 'In a working state; no process of this server runs it',
+    hand: (party, at) => `Worked by ${party} through its live console, since ${at}`,
     // a role a line: its share of the spend drawn, its sum at the end; sessions in the label (the author: no figures run on
     // after each other with dots)
     spend: (roles, running) => hover('Spend by role', roles.map(([k, p, share]) => meter(sessionsOf(k, p.calls), share,
@@ -271,6 +311,11 @@ const NO_VALUE = {unchecked: 'not checked yet', unanswered: 'no verdict on this 
     unkept: "not kept: this round's record names only what failed"};
 export const PANEL = {
     refusedSaid: 'a validator reported and the report was REFUSED as ⊥ — ',
+    openView: hover('Open as its own view', 'The same graph drawn from this part down, its path above; no new project'),
+    // whose name a move signs, as the server will sign it: the holder of the role it needs, among the names you signed in with
+    signedAs: name => hover(`Signed as ${name}`, 'The name the role this move needs is held by — yours since you signed in; the page sends none'),
+    // the deferral's own reason, as the decomposer recorded it
+    splitAfter: why => hover('Its split waits until these parts pass', why || ''),
     escalated: hover('The issuer decides', ISSUER_MOVES),
     contested: hover('Read the verdict', 'Legitimate, and nothing can check it'),
     deadline: () => hover('Deadline', 'Red once it has passed'),
@@ -298,6 +343,9 @@ const passing = (m, total) => `${m.atMost ? '≤ ' : ''}${m.k}/${total}`;
 const span = s => { const f = s.end - s.start < 60e3 && !s.open ? hms : hm; return `${f(s.start)}–${s.open ? 'now' : f(s.end)}`; };
 export const TIP = {
     // a node on the graph: what the drawing does not say — its full name, who holds it, what it waits on, its rounds
+    // an arrow's meaning: a split's (a part of) or a dependency's (waits on); drawn between folds, it stands for their parts'
+    edge: (type, from, to, inner) => card(type === 'parent-child' ? `${to} is a part of ${from}` : `${to} waits on ${from}`,
+        [type !== 'parent-child' && 'It starts once that one has passed', inner && 'Between parts folded into these nodes']),
     node: (t, name, badge, waits, rs, criteria, failing, sentBack) => card(name || '',
         [rs.length && roundsLine(rs), failing && `Failing: ${failing}`,
          Array.isArray(waits) ? waits.length === 1 ? `Waits on ${waits[0]}` : [`Waits on ${waits.length}:`, waits.map(n => `– ${n}`)] : waits && `Waits on ${waits}`,
@@ -340,8 +388,9 @@ export const TIP = {
     verdict: (signal, r, t, f, m, total, name) => card(`${signal}${m ? `\t${passing(m, total)}` : ''}`, [
         name, `${r ? `Round ${r.n}, ` : ''}${hm(t)}`, failedRows(f)]),
     cell: (name, also) => hover(name, also),
-    fold: rows => hover('Unfold', 'Draws these parts in the graph', ...rows),
-    foldBack: hover('Fold back', 'Hides these parts under this node again'),
+    // what is inside, before going in: the figures the parts ask with (the author, 11-15: a mark that lights and says nothing is noise)
+    fold: rows => hover('Go into this part', 'Draws it from here down, its path above; Back, Esc or the path go up', ...rows),
+    pathWhole: hover('The whole graph', 'This view draws one part of the graph from its level down; the same graph and log'),
     waits: names => hover(`Waits on ${names.length}`, names.map(n => `– ${n}`)),
     // a ⊥ standing alone: which absence it is
     noValue: why => hover('No value', cap(NO_VALUE[why])),

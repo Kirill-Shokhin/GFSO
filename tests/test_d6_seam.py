@@ -42,10 +42,10 @@ def _deliver(e, tid, actor, self_check=Verdict.PASS):
 
 
 def test_is_public_classification(engine):
-    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("user"))
     engine.wait_idle()
     engine.decompose_task(TaskId("root"), [
-        (TaskId("mine"), spec("mine", "mc"), AgentId("agent")),      # same Del → internal
+        (TaskId("mine"), spec("mine", "mc"), AgentId("user")),      # same Del → internal
         (TaskId("theirs"), spec("theirs", "tc"), AgentId("worker")),  # Del seam → public
     ], [CriterionMapping("rc", TaskId("mine")), CriterionMapping("rc", TaskId("theirs"))], register=REGISTER_SPLIT)
     engine.wait_idle()
@@ -59,23 +59,23 @@ def test_internal_same_del_node_may_self_pass(engine):
     """The agent's own internal node self-verifies — no INDEPENDENT verdict demanded (§10.3);
     what its delivery must carry is its own decided self-check, which is the record it is validated on.
     A delivery that checked nothing leaves the node in VALIDATING for its issuer (§2.3)."""
-    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("user"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("in1"), spec("in", "ic"), AgentId("agent"))],
+    engine.decompose_task(TaskId("root"), [(TaskId("in1"), spec("in", "ic"), AgentId("user"))],
                           criterion_mappings=[CriterionMapping("rc", TaskId("in1"))], register=REGISTER_SPLIT)
     engine.wait_idle()
-    _deliver(engine, "in1", "agent", self_check=None)          # nothing checked → ⊥, not a pass
-    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in1"), source=AgentId("agent")))
+    _deliver(engine, "in1", "user", self_check=None)          # nothing checked → ⊥, not a pass
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in1"), source=AgentId("user")))
     engine.wait_idle()
     assert engine.graph.get_state(TaskId("in1")) == State.VALIDATING
 
     # …saying what was checked settles it, through either door: the executor's own recorded verdict.
     # A criterion now carries the procedure that decides it (A1/§2), so the observation names which
     # of the PINNED commands was run — nothing is decided by a probe invented at validation time.
-    engine.record_reviewer_verdict(TaskId("in1"), Verdict.PASS, [], reviewer="agent",
+    engine.record_reviewer_verdict(TaskId("in1"), Verdict.PASS, [], reviewer="user",
                                    observed={"ic": {"note": "ran it and read the output",
                                                     "ran": ["check ic"]}})
-    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in1"), source=AgentId("agent")))
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in1"), source=AgentId("user")))
     engine.wait_idle()
     assert engine.graph.get_state(TaskId("in1")) == State.DONE        # no independent verdict required
     assert engine.get_exec_verdict(TaskId("in1"))["verdict"] == Verdict.PASS   # …and it left a record
@@ -83,29 +83,29 @@ def test_internal_same_del_node_may_self_pass(engine):
 
 def test_an_internal_delivery_that_carries_its_self_check_needs_nothing_else(engine):
     """The other door: `self_validation` in the DELIVER packet IS the record (§10.3)."""
-    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("user"))
     engine.wait_idle()
-    engine.decompose_task(TaskId("root"), [(TaskId("in2"), spec("in", "ic"), AgentId("agent"))],
+    engine.decompose_task(TaskId("root"), [(TaskId("in2"), spec("in", "ic"), AgentId("user"))],
                           criterion_mappings=[CriterionMapping("rc", TaskId("in2"))], register=REGISTER_SPLIT)
     engine.wait_idle()
-    _deliver(engine, "in2", "agent")                            # carries self_validation=PASS
-    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in2"), source=AgentId("agent")))
+    _deliver(engine, "in2", "user")                            # carries self_validation=PASS
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("in2"), source=AgentId("user")))
     engine.wait_idle()
     assert engine.graph.get_state(TaskId("in2")) == State.DONE
     rec = engine.get_exec_verdict(TaskId("in2"))
-    assert rec["verdict"] == Verdict.PASS and rec["validator"] == "agent"
+    assert rec["verdict"] == Verdict.PASS and rec["validator"] == "user"
 
 
 def test_root_self_pass_still_gated(engine):
     """The root is the one seam "done" must cross — a self-stamp never completes it."""
-    engine.assign_task(TaskId("solo"), spec(), AgentId("agent"))
+    engine.assign_task(TaskId("solo"), spec(), AgentId("user"))
     engine.wait_idle()
-    _deliver(engine, "solo", "agent")
-    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("solo"), source=AgentId("agent")))
+    _deliver(engine, "solo", "user")
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("solo"), source=AgentId("user")))
     engine.wait_idle()
     assert engine.graph.get_state(TaskId("solo")) == State.VALIDATING  # rejected without a verdict
     reviewer_passes(engine, TaskId("solo"))
-    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("solo"), source=AgentId("agent")))
+    engine.send_signal(SignalData(signal=Signal.PASS, task_id=TaskId("solo"), source=AgentId("user")))
     engine.wait_idle()
     assert engine.graph.get_state(TaskId("solo")) == State.DONE
 
@@ -152,10 +152,10 @@ def test_a_validation_stands_at_every_seam_and_at_the_top_of_every_one_session_s
     reg = AgentRegistry.__new__(AgentRegistry)
     reg._agents = {}
     d = Dispatcher(engine, reg)
-    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("user"))
     engine.wait_idle()
     engine.decompose_task(TaskId("root"), [
-        (TaskId("mine"), spec("m", "mc"), AgentId("agent")),
+        (TaskId("mine"), spec("m", "mc"), AgentId("user")),
         (TaskId("theirs"), spec("t", "tc"), AgentId("worker")),
     ], [CriterionMapping("rc", TaskId("mine")), CriterionMapping("rc", TaskId("theirs"))], register=REGISTER_SPLIT)
     engine.wait_idle()
@@ -164,9 +164,16 @@ def test_a_validation_stands_at_every_seam_and_at_the_top_of_every_one_session_s
     assert d._validate_here(engine.graph.get_task(TaskId("root")))       # root → instrument
     for t in ("root", "mine", "theirs"):
         engine.record_session_fit(TaskId(t), "~200 lines, 6 checks", True)
+    # …a member of another executor's breaks the scope: no one session carries it (`session_scope`), mine works in a
+    # session of its own and is validated on its own — called internal, its delivery waited for nobody (tn7a14284)
+    assert d._validate_here(engine.graph.get_task(TaskId("mine")))
+    engine.reassign(TaskId("theirs"), AgentId("user"))
+    engine.wait_idle()
     assert not d._validate_here(engine.graph.get_task(TaskId("mine")))   # inside one session's scope
-    assert d._validate_here(engine.graph.get_task(TaskId("theirs")))     # a seam stays a seam
     assert d._validate_here(engine.graph.get_task(TaskId("root")))       # the scope's top
+    engine.reassign(TaskId("theirs"), AgentId("worker"))
+    engine.wait_idle()
+    assert d._validate_here(engine.graph.get_task(TaskId("theirs")))     # a seam stays a seam
     engine.record_session_fit(TaskId("theirs"), "~9000 lines, 80 checks", False)
     assert d._validate_here(engine.graph.get_task(TaskId("mine")))       # a part that does not fit: no scope
     monkeypatch.setenv("GFSO_VALIDATE_INTERNAL", "1")
@@ -181,22 +188,22 @@ def test_execution_gated_on_plan_verification(engine):
     plan is completed and checked ONCE up front (no discover-after-delivery, no rework churn).
     Canon v4.1 (§11.5, §12.16 (ii), §12.10): the gate is the split's ADMISSION — a holed split issues no child;
     a hole a revision opens after it is a flag on the decomposer's plan, never a hold on the child's ACCEPT."""
-    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("user"))
     engine.wait_idle()
     # unmapped child → parent CHECK-1 fails → the split is REFUSED whole (cannot execute an unverified plan)
     with pytest.raises(AdmissionRefused, match="CHECK-1"):
-        engine.decompose_task(TaskId("root"), [(TaskId("ch"), spec("child", "cc"), AgentId("agent"))],
+        engine.decompose_task(TaskId("root"), [(TaskId("ch"), spec("child", "cc"), AgentId("user"))],
                               register=REGISTER_SPLIT)
     assert engine.graph.get_task(TaskId("ch")) is None, "a refused admission issued a child"
     # complete the plan (map the child) → now execution is admitted
-    engine.decompose_task(TaskId("root"), [(TaskId("ch"), spec("child", "cc"), AgentId("agent"))],
+    engine.decompose_task(TaskId("root"), [(TaskId("ch"), spec("child", "cc"), AgentId("user"))],
                           [CriterionMapping("rc", TaskId("ch"))], register=REGISTER_SPLIT)
     engine.wait_idle()
     # a criterion added after admission opens a hole: flagged, and the issued child keeps working
-    engine.edit_criteria(TaskId("root"), spec("root", "rc", "rd").criteria, AgentId("agent"))
+    engine.edit_criteria(TaskId("root"), spec("root", "rc", "rd").criteria, AgentId("user"))
     engine.wait_idle()
     assert any(c.check_name.startswith("CHECK-1:") and not c.passed for c in engine.get_checks(TaskId("root")))
-    r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("agent")))
+    r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("user")))
     assert not r.rejected and engine.graph.get_state(TaskId("ch")) == State.EXECUTING
 
 
@@ -207,21 +214,21 @@ def test_empty_accepted_risks_does_not_gate_execution(engine):
     child; a register emptied after admission is a flag on the decomposer's plan, never a hold on issued work.
     Canon v4.1 §11.5 ("the split … and its register — changes only by a re-admission"): the emptying write is itself
     refused naming CHECK-4, the admitted register stands, and the issued child works on, never held."""
-    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("agent"))
+    engine.assign_task(TaskId("root"), spec("root", "rc"), AgentId("user"))
     engine.wait_idle()
-    split = ([(TaskId("ch"), spec("child", "cc"), AgentId("agent"))], [CriterionMapping("rc", TaskId("ch"))])
+    split = ([(TaskId("ch"), spec("child", "cc"), AgentId("user"))], [CriterionMapping("rc", TaskId("ch"))])
     with pytest.raises(AdmissionRefused, match="CHECK-4"):
         engine.decompose_task(TaskId("root"), *split)          # NO ACCEPTED_RISKS authored with the split
     assert engine.graph.get_task(TaskId("ch")) is None
     engine.decompose_task(TaskId("root"), *split, register=REGISTER_SPLIT)
     with pytest.raises(AdmissionRefused, match="CHECK-4"):     # its decomposer empties it afterwards: refused
-        engine.admit_register(TaskId("root"), Register(), AgentId("agent"))
+        engine.admit_register(TaskId("root"), Register(), AgentId("user"))
     engine.wait_idle()
     assert engine.graph.get_task(TaskId("root")).register.items == REGISTER_SPLIT.items   # nothing changed
-    r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("agent")))
+    r = engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("ch"), source=AgentId("user")))
     assert not r.rejected and engine.graph.get_state(TaskId("ch")) == State.EXECUTING
     complete = T._accepted_risks_from([{**REGISTER[0], "item": "a host restarts mid-run"}, REGISTER[1]])
-    engine.admit_register(TaskId("root"), Register(complete), AgentId("agent"))   # … his complete one is admitted
+    engine.admit_register(TaskId("root"), Register(complete), AgentId("user"))   # … his complete one is admitted
     assert engine.graph.get_task(TaskId("root")).register.items == complete
     assert engine.graph.get_state(TaskId("ch")) == State.EXECUTING
 

@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from gfso.core.graph import Graph
-from gfso.core.graph.model import (admission_key, dep_scope, drops_key, non_leaf_ids, on_the_wall, parent_waits, project_now,
+from gfso.core.graph.model import (project_max_iterations, admission_key, dep_scope, drops_key, non_leaf_ids, on_the_wall, parent_waits, project_now,
                                    register_log_key)
 from gfso.core.graph.mutations import InvariantViolation, Schedule, declare, one_per_pair, producers_of
 from gfso.core.protocol.procedure import admission_defects
@@ -463,8 +463,11 @@ def _issue(graph: Graph, send, parent, by_id: dict, order: tuple, covers: dict, 
     for cid in (c for c in order if c in by_id):
         child_id, spec, assignee, *rest = by_id[cid]
         deadline = rest[0] if rest else None
-        # …the child's own rework bound where the act names one (a merged child keeps its members'), else the act's
-        bound = (rest[1] if len(rest) > 1 else None) or max_iterations
+        # …the child's own rework bound where the act names one (a merged child keeps its members'), else the act's;
+        # a NEW child unnamed takes the project's, a standing one re-issued keeps its own (None = keep: an issuer's
+        # raised forecast is not undone by a re-admission — critic)
+        bound = ((rest[1] if len(rest) > 1 else None) or max_iterations
+                 or (project_max_iterations(graph) if graph.get_task(TaskId(str(child_id))) is None else None))
         supplied = deadline is None and defaults.get(cid) is not None
         entry = send(SignalData(
             signal=Signal.ASSIGN, task_id=TaskId(str(child_id)), spec=spec, source=parent.assignee,

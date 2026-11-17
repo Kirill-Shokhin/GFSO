@@ -167,7 +167,7 @@ def test_set_mode_turns_the_switch_alone_in_the_mode_record_and_at_once(monkeypa
     monkeypatch.setattr(TL, "where_it_runs", lookup)
     got = TL.set_mode(e, network="off")
     assert e.mode() is None and got["network_in_force"] == {"mode": "off", "hosts": []},         "a project with no mode could not close its network without choosing who holds it"
-    e.set_mode(Mode.SEMI, 2, AgentId("agent"), said="semi please")
+    e.set_mode(Mode.SEMI, 2, AgentId("user"), said="semi please")
     before = e.mode()
     for bad in ({"mode": "allowlist", "hosts": ["not a host"]}, "sideways", False, [], {}, 0, {"hosts": ["a.b"]}):
         assert TL.set_mode(e, network=bad)["refused"], bad
@@ -182,7 +182,7 @@ def test_set_mode_turns_the_switch_alone_in_the_mode_record_and_at_once(monkeypa
     assert turned[-1] == '{"mode": "off"}', "a turn waited for the next session's lookup"
     assert got["network_in_force"] == {"mode": "off", "hosts": []}
     assert "user_said" not in TL.set_mode(e, network="off"), "the record carried an earlier change's words"
-    e.set_mode(Mode.SOLO, None, AgentId("agent"), said="solo")
+    e.set_mode(Mode.SOLO, None, AgentId("user"), said="solo")
     assert e.mode()["settings"]["network"] == '{"mode": "off"}', "a mode change dropped the switch from the record"
     TL.set_mode(e, network="declared")
     assert not e.graph.setting("network") and "network" not in (e.mode().get("settings") or {})
@@ -195,7 +195,7 @@ def test_a_switch_turned_before_any_mode_stands_in_the_mode_set_after(monkeypatc
     monkeypatch.setattr(TL, "declaring_role", lambda engine, agents=None: {"execution": "t"})
     monkeypatch.setattr(TL, "where_it_runs", lambda engine, agents=None: (_ for _ in ()).throw(ValueError("no read")))
     TL.set_mode(e, network="off")
-    e.set_mode(Mode.SEMI, 2, AgentId("agent"), said="semi please")
+    e.set_mode(Mode.SEMI, 2, AgentId("user"), said="semi please")
     assert json.loads(e.mode()["settings"]["network"]) == {"mode": "off"}
 
 

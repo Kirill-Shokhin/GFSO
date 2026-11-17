@@ -93,8 +93,8 @@ class MemoryStorage(StoragePort):
         self._pipeline.append({"ts": ts, "source": source, "message": message})
         del self._pipeline[:-10000]  # same pragmatic cap as sqlite
 
-    def get_pipeline(self, limit: int = PIPELINE_PAGE) -> list[dict]:
-        return list(self._pipeline[-limit:])
+    def get_pipeline(self, limit: int = PIPELINE_PAGE, about: str = "") -> list[dict]:
+        return [r for r in self._pipeline if r["message"].startswith(about)][-limit:]
 
     def log_usage(self, row: dict) -> None:
         self._usage.append(dict(row))

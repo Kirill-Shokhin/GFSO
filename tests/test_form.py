@@ -149,9 +149,8 @@ BASE = {
     # the split rather than a new baseline — the three sources are one question ("what did this
     # report not account for") and now have one owner, `procedure.unaccounted_for`.
     "F_function_over_size_limit": 0,
-    # C5 — the hardcode rule, and the number S4 owns. Floor is 1, NOT 0: `GFSO_L2_GATE` is read at
-    # its point of enforcement DELIBERATELY (hard constraint #7 of the run sheet) — it is the switch
-    # of a measured mechanism, not a setting.
+    # C5 — the hardcode rule, and the number S4 owns. `GFSO_L2_GATE` is read at its point of enforcement DELIBERATELY
+    # (hard constraint #7 of the run sheet) — the switch of a measured mechanism, not a setting — through `config.flag`.
     # 51 after the four path derivations moved to their owner (`gfso.config`); it read 56, and
     # 56, not the 47 this plan predicted — and the difference is the point. CM-2 unaliased
     # `import os as _os`, and eight `_os.environ` reads that this rule could not see became
@@ -166,8 +165,10 @@ BASE = {
     # including `APPDATA`, which is the OS's variable and not this product's configuration.
     # 6 (2026-10-30, S6): `shell.client` forwards the environment its CLI gave it to where the command runs — a
     # program of its own inside a container, which no `gfso.config` reaches; what it reads is the CLI's, not a setting
-    "C5_env_read_outside_config": 5,     # floor 1: GFSO_L2_GATE at its enforcement point
-                                         # (S4, 2026-08-22: provider/billing/storage/llm/model,
+    # 4 (2026-11-17): every on/off switch is read by `config.flag`, one truth table — `GFSO_L2_GATE` too, still at its
+    # point of enforcement; `decompose.checker_at_authoring` read its own through `__import__("os")`, which this rule
+    # now sees. Left: the container-side `shell.client`, and doctor's three diagnostic reads.
+    "C5_env_read_outside_config": 4,     # (S4, 2026-08-22: provider/billing/storage/llm/model,
                                          #  the runtime panel and the roster path have owners)
 }
 
@@ -315,7 +316,11 @@ def _measure(root: Path) -> tuple[dict[str, int], dict[str, list[str]]]:
             if isinstance(n, ast.If) and n.lineno not in chain_tail and _chain_target(n):
                 hit("C2_chain_dispatch_over_constants", f"{path.name}:{n.lineno}")
             # C5 — a read of the environment outside the one module that owns configuration.
-            if isinstance(n, ast.Attribute) and n.attr == "environ"                     and isinstance(n.value, ast.Name) and n.value.id == "os"                     and mod not in ("gfso.config",):
+            # …`__import__("os").environ` too: it read a switch past this rule, and past the switches' one reading (F18)
+            if isinstance(n, ast.Attribute) and n.attr == "environ" and mod not in ("gfso.config",) and (
+                    isinstance(n.value, ast.Name) and n.value.id == "os"
+                    or isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)
+                    and n.value.func.id == "__import__" and ast.unparse(n.value.args[:1] or [ast.Constant("")]) == "'os'"):
                 hit("C5_env_read_outside_config", f"{path.name}:{n.lineno}")
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)                     and n.func.attr == "getenv" and mod not in ("gfso.config",):
                 hit("C5_env_read_outside_config", f"{path.name}:{n.lineno}")
@@ -467,8 +472,9 @@ def _free_names(src: str) -> list[tuple[str, str]]:
     # A function-level import binds inside THAT function, and the walk below already carries it.
     known = {sym.get_name() for sym in st.get_symbols()} | set(dir(builtins))
     # module globals symtable omits, plus `__class__` — the implicit cell a method gets from a
-    # zero-argument `super()`, bound by the interpreter and by nothing in the source
-    known |= {"__file__", "__name__", "__doc__", "__package__", "__class__"}
+    # zero-argument `super()`, bound by the interpreter and by nothing in the source; `__classdict__`
+    # — the cell through which Python 3.14's lazy `__annotate__` scope of a class body reads it
+    known |= {"__file__", "__name__", "__doc__", "__package__", "__class__", "__classdict__"}
     out: list[tuple[str, str]] = []
 
     def walk(table, enclosing: set[str]) -> None:

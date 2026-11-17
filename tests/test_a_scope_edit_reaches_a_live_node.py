@@ -13,7 +13,7 @@ from tests.test_every_verb_answers import _engine, _seeded
 def test_a_scope_edit_on_an_issued_node_takes_and_is_typed():
     e = _seeded(_engine())
     assert e.graph.get_task(TaskId("root")).state == State.OFFERED
-    out = TL.TOOLS["edit_scope"](e, "root", ["vectors — out of this goal"], agent="agent")
+    out = TL.TOOLS["edit_scope"](e, "root", ["vectors — out of this goal"], agent="user")
     assert "error" not in out, out
     assert e.graph.get_task(TaskId("root")).spec.scope == ("vectors — out of this goal",)
     assert e.audit_log(TaskId("root"))[-1].revision_reason == "SCOPE_EXPANSION"

@@ -8,8 +8,8 @@ first cut ran it in the validator's copy after the validator, read stdout alone 
 its own: correct work printing to stderr, or a probe that creates its state, failed (critic over 38c16f9).
 
 CONTROLS (each breaks exactly its test): drop the stderr arm of `observe.printed` — the stderr test; run
-`_observe_exact` after `_validator_texts` — the stateful test; require `_NODES in workdir` in `_observe_exact` — the
-no-place test; drop the `blind` note in `with_engine_observations` — the not-observed test; `_observe_exact` → {} —
+`_observe_pins` after `_validator_texts` — the stateful test; require `_NODES in workdir` in `_observe_pins` — the
+no-place test; drop the `blind` note in `with_engine_observations` — the not-observed test; `_observe_pins` → {} —
 the mismatch tests."""
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import subprocess
 import pytest
 
 from gfso import tools as T
-from gfso import tools_llm as TL
+from gfso import observe, tools_llm as TL
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.protocol.procedure import part_credit, probe_id, procedure_digest, with_engine_observations
 from gfso.core.types import Criteria, Probe, Spec
@@ -39,11 +39,13 @@ STATEFUL = "if [ -e t.db ]; then echo 'Error: table t already exists'; else touc
 class _Says:
     """A validator that passes `c` and cites its pinned probe as held, whatever the place holds — having run it in its
     working directory first where `runs`."""
-    def __init__(self, cmd, expect, runs=False):
-        self.cmd, self.expect, self.runs = cmd, expect, runs
+    def __init__(self, cmd, expect, runs=False, edit=None):
+        self.cmd, self.expect, self.runs, self.edit = cmd, expect, runs, edit
         self.calls, self.last_tool_calls, self.on_tick, self.stage_hint = [], {"Bash": 1}, None, ""
 
     def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+        if self.edit:
+            subprocess.run([LocalExecution().shell(), "-c", self.edit], cwd=cwd, capture_output=True)
         if self.runs:
             subprocess.run([LocalExecution().shell(), "-c", self.cmd], cwd=cwd, capture_output=True)
         self.calls.append({"duration_ms": 1, "input_tokens": 1, "output_tokens": 1})
@@ -58,7 +60,7 @@ class _Says:
 
 
 def _validated(tmp_path, printed: str, exact: bool = True, cmd: str = CMD, expect: str = "hello", runs=False,
-               node=True, before=lambda e: None) -> dict:
+               node=True, before=lambda e: None, cite: str = None, edit: str = None, keep=None) -> dict:
     # a node's own place (its validation runs in a copy of it) — or a shared one, which the validator works in itself
     place = tmp_path / ".gfso-nodes-p" / "n" if node else tmp_path / "work"
     place.mkdir(parents=True)
@@ -66,11 +68,14 @@ def _validated(tmp_path, printed: str, exact: bool = True, cmd: str = CMD, expec
     e = _eng()
     T.create_task(e, "n", {"description": "greet", "criteria": [{"name": "c", "description": "prints hello", "check": [
         {"behaviour": "it greets", "command": cmd, "expect": expect, "exact": exact}]}]}, "alice")
+    if keep is not None:
+        keep["e"] = e
     T.signal(e, "n", "ACCEPT", "alice")
     T.signal(e, "n", "DELIVER", "alice", result="out.txt")
     before(e)
     try:
-        return TL.validate_result(e, "n", _llm=_Says(cmd, expect, runs), workdir=str(place))
+        return TL.validate_result(e, "n", _llm=_Says(cmd, expect if cite is None else cite, runs, edit),
+                                  workdir=str(place))
     finally:
         e.stop()
 
@@ -86,10 +91,6 @@ def test_a_held_exact_probe_that_prints_otherwise_fails(tmp_path, monkeypatch, b
 
 def test_a_held_exact_probe_that_prints_it_passes(tmp_path):
     assert _validated(tmp_path, "hello")["verdict"] == "PASS"
-
-
-def test_a_probe_not_exact_stands_on_the_validator_s_word(tmp_path):
-    assert _validated(tmp_path, "goodbye", exact=False)["verdict"] == "PASS"
 
 
 def test_correct_work_that_prints_its_error_to_stderr_passes(tmp_path):
@@ -166,3 +167,63 @@ def test_a_part_probe_held_is_overruled_only_by_a_mismatch_the_system_saw(matche
     assert e["verdict"] == verdict
     credited, _ = part_credit(parts, [e])
     assert (pid in credited) == (verdict == "pass")
+
+
+# A pin that is NOT exact is run by the system too, its `expect` read as a part of what it prints; a PASS over it stands
+# only where that run shows the pin's `expect` or the one the report cites — else ⊥, never a FAIL (an `expect` in
+# words shows in no output). CONTROLS: `contains` → `shows` in `observe.printed` — the substring test; `_reproduced`
+# returning `e` — the two ⊥ tests; drop the cited arm of `_reproduced` — the words test.
+
+def test_a_pin_not_exact_whose_output_shows_its_expect_as_a_part_passes(tmp_path):
+    """…the pin's own `expect` decides, whatever the report cites."""
+    assert _validated(tmp_path, "well, hello there", exact=False, cite="nothing it printed")["verdict"] == "PASS"
+
+
+def test_a_pass_over_a_pin_not_exact_the_delivery_does_not_reproduce_is_no_verdict(tmp_path):
+    keep = {}
+    out = _validated(tmp_path, "goodbye", exact=False, keep=keep)
+    assert out["verdict"] is None and out.get("failed_criteria") in (None, []), out
+    assert "which shows neither 'hello' nor what the report cites" in out["verdict_defects"], out
+
+
+def test_a_pin_in_words_passes_on_the_part_of_the_system_s_run_the_report_cites(tmp_path):
+    assert _validated(tmp_path, "hello", exact=False, expect="it greets the user", cite="hello")["verdict"] == "PASS"
+
+
+def test_a_pin_in_words_with_a_citation_the_delivery_does_not_print_is_no_verdict(tmp_path):
+    """The validator changed what it ran over (here: its copy's `out.txt`) and cites what it then saw."""
+    out = _validated(tmp_path, "goodbye", exact=False, expect="it greets the user", cite="hello",
+                     edit="echo hello > out.txt")
+    assert out["verdict"] is None, out
+
+
+# A pin not exact the system ran and got no answer from: past its bound or past the observation's budget, ⊥ as an exact
+# pin's; a 126/127 over a program the delivery names by a path, the delivery's FAIL; a 126/127 over a bare name, or an
+# empty output, the validator's word. CONTROLS: `unseen` over exact pins only — the two ⊥ tests; `delivery_lacks` →
+# False — the path test; drop `o.get("rc") not in NOT_RUN_RC` from `unshown` — the bare-name test; drop the
+# `printed`-is-not-blank clause from `unshown` — the empty test.
+
+def test_a_pin_not_exact_past_its_bound_is_no_verdict(tmp_path, monkeypatch):
+    monkeypatch.setattr(observe, "PROBE_S", 1)
+    out = _validated(tmp_path, "hello", exact=False, cmd="sleep 3; cat out.txt")
+    assert out["verdict"] is None and "did not finish" in out["verdict_defects"], out
+
+
+def test_a_pin_not_exact_the_observations_budget_left_unrun_is_no_verdict(tmp_path, monkeypatch):
+    monkeypatch.setattr(TL, "OBSERVE_S", 0)
+    monkeypatch.setattr(TL, "FRESH_S", 0)
+    assert _validated(tmp_path, "hello", exact=False)["verdict"] is None
+
+
+def test_a_pin_not_exact_whose_program_the_delivery_lacks_fails(tmp_path):
+    out = _validated(tmp_path, "hello", exact=False, cmd="./prog")
+    assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["c"], out
+
+
+def test_a_pin_not_exact_whose_bare_named_program_the_shell_did_not_find_is_the_validators_word(tmp_path):
+    assert _validated(tmp_path, "hello", exact=False, cmd="no_such_tool_here")["verdict"] == "PASS"
+
+
+def test_a_pin_not_exact_whose_correct_output_is_empty_is_the_validators_word(tmp_path):
+    out = _validated(tmp_path, "", exact=False, expect="Empty output")
+    assert out.get("verdict") == "PASS", out

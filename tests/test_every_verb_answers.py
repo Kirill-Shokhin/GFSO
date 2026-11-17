@@ -22,7 +22,7 @@ import pytest
 import gfso.decompose as _dec
 from gfso import tools_llm as TL
 from gfso.adapters.llm.stub import StubLLM
-from tests.support import criterion, make_engine, DENIAL_ENTRY
+from tests.support import criterion, make_engine, written, DENIAL_ENTRY
 
 # Verbs whose whole job is to spawn a model run. They are still called (their argument guards are
 # the point), with an id that exists and a state that stops them before any transport is touched.
@@ -52,8 +52,8 @@ def _seeded(e):
         "name": "root", "description": "the goal",
         "criteria": [criterion("c1", "the thing")],
         "accepted_risks": [{"item": "an unmodelled fault", "predictability": "extraordinary", "justification": "accepted here", "invalidation_condition": "never", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]},
-        "agent")
-    TL.TOOLS["create_task"](e, "kid", dict(_GOOD_SPEC), assignee="agent", parent_id="root")
+        "user")
+    TL.TOOLS["create_task"](e, "kid", dict(_GOOD_SPEC), assignee="user", parent_id="root")
     TL.TOOLS["map_criterion"](e, "root", "kid", "c1")
     return e
 
@@ -68,7 +68,7 @@ _GOOD: dict[str, dict] = {
     "get_verdict": {"task_id": "kid"},
     "dispute_finding": {"task_id": "root", "criterion": "c1", "why": "it does hold"},
     "return_finding": {"task_id": "root", "finding": "c1#none", "why": "the goal asks for it"},
-    "available_actions": {"task_id": "kid", "agent": "agent"},
+    "available_actions": {"task_id": "kid", "agent": "user"},
     "get_dependencies": {},
     "metrics": {},
     "usage": {},
@@ -76,26 +76,26 @@ _GOOD: dict[str, dict] = {
     "register_agent": {"agent_id": "probe-exec", "kind": "external"},   # no workdir needed for these
     "unregister_agent": {"agent_id": "probe-exec"},
     "set_mode": {"mode": "solo"},
-    "create_task": {"task_id": "fresh", "spec": dict(_GOOD_SPEC), "assignee": "agent",
+    "create_task": {"task_id": "fresh", "spec": dict(_GOOD_SPEC), "assignee": "user",
                     "parent_id": "root"},
     "decompose": {"parent_id": "kid", "children": [{"task_id": "kid.a", "spec": dict(_GOOD_SPEC),
                                                     "covers": ["c"]}]},
-    "revise": {"task_id": "kid", "spec": dict(_GOOD_SPEC), "agent": "agent",
+    "revise": {"task_id": "kid", "spec": dict(_GOOD_SPEC), "agent": "user",
                "reason": "spec_defect"},
-    "edit_accepted_risks": {"task_id": "root", "agent": "agent",
+    "edit_accepted_risks": {"task_id": "root", "agent": "user",
                             "accepted_risks": [{"item": "another fault", "predictability": "extraordinary", "justification": "accepted", "invalidation_condition": "never", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]},
-    "edit_scope": {"task_id": "root", "agent": "agent",
+    "edit_scope": {"task_id": "root", "agent": "user",
                    "scope": ["it does not ship a GUI"]},
     "claim_drift": {"task_id": "kid"},
     "probe_inputs": {"task_id": "kid"},
-    "edit_criteria": {"task_id": "kid", "agent": "agent",
+    "edit_criteria": {"task_id": "kid", "agent": "user",
                       "criteria": [criterion("c", "C, sharper")]},
     "reassign": {"task_id": "kid", "assignee": "someone", "reason": "capability_mismatch"},
-    "reopen": {"task_id": "kid", "agent": "agent"},
+    "reopen": {"task_id": "kid", "agent": "user"},
     "add_dependency": {"from_id": "root", "to_id": "kid", "glue": "the input"},
     "remove_dependency": {"from_id": "root", "to_id": "kid"},
     "map_criterion": {"parent_id": "root", "child_id": "kid", "criterion_name": "c1"},
-    "signal": {"task_id": "kid", "signal": "ACCEPT", "source": "agent"},
+    "signal": {"task_id": "kid", "signal": "ACCEPT", "source": "user"},
     "record_verdict": {"task_id": "kid", "verdict": "PASS", "reviewer": "someone-else",
                        "observed": {"c": {"note": "ran it, it printed what it should",
                                           "ran": ["check c"]}}},
@@ -107,6 +107,8 @@ _GOOD: dict[str, dict] = {
     "validate_result": {"task_id": "kid"},
     "stop_project": {"why": "look"}, "start_project": {},
     "tech_report": {"text": "a check contradicts the contract", "task_id": "kid"}, "tech_reports": {},
+    "canon": {"section": "12.4"},
+    "rule_unrun_finding": {"task_id": "kid", "findings": ["nope"], "ruling": "retire", "why": "it cannot run"},
 }
 
 # The wrong SHAPE, not merely a wrong value: the class of input that used to reach the interpreter.
@@ -130,19 +132,19 @@ _BAD: dict[str, dict] = {
     "set_mode": {"mode": ["not", "a", "mode"]},
     "create_task": {"task_id": "bad", "spec": "just do the thing"},
     "decompose": {"parent_id": "root", "children": "not-a-list"},
-    "revise": {"task_id": "kid", "spec": "a sentence", "agent": "agent"},
+    "revise": {"task_id": "kid", "spec": "a sentence", "agent": "user"},
     "edit_accepted_risks": {"task_id": "root", "accepted_risks": [{"item": "x", "predictability": "HIGH", "p": 0.01, "impact": "the run stops and is resumed", "justification": "no precedent in this environment", "invalidation_condition": "one occurs"}, DENIAL_ENTRY],
-                            "agent": "agent"},
-    "edit_scope": {"task_id": "no-such-node", "scope": "a sentence", "agent": "agent"},
+                            "agent": "user"},
+    "edit_scope": {"task_id": "no-such-node", "scope": "a sentence", "agent": "user"},
     "claim_drift": {"task_id": "no-such-node"},
     "probe_inputs": {"task_id": "no-such-node"},
-    "edit_criteria": {"task_id": "kid", "criteria": "one criterion", "agent": "agent"},
+    "edit_criteria": {"task_id": "kid", "criteria": "one criterion", "agent": "user"},
     "reassign": {"task_id": "no-such-node", "assignee": "someone"},
-    "reopen": {"task_id": "no-such-node", "agent": "agent"},
+    "reopen": {"task_id": "no-such-node", "agent": "user"},
     "add_dependency": {"from_id": "kid", "to_id": "kid"},          # a self-edge is a cycle
     "remove_dependency": {"from_id": "no-such-node", "to_id": "kid"},
     "map_criterion": {"parent_id": "root", "child_id": "kid", "criterion_name": "no-such-criterion"},
-    "signal": {"task_id": "kid", "signal": "NOT_A_SIGNAL", "source": "agent"},
+    "signal": {"task_id": "kid", "signal": "NOT_A_SIGNAL", "source": "user"},
     "record_verdict": {"task_id": "kid", "verdict": "MAYBE", "reviewer": "someone-else"},
     "next_step": {"root_id": "no-such-node"},
     "next_steps": {"root_id": "no-such-node"},
@@ -152,6 +154,8 @@ _BAD: dict[str, dict] = {
     "validate_result": {"task_id": "no-such-node"},
     "stop_project": {"why": ["not", "a", "reason"]}, "start_project": {"by": ["not", "an", "id"]},
     "tech_report": {"text": ["not", "text"], "task_id": {"no": "id"}}, "tech_reports": {},
+    "canon": {"section": ["not", "a", "section"]},
+    "rule_unrun_finding": {"task_id": {"no": "id"}, "findings": "x", "ruling": 3, "why": ["no"]},
 }
 
 
@@ -169,7 +173,8 @@ def test_a_verb_answers_instead_of_raising(verb, kind):
     e = _seeded(_engine())
     args = (_GOOD if kind == "good" else _BAD)[verb]
     try:
-        out = TL.TOOLS[verb](e, **args)
+        # …a plan's answer comes from its own thread: the one read after it is written is the verb's
+        out = written(TL.TOOLS[verb], e, **args) if verb in ("plan", "refine_plan") else TL.TOOLS[verb](e, **args)
     except Exception as ex:                                 # noqa: BLE001 — that is the assertion
         pytest.fail(f"{verb} ({kind} arguments) raised {type(ex).__name__}: {ex}\n"
                     f"A door cannot forward this: HTTP turns it into a 500 with no body, and the "

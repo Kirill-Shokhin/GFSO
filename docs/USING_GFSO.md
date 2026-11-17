@@ -4,7 +4,8 @@ This page is the working loop, not the theory. It assumes `pipx install gfso` (`
 Pythons of macOS/Homebrew and Debian, which refuse it under PEP 668) and one `gfso setup`
 — which registers the agent door and brings the engine and the UI up at `http://127.0.0.1:8000`.
 One home holds your graphs (`~/.gfso`, or wherever `GFSO_HOME` says), and separate pieces of work
-are separate projects inside it, not separate directories. The theory is in
+are separate projects inside it, not separate directories. Why the product behaves as it does is
+[`DECISIONS.md`](DECISIONS.md), clause by clause; the theory is [`THEORY.md`](THEORY.md) and
 [`applied_gfso_v4_en.md`](applied_gfso_v4_en.md); the protocol as an agent session receives it is
 [`ORCHESTRATOR.md`](../gfso/mcp/ORCHESTRATOR.md).
 
@@ -13,7 +14,7 @@ are separate projects inside it, not separate directories. The theory is in
 You need the [install](../README.md#install) done: Docker running, and the token from `gfso credential claude --sign-in` kept. Only what is committed at your `HEAD` enters a run, so commit what the task needs first.
 
 1. **Say the task and "use gfso".** The system writes a plan as a file; your agent reads it whole and tells you what it splits into and what the plan leaves undecided. It then gives the go without waiting, so if you want to read the plan first, say that with the task. A note goes back to the planner; the agent does not edit the plan.
-2. **The go.** Your agent starts the run and gives you a link to the live page. From here it runs unattended, in Docker, on the local server and not in your chat: close the chat and it goes on, and the page still shows it. To hear the end from your agent again, open Claude Code and ask for the project's status by its name, which the page shows.
+2. **The go.** Your agent starts the run; the live page opens in your browser (`GFSO_OPEN_PAGE=0` keeps it closed) and the agent gives you its link. From here it runs unattended, in Docker, on the local server and not in your chat: close the chat and it goes on, and the page still shows it. To hear the end from your agent again, open Claude Code and ask for the project's status by its name, which the page shows.
 3. **The verdict.** "Done" is the `PASS` of the plan's top node, the root, and your agent reports it with the link. Nothing else is called done.
 4. **Take the result.** It waits on the branch `gfso/<project>/accepted`; your branches and working tree are as they were. Read it with `git diff HEAD...gfso/<project>/accepted`, then merge it or leave it. Merge it rather than checking it out: a landing on a branch you have checked out is refused.
 5. **The next task is a new project.** In the default mode, `auto`, where the system holds every part of the plan, one project holds one goal, so your agent opens a project of a new name. Merge the last result first if the next task builds on it.
@@ -98,9 +99,9 @@ claim_drift("api")                      # how the contract moved between authori
 One difference between the doors is worth knowing before you copy a call: on the **MCP** door the
 actor parameters are not yours to pass. `source` on `signal`, `reviewer` on `record_verdict`, and `agent` on `revise` /
 `edit_criteria` / `edit_accepted_risks` / `reopen`, are removed from the schema
-and filled with the session's own identity — everything arriving over MCP *is* the agent, so it
-cannot sign an act as someone else. From the CLI, the unpinned developer door, you name the actor
-yourself (`gfso run signal schema DELIVER human`).
+and filled with the name the connection's credential carries, so it cannot sign an act as someone else.
+The CLI and HTTP doors take the same rule: a signer argument there is honoured only for a name the
+credential may sign as (`gfso run signal schema DELIVER user`), and any other is refused, naming what lifts it.
 
 Every parent criterion must be **mapped** to the child that delivers it. That mapping is the claim
 the whole composition rests on: the parent passes exactly when its children do (§7.3), so an
@@ -130,7 +131,7 @@ failure mode each one guards.) A check answers one of four words, not two: `met`
 such as deadline coherence on a plan with no dependency edges. True, and true of nothing; the page
 draws it `∅` rather than a tick, because a row of ticks that verified nothing is not a checked plan.
 
-**Level 2 — causality (§9.5).** `review_decomposition(node)` asks, per parent criterion, whether
+**Level 2 — causality (§9.1, the Pragmatic level).** `review_decomposition(node)` asks, per parent criterion, whether
 the mapped children's criteria — taken as facts about the world — actually *carry* it, and names the
 gap where they do not. Structure cannot see this: a criterion with a covering child passes Level 0
 even when that child's criteria could not possibly deliver it, and you would then meet the hole in
@@ -219,7 +220,8 @@ registered — a guard against accidents, not an owner check; a role registered 
 removed by anyone). The answer lists your live nodes the role was carrying or had issued.
 
 Where the project dir is the top of a git repository with a commit, each node an executor runs gets a
-place of its own: a repository of its own, a clone sharing the project dir's objects, beside it (`../.gfso-nodes-<dir>/<project>/<node>`, a space or other shell-unsafe
+place of its own: a repository of its own, a clone sharing the project dir's objects, kept in gfso's own state and never
+beside your repository (`<data>/places/<hash of its parent>/.gfso-nodes-<dir>/<project>/<node>`, a space or other shell-unsafe
 character of `<dir>` escaped there as `~xx`; branch `gfso/<project>/<node>`), made when its first session starts from where its parent stood when the node
 entered the split, with its producers by their Dep edges, and reused on rework: a
 sibling's work it needs is an edge in the plan, or a BLOCK that makes one. Its delivery is committed there, its validation reads it there — never a sibling's half-edited
@@ -288,8 +290,11 @@ never written: when the root PASSes, its accepted result lands in your repositor
 `gfso/<project>/accepted` (a `git fetch` of a bundle, without submodules, nothing else), to read, diff and merge
 when you choose; a later root's PASS moves that branch (its reflog keeps where it stood), and the landing is
 refused while the branch is checked out in any worktree of yours. So two projects on one project dir no longer see each other's
-accepted work until you merge their branches. `perform="in_chat"` is refused under a container execution: work your own agent does
-on this host is not in the volume, and only what stands there is validated. To read the places, write them out:
+accepted work until you merge their branches. Under `perform="in_chat"` your own agent works in your repository on this
+host, and its delivery is the commit it stands on at DELIVER (what is not committed is no part of it and is named): the
+system keeps that commit under `refs/gfso/<project>/delivered/<node>` and carries it into the volume, where it is judged;
+parts a system executor did under a node your agent holds land in your repository as the branch
+`gfso/<project>/joined/<node>` for your agent to read and merge. To read the places, write them out:
 `gfso export-places <project> <dir>` puts them under `<dir>/<project>/` — the volume found by the project's
 own record in the installation's data directory, whatever roster the shell points at —, each node's repository whole
 (it no longer borrows objects from the project dir) and inert: no repository carries the config or hooks
@@ -318,20 +323,33 @@ working it.
 
 ### Who you are at each door
 
-The actor a signal is signed as is decided by the door, not guessed:
+A move is signed by a name its credential carries — resolved by the server, the same way at every door, and never
+typed by you. `GET /api/whoami` says who a call is: `{name, kind, how, signs_as}`, `name` the one it signs as where the
+move names no one, `signs_as` every name it may sign as.
 
-* **MCP (the agent door)** pins it: everything arriving over MCP *is* the calling agent, so `source`
-  on `signal`, `agent` on the authoring verbs and `reviewer` on `record_verdict` are not in the
-  schema at all — you cannot sign as somebody else.
-* **CLI** is the unpinned door: you name yourself (`source=<your name>`), and the FSM checks that
-  name against the node's Del.
-* **HTTP** is the same as the CLI — the parameters are yours to fill, and nothing infers them for
-  you. The standing agent identity of the server is `agent` (`GET /api/runtime` says it under
-  `agent_id`), which is what `auto_decompose` assigns nodes to unless you pass `assignee`. So a
-  graph you build over HTTP and then drive as yourself needs either your own name on the nodes
-  (`create_task assignee=…`, `reassign`) or your signals sent as `agent`; the automatic paths — the
-  dispatcher running an executor, an `llm-validator` role relaying its verdict — only ever act for
-  the identities registered on the roster, never for a name you use once in a call.
+* **The page** on this machine is you, with no sign-in step: the server asks the OS whether its connection comes from
+  a process of your own OS user, and signs its moves as `user`, your name here (`how: local-peer`); `gfso ui` just opens it. From
+  anywhere else the server is reachable — your phone through `tailscale serve`, a device on the LAN, another account
+  on the computer — the page READS everything and moves nothing; to move from there, run `gfso ui --host <the name it is
+  reached at>` on the computer and open the one-time link it prints on the device. A reader may call, on every door (the page, MCP, the CLI), what writes nothing — no verb that writes, makes a project, holds a lease or spends your model account. Every device that can reach the server can read: `tailscale serve` keeps that to your tailnet, while a PUBLIC front (`tailscale funnel`, `ngrok`, `cloudflared`) makes every project readable from the internet — use `--protected` there. `gfso up --protected` (kept for
+  every later start; `--no-protected` undoes it) closes reading too and asks the page to sign in as well: `gfso ui`
+  opens it signed in, and through a front that keeps the Host header `gfso ui --host <front>` does. A container's call
+  to this loopback (through Docker's port forwarder) is served nothing without a token, in every mode. A session signs as every name you own; a move that names no
+  signer is signed by the holder of the role it needs where that name is yours, else by `user`. Where the page signs
+  in, the link an agent hands you opens it unsigned: it reads, and a move asks you to sign in.
+* **An agent session** (MCP, the CLI, `gfso wait`) with no credential signs as `user`, your name, as your standing agent; the name
+  `auto_decompose` assigns nodes to unless you pass `assignee` — nothing to set up. `source` on `signal`, `agent` on
+  the authoring verbs and `reviewer` on `record_verdict` are not in the MCP schema at all.
+* **A console of its own name** (`engineering`, a reviewer's console) runs with a token: `gfso agent <name>` at your
+  shell issues one for a name you own and prints the launch line, `GFSO_TOKEN=<token> claude`; its bridge and its CLI
+  both read it, and it signs as that name alone. `GFSO_AGENT_ID` names nothing now: a console launched with it and no
+  token is refused at connect, told the command to run.
+* **A signer argument** at the CLI or over HTTP is taken only for a name the credential may sign as, and refused
+  otherwise, naming what lifts it. The automatic paths — the dispatcher running an executor, an `llm-validator` role
+  relaying its verdict — act only for the identities registered on the roster, never for a name you use once in a call.
+
+The log keeps beside each signer the credential it came through (`via`: `session`, the token's id, `default`): every
+name here is yours, so the credential is what tells your click on the page from your console's move.
 
 ## 5. The verdict is not yours to sign
 
@@ -351,6 +369,8 @@ delivery.
   it refuses a verdict with nothing observed behind it. What it cannot check is whether the party who
   named themselves is independent of the work, so it does not pretend to: a record made this way
   carries `by_hand`, and `get_verdict` says it was asserted rather than produced by an instrument.
+  Under a mode, a PASS stands only on the instrument's record or on a hand record by the node's issuer
+  where the issuer is not its executor; anyone else's hand record is kept and counts for nothing.
   Observations that name no criterion of the node are kept out of the verdict and named back to you.
 
 A node whose executor is the same as its parent's is *internal* — your own private decomposition. It
@@ -442,9 +462,9 @@ User scope, and the **absolute** path to the console script: a bare `gfso` resol
 `PATH` the client happens to have, and a venv you later leave takes the name with it — the session
 then has no gfso tools and says nothing. `gfso setup` writes the absolute path for you.
 
-The session receives the protocol as its instructions and gets the verbs above as tools. Its identity
-is `agent`, so nodes it creates are its own and its signals are signed as itself; nodes owned by you
-or by a teammate it cannot move, and it will surface them to you instead.
+The session receives the protocol as its instructions and gets the verbs above as tools. It signs
+as `user`, your name, as your page does, so it moves the nodes you hold; nodes owned by a teammate or by a
+console of another name it cannot move, and it will surface them to you instead.
 
 Working by hand, a session that does well on real code looks like this: it studies the part of the repository the
 goal touches, builds or repairs the graph by hand, runs `list_holes` and `review_decomposition` and
@@ -473,7 +493,8 @@ Every mode needs a validator registered for the project; `semi` and `auto` need 
 says what is missing. A node your session holds is performed by `perform="dispatch"` (the default: your
 session consents, a clean executor session of the project does the work in the node's own place) or
 `perform="in_chat"` (your session does it with its own tools). A set mode is a lock: once the project has
-work in it, changing it takes your own words as `user_said`.
+work in it, you change who holds it on the project's page (the mode in its header); an agent's connection, the CLI and a
+named token are refused.
 
 ### Which model runs a role, and on whose account
 
@@ -497,7 +518,7 @@ Three are for using it; the rest are for running it, and you can ignore them unt
 | `gfso demo [name]` | Run a shipped example; no name lists them. |
 | `gfso credential <provider> […]` | Set, name, choose or order a model provider's credentials (value on stdin, never shown). |
 | `gfso provider-check <spec>` | Whether a model provider can run on gfso, and in which roles. |
-| `gfso run <tool> …` | The same verbs as the MCP tools, headless from a shell — through the running server, so its writes are live in the UI, and straight against the database when none is up. `project=<name>` selects the graph. This is the door where you name the actor yourself. |
+| `gfso run <tool> …` | The same verbs as the MCP tools, headless from a shell — through the running server, so its writes are live in the UI, and straight against the database when none is up. `project=<name>` selects the graph. It signs as `user`, or as the name of the token in `GFSO_TOKEN`. |
 | `gfso up [--force]` | Start-or-reconcile the one server: start it if down, restart it if it serves stale code or the wrong switches, do nothing if it is already correct — and leave it alone rather than end someone else's run. `--force` restarts anyway. |
 | `gfso down` | Stop the one server. |
 | `gfso connect` | The MCP stdio door an agent client runs. You do not type this; a client does. |
@@ -508,10 +529,10 @@ Three are for using it; the rest are for running it, and you can ignore them unt
 
 **The UI is always at `http://127.0.0.1:8000`:** that address alone lists the projects and opens none, and a project's page is `?project=<name>`, the link its agent gives you. Whichever door raised the server, it is the same
 single process, and it is a background service: it stays until `gfso down`, so closing your agent
-session does not take the UI with it. After `pipx upgrade gfso`, the next agent session reconciles
-the running server against what is installed and restarts it if they differ — an upgrade takes
-effect without your doing anything, and `gfso doctor` says whether the live server is this
-installation.
+session does not take the UI with it. To upgrade, `pipx upgrade gfso`, then `gfso setup` (it rebuilds
+the agents' image when the release changed it); the next agent session reconciles the running server
+against what is installed and restarts it if they differ, and `gfso doctor` says whether the live
+server is this installation.
 
 **Your data.** Everything is in `~/.gfso` (`gfso doctor` prints the exact path): one SQLite file per
 project, plus the agent registry and the server log. It survives uninstalling the package — to start

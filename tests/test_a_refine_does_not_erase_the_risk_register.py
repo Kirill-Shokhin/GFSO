@@ -37,7 +37,7 @@ def _root_with(components: tuple[str, ...]):
     e.start()
     spec = Spec("a goal with grouped risks", _criteria(), REGISTER_ITEMS, components,
                 name="root")
-    e.assign_task(TaskId("root"), spec, AgentId("agent"))
+    e.assign_task(TaskId("root"), spec, AgentId("user"))
     return e
 
 
@@ -68,7 +68,7 @@ def test_a_refine_keeps_the_components_it_did_not_author() -> None:
     before = e.graph.get_task("root").spec.risk_components
     assert before == ("supply_chain", "infra_outage")
 
-    e.revise(TaskId("root"), _refine_spec(e.graph.get_task("root")), AgentId("agent"))
+    e.revise(TaskId("root"), _refine_spec(e.graph.get_task("root")), AgentId("user"))
     e.wait_idle()
 
     assert e.graph.get_task("root").spec.risk_components == before, (
@@ -85,18 +85,18 @@ def test_the_risk_check_does_not_go_green_across_a_refine() -> None:
     component); the RED is what a child cancelled after it leaves — a flag on the plan — and a refine must not clear it."""
     e = _root_with(("supply_chain", "infra_outage"))
     kids = [(TaskId(f"root.{r}"), T._spec_from({"description": f"mitigates {r}", "covers_risks": [r],
-                                                "criteria": [criterion("k", "K holds")]}), AgentId("agent"))
+                                                "criteria": [criterion("k", "K holds")]}), AgentId("user"))
             for r in ("supply_chain", "infra_outage")]
     e.decompose_task(TaskId("root"), kids, [CriterionMapping("g", k[0]) for k in kids],
                      register=Register(REGISTER_ITEMS, ("supply_chain", "infra_outage")))
     assert _check5(e)[0].passed                            # admitted whole: a risk node per component
-    T.signal(e, "root.infra_outage", "CANCEL", "agent")    # the decomposer cancels one mitigation …
-    T.signal(e, "root.infra_outage", "CONFIRM_CANCEL", "agent", in_flight="nothing started")
+    T.signal(e, "root.infra_outage", "CANCEL", "user")    # the decomposer cancels one mitigation …
+    T.signal(e, "root.infra_outage", "CONFIRM_CANCEL", "user", in_flight="nothing started")
     e.wait_idle()
     before = _check5(e)
     assert before and not before[0].passed, before      # red: two components, a risk node for one
 
-    e.revise(TaskId("root"), _refine_spec(e.graph.get_task("root")), AgentId("agent"))
+    e.revise(TaskId("root"), _refine_spec(e.graph.get_task("root")), AgentId("user"))
     e.wait_idle()
 
     after = _check5(e)
@@ -112,6 +112,6 @@ def test_the_control_in_both_directions(components: tuple[str, ...]) -> None:
     """A root that genuinely has no components must still read as having none, and one that has
     them must not gain any: the repair carries the value across, it does not invent or force one."""
     e = _root_with(components)
-    e.revise(TaskId("root"), _refine_spec(e.graph.get_task("root")), AgentId("agent"))
+    e.revise(TaskId("root"), _refine_spec(e.graph.get_task("root")), AgentId("user"))
     e.wait_idle()
     assert e.graph.get_task("root").spec.risk_components == components

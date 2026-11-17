@@ -11,6 +11,7 @@ import time
 import pytest
 
 from gfso import sessions as S
+from gfso.adapters import children as CH
 from gfso.adapters import execution as E
 from gfso.adapters.llm import budget as B
 from gfso.adapters.llm import headless as H
@@ -258,9 +259,9 @@ def cli(tmp_path, monkeypatch):
 
     monkeypatch.setattr(H.subprocess, "Popen", popen)
     monkeypatch.setattr(H.ClaudeCodeProvider, "_read_stream", read_stream)
-    monkeypatch.setattr(E, "adopt", lambda p: p)
-    monkeypatch.setattr(E, "kill_tree", lambda p: None)
-    monkeypatch.setattr(E, "release", lambda p: None)
+    monkeypatch.setattr(CH, "adopt", lambda p: p)
+    monkeypatch.setattr(CH, "kill_tree", lambda p: None)
+    monkeypatch.setattr(CH, "release", lambda p: None)
     llm = H.ClaudeCodeProvider()
     # the rounds: the reading of a CLI that runs no hooks (the hooked path: test_a_hook_hands_a_session_over.py)
     llm._cmd, llm.budgeted, llm.context_budget, llm.handover_hook = "claude", True, 50_000, False

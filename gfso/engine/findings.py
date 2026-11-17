@@ -25,7 +25,7 @@ from typing import Iterable, Optional
 
 from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, round_inputs, round_of, round_words,
                                           without_past_builds, without_pinned_runs, without_retired)
-from gfso.core.types import HOST, LAID, VOLUME, Signal, TaskId, files_at, laid_beside
+from gfso.core.types import BATCH, HOST, LAID, VOLUME, Signal, TaskId, files_at, laid_beside
 from .audit import VERSION_INSTALLING
 from .verdicts import REGRESSION, criterion_version, ledger_read, ledger_write
 
@@ -104,14 +104,15 @@ def _blob(storage, d: str) -> Optional[bytes]:
     return raw if hashlib.sha256(raw).hexdigest() == d else None
 
 
-def lay_files(graph, storage, command: str, at, execution) -> str:
+def lay_files(graph, storage, command: str, at, execution, judged=None) -> str:
     """`command` as its re-run runs under `at`, a judge's own round or batch: each validation round it names
     (`round_of`) respelled as a directory of `at`'s own (`REGRESSION_DIR`), made afresh by the command itself from
     what the system lays for it beside `at`'s round or batch (`laid_beside`): the files of that round the record holds (`keep_files`; those
     of a round still standing kept now, first). From the record alone, and read-only to the judge: the delivered code
     its run executes — a `make`, a test, a process either left — cannot rewrite what the re-run starts from, and no
     earlier round is mounted to be read (critic over the judged tree: a forged `../probe.sh`, rc 0). A command naming
-    no round is returned as it is."""
+    no round is returned as it is. `judged`: the copy of the delivery this re-run judges, which a laid text names in
+    place of the one its round judged (`_onto_the_judged`)."""
     if not (words := round_words(command)):
         return command
     keep_files(graph, storage, [command])
@@ -129,7 +130,7 @@ def lay_files(graph, storage, command: str, at, execution) -> str:
             rec = json.loads(graph.setting(_KEPT + _path_key(w)) or "{}")
             for sub, d in ({"": rec["file"]} if "file" in rec else rec.get("tree") or {}).items():
                 if (raw := _blob(storage, d)) is not None:
-                    laid["/".join(x for x in (rel, sub) if x)] = raw
+                    laid["/".join(x for x in (rel, sub) if x)] = _onto_the_judged(raw, prefix, judged)
             out = re.sub(re.escape(prefix) + r"(?=[\\/])", lambda _: work.as_posix(), out)   # …not `<round>9`
         execution.files.mkdir(str(src))             # …laid even when nothing was kept: the copy below reads it
         execution.files.write_files(str(src), laid)
@@ -141,6 +142,23 @@ def lay_files(graph, storage, command: str, at, execution) -> str:
                      + " && ".join(f'mkdir -p "{d}"' for d in dirs))
     execution.release(str(laid_root))           # …written: nothing of the system's runs there on
     return " && ".join(fresh) + f" && ( {out} )"
+
+
+def _onto_the_judged(raw: bytes, prefix: str, judged) -> bytes:
+    """A kept text naming the copy of the delivery its round judged (`<round>[/batch<N>]/delivery`) as naming `judged`.
+    That copy was the system's, made for that run and removed after it: a script going there failed its setup and
+    printed its refutation, or ran the old source where the copy still stood — the finding refuted every later round
+    whatever was fixed (series 2 REF 1, `cmp.sh`). A program's bytes are not text to rewrite."""
+    if judged is None or b"\0" in raw:
+        return raw
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+    sep = r"[\\/]+"
+    copy = (sep.join(map(re.escape, re.split(sep, prefix.rstrip("\\/"))))
+            + rf"(?:{sep}{BATCH}[^\\/\s'\"]*)?{sep}delivery(?![\w.-])")
+    return re.sub(copy, lambda _: Path(judged).as_posix(), text).encode("utf-8")
 
 
 def round_stands(graph):
@@ -281,6 +299,41 @@ def record_not_reproduced(storage, task, marks: Iterable[tuple], by: str, at: st
                 p[NOT_REPRODUCED] = {**said[(k, p.get("id"))], "by": by, "at": at, "text": _criterion_now(k, task)}
     if said or again:
         ledger_write(storage, task.id, REGRESSION, stored)
+
+
+def unrun(storage, entries: list, task, report: Optional[dict]) -> list[dict]:
+    """[{criterion, id, as_run, why}] — each finding standing on `task` that its refused `report` says it could not run
+    as filed (`ran: false`), with the validator's reason, less those its issuer kept (`keep_unrun`) while the criterion
+    reads as then. Such a line observed nothing (§2.3), so the PASS waits on it; the validator lifts that by no
+    truthful move, a false `ran` being the only other, so it is its issuer's question (§12.16 (ii), §10.2)."""
+    standing = {k: {p.get("id"): p for p in ps} for k, ps in regression(storage, entries, task).items()}
+    out: list[dict] = []
+    for e in (report or {}).get("per_criterion") or ():
+        name = " ".join(str(e.get("criterion", "")).split())
+        raw = e.get("probe")
+        for p in [q for q in (raw if isinstance(raw, list) else [raw]) if isinstance(q, dict) and q.get("ran") is False]:
+            hit = [f for i, f in standing.get(name, {}).items() if i and (
+                _hash(i) == _hash(str(p.get("id") or "")) or i == probe_id(name, p))]
+            out += [{"criterion": name, "id": f["id"], "as_run": f.get("as_run") or f.get("command"),
+                     "why": str(p.get("expect") or p.get("why") or "no reason given")}
+                    for f in hit if not ((k := f.get(KEPT_UNRUN)) and k.get("text") == _criterion_now(name, task))
+                    and all(f["id"] != o["id"] for o in out)]
+    return out
+
+
+#: on a finding in the ledger: its issuer heard that a validator could not run it and kept it demanded (`keep_unrun`)
+KEPT_UNRUN = "kept_unrun"
+
+
+def keep_unrun(storage, task, ids: Iterable[str], by: str, why: str) -> None:
+    """The issuer's word on findings a validator could not run: they stay demanded, and are not asked of him again while
+    their criterion reads as now."""
+    stored, ids = ledger_read(storage, task.id, REGRESSION, {}) or {}, set(ids)
+    for k, ps in stored.items():
+        for p in ps:
+            if p.get("id") in ids:
+                p[KEPT_UNRUN] = {"by": by, "why": why, "text": _criterion_now(k, task)}
+    ledger_write(storage, task.id, REGRESSION, stored)
 
 
 def return_finding(storage, task, finding: str, by: str, why: str) -> bool:

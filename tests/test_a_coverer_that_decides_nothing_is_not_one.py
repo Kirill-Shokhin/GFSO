@@ -41,12 +41,12 @@ def _no_plan_gate(monkeypatch):
 
 def _kid(criteria):
     return [{"task_id": "root.kid", "spec": {"description": "a child", "criteria": criteria},
-             "assignee": "agent", "covers": ["g"]}]                # same Del as its parent => INTERNAL
+             "assignee": "user", "covers": ["g"]}]                # same Del as its parent => INTERNAL
 
 
 def _parent_and_an_empty_child(e):
     T.create_task(e, "root", {"description": "the parent", "criteria": [criterion("g", "G holds")]},
-                  assignee="agent")
+                  assignee="user")
     T.decompose(e, "root", _kid([criterion("k", "K holds")]), accepted_risks=REGISTER)
     e.wait_idle()
     emptied(e, "root.kid")      # …and its contract emptied after admission, as stored before §2.2 was held there
@@ -56,7 +56,7 @@ def test_coverage_refuses_a_child_that_carries_no_criteria():
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "the parent", "criteria": [criterion("g", "G holds")]},
-                  assignee="agent")
+                  assignee="user")
     with pytest.raises(ValueError, match="NONEMPTY"):
         T.decompose(e, "root", _kid([]), accepted_risks=REGISTER)
     assert e.graph.get_task(TaskId("root.kid")) is None, "the admission refused the split, yet issued its child"
@@ -77,8 +77,8 @@ def test_the_self_check_writer_does_not_record_a_verdict_about_nothing():
     e = make_engine()
     e.start()
     _parent_and_an_empty_child(e)
-    T.signal(e, "root.kid", "ACCEPT", "agent")
-    T.signal(e, "root.kid", "DELIVER", "agent", result="nothing to do here", self_validation="PASS")
+    T.signal(e, "root.kid", "ACCEPT", "user")
+    T.signal(e, "root.kid", "DELIVER", "user", result="nothing to do here", self_validation="PASS")
     e.wait_idle()
 
     assert T.get_verdict(e, "root.kid").get("verdict") is None, (
@@ -90,9 +90,9 @@ def test_and_such_a_child_cannot_satisfy_its_parents_AND():
     e = make_engine()
     e.start()
     _parent_and_an_empty_child(e)
-    T.signal(e, "root.kid", "ACCEPT", "agent")
-    T.signal(e, "root.kid", "DELIVER", "agent", result="nothing to do here", self_validation="PASS")
-    T.signal(e, "root.kid", "PASS", "agent")
+    T.signal(e, "root.kid", "ACCEPT", "user")
+    T.signal(e, "root.kid", "DELIVER", "user", result="nothing to do here", self_validation="PASS")
+    T.signal(e, "root.kid", "PASS", "user")
     e.wait_idle()
 
     assert passed(e.graph.get_task(TaskId("root.kid"))) is False
@@ -106,16 +106,16 @@ def test_a_child_WITH_criteria_covers_and_self_verifies_exactly_as_before():
     T.create_task(e, "root", {"description": "the parent",
                               "criteria": [criterion("g", "G holds")],
                               "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     T.decompose(e, "root", [{"task_id": "root.kid", "spec": {"description": "a child that decides something",
-                                  "criteria": [criterion("k", "K holds")]}, "assignee": "agent", "covers": ["g"]}], accepted_risks=REGISTER)
+                                  "criteria": [criterion("k", "K holds")]}, "assignee": "user", "covers": ["g"]}], accepted_risks=REGISTER)
     e.wait_idle()
-    T.signal(e, "root.kid", "ACCEPT", "agent")
-    T.signal(e, "root.kid", "DELIVER", "agent", result="built it", self_validation="PASS")
+    T.signal(e, "root.kid", "ACCEPT", "user")
+    T.signal(e, "root.kid", "DELIVER", "user", result="built it", self_validation="PASS")
     e.wait_idle()
 
     assert T.list_holes(e) == {"holes": [], "count": 0}
     assert T.get_verdict(e, "root.kid")["verdict"] == "PASS"
-    assert T.signal(e, "root.kid", "PASS", "agent")["accepted"] is True
+    assert T.signal(e, "root.kid", "PASS", "user")["accepted"] is True
     assert passed(e.graph.get_task(TaskId("root.kid"))) is True
     e.stop()

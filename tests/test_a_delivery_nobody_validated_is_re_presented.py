@@ -47,6 +47,9 @@ def test_the_unvalidated_delivery_comes_back_and_is_validated(monkeypatch):
         assert any(a.signal.name == "DELIVER" and a.result == "the artifact"
                    for a in e.audit_log(TaskId("leaf")))
 
+        # …the short bound did its part; the second visit is the one validated, so it gets the time a PASS takes —
+        # at 50 ms a loaded machine's PASS arrived after the clock (red once under -n 16, 2026-11-12)
+        monkeypatch.setenv("GFSO_BOUND_VALIDATING", "60")
         # the issuer's own move: a re-ASSIGN carrying no spec re-presents the same contract
         T.signal(e, "leaf", "ASSIGN", "worker")   # a self-assigned root: its issuer is external, here the same agent
         assert _waits_for(e, "leaf", "OFFERED")

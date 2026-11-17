@@ -24,7 +24,6 @@ import hashlib
 import json
 import os
 import socket
-import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -34,9 +33,11 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from gfso import __version__
+from gfso.adapters.children import run
 from gfso.config import agents_path as _roster
-from gfso.config import home as _config_home
-from gfso.config import LOOPBACK, local_agents, shared_url
+from gfso.adapters.children import open_outside
+from gfso.config import (LOOPBACK, data_dir, flag, home, local_agents, opens_the_page, page_auth, shared_url,
+                         windows_allowed, write_atomic)
 
 def _address() -> tuple[str, int]:
     """THE address of the one server. `GFSO_SHARED_URL` is the single knob — `gfso connect`, `gfso
@@ -58,26 +59,26 @@ def ui_link(project: Optional[str] = None) -> str:
     """The local address of the page that shows this graph (tab-per-project) — the server's address, so the server's
     module says it; the verb surface reached up into the transport for it (sync audit, D-F17)."""
     return f"{BASE}/" + (f"?project={urllib.parse.quote(str(project))}" if project else "")
+
+
+#: the projects whose page this process has opened: once each — the page re-reads itself live, and a plan, its note
+#: and the go opened three tabs of one project
+_OPENED: set = set()
+
+
+def open_the_page(project) -> "bool | str":
+    """Open `project`'s page where the server may put it on the person's screen itself (`opens_the_page`, and windows
+    allowed), once per project in this process: True where it opened now, False where it did not, or why it failed —
+    the go and the plan written open it alike."""
+    if not (opens_the_page() and windows_allowed()) or project in _OPENED:
+        return False
+    try:
+        open_outside(ui_link(project))
+        _OPENED.add(project)
+        return True
+    except Exception as e:                       # …a convenience: the link in text stays the way in
+        return f"not opened: {e}"[:200]
 ROOT = Path(__file__).resolve().parent.parent          # the tree whose gfso/*.py the fingerprint covers
-
-
-def home() -> Path:
-    """Where THIS installation keeps its state: the database, the server log, `data/serve.json`, the
-    agent registry.
-
-    `GFSO_HOME` wins. A source checkout — a `pyproject.toml` sitting beside the package — keeps its
-    state in the tree, as it always has. An INSTALLED package's `ROOT` is site-packages, which is no
-    place for a database (an upgrade deletes it, a system install refuses to write it), so the
-    fallback is `~/.gfso`: ONE home per user, for the same reason there is one server.
-
-    The current directory was the earlier fallback, and it was the wrong axis. Isolation between
-    pieces of work is what PROJECTS are (`use_project`, one database file each); making the
-    directory carry it as well meant a second directory got a second database that the one server
-    could not serve at the same time — so yesterday's graphs were not lost but unreachable, and
-    nothing said so. Every other default path in the package now resolves against this function
-    (`gfso.runtime.data_dir`), including the doors that used to read the caller's cwd.
-    """
-    return _config_home()
 
 
 #: One generation is kept beside the live log. The point is a BOUND, not a history: what a reader
@@ -110,17 +111,17 @@ def open_server_log(data: Path, max_bytes: int = LOG_MAX_BYTES):
 
 
 def declared_path() -> Path:
-    """Where the installation writes what its server should be (`data/serve.json`)."""
-    return home() / "data" / "serve.json"
+    """Where the installation writes what its server should be (`serve.json` in the state directory), where
+    `config.network_record_off` reads it: composed from the home, it was written where a moved state directory is not."""
+    return data_dir() / "serve.json"
 
 
-# The declared state of the one server. `data/serve.json` under `home()` overrides it, so the
+# The declared state of the one server. `serve.json` in the state directory overrides it, so the
 # configuration is a fact of the installation rather than of whoever last typed a command — and
 # anything experiment-specific (a named agent registry, a different validator) belongs in that file,
 # not in the defaults a stranger's first install inherits.
-# GFSO_VALIDATE_INTERNAL is not declared here: its default is ON (`config.validate_internal` —
-# every delivery observed, whoever holds the node), and an installation that narrows observation to
-# the seams says so in `data/serve.json`, which is where anything experiment-specific belongs.
+# GFSO_VALIDATE_INTERNAL is not declared here: its default is OFF (`config.validate_internal` — a validation at every
+# seam and κ-scope), and a measurement that observes every delivery says so in `serve.json`.
 DEFAULTS = {"GFSO_L2_GATE": "1"}
 
 
@@ -143,6 +144,20 @@ def source_fingerprint() -> str:
         h.update(rel.encode())
         h.update(p.read_bytes().replace(b"\r\n", b"\n"))
     return h.hexdigest()[:12]
+
+
+def declare(key: str, value: str) -> None:
+    """`key` set to `value` in `data/serve.json`, what else it declares kept: a switch the person gave a command
+    (`gfso up --protected`) becomes the installation's, so every later start keeps it."""
+    path = declared_path()
+    held = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    write_atomic(path, json.dumps({**held, key: value}, indent=2) + "\n")
+
+
+def page_auth_in_force(rt: Optional[dict] = None) -> str:
+    """What a page needs to be the person (`config.page_auth`): the live server's word (`rt`, else asked), else what
+    the installation declares."""
+    return (rt or runtime(timeout=1.0) or {}).get("page_auth") or page_auth(declared().get("GFSO_PAGE_AUTH", ""))
 
 
 def declared() -> dict:
@@ -246,13 +261,20 @@ def drift(rt: dict, env: dict, fingerprint: str) -> list[str]:
     if "home" in rt and Path(rt["home"]) != home():
         out.append(f"state home {rt['home']} != {home()}")
     for key, field in (("GFSO_VALIDATE_INTERNAL", "validate_internal"), ("GFSO_L2_GATE", "l2_gate")):
-        want = str(env.get(key, "")) not in ("", "0")
-        if bool(rt.get(field)) != want:
+        if bool(rt.get(field)) != (want := flag(key, env=env)):
             out.append(f"{field}={bool(rt.get(field))} != {want}")
+    # …the screen, as the INSTALLATION declares it (serve.json): the screen is its owner's, so a connecting client's own
+    # export restarted an idle server under its knob and the next go opened a page on a screen the owner had closed
+    # (or kept closed one he had opened); a server spawned fresh still takes its starter's export
+    if "no_windows" in rt and "GFSO_NO_WINDOWS" in (d := declared()) and \
+            rt["no_windows"] != (want := flag("GFSO_NO_WINDOWS", env=d)):
+        out.append(f"no_windows={rt['no_windows']} != {want}")
     # …the word as the server it would spawn takes it: exported here, else declared (`install_spawned_server_env`)
     word = local_agents(str(env.get("GFSO_LOCAL_AGENTS", "")))
     if "local_agents" in rt and bool(rt["local_agents"]) != word:
         out.append(f"local_agents={bool(rt['local_agents'])} != {not rt['local_agents']}")
+    if "page_auth" in rt and rt["page_auth"] != (want := page_auth(str(env.get("GFSO_PAGE_AUTH", "")))):
+        out.append(f"page_auth={rt['page_auth']} != {want}")
     if (rt.get("agents_path") or "") != env.get("GFSO_AGENTS_PATH", ""):
         out.append("agent registry differs")
     # …and its CONTENT, not just its path. The registry is loaded once at startup, so an edited
@@ -301,22 +323,17 @@ def _port_holder(port: int) -> str:
     and a single byte outside it raised UnicodeDecodeError *inside the diagnostic* — the one command
     whose whole job is to still work when everything else does not.
     """
+    said = lambda *argv: run(list(argv), timeout=10, text=True, encoding="utf-8", errors="replace").stdout
     try:
         if os.name == "nt":
-            out = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True,
-                                 encoding="utf-8", errors="replace", timeout=10).stdout
-            pids = {line.split()[-1] for line in out.splitlines()
+            pids = {line.split()[-1] for line in said("netstat", "-ano", "-p", "tcp").splitlines()
                     if f":{port} " in line and "LISTENING" in line}
             if pids:
                 pid = pids.pop()
-                name = subprocess.run(["tasklist", "/fi", f"pid eq {pid}", "/nh"],
-                                      capture_output=True, text=True, encoding="utf-8",
-                                      errors="replace", timeout=10).stdout.split()
+                name = said("tasklist", "/fi", f"pid eq {pid}", "/nh").split()
                 return f"pid {pid}" + (f", {name[0]}" if name else "")
         else:
-            pid = subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
-                                 capture_output=True, text=True, encoding="utf-8",
-                                 errors="replace", timeout=10).stdout.split()
+            pid = said("lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN").split()
             if pid:
                 return f"pid {pid[0]}"
     # who holds the port is a DIAGNOSTIC FIELD — no tasklist/lsof, or one that refuses, gives "pid

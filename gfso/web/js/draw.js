@@ -69,9 +69,14 @@ export function frame(run, W, left, right = 16) {
             }
             return shown.map((t, i) => `<g class="ax-tick"><line x1="${X(t)}" x2="${X(t)}" y1="${y0}" y2="${y1}"/>${ly == null || !keep[i] ? '' : `<text x="${X(t)}" y="${ly}">${labs[i]}</text>`}</g>`).join('');
         },
+        // a fold's label only where it has room after the last one kept (19 labels smeared over each other on a graph people
+        // hold — critic), and «idle» only where sessions ran: people's quiet between their moves is their pace (§12)
         folds(y0, y1, ly) {
-            return run.clock.folds.map(f => { const x = left + f.at * k;
-                return `<g class="ax-fold"><path d="M${x},${y0}V${y1}"/><text x="${x + 4}" y="${ly}">${dur(f.to - f.from)} idle</text></g>`; }).join('');
+            const word = run.sessions.length ? ' idle' : '';
+            let room = -Infinity;
+            return run.clock.folds.map(f => { const x = left + f.at * k, text = `${dur(f.to - f.from)}${word}`, fits = x + 4 >= room;
+                if (fits) room = x + 4 + text.length * 6 + 6;
+                return `<g class="ax-fold"><path d="M${x},${y0}V${y1}"/>${fits ? `<text x="${x + 4}" y="${ly}">${text}</text>` : ''}</g>`; }).join('');
         },
         // a step series as a filled area from the baseline y0, scaled so `max` reaches height h
         area(steps, y0, h, max) {

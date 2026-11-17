@@ -39,8 +39,9 @@ import sys
 import threading
 import time
 import webbrowser
+import weakref
 
-from gfso.config import mark_serving, serving, subprocess_env
+from gfso.config import browser as _browser, mark_serving, serving, subprocess_env, windows_allowed
 
 if os.name == "nt":
     from ctypes import wintypes
@@ -48,6 +49,8 @@ if os.name == "nt":
 log = logging.getLogger(__name__)
 
 _LIVE: set[subprocess.Popen] = set()
+#: the `shown` children: in the terminal's own session, leading no group their pid could name
+_IN_THE_TERMINAL: "weakref.WeakSet[subprocess.Popen]" = weakref.WeakSet()
 _LOCK = threading.RLock()    # re-entrant: `adopt` may reap under it while this process is closing
 _CLOSING = False             # once the SERVER reaps, nothing may start after the children were ended
 # This process is the server (`bind_this_process`), so its reap is its end. Inherited by a
@@ -99,9 +102,21 @@ def bind_this_process() -> bool:
     return True
 
 
+# ── THE ONE DOOR to the person's screen: a page, a console, an app — each read `windows_allowed` here and nowhere else.
+# Four places opened windows on their own, so each measurement on an owner's busy screen found one more (2026-11-16).
+
+_NEW_CONSOLE = 0x10                 # CREATE_NEW_CONSOLE
+
 def open_outside(url: str) -> None:
     """Open `url` in the user's browser, OUTSIDE the job: a browser this process happened to start
-    must not close with the server."""
+    must not close with the server. A `BROWSER` the person set is what opens it, as `webbrowser` itself honours: the
+    page opened at the go went past it through `start`, onto a screen whose owner had said where links go (2026-11-16)."""
+    if not windows_allowed():
+        log.info(f"the page is not opened (GFSO_NO_WINDOWS): {url}")
+        return
+    if _browser():
+        webbrowser.open(url)                # it reads BROWSER as every tool does: a list, `%s` in a command
+        return
     if os.name == "nt" and _JOB is not None:
         try:
             subprocess.Popen(["cmd", "/c", "start", "", url], creationflags=0x01000000 | 0x08000000)
@@ -109,6 +124,46 @@ def open_outside(url: str) -> None:
         except OSError as e:                # an outer job that forbids breakaway
             log.warning(f"the browser opens inside the server's job and will close with it ({e})")
     webbrowser.open(url)
+
+
+def console(argv: list) -> bool:
+    """Start `argv` in a console window of its own on Windows, for the person to work in (the sign-in pastes a token
+    there); with no windows allowed it is not started — run hidden, it waited at a prompt nobody could see. True: it
+    was started; False: the caller says the steps instead."""
+    if not windows_allowed():
+        log.info(f"not started (GFSO_NO_WINDOWS): {' '.join(map(str, argv))}")
+        return False
+    subprocess.Popen(argv, creationflags=_NEW_CONSOLE)
+    return True
+
+
+def app(argv: list, timeout: float) -> bool:
+    """Run `argv`, which brings up an application of the person's (Docker Desktop), waiting at most `timeout`; with no
+    windows allowed it is not run. True: it ran and said so (exit 0); False: the caller asks the person instead."""
+    if not windows_allowed():
+        log.info(f"not started (GFSO_NO_WINDOWS): {' '.join(map(str, argv))}")
+        return False
+    return run(argv, timeout=timeout).returncode == 0
+
+
+def detached(argv: list, out, **kw) -> None:
+    """Start `argv` to outlive this process (the shared server, a build longer than its caller's shell call), its output
+    to `out`. On Windows in a console of its own that nobody sees: started with none, it and every console program it
+    starts in turn would ALLOCATE one and show it (measured over visible top-level windows: 2 per uncontrolled grandchild
+    of a console-less parent, 0 under a hidden console, whose descendants attach to it)."""
+    if os.name == "nt":
+        kw.update(creationflags=_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP, startupinfo=_unseen())
+    else:
+        kw.update(start_new_session=True)
+    subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=out, **kw)
+
+
+def _unseen():
+    """Windows: a window started hidden (SW_HIDE)."""
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0
+    return si
 
 
 def spawn_kw() -> dict:
@@ -131,31 +186,54 @@ def kill_tree(proc: subprocess.Popen) -> None:
     """End a child AND what it started: its group on POSIX (whether or not the leader is alive),
     its process tree on Windows."""
     if os.name != "nt":
-        _kill_group(proc.pid)
+        if proc not in _IN_THE_TERMINAL:                   # …a `shown` child leads no group: its pid names none
+            _kill_group(proc.pid)
     elif proc.poll() is None:
-        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
     if proc.poll() is None:
         proc.kill()
 
 
-def run(args, *, timeout: float, input=None, **kw) -> subprocess.CompletedProcess:
-    """`subprocess.run` for a child of this process: adopted, in a group of its own, without the
-    server's mark in its environment, and ended with its whole tree however the call ends — a
-    `TimeoutExpired` still reaches the caller. `input` is fed to its stdin."""
+def popen(args, shown: bool = False, **kw) -> subprocess.Popen:
+    """A child this process holds while it runs (`end` takes it): adopted, in a group of its own, without the server's
+    mark in its environment, and with no console window — on Windows a console child of a parent with none (the server)
+    ALLOCATES one and shows it: every agent run popped an empty, closable `claude` window on the person's screen.
+    `shown` (`run`): a program the person works in stays in the terminal's session, where its Ctrl-C reaches it."""
     kw.setdefault("env", subprocess_env())
-    # under `gfso mcp` stdin is the protocol pipe
-    kw.setdefault("stdin", subprocess.DEVNULL if input is None else subprocess.PIPE)
     if os.name == "nt":
         kw.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    proc = subprocess.Popen(args, **kw, **({} if shown else spawn_kw()))
+    if shown:
+        _IN_THE_TERMINAL.add(proc)
+    return adopt(proc)
+
+
+def end(proc: subprocess.Popen) -> None:
+    """End a child `popen` started, with what it started, and stop remembering it."""
+    kill_tree(proc)
+    release(proc)
+
+
+def run(args, *, timeout: float | None, input=None, shown: bool = False, **kw) -> subprocess.CompletedProcess:
+    """`subprocess.run` for a child of this process (`popen`), ended with its whole tree however the call ends — a
+    `TimeoutExpired` still reaches the caller. `input` is fed to its stdin. `shown`: its streams are this process's own,
+    for a program the person reads or answers here (an install's progress, a sign-in) — in this console where there is
+    one, no window made for it where there is none."""
+    if shown:
+        kw.update(stdin=None, stdout=None, stderr=None)
+        if os.name == "nt" and ctypes.WinDLL("kernel32").GetConsoleWindow():
+            kw.setdefault("creationflags", 0)
+    # under `gfso mcp` stdin is the protocol pipe
+    kw.setdefault("stdin", subprocess.DEVNULL if input is None else subprocess.PIPE)
     kw.setdefault("stdout", subprocess.PIPE)
     kw.setdefault("stderr", subprocess.PIPE)
-    proc = adopt(subprocess.Popen(args, **kw, **spawn_kw()))
+    proc = popen(args, shown, **kw)
     try:
         out, err = proc.communicate(input, timeout=timeout)
         return subprocess.CompletedProcess(args, proc.returncode, out, err)
     finally:
-        kill_tree(proc)
-        release(proc)
+        end(proc)
 
 
 #: the most of one stream of a program whose output nobody bounded that the server keeps in its memory: half its head,
@@ -192,27 +270,23 @@ def run_printing(args, *, timeout: float, encoding: str = "utf-8", errors: str =
                  **kw) -> subprocess.CompletedProcess:
     """`run` of a program that may print without end, as text: each stream kept to `PRINTED_CAP`, what was dropped from
     its middle said in its place."""
-    kw.setdefault("env", subprocess_env())
     kw.setdefault("stdin", subprocess.DEVNULL)
-    if os.name == "nt":
-        kw.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
-    proc = adopt(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw, **spawn_kw()))
+    proc = popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
     kept: tuple = ([], [])
     readers = [threading.Thread(target=_kept, args=(s, PRINTED_CAP, k), daemon=True)
                for s, k in zip((proc.stdout, proc.stderr), kept)]
     try:
-        end = time.monotonic() + timeout
+        until = time.monotonic() + timeout
         for r in readers:
             r.start()
         for r in readers:
-            r.join(max(0.0, end - time.monotonic()))
+            r.join(max(0.0, until - time.monotonic()))
         if any(r.is_alive() for r in readers):
             raise subprocess.TimeoutExpired(args, timeout)
-        proc.wait(max(0.0, end - time.monotonic()))
+        proc.wait(max(0.0, until - time.monotonic()))
         return subprocess.CompletedProcess(args, proc.returncode, *(_said(k, encoding, errors) for k in kept))
     finally:
-        kill_tree(proc)
-        release(proc)
+        end(proc)
 
 
 def release(proc: subprocess.Popen) -> None:
@@ -232,6 +306,8 @@ def reap(closing: bool = False) -> None:
 
 
 def _kill_group(pgid: int) -> None:
+    if pgid <= 0:            # killpg(0) is THIS process's own group: a fake child's pid 0 killed pytest and CI's runner
+        return
     with contextlib.suppress(ProcessLookupError):         # the group is already gone: the goal
         try:
             os.killpg(pgid, signal.SIGKILL)

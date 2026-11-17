@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import copy
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ from gfso.core.types import (
 )
 from gfso.config import PIPELINE_PAGE, USAGE_PAGE
 from gfso.core.graph.model import PAUSE_KEY
+from gfso.adapters.storage import person
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +95,37 @@ def settings_of(db_path: str) -> Optional[dict]:
         return None
 
 
+class KeptReads:
+    """Whole-table reads kept until the next write (`SqliteStorage._write` marks them stale): one question about the
+    frontier read the whole task table 690 times and its edges 176 — 24 s on a 400-node graph, the page's and every
+    verb's answer waiting on it (measured 2026-11-13). Read under the store's own lock, so no read lands inside a write."""
+
+    def __init__(self, lock, version):
+        self._gen, self._kept, self._lock, self._version = 0, {}, lock, version
+
+    def stale(self) -> None:
+        """Every read kept so far is out of date."""
+        self._gen += 1
+
+    def get(self, key: str, read):
+        """`read()`'s answer as kept since the last write, read anew after one."""
+        with self._lock:
+            # …and the file's own version: a write by another connection (a second process on the file) moves it
+            now = (self._gen, self._version())
+            if (hit := self._kept.get(key)) is None or hit[0] != now:
+                self._kept[key] = hit = (now, read())
+            return hit[1]
+
+
+def by_parent(tasks: dict) -> dict:
+    """{parent id: [its children]} of `tasks`: a child read by scanning every node, per call, was the quadratic again."""
+    by: dict = {}
+    for t in tasks.values():
+        if t.parent_id is not None:
+            by.setdefault(str(t.parent_id), []).append(t)
+    return by
+
+
 def peek_project(db_path: str) -> Optional[dict]:
     """What a project IS, read from a file this process has not opened as a store: its root (goal
     name, state, started), its last protocol event, its spend and its mode — None when there is no
@@ -125,12 +158,16 @@ def peek_project(db_path: str) -> Optional[dict]:
                      or (_one(c, "SELECT MAX(ts) FROM audit_log") or (None,))[0])
             mode = _one(c, "SELECT value FROM settings WHERE key = 'mode'")
             stop = _one(c, f"SELECT value FROM settings WHERE key = '{PAUSE_KEY}'")
+            # …the moves its parties made beyond giving the work out: a graph people hold calls no model, and "never
+            # ran" by spend alone offered a 400-node development graph for deletion (the author, 2026-11-13)
+            moves = (_one(c, "SELECT COUNT(*) FROM audit_log WHERE rejected = 0 AND signal != 'ASSIGN' "
+                             "AND source IS NOT NULL") or (0,))[0]          # …a party's, not the clock's lapse
     except sqlite3.Error:
         return None
     out = {"goal": None, "last": max(filter(None, (_epoch(spent and spent[0]), _epoch(acted))),
                                      default=None),
            "cost": round(spent[1] or 0.0, 2) if spent else 0.0,
-           "mode": mode and _mode_named(mode[0]), "models": models,
+           "mode": mode and _mode_named(mode[0]), "models": models, "moves": moves,
            # the stop as set — {by, at, why} — the one record `Engine.paused` reads; None while it runs
            "stopped": _json_or_none(stop and stop[0])}
     if root is not None:
@@ -217,9 +254,9 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         # lock below — not the connection — is what makes a multi-statement write atomic. Reentrant
         # because a reader may call another reader (`get_parent` → `get_task`).
         self._lock = self._one_write = threading.RLock()
+        self._kept = KeptReads(self._lock, lambda: self._conn.execute("PRAGMA data_version").fetchone()[0])
         with self._write() as c:
-            c.execute("PRAGMA journal_mode=WAL")
-            c.execute("PRAGMA busy_timeout=5000")
+            c.executescript("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")
         self._check_schema_version()
         self._init_tables()
 
@@ -240,6 +277,8 @@ class SqliteStorage(_ProjectSettings, StoragePort):
             except BaseException:
                 self._conn.rollback()
                 raise
+            finally:
+                self._kept.stale()              # …after its commit or rollback: a read kept inside it is stale
 
     @contextmanager
     def _read(self):
@@ -248,8 +287,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
             yield self._conn
 
     def close(self) -> None:
-        """Release the file handle (Windows keeps the .db locked until the connection closes —
-        project deletion depends on this)."""
+        """Release the file handle (Windows holds the .db locked until it closes; project deletion depends on it)."""
         with self._lock:
             self._conn.close()
 
@@ -332,8 +370,10 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         ("audit_log", "retire_findings_json", "TEXT"),       # §10.2: the ruling an ACCEPT_CHALLENGE makes
         ("audit_log", "artifact", "TEXT"),                   # §11.2: what a DELIVER handed over, by identity
         ("audit_log", "delivered_commit", "TEXT"),           # …and the commit that carried it
+        ("audit_log", "delivered_repository", "TEXT"),       # …and the repository a chat's delivery was recorded in
         ("audit_log", "delivered_build", "TEXT"),            # …and how its judge builds it
         ("audit_log", "by_system", "INTEGER DEFAULT 0"),     # §11.6: the system made this issuer move
+        ("audit_log", "via", "TEXT"),                        # the credential the signer came through
     )
 
     def _init_tables(self):
@@ -446,8 +486,10 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                 retire_findings_json TEXT,
                 artifact TEXT,
                 delivered_commit TEXT,
+                delivered_repository TEXT,
                 delivered_build TEXT,
-                by_system INTEGER DEFAULT 0
+                by_system INTEGER DEFAULT 0,
+                via TEXT
             );
         """)
         # Defensive migrations for DBs created before these columns existed. DATA, not twenty
@@ -471,6 +513,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                     self._conn.execute("UPDATE dep_edges SET closed = 1, provisional = 0 WHERE provisional = 1 "
                                        "AND to_id NOT IN (SELECT id FROM tasks WHERE state = 'BLOCKED')")
         self._migrate_retired_states()
+        person.rename(self._conn)           # …the person written `user` where a graph from before 0.4.0 says `agent`
         _seams_to_edges(self._conn, self._spec_from_json, self._spec_to_json, self._mappings_from_json,
                         self._mappings_to_json)
 
@@ -606,9 +649,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
     # === StoragePort ===
 
     def get_task(self, task_id: TaskId) -> Optional[Task]:
-        with self._read() as c:
-            row = c.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        return self._row_to_task(row) if row else None
+        return copy.copy(t) if (t := self._tasks().get(str(task_id))) is not None else None
 
     def save_task(self, task: Task) -> None:
         with self._write() as c:
@@ -652,15 +693,18 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                 ),
             )
 
+    def _tasks(self) -> dict:
+        """{id: Task} parsed once a write, handed out as copies (a Task's values are immutable, so shallow is whole)."""
+        return self._kept.get("tasks", lambda: {r["id"]: self._row_to_task(r)
+                                                for r in self._conn.execute("SELECT * FROM tasks").fetchall()})
+
     def get_all_tasks(self) -> list[Task]:
-        with self._read() as c:
-            rows = c.execute("SELECT * FROM tasks").fetchall()
-        return [self._row_to_task(r) for r in rows]
+        return [copy.copy(t) for t in self._tasks().values()]
+
+    task_view = _tasks                          # …read-only: the store's own nodes (`StoragePort.task_view`)
 
     def get_children(self, task_id: TaskId) -> list[Task]:
-        with self._read() as c:
-            rows = c.execute("SELECT * FROM tasks WHERE parent_id = ?", (task_id,)).fetchall()
-        return [self._row_to_task(r) for r in rows]
+        return [copy.copy(t) for t in self._kept.get("children", lambda: by_parent(self._tasks())).get(str(task_id), ())]
 
     def get_parent(self, task_id: TaskId) -> Optional[Task]:
         with self._read() as c:
@@ -725,10 +769,9 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                       f"{' AND '.join(f'{k} = ?' for k in _EDGE_FIELDS)} LIMIT 1)", _edge_row(edge))
 
     def get_dep_edges(self) -> list[DepEdge]:
-        with self._read() as c:
-            return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]), r["glue"] or "",
-                            *(bool(r[k]) for k in _EDGE_FIELDS[4:]))
-                    for r in c.execute("SELECT * FROM dep_edges ORDER BY id").fetchall()]
+        rows = self._kept.get("edges", lambda: self._conn.execute("SELECT * FROM dep_edges ORDER BY id").fetchall())
+        return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]), r["glue"] or "",
+                        *(bool(r[k]) for k in _EDGE_FIELDS[4:])) for r in rows]
 
     def store_critique(self, task_id: TaskId, critique_json: str) -> None:
         with self._write() as c:
@@ -774,11 +817,11 @@ class SqliteStorage(_ProjectSettings, StoragePort):
             c.execute(
                 "DELETE FROM pipeline_log WHERE id <= (SELECT MAX(id) FROM pipeline_log) - 10000")
 
-    def get_pipeline(self, limit: int = PIPELINE_PAGE) -> list[dict]:
+    def get_pipeline(self, limit: int = PIPELINE_PAGE, about: str = "") -> list[dict]:
         with self._read() as c:
             rows = c.execute(
-                "SELECT ts, source, message FROM "
-                "(SELECT * FROM pipeline_log ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (limit,)).fetchall()
+                "SELECT ts, source, message FROM (SELECT * FROM pipeline_log WHERE substr(message, 1, ?) = ? "
+                "ORDER BY id DESC LIMIT ?) ORDER BY id ASC", (len(about), about, limit)).fetchall()
         return [{"ts": r["ts"], "source": r["source"], "message": r["message"]} for r in rows]
 
     _USAGE_COLS = ("ts", "stage", "model", "node_id", "input_tokens", "output_tokens",
@@ -814,13 +857,14 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                 "INSERT INTO audit_log (ts, task_id, signal, old_state, new_state, effects_json, "
                 "rejected, error, source, reason, justification, result, failed_criteria_json, "
                 "action, in_flight, spec_json, revision_reason, retire_findings_json, artifact, delivered_commit, "
-                "delivered_build, by_system) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "delivered_repository, delivered_build, by_system, via) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (row["ts"], row["task_id"], row["signal"], row.get("old_state"), row.get("new_state"),
                  json.dumps(row.get("effects") or []), int(bool(row.get("rejected"))), row.get("error"),
                  row.get("source"), row.get("reason"), row.get("justification"), row.get("result"),
                  json.dumps(row.get("failed_criteria") or []), row.get("action"), row.get("in_flight"),
                  row.get("spec"), row.get("revision_reason"), json.dumps(row.get("retire_findings") or []),
-                 row.get("artifact"), row.get("commit"), row.get("build"), int(bool(row.get("by_system")))))
+                 row.get("artifact"), row.get("commit"), row.get("repository"), row.get("build"), int(bool(row.get("by_system"))),
+                 row.get("via")))
 
     def load_audit(self) -> list[dict]:
         with self._read() as c:
@@ -838,6 +882,8 @@ class SqliteStorage(_ProjectSettings, StoragePort):
             "retire_findings": json.loads(r["retire_findings_json"] or "[]") if "retire_findings_json" in r.keys() else [],
             "artifact": r["artifact"] if "artifact" in r.keys() else None,
             "commit": r["delivered_commit"] if "delivered_commit" in r.keys() else None,
+            "repository": r["delivered_repository"] if "delivered_repository" in r.keys() else None,
             "build": r["delivered_build"] if "delivered_build" in r.keys() else None,
             "by_system": bool(r["by_system"]),
+            "via": r["via"] if "via" in r.keys() else None,
         } for r in rows]

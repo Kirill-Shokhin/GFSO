@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from datetime import datetime
 from typing import Optional
 
-from gfso.config import agent_id as _config_agent_id
+from gfso.config import PERSON, PERSONS_NAMES, agent_id as _config_agent_id, flag, reserved_refusal
 from gfso.config import validate_internal as _validate_internal
 from gfso.engine.verdicts import criterion_version, observations, refuted_versions
 from gfso.engine.findings import regression, ruling_defect, standing_rulings
@@ -82,7 +81,7 @@ def l2_gate_on(graph: "Graph | None" = None) -> bool:
     (`set_mode(l2_gate=)`) holds for it whatever the server's switch says: rows of one server differ in it."""
     if graph is not None and (v := graph.setting("l2_gate")) is not None:
         return v == "1"
-    return os.environ.get("GFSO_L2_GATE", "1") not in ("", "0")
+    return flag("GFSO_L2_GATE", True)
 
 
 def _l2_undischarged(graph: Graph, node) -> Optional[list[str]]:
@@ -205,10 +204,14 @@ def checked_by_contact(graph: Graph, task) -> bool:
 
 
 def within_a_scope(graph: Graph, task) -> bool:
-    """Is this node inside one executor session's scope — its parent's subtree fits one? Then it is that
-    executor's internal work (§10.3, below κ): the scope's one validation at its top carries it."""
-    parent = graph.get_parent(task.id)
-    return parent is not None and fits_one_session(graph, parent.id)
+    """Is this node inside one executor session's scope — below the top of the scope it lies in (`scope_top`), every
+    node of which is the top's executor's? Then it is that executor's internal work (§10.3, below κ): the scope's one
+    validation at its top carries it. A scope broken — a member handed to another executor, a Dep leaving and
+    re-entering — starts its nodes as their own (`workspaces.session_scope`), and each is validated on its own: read
+    off its parent's fit alone, a delivered member waited for a validation nobody would start (tn7a14284, 2026-10-20)."""
+    top = scope_top(graph, task)
+    return (top is not None and str(top.id) != str(task.id)
+            and all(str(m.assignee) == str(top.assignee) for m in scope_members(graph, top)))
 
 
 def scope_top(graph: Graph, task, edges: "list | None" = None):
@@ -392,6 +395,47 @@ def stands_as_pass(graph: Graph, audit, task, rec: Optional[dict]) -> bool:
     return bool(rec) and rec.get("verdict") == Verdict.PASS and record_stands(graph, audit, task, rec)
 
 
+def split_after(graph: Graph, task) -> list[str]:
+    """The parts whose results this node's split waits on, as its decomposer named them (`record_session_fit`), or []."""
+    return [str(p) for p in ((session_fit(graph, task.id) or {}).get("after") or {}).get("producers") or ()]
+
+
+def split_waits_on(graph: Graph, task) -> list[str]:
+    """The named parts (`split_after`) whose results do not stand yet: until none is left the split is not definable
+    — the information determining it is not obtainable (FM-6, §8.6) — so nobody is asked to make it. Read through the
+    node's Dep producers as they stand NOW: a named part a repair replaced, dropped or cancelled (no producer of this
+    node any more, or abandoned) is no ground left to wait on — waited on, the split was asked of nobody and the node
+    sat to its bound (critic: a reshape replacing the parser left the checker OFFERED for good)."""
+    now = {str(e.from_id) for e in graph.dep_edges(adopted=True) if str(e.to_id) == str(task.id)}
+    return [p for p in split_after(graph, task) if p in now and (t := graph.get_task(TaskId(p))) is not None
+            and not settled_positive(t) and t.state != State.ABANDONED]
+
+
+def deferral_refused(graph: Graph, task_id, after: dict) -> Optional[str]:
+    """Why a split may not wait on `after` ({producers, why}), or None. A deferral is FM-6's remedy only where it names
+    the work whose result makes the split definable (§8.6): each producer a Dep producer of the node (its criteria
+    reference that result, §2.7) and a part of the same split, at least one of them not yet settled — so every further
+    deferral waits on work delivered and validated first, and a chain of them cannot grow by splitting alone; a named
+    producer already accepted is contact in hand, read by the round with the rest (a repair adding a second producer
+    to a standing deferral must not cancel it, critic). A count of links would be no finiteness device (Φ3): the root's
+    deadline bounds the chain in time. The lift is the decomposer's own: name such a producer, or split now
+    (§12.16 (ii))."""
+    named, why = [str(p) for p in after.get("producers") or ()], str(after.get("why") or "").strip()
+    parent, into = graph.get_parent(TaskId(task_id)), {str(e.from_id) for e in graph.dep_edges(adopted=True)
+                                                        if str(e.to_id) == str(task_id)}
+    bad = [p for p in named if p not in into or (t := graph.get_task(TaskId(p))) is None
+           or parent is None or graph.get_parent(t.id) is None or str(graph.get_parent(t.id).id) != str(parent.id)
+           or t.state == State.ABANDONED]
+    open_ = [p for p in named if p not in bad and graph.get_task(TaskId(p)).state != State.DONE]
+    if named and why and not bad and open_:
+        return None
+    return (f"{task_id}'s split may wait only on parts of the same split it consumes (Dep producers of it), at least one"
+            f" not in yet, with the reason the split needs them (FM-6's remedy, §8.6) — "
+            + (f"{', '.join(bad)} is not such a part" if bad else "it names " + (
+                "no reason" if named and not why else "only parts already in" if named else "no part"))
+            + f". Name such a producer, or split {task_id} now")
+
+
 def split_owed(graph: Graph, task) -> Optional[dict]:
     """Why this CHILDLESS node's work is not a leaf's because its plan's author judged it larger than one session of
     its executor — or None. A node above κ, one executor session (§3.7), is not a leaf (§3.7), and its split is owed:
@@ -406,12 +450,19 @@ def split_owed(graph: Graph, task) -> Optional[dict]:
     if (not fit or fit.get("fits") is not False or graph.get_active_children(task.id)
             or project_mode(graph) is None):
         return None
+    after, waits = fit.get("after") or {}, split_waits_on(graph, task)
     return {"kind": "split_owed", "fails": [],
-            "why": ("its plan's author judged it larger than one session of its executor"
+            "why": ((f"its plan's author deferred its split until {', '.join(split_after(graph, task))} deliver"
+                     f" ({after.get('why', '')}) — a split fixed before the information determining it is obtainable is "
+                     f"a guess (FM-6, §8.6), so it is made once that result stands; its parts are what get delivered "
+                     f"and validated") if after else
+                    "its plan's author judged it larger than one session of its executor"
                     + (f" ({fit.get('volume')})" if fit.get("volume") else "")
                     + " — a node above κ, one executor session (§3.7), is not a leaf (§3.7), and its split is owed "
                       "(§11.5, deferred decomposition): its parts are what get delivered and validated"),
-            "opens_with": (f"its executor splits it — `auto_decompose(root_id='{task.id}')`, or `decompose` "
+            "opens_with": ((f"nothing yet — once {', '.join(waits)} {'is' if len(waits) == 1 else 'are'} accepted, "
+                            if waits else "")
+                           + f"its executor splits it — `auto_decompose(root_id='{task.id}')`, or `decompose` "
                            f"on it — and the parts carry its criteria")}
 
 
@@ -502,7 +553,10 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
     if must and not st["pass"]:
         return {"kind": "unobserved", "fails": [],
                 "why": ("no appointed observer has observed this delivery — "
-                        + ("it is a seam, where the result crosses into another scope (§10.3)"
+                        + ("it is a root its own executor issued: nothing above carries its verdict, so the "
+                           "product's own check stands behind it (§10.2, §10.3)"
+                           if task.parent_id is None and graph.issuer_of(task.id) == task.assignee else
+                           "it is a seam, where the result crosses into another scope (§10.3)"
                            if graph.is_public(task) else
                            "it is the top of a scope one executor session carries, where that scope's "
                            "validation stands (§3.7, §10.3)")
@@ -1472,6 +1526,9 @@ def packet_refusal(signal_data: SignalData, graph: Graph, state) -> Optional[str
     §12.14), and no Dep cycle closed by its criteria (§12.10)."""
     if signal_data.signal not in (Signal.ASSIGN, Signal.ACCEPT_CHALLENGE):
         return None
+    # …a holder born under the person's name of before 0.4.0 would be a second party beside him, `user`
+    if signal_data.signal == Signal.ASSIGN and str(signal_data.assignee or "") in PERSONS_NAMES - {PERSON}:
+        return f"{reserved_refusal(signal_data.assignee)} The person is written `{PERSON}`: assign to it."
     if signal_data.deadline is not None and signal_data.deadline <= project_now(graph):
         return (f"{signal_data.signal.name} on {signal_data.task_id} carries a deadline already passed "
                 f"({on_the_wall(graph, signal_data.deadline):%Y-%m-%d %H:%M}) — a task is given out with a live deadline, one still ahead "

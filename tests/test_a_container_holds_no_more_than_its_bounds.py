@@ -3,6 +3,7 @@ judge's probe held 9 GiB of the Docker VM's 19.5 and starved every project on th
 c_compiler, 2026-10-30; the author's charter: «по ошибке могут насрать соседу и вся система полетит»). A runaway dies
 as its own failure, exit 137, and the session it ran in goes on.
 """
+import asyncio
 import contextlib
 import inspect
 import json
@@ -22,9 +23,10 @@ import gfso.adapters.snapshots as S
 import gfso.adapters.worktrees as W
 import gfso.observe as O
 import gfso.sessions as SS
-from gfso import config as C, issuer as I, tools as T
+from gfso import config as C, issuer as I, tools as T, tools_llm as TL
 from gfso.core.types import Criteria, Mode, Probe, TaskId
 from gfso.delegate import Dispatcher
+from gfso.mcp.server import _bind
 from gfso.engine.parking import USERS_WAY
 from tests.support import criterion, round_over
 from tests.test_delegate import _agents, _eng, _goal, _node
@@ -771,7 +773,7 @@ def test_a_node_whose_executor_its_disk_bound_ended_is_parked_at_once_with_its_c
         e.emit_info = lambda src, msg, _s=said: _s.append(msg)
         d = Dispatcher(e, agents, poll=30, runner=lambda en, tid, ex, ag, _p=past: tries.append(1) or
                        {"task_id": str(tid), "status": "unparsed", "cut": True, "past_disk": _p})
-        _goal(e, assignee="agent")
+        _goal(e, assignee="user")
         _node(e, "n1", assignee="exec-1", parent="goal")
         d.dispatch_once()
         round_over(d, "n1", lambda: len(tries) >= 1)
@@ -779,10 +781,10 @@ def test_a_node_whose_executor_its_disk_bound_ended_is_parked_at_once_with_its_c
         assert parked == bool(past), (past, said)
         if past:
             assert any(why in m and "PARKED" in m for m in said) and not any("redialled" in m for m in said), said
-            step = next(s for s in T.next_steps(e, actor="agent")["steps"] if s["task_id"] == "n1")
+            step = next(s for s in T.next_steps(e, actor="user")["steps"] if s["task_id"] == "n1")
             assert step["mine"] and why in step["directive"] and "CANCEL" in step["directive"]
             assert "revise(" not in step["directive"] and "reassign(" not in step["directive"], step["directive"]
-            T.revise(e, "n1", agent="agent", max_iterations=5)
+            T.revise(e, "n1", agent="user", max_iterations=5)
             assert "n1" not in e.parking.parked_executions(), "a new version lifts the park, as any park"
         else:
             assert any("redialled" in m for m in said), said
@@ -858,7 +860,7 @@ def test_the_issuers_step_at_a_root_its_disk_bound_parked_says_cancelling_abando
     _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")))
     for node, says in (("root", "abandons the goal"), ("root.part", "its parent's split can issue")):
         e.parking.park_execution(TaskId(node), why)
-        step = next(s for s in T.next_steps(e, actor="agent")["steps"] if s["task_id"] == node)
+        step = next(s for s in T.next_steps(e, actor="user")["steps"] if s["task_id"] == node)
         assert why in step["directive"] and says in step["directive"] and "restart" in step["directive"], step
 
 
@@ -872,7 +874,7 @@ def test_where_only_the_user_lifts_a_place_past_its_bound_no_system_move_is_offe
     _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")))
     root, part = e.graph.get_task(TaskId("root")), e.graph.get_task(TaskId("root.part"))
     e.parking.park_execution(root.id, why)
-    step = next(s for s in T.next_steps(e, actor="agent")["steps"] if s["task_id"] == "root")
+    step = next(s for s in T.next_steps(e, actor="user")["steps"] if s["task_id"] == "root")
     assert USERS_WAY in step["directive"] and "CANCEL" not in step["directive"], step["directive"]
     e.parking.park_execution(part.id, why)
     assert I.moves_for(e, part, "parked") == ("cancel",), "below the root of the system's own plan: cancel"
@@ -880,6 +882,20 @@ def test_where_only_the_user_lifts_a_place_past_its_bound_no_system_move_is_offe
     assert I.moves_for(e, part, "parked") == (), "a part of the plan the user handed in is not the system's to cut"
     out = I.settle(e, None, part.id, "parked", str(e.graph.issuer_of(part.id)), None)
     assert out["status"] == "users" and USERS_WAY in out["why"], out
+
+
+def test_under_auto_the_users_lift_reaches_them_by_the_runs_stop_and_their_start_is_taken():
+    """The mode lock holds node moves; a lift only the user makes (a disk bound) is no node move but the run's: the
+    system stops it with their way, their waiting `next_steps` returns with it at once — a stop standing before the wait
+    held it the wait's whole length — and their `start_project` is taken under AUTO."""
+    e = _engine(Mode.AUTO)
+    T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
+    e.parking.park_execution(TaskId("root"), "the directories of its place hold 21000 MiB, past its bound")
+    assert I.settle(e, None, TaskId("root"), "parked", str(e.graph.issuer_of(TaskId("root"))), None)["status"] == "users"
+    began = time.monotonic()
+    out = TL.wait_for_the_customer(e, seconds=5)
+    assert time.monotonic() - began < 2 and out["run"]["state"] == "stopped" and USERS_WAY in out["run"]["why"], out
+    assert asyncio.run(_bind(e, TL.TOOLS["start_project"])())["state"] == "running"
 
 
 def test_a_plain_park_whose_last_end_was_the_disks_watch_says_it_and_keeps_its_moves(tmp_path, monkeypatch):
@@ -891,13 +907,13 @@ def test_a_plain_park_whose_last_end_was_the_disks_watch_says_it_and_keeps_its_m
     tries = []
     d = Dispatcher(e, agents, poll=30, runner=lambda en, tid, ex, ag: tries.append(1) or
                    {"task_id": str(tid), "status": "unparsed", "past_disk": None, "disk_ended": "LAST-END"})
-    _goal(e, assignee="agent")
+    _goal(e, assignee="user")
     _node(e, "n1", assignee="exec-1", parent="goal")
     for want in (1, 2):
         d.dispatch_once()
         round_over(d, "n1", lambda: len(tries) >= want)
     assert "n1" in e.parking.parked_executions()
-    step = next(s for s in T.next_steps(e, actor="agent")["steps"] if s["task_id"] == "n1")
+    step = next(s for s in T.next_steps(e, actor="user")["steps"] if s["task_id"] == "n1")
     assert "STOPPED WITHOUT A SIGNAL" in step["directive"] and "ended by the disk's watch: LAST-END" in step["directive"]
     assert "revise(" in step["directive"], "its moves kept"
     e.stop()
@@ -916,7 +932,7 @@ def test_a_parents_consent_in_a_place_past_its_bound_parks_it_at_once_with_the_c
         e = _eng()
         d = Dispatcher(e, _agents(tmp_path, ("exec-1", "llm-executor")), poll=30, runner=lambda *a: None,
                        consent_runner=lambda *a, _p=past: {"status": "unparsed", "past_disk": _p})
-        _goal(e, assignee="agent")
+        _goal(e, assignee="user")
         _node(e, "n1", assignee="exec-1", parent="goal")
         d._consent_guarded(TaskId("n1"), "exec-1")
         assert ("n1" in e.parking.parked_executions()) == bool(past), past

@@ -71,7 +71,7 @@ jobs:
         # The edges of what `requires-python = ">=3.11"` promises, on both developed platforms.
         # A middle version buys little; an unchecked edge is an untested claim on the PyPI page.
         os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.13']
+        python-version: ['3.11', '3.14']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

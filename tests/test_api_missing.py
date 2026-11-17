@@ -89,11 +89,11 @@ def test_dependency_endpoints():
     e.assign_task(TaskId("t2"), Spec("b", (Criteria("c", "C", check=pinned("c")),)), AgentId("d"), parent_id=TaskId("goal"))
     e.wait_idle()
     c = _client(e)
-    r = c.post("/api/run/add_dependency", json={"from_id": "t1", "to_id": "t2"})
+    r = c.post("/api/run/add_dependency", json={"from_id": "t1", "to_id": "t2", "agent": "d"})
     assert r.status_code == 200 and r.json()["ok"] is True
-    r = c.post("/api/run/add_dependency", json={"from_id": "t2", "to_id": "t1"})
+    r = c.post("/api/run/add_dependency", json={"from_id": "t2", "to_id": "t1", "agent": "d"})
     assert r.status_code == 422  # cycle → ValueError
-    r = c.post("/api/run/remove_dependency", json={"from_id": "t1", "to_id": "t2"})
+    r = c.post("/api/run/remove_dependency", json={"from_id": "t1", "to_id": "t2", "agent": "d"})
     assert r.status_code == 200 and r.json()["ok"] is True
     assert len(e.get_dependencies()) == 0
 

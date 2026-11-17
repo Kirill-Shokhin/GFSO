@@ -48,7 +48,7 @@ def _a_node_with_an_open_finding(e):
     T.create_task(e, "root", {"description": "goal",
                               "criteria": [criterion("c1", "C1")],
                               "accepted_risks": REGISTER},
-                  assignee="agent")
+                  assignee="user")
     e.wait_idle()
 
 

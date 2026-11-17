@@ -49,18 +49,18 @@ def _delivered_with_a_validator_on_the_roster(e, tmp_path, validator_project=Non
     reg.register("stranger-val", "llm-validator", model="sonnet",
                  workdir=workdir_(tmp_path, "someone-elses-tree"), project=validator_project)
     e._graph.authorized_validators = {"stranger-val"}      # what the dispatcher publishes each round
-    T.create_task(e, "root", {"description": "the parent", "criteria": [criterion("g", "G")]}, assignee="agent")
+    T.create_task(e, "root", {"description": "the parent", "criteria": [criterion("g", "G")]}, assignee="user")
     T.decompose(e, "root", [{"task_id": "root.kid",
                              "spec": {"description": "an internal child — same Del as its parent",
                                       "criteria": [criterion("c", "C")]},
-                             "assignee": "agent", "covers": ["g"]}], accepted_risks=REGISTER)
+                             "assignee": "user", "covers": ["g"]}], accepted_risks=REGISTER)
     e.wait_idle()
     assert not e.is_seam(e.graph.get_task(TaskId("root.kid"))), "the probe built a seam, not an internal node"
-    T.signal(e, "root.kid", "ACCEPT", "agent")
+    T.signal(e, "root.kid", "ACCEPT", "user")
     # The binding is a fact the DISPATCHER owns and publishes; a door may not compose it (the layer
     # gate), so a probe that never runs a round is asking about a state the product never reaches.
     Dispatcher(e, reg, runner=lambda *a: None).dispatch_once()
-    return T.signal(e, "root.kid", "DELIVER", "agent", result="built it")
+    return T.signal(e, "root.kid", "DELIVER", "user", result="built it")
 
 
 def test_a_validator_from_no_project_is_named_with_its_directory(tmp_path, monkeypatch):

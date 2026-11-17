@@ -35,6 +35,11 @@ Reduce everything to a canonical, non-redundant **BASIS**:
     one that does not fit is split at seams, each piece validated on its own. Judge from the count, not
     from the number of pieces you wrote: the same goal gets the same answer whether it is a whole
     project or one part of a larger one.
+    **A piece whose split depends on what another piece delivers is split after it, not guessed.**
+    Where you cannot define a subtask's parts until a producer it consumes has delivered — its interface,
+    its format, what it turns out to support — give that subtask `split_after`: the producer ids (each one
+    also a `deps` producer of it) and why the split needs their result. It keeps its criteria and is split
+    once those results are accepted, with them in hand. Everything definable now is split now.
   - **Dep** — cross-component dependency seams (an ordered pair, source → target, plus the concrete thing
     that breaks if the edge is absent). A seam connects TWO DIFFERENT subtasks — never emit a
     self-dependency (X → X); an internal ordering within one subtask is not a Dep. **Anti-mock:** the seam's

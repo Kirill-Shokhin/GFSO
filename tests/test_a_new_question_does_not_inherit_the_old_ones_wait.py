@@ -8,6 +8,7 @@ import time
 import gfso.issuer as I
 from gfso.core.types import TaskId
 from tests.test_the_mode_decides_who_holds_what import _auto_goal
+from tests.support import issuer_sweep
 
 
 def test_an_escalation_is_asked_at_once_after_the_dispute_backed_off(tmp_path, monkeypatch):
@@ -24,11 +25,7 @@ def test_an_escalation_is_asked_at_once_after_the_dispute_backed_off(tmp_path, m
     ledger, cap = {}, threading.Semaphore(1)
 
     def sweep():
-        before = set(threading.enumerate())
-        I.answer_open_questions(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
-        for th in set(threading.enumerate()) - before:
-            if th.ident is not None:   # …one another thread is only starting is listed too, and cannot be joined
-                th.join(5)
+        issuer_sweep(e, agents, lambda k: True, lambda *a, **k: None, cap, None, ledger)
 
     for _ in range(4):   # the dispute's turns fail; each sweep runs past the wait the last one left
         sweep()

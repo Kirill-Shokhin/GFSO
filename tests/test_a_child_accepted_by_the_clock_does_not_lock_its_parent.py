@@ -24,17 +24,17 @@ def _graph():
     e.start()
     T.create_task(e, "root", {"description": "a goal", "accepted_risks": _RISK,
                               "criteria": [criterion("g", "G holds")]},
-                  assignee="agent")
+                  assignee="user")
     T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "the work",
-                             "criteria": [criterion("k", "K holds")]}, "assignee": "agent", "covers": ["g"]}], accepted_risks=REGISTER)
+                             "criteria": [criterion("k", "K holds")]}, "assignee": "user", "covers": ["g"]}], accepted_risks=REGISTER)
     return e
 
 
 def _child_a_clock_accepted(e):
     """A row as an older build left it: DONE(AUTO_PASS). No edge produces it any more (§16.14), so it
     is written the way a reader finds it — in the graph — rather than through a signal."""
-    T.signal(e, "kid", "ACCEPT", "agent")
-    T.signal(e, "kid", "DELIVER", "agent", result="did the work")
+    T.signal(e, "kid", "ACCEPT", "user")
+    T.signal(e, "kid", "DELIVER", "user", result="did the work")
     e.wait_idle()
     t = e._graph.get_task(TaskId("kid"))
     t.state, t.done_reason = State.DONE, DoneReason.AUTO_PASS
@@ -44,8 +44,8 @@ def _child_a_clock_accepted(e):
 def test_the_clock_no_longer_accepts_for_the_issuer():
     """The edge itself: the timeout that used to close DONE(auto_pass) hands the node back (§16.14)."""
     e = _graph()
-    T.signal(e, "kid", "ACCEPT", "agent")
-    T.signal(e, "kid", "DELIVER", "agent", result="did the work")
+    T.signal(e, "kid", "ACCEPT", "user")
+    T.signal(e, "kid", "DELIVER", "user", result="did the work")
     e.send_signal(SignalData(signal=Signal.TIMEOUT, task_id=TaskId("kid")))
     e.wait_idle()
     t = e.graph.get_task("kid")
@@ -54,13 +54,13 @@ def test_the_clock_no_longer_accepts_for_the_issuer():
 
 
 def _parent_claims_the_aggregate(e):
-    T.signal(e, "root", "ACCEPT", "agent")
-    T.signal(e, "root", "DELIVER", "agent", result="the aggregate")
+    T.signal(e, "root", "ACCEPT", "user")
+    T.signal(e, "root", "DELIVER", "user", result="the aggregate")
     T.record_verdict(e, "root", "PASS", reviewer="rev",
                      observed={"g": {"note": "read the child's artifact end to end; it holds",
                                     # …and the part's pinned probe over this delivery: g rests on it
                                     "ran": ["check g", "check k"]}})
-    return T.signal(e, "root", "PASS", "agent")
+    return T.signal(e, "root", "PASS", "user")
 
 
 def test_the_parents_conjunction_accepts_a_child_the_clock_accepted():
@@ -92,12 +92,12 @@ def test_a_child_that_actually_failed_still_blocks():
     """The control. The conjunction is narrowed to the canon's reading, not loosened in general:
     a child that did not settle positively must still hold its parent."""
     e = _graph()
-    T.signal(e, "kid", "ACCEPT", "agent")
-    T.signal(e, "kid", "DELIVER", "agent", result="a first attempt")
+    T.signal(e, "kid", "ACCEPT", "user")
+    T.signal(e, "kid", "DELIVER", "user", result="a first attempt")
     T.record_verdict(e, "kid", "FAIL", reviewer="rev", failed_criteria=["k"],
                      observed={"k": {"note": "ran it: red on the first case",
                                    "ran": ["check k"]}})
-    T.signal(e, "kid", "FAIL", "agent", failed_criteria=["k"])
+    T.signal(e, "kid", "FAIL", "user", failed_criteria=["k"])
     out = _parent_claims_the_aggregate(e)
     assert out.get("accepted") is False and "children" in str(out.get("error")), \
         f"a parent passed over a child in rework: {out}"

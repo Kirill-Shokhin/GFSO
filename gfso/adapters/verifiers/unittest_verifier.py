@@ -7,13 +7,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import subprocess
 import sys
-import tempfile
 
 from gfso.adapters import children
+from gfso.adapters.verifiers.subprocess_verifier import finish, temp_py
 from gfso.core.types import TaskId, Spec, CheckResult, StoragePort, VerifierPort, Verdict
 
 log = logging.getLogger(__name__)
@@ -75,35 +74,20 @@ _PREFIX = (
 
 def _run_suite(model_code: str, test_code: str, timeout: float = 60.0) -> list[dict]:
     """Run model_code + test_code in a subprocess, return list of {name, passed, details}."""
-    full = _PREFIX + model_code + "\n\n" + test_code + "\n\n" + _RUNNER
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
-        f.write(full)
-        path = f.name
-    try:
-        r = children.run([sys.executable, path], timeout=timeout, text=True,
-                         encoding="utf-8", errors="replace")
-        out = r.stdout or ""
-        if "__GFSO_VERIFIER_LOAD_FAIL__" in out:
-            err = out.split("__GFSO_VERIFIER_LOAD_FAIL__:", 1)[1].strip()
-            names = _extract_test_names(test_code)
-            return [{"name": n, "passed": False, "details": f"LOAD_FAIL: {err}"} for n in names]
-        if "__GFSO_VERIFIER_RESULTS__" not in out:
-            # Crash before runner ran (syntax error in model code, etc)
-            err_blob = (r.stderr or "")[-1500:]
-            names = _extract_test_names(test_code)
-            return [{"name": n, "passed": False, "details": f"CRASH: {err_blob}"} for n in names]
-        payload = out.split("__GFSO_VERIFIER_RESULTS__", 1)[1].strip()
-        return json.loads(payload)
-    except subprocess.TimeoutExpired:
-        names = _extract_test_names(test_code)
-        return [{"name": n, "passed": False, "details": f"TIMEOUT after {timeout}s"} for n in names]
-    finally:
+    names = _extract_test_names(test_code)
+    with temp_py(_PREFIX + model_code + "\n\n" + test_code + "\n\n" + _RUNNER) as path:
         try:
-            os.unlink(path)
-        # the results are already parsed; a temp file still held by the OS must not turn a finished
-        # run into a crash
-        except OSError:
-            pass
+            r = children.run([sys.executable, path], timeout=timeout, text=True, encoding="utf-8", errors="replace")
+        except subprocess.TimeoutExpired:
+            return [{"name": n, "passed": False, "details": f"TIMEOUT after {timeout}s"} for n in names]
+    out = r.stdout or ""
+    if "__GFSO_VERIFIER_LOAD_FAIL__" in out:
+        err = out.split("__GFSO_VERIFIER_LOAD_FAIL__:", 1)[1].strip()
+        return [{"name": n, "passed": False, "details": f"LOAD_FAIL: {err}"} for n in names]
+    if "__GFSO_VERIFIER_RESULTS__" not in out:
+        # Crash before runner ran (syntax error in model code, etc)
+        return [{"name": n, "passed": False, "details": f"CRASH: {(r.stderr or '')[-1500:]}"} for n in names]
+    return json.loads(out.split("__GFSO_VERIFIER_RESULTS__", 1)[1].strip())
 
 
 def evaluate_unittest(model_code: str, test_code: str, timeout: float = 60.0) -> list[CheckResult]:
@@ -138,10 +122,7 @@ class UnittestVerifier(VerifierPort):
                 out.append(CheckResult(check_name=c.name, passed=False, details="test not found in suite"))
             else:
                 out.append(CheckResult(check_name=c.name, passed=r["passed"], details=r["details"]))
-        self._storage.store_check_results(task_id, out)
-        passed = sum(1 for r in out if r.passed)
-        log.info(f"RESULT: {passed}/{len(out)} passed")
-        for r in out:
+        for r in finish(self._storage, task_id, out):
             status = Verdict.PASS if r.passed else Verdict.FAIL
             log.info(f"{r.check_name}: {status}")
             if not r.passed and r.details:

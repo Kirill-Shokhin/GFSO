@@ -11,13 +11,19 @@ from datetime import datetime, timedelta
 
 import gfso.core.graph.model as M
 import gfso.tools as T
+from gfso.adapters import children as CH
 from gfso.adapters import execution as E
 from gfso.adapters.llm import credentials
 from gfso.adapters.llm import headless as H
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.types import TaskId
 from gfso.issuer import LIMIT_RETRY_S
-from tests.support import criterion, make_engine
+from tests.support import carried_by_the_system, criterion, make_engine as _make
+
+
+def make_engine(*a, **kw):
+    """…a project the system carries: the limit stops only that (tests/test_an_accounts_refusal_stops_only_the_systems_work.py)."""
+    return carried_by_the_system(_make(*a, **kw))
 
 LIFT = 1791954000
 #: The stream the CLI wrote for a refused call (agent trace 20261013T190621-25f01028, trimmed).
@@ -48,7 +54,7 @@ def _refused(at=None) -> list:
 def test_the_adapter_reads_when_the_limit_lifts(monkeypatch, tmp_path):
     monkeypatch.setattr(H.subprocess, "Popen", lambda args, **kw: _Proc(LIMIT_STREAM))
     for name in ("adopt", "kill_tree", "release"):
-        monkeypatch.setattr(E, name, lambda p: p)
+        monkeypatch.setattr(CH, name, lambda p: p)
     # …a credential given, not stored: what the ADAPTER reads of the stream, before the store marks it spent (`spend`)
     llm = H.ClaudeCodeProvider(credential=credentials.Credential("token", "t-held"))
     llm._cmd = "claude"
@@ -112,7 +118,7 @@ def test_a_date_shown_during_a_stop_comes_back_as_it_was(monkeypatch):
     feeding it back (a re-admission of an unchanged child) had it taken off with a larger off — read as changed."""
     shift = {"s": 0.0}
     monkeypatch.setattr(M, "time", type("T", (), {"time": staticmethod(lambda: time.time() + shift["s"])}))
-    e = make_engine(llm=None, validate_signals=True, state_timeout=0, check_interval=3600)
+    e = _make(llm=None, validate_signals=True, state_timeout=0, check_interval=3600)
     e.start()
     due = (datetime.now() + timedelta(hours=2)).replace(microsecond=0)
     T.create_task(e, "d", {"description": "x", "criteria": [criterion("a", "A")]}, "w", deadline=due.isoformat())
