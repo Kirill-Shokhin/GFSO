@@ -185,6 +185,8 @@ body {
 .hq-head { display: flex; align-items: baseline; gap: 10px; }
 /* who filed it, whole: the node's link beside it gives way, the name never (a critic: «engineer / ing») */
 .hq-head b { flex: none; font-family: var(--font-mono); font-size: 11px; font-weight: 500; min-width: 44px; }
+/* …in the reports a long agent id ends in an ellipsis at 60% of the row: whole, it pushed the time past a 360 px phone (critic) */
+#hd-reports .hq-head b { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hq-val { font-family: var(--font-display); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; flex: 1; }
 .hq-val.acc { color: var(--acc); }
 .hq-val:has(+ .hq-nil) { flex: none; margin-right: 6px; }
@@ -1511,10 +1513,12 @@ button.rs-switch { cursor: pointer; min-height: 32px; }   /* a finger's target, 
     .dk-now.dk-one + .dk-chips { max-width: 100%; }
     .dk-live { min-width: 0; }
     .dk-strip.fit .dk-live, .dk-live { overflow: hidden; }
-    /* …on a phone the chip says the node alone; who works it and since when are in its tip: kept, the chip's edge cut them
-       to a first letter («○ Pars… g», critic) */
-    .dk-live span { display: none; }
-    .dk-strip.fit .dk-live em, .dk-live em { flex: 0 1 auto; min-width: 5ch; white-space: nowrap; }
+    /* …short of room, who works it and since when give way before the node's name — to an ellipsis, or to nothing — and stay
+       where they fit («● the goal planning 433.9h»): kept whole, the chip's edge cut them to a first letter («○ Pars… g»,
+       critic); hidden outright, a phone lost what fitted (critic) */
+    .dk-live span { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* …and the name keeps a readable start when two chips share the line (5ch of its small face was 18 px, «fron…») */
+    .dk-strip.fit .dk-live em, .dk-live em { flex: 0 1 auto; min-width: 64px; white-space: nowrap; }
     .need { max-width: none; }   /* cut mid-word at the screen's edge (critic 5): whole, the row scrolls */
     /* an Events head wraps: why the node fails takes a line of its own — on one line it was squeezed to nothing (critic 12) */
     .ev-group > summary { flex-wrap: wrap; }
