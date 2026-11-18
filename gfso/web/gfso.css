@@ -185,8 +185,9 @@ body {
 .hq-head { display: flex; align-items: baseline; gap: 10px; }
 /* who filed it, whole: the node's link beside it gives way, the name never (a critic: «engineer / ing») */
 .hq-head b { flex: none; font-family: var(--font-mono); font-size: 11px; font-weight: 500; min-width: 44px; }
-/* …in the reports a long agent id ends in an ellipsis at 60% of the row: whole, it pushed the time past a 360 px phone (critic) */
-#hd-reports .hq-head b { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* …in the reports a long agent id wraps inside 60% of the row: whole on one line it pushed the time past a 360 px phone
+   (critic), cut it read as another agent's */
+#hd-reports .hq-head b { max-width: 60%; overflow-wrap: anywhere; }
 .hq-val { font-family: var(--font-display); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; flex: 1; }
 .hq-val.acc { color: var(--acc); }
 .hq-val:has(+ .hq-nil) { flex: none; margin-right: 6px; }
@@ -1403,7 +1404,7 @@ body.no-project .header > .role-select:not(.mine-as)::after { display: none; }
 .pl-row:hover { background: var(--hair-soft); }
 .pl-row.pl-head, .pl-row.pl-head:hover { background: none; cursor: default; font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-soft); padding-top: 2px; padding-bottom: 2px; }
 .pl-head span:nth-child(5), .pl-head span:nth-child(6) { text-align: right; }
-@media (max-width: 720px) { .pl-head { display: none; } }
+
 .pl-row.cur { box-shadow: inset 2px 0 0 var(--acc); }
 .pl-time, .pl-mode, .pl-cost, .pl-res { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
 .pl-cost { text-align: right; }
@@ -1411,6 +1412,15 @@ body.no-project .header > .role-select:not(.mine-as)::after { display: none; }
    margin before the first one set it off the row's other lines on a phone (critic, 2026-11-17) */
 .pl-res { text-align: right; }
 .pl-res .tally + .tally { margin-left: 8px; }
+/* a list narrower than 660 px stacks its rows as on a phone, by its own width (the panel's, not the window's): in six
+   columns the run had 63–164 px and long names sharing a prefix read alike; after the rules above, so its left wins */
+#pl-list { container: pl / inline-size; }
+@container pl (max-width: 660px) {
+    .pl-head { display: none; }
+    .pl-row { grid-template-columns: 40px 1fr 64px; row-gap: 2px; }
+    .pl-where, .pl-mode, .pl-res { grid-column: 2; text-align: left; }
+    .pl-cost { grid-column: 3; grid-row: 1; }
+}
 .pn-round { margin-left: 12px; }
 .pn-round b { font-family: var(--font-display); font-weight: 650; color: var(--ui-text); }
 /* what Docker holds: the machine over the project list, a project's own in its deck view — counts as marks */
@@ -1534,9 +1544,6 @@ button.rs-switch { cursor: pointer; min-height: 32px; }   /* a finger's target, 
     .sidebar:not(.hidden) { position: absolute; inset: 0; width: auto; z-index: 25; padding: 18px 16px; border-left: none; }
     .reader { left: 0; right: 0; width: auto; z-index: 26; padding: 0 16px 16px; }
     .goal-panel, .project-panel { width: 100%; }
-    .pl-row { grid-template-columns: 40px 1fr 64px; row-gap: 2px; }
-    .pl-where, .pl-mode, .pl-res { grid-column: 2; text-align: left; }
-    .pl-cost { grid-column: 3; grid-row: 1; }
     .dk-grip { top: -10px; height: 20px; }
 }
 /* THE HEAD IN TWO ROWS where the deck is narrow, a phone or beside a panel: what runs and waits, with the sum, first; the tabs
