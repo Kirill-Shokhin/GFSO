@@ -38,6 +38,10 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 - Deleting a project removes its own branches and refs in the person's repositories (`gfso/<project>/*`,
   `refs/gfso/<project>/*`), keeping `gfso/<project>/accepted` and any branch checked out in a worktree: a project made
   again under the name started its nodes from the old attempt's code.
+- A landing never overwrites a result it does not contain: where `gfso/<project>/accepted` holds a commit the new
+  result does not have in its history (an earlier root's result never merged, or a deleted project's under a re-made
+  one's name), the old one is first kept as `gfso/<project>/accepted-<UTC time>`, which deleting the project keeps
+  and the next import into the project leaves out. Every landing, a chat-performed root's included, moves it so.
 
 ## [0.4.0] — 2026-11-17
 

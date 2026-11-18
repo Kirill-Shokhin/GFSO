@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import uuid
 from pathlib import Path
@@ -684,9 +685,12 @@ def _name_the_delivery(engine, root, base=None):
         return f"its accepted result {sha[:12]} is no longer in {repo}, where its delivery was recorded"
     if W.checked_out(repo, f"refs/heads/{(ref := accepted_branch(engine))}"):
         return f"`{ref}` is checked out there (in a worktree of it), and the system lands only on a branch nobody works on: check out another branch"
-    if W.git(repo, "update-ref", "-m", "gfso: a root's accepted result", f"refs/heads/{ref}", sha).returncode:
-        return f"its accepted result {sha[:12]} could not be named `{ref}` in {repo}"
-    return _landed(engine, root, ref, sha, repo)
+    try:
+        kept = W.move_result(repo, f"refs/heads/{ref}", sha)
+    except OSError as ex:
+        return f"its accepted result {sha[:12]} could not be named `{ref}` in {repo}: {ex}"
+    return _landed(engine, root, ref, sha, repo,
+                   f" (the earlier result it does not contain is kept as `{kept.removeprefix('refs/heads/')}`)" if kept else "")
 
 
 def _landed(engine, root, ref: str, sha: str, base, note: str = "") -> None:
@@ -738,7 +742,7 @@ def drop_node_branches(project: str, bases) -> list[str]:
             if refs.returncode:         # …a git older than `%(worktreepath)`: nothing removed, and said
                 logging.getLogger(__name__).warning(f"{base}: {name}'s node branches not read, kept: {refs.stderr.strip()}")
             for ref, *held in (r.split(" ", 1) for r in (refs.stdout.splitlines() if refs.returncode == 0 else ())):
-                if ref != keep and not "".join(held).strip() and W.git(base, "update-ref", "-d", ref).returncode == 0:
+                if ref != keep and not re.fullmatch(re.escape(keep) + r"-\d{8}T\d{6}Z", ref) and not "".join(held).strip() and W.git(base, "update-ref", "-d", ref).returncode == 0:
                     gone.append(f"{base}: {ref}")
         except (OSError, subprocess.SubprocessError):
             continue                    # …no git here, or one that hung: the deletion completes, the refs stay

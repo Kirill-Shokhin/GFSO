@@ -2386,7 +2386,7 @@ def _carried_in(base: Path, project: str, d: Path) -> tuple:
             raise OSError(_unfetched(base, missing))
         (d / "branch").write_text(git("symbolic-ref", "-q", "--short", "HEAD").stdout.strip() or "main")
         if (got := git("bundle", "create", "-q", str(d / "bundle"), "HEAD", f"--exclude=gfso/{project}/accepted",
-                       f"--branches=gfso/{project}/*")).returncode:
+                       f"--exclude=gfso/{project}/accepted-*", f"--branches=gfso/{project}/*")).returncode:
             raise OSError(f"{base}: its HEAD could not be bundled ({got.stderr.strip()[-300:]})")
         for n in ("bundle", "branch"):
             t.add(d / n, arcname=n)

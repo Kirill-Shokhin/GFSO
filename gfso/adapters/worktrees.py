@@ -24,6 +24,7 @@ import shutil
 import tempfile
 import threading
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from gfso.adapters import children, lfs
@@ -614,6 +615,27 @@ def _bundled(src, rev: str, nots: list, execution) -> bytes:
             ex.files.remove_matching(str(a.parent), [name])
 
 
+def move_result(base, ref: str, sha: str) -> str | None:
+    """THE one move of a result branch of the person's repository to `sha` — every landing's (`land`, a chat-performed
+    root's `_name_the_delivery`). The result it holds, where `sha` does not contain it, is kept first under
+    `<ref>-<UTC time>`, that name returned: a project made again under a deleted one's name, or a root whose earlier result
+    was never merged, landed over it and left it only in the reflog — and the result is the person's. The move itself is
+    from the value read, so a write between the two is refused, never overwritten unkept; either step failing raises
+    OSError, nothing moved."""
+    git_ = lambda *a: children.run(["git", "-C", str(base), *a], timeout=_SLOW, text=True, encoding="utf-8",
+                                   errors="replace", env=subprocess_env(extra={"GIT_NO_REPLACE_OBJECTS": "1"}))
+    old = git_("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").stdout.strip()
+    kept = None
+    if old and old != sha and git_("merge-base", "--is-ancestor", old, sha).returncode:
+        kept = f"{ref}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+        if (got := git_("update-ref", "-m", "gfso: the result a landing would have overwritten", kept, old, "")).returncode:
+            raise OSError(f"`{ref}` holds {old[:12]}, which the new result does not contain, and it could not be kept "
+                          f"as `{kept}`: {got.stderr.strip()[-300:]}")
+    if (got := git_("update-ref", "-m", "gfso: a root's accepted result", ref, sha, old)).returncode:
+        raise OSError(f"`{ref}` could not be set to {sha[:12]}: {got.stderr.strip()[-300:]}")
+    return kept
+
+
 def checked_out(base, ref: str) -> bool:
     """Is `ref` checked out in a worktree of the user's repository at `base`? The system lands only on a branch nobody
     works on: moved under their working tree, the files stay, and their next commit undoes what landed."""
@@ -626,7 +648,8 @@ def land(base, ref: str, execution, since: str | None, tree: str | None = None, 
     was imported from) lacks — whole where the user's repository lacks that too —, carried out through the port, and
     taken there by the user's own git: `fetch` from the bundle and `update-ref` of `ref` alone — no config nor hook of
     the place, never their working tree nor any branch of theirs; `ref` checked out in any worktree of theirs is
-    refused. `ref` standing is moved to the new commit (its reflog keeps where it stood)."""
+    refused. `ref` standing is moved to the new commit (`move_result`: a result it would no longer contain kept
+    first as `<ref>-<UTC time>`)."""
     sha = git(base, "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}", execution=execution).stdout.strip()
     # …no replace refs: an object they stand in for is not the one a checkout without them reads (critic, run)
     host = lambda *a: children.run(["git", "-C", str(base), *a], timeout=_SLOW, text=True, encoding="utf-8",
@@ -654,8 +677,7 @@ def land(base, ref: str, execution, since: str | None, tree: str | None = None, 
     # may still run in, and what lands is the issuer's PASS, never what stood there at landing (critic over a99ea34)
     if tree and (got := host("rev-parse", f"{sha}^{{tree}}").stdout.strip()) != tree:
         raise OSError(f"its HEAD {sha[:12]} holds tree {got[:12]}, not the {tree[:12]} its PASS accepted")
-    if (got := host("update-ref", "-m", "gfso: a root's accepted result", ref, sha)).returncode:
-        raise OSError(f"`{ref}` could not be set to {sha[:12]}: {got.stderr.strip()[-300:]}")
+    move_result(base, ref, sha)
     return sha
 
 

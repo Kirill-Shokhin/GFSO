@@ -288,7 +288,8 @@ repository's top with a commit is not copied in at all: the container refuses it
 (a subdirectory of a repository would carry its ignored files, `.env` among them). Your working tree and your branches are
 never written: when the root PASSes, its accepted result lands in your repository as the branch
 `gfso/<project>/accepted` (a `git fetch` of a bundle, without submodules, nothing else), to read, diff and merge
-when you choose; a later root's PASS moves that branch (its reflog keeps where it stood), and the landing is
+when you choose; a later root's PASS moves that branch, and an earlier result it does not contain (one you never merged) is first
+kept as `gfso/<project>/accepted-<UTC time>`, which deleting the project keeps too, and the landing is
 refused while the branch is checked out in any worktree of yours. So two projects on one project dir no longer see each other's
 accepted work until you merge their branches. Under `perform="in_chat"` your own agent works in your repository on this
 host, and its delivery is the commit it stands on at DELIVER (what is not committed is no part of it and is named): the

@@ -8,6 +8,7 @@ from pathlib import Path
 from gfso import runtime, tools_llm as TL
 from gfso.adapters.execution import LocalExecution
 from gfso import workspaces as WS
+from gfso.adapters import worktrees as W
 from gfso.core.types import PLACES, nodes_root
 from gfso.runtime import ProjectRegistry
 
@@ -130,3 +131,50 @@ def test_with_no_git_the_deletion_completes(tmp_path, monkeypatch):
     _lay(tmp_path / "data" / "probe_inputs" / "doomed" / "root_1")
     reg.delete("doomed")
     assert not (tmp_path / "data" / "probe_inputs" / "doomed").exists() and not (tmp_path / "data" / "doomed.db").exists()
+
+
+def test_a_result_the_new_one_does_not_contain_is_kept_before_its_branch_moves(tmp_path):
+    """A project made again under a deleted one's name landed over the old result, left only in the reflog."""
+    git = _repo(tmp_path / "base")
+    ref = "refs/heads/gfso/p/accepted"
+    git("commit", "-q", "--allow-empty", "-m", "old result")
+    old = git("rev-parse", "HEAD").strip()
+    git("update-ref", ref, old)
+    git("checkout", "-q", "--orphan", "fresh")
+    git("commit", "-q", "--allow-empty", "-m", "an unrelated new result")
+    new = git("rev-parse", "HEAD").strip()
+    kept = W.move_result(tmp_path / "base", ref, new)
+    assert kept and kept.startswith(ref + "-") and git("rev-parse", kept).strip() == old, kept
+    assert git("rev-parse", ref).strip() == new
+    git("commit", "-q", "--allow-empty", "-m", "built on it")
+    assert W.move_result(tmp_path / "base", ref, git("rev-parse", "HEAD").strip()) is None, "contained: moved as before"
+
+
+def test_the_kept_results_stay_with_accepted_when_the_project_is_deleted(tmp_path, monkeypatch):
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("GFSO_HOME", str(tmp_path))
+    monkeypatch.setenv("GFSO_AGENTS_PATH", str(tmp_path / "agents.json"))
+    git = _repo(tmp_path / "repo", "refs/heads/gfso/doomed/accepted", "refs/heads/gfso/doomed/accepted-20261118T000000Z",
+                "refs/heads/gfso/doomed/root", "refs/heads/gfso/doomed/accepted-criteria")
+    reg = ProjectRegistry(default_storage="sqlite", default_llm="stub", seed=False)
+    reg.engine("doomed")
+    runtime.AgentRegistry().register("doomed-exec", "llm-executor", workdir=str(tmp_path / "repo"), project="doomed")
+    reg.delete("doomed")
+    assert sorted(r for r in git("for-each-ref", "--format=%(refname)").split() if "gfso" in r) == [
+        "refs/heads/gfso/doomed/accepted", "refs/heads/gfso/doomed/accepted-20261118T000000Z"]
+
+
+def test_a_landing_through_land_keeps_the_result_it_would_have_lost(tmp_path):
+    """The wiring: `land` itself, on this host, over an `accepted` the new result does not contain — a mutation that put
+    a plain update-ref back at the call site passed every test before this one (critic)."""
+    git = _repo(tmp_path / "base")
+    ref = "refs/heads/gfso/p/accepted"
+    git("commit", "-q", "--allow-empty", "-m", "the earlier result")
+    old = git("rev-parse", "HEAD").strip()
+    git("update-ref", ref, old)
+    git("checkout", "-q", "--orphan", "fresh")
+    git("commit", "-q", "--allow-empty", "-m", "a new root's result")
+    new = git("rev-parse", "HEAD").strip()
+    assert W.land(tmp_path / "base", ref, LocalExecution(), None, rev=new) == new
+    refs = dict(line.split() for line in git("for-each-ref", "--format=%(refname) %(objectname)").splitlines())
+    assert refs[ref] == new and [r for r, s in refs.items() if r.startswith(ref + "-") and s == old], refs
