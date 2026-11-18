@@ -1376,7 +1376,8 @@ div.gp-mode .gp-needs { display: block; margin-top: 4px; }
 .pn-meta .tally { margin-left: 12px; }
 
 /* ============ The project list — the goal constructor's slide-over, a run found by what and when ============ */
-.project-panel { width: min(760px, 70vw); z-index: 31; }
+/* …never narrower than a row's fixed columns need (600 px): at 70vw a window just past the phone width cut the cost off */
+.project-panel { width: min(760px, max(70vw, 600px), 100%); z-index: 31; }
 body.no-project .project-panel { width: 100%; padding-inline: max(20px, calc((100% - 960px) / 2)); }
 body.no-project .project-panel .sidebar-close, body.no-project #hd-quality { display: none; }
 body.no-project .header > .role-select:not(.mine-as)::after { display: none; }
@@ -1386,7 +1387,9 @@ body.no-project .header > .role-select:not(.mine-as)::after { display: none; }
 .pl-bar .list-add { margin: 0; white-space: nowrap; }
 .pl-day { font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: var(--tr-mono);
           color: var(--ink-caption); padding: 14px 0 4px; border-bottom: 1px solid var(--hair); }
-.pl-row { display: grid; grid-template-columns: 44px 1fr 150px 40px 120px 64px; gap: 10px; align-items: baseline;
+/* the run's column gives way to the fixed ones (minmax 0): a long name held it at its full width and pushed the cost past
+   the list's edge between 721 and ~770 px (critic) */
+.pl-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 150px 40px 120px 64px; gap: 10px; align-items: baseline;
           padding: 7px 6px; border-bottom: 1px solid var(--hair-soft); color: var(--ink); text-decoration: none; }
 .pl-row:hover { background: var(--hair-soft); }
 .pl-row.pl-head, .pl-row.pl-head:hover { background: none; cursor: default; font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tr-mono); text-transform: uppercase; color: var(--ink-soft); padding-top: 2px; padding-bottom: 2px; }
@@ -1508,6 +1511,9 @@ button.rs-switch { cursor: pointer; min-height: 32px; }   /* a finger's target, 
     .dk-now.dk-one + .dk-chips { max-width: 100%; }
     .dk-live { min-width: 0; }
     .dk-strip.fit .dk-live, .dk-live { overflow: hidden; }
+    /* …on a phone the chip says the node alone; who works it and since when are in its tip: kept, the chip's edge cut them
+       to a first letter («○ Pars… g», critic) */
+    .dk-live span { display: none; }
     .dk-strip.fit .dk-live em, .dk-live em { flex: 0 1 auto; min-width: 5ch; white-space: nowrap; }
     .need { max-width: none; }   /* cut mid-word at the screen's edge (critic 5): whole, the row scrolls */
     /* an Events head wraps: why the node fails takes a line of its own — on one line it was squeezed to nothing (critic 12) */
