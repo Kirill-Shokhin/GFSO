@@ -19,7 +19,7 @@ import uuid
 from abc import ABC, abstractmethod
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .primitives import (
     TaskId, AgentId, Task, CheckResult, Recommendation,
@@ -86,6 +86,12 @@ class StoragePort(ABC):
         for a copy of every node at every step — 2,344 whole copies for one question on a 421-node graph, quadratic
         in its size (measured 2026-11-13). A store that keeps its nodes answers with them as they are."""
         return {str(t.id): t for t in self.get_all_tasks()}
+
+    def kept(self, key, read: Callable[[], object]):
+        """`read()`'s answer, kept until this store's next write: a reading derived from the whole graph (its live
+        edges, a subtree, the waits) asked again at every node a question walks made each answer grow with the
+        graph's square (measured 2026-11-18). A store that cannot tell a write reads anew — the answer is the same."""
+        return read()
 
     @abstractmethod
     def get_children(self, task_id: TaskId) -> list[Task]:

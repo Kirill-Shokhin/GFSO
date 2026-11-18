@@ -13,6 +13,9 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 ## [Unreleased]
 
 ### Changed
+- Moves and the next steps stay fast on a large graph: a signal is answered in 0.6 s on a
+  2,000-node graph where it took 10 s, `next_steps` in 0.5 s where it took 21 s, `get_graph` and `list_holes` likewise —
+  a question about the whole graph is read once per change to it, no longer again at every node it walks.
 - What is in work is read from the log alone: a node taken (EXECUTING, REWORKING) is in work whoever holds it and however
   they are connected. The server no longer keeps who is connected: the presence of 0.4.0 (a node a live party works over
   the MCP door seen worked while connected) is removed, `working` in `/api/runtime` is an empty list, and the page's live

@@ -59,14 +59,22 @@ class AuditLog:
 
     def __init__(self, storage=None):
         self._entries: list[AuditEntry] = []
+        # …and each node's entries beside them: one node's history read by scanning the whole log, at every node a
+        # question walks, was the quadratic of a large graph's every answer (measured 2026-11-18)
+        self._by_task: dict[str, list[AuditEntry]] = {}
         self._storage = storage if (storage is not None and hasattr(storage, "append_audit")) else None
         if self._storage is not None:
-            self._entries = [self._from_row(r) for r in self._storage.load_audit()]
+            for e in map(self._from_row, self._storage.load_audit()):
+                self._keep(e)
+
+    def _keep(self, entry: AuditEntry) -> None:
+        self._entries.append(entry)
+        self._by_task.setdefault(str(entry.task_id), []).append(entry)
 
     def record(self, entry: AuditEntry) -> None:
         """Append one entry — the only way this log grows. History is never rewritten (Inv-7); a
         correction is a new entry, which is what makes `state = fold(log)` checkable."""
-        self._entries.append(entry)
+        self._keep(entry)
         if self._storage is not None:
             self._storage.append_audit(self._to_row(entry))
 
@@ -74,7 +82,7 @@ class AuditLog:
         """The log, whole or for one node, oldest first."""
         if task_id is None:
             return list(self._entries)
-        return [e for e in self._entries if e.task_id == task_id]
+        return list(self._by_task.get(str(task_id), ()))
 
     def last_at(self, task_id: TaskId, *, signal: Signal | None = None,
                 new_state: State | None = None) -> int:

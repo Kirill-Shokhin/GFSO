@@ -415,6 +415,8 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                 skipped INTEGER DEFAULT 0,
                 vacuous INTEGER DEFAULT 0
             );
+            -- one node's checks found without scanning every node's (each frontier step reads its own)
+            CREATE INDEX IF NOT EXISTS check_results_by_task ON check_results (task_id);
             CREATE TABLE IF NOT EXISTS recommendations (
                 task_id TEXT PRIMARY KEY,
                 suggestions_json TEXT NOT NULL
@@ -704,15 +706,15 @@ class SqliteStorage(_ProjectSettings, StoragePort):
 
     task_view = _tasks                          # …read-only: the store's own nodes (`StoragePort.task_view`)
 
+    def kept(self, key, read):
+        return self._kept.get(("derived", key), read)
+
     def get_children(self, task_id: TaskId) -> list[Task]:
         return [copy.copy(t) for t in self._kept.get("children", lambda: by_parent(self._tasks())).get(str(task_id), ())]
 
     def get_parent(self, task_id: TaskId) -> Optional[Task]:
-        with self._read() as c:
-            row = c.execute("SELECT parent_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        if row and row["parent_id"]:
-            return self.get_task(TaskId(row["parent_id"]))
-        return None
+        # …off the nodes kept since the last write: a query per call, at every node a question walks up from
+        return self.get_task(TaskId(t.parent_id)) if (t := self._tasks().get(str(task_id))) and t.parent_id else None
 
     def get_active_tasks(self) -> list[Task]:
         terminal = tuple(s.name for s in TERMINAL_STATES)

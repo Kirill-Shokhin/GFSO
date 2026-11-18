@@ -1,6 +1,7 @@
 """G = (N, E_D, E_Dep, sigma). Wraps StoragePort."""
 from __future__ import annotations
 
+import bisect
 import copy
 import dataclasses
 
@@ -339,6 +340,9 @@ class Graph:
         consumed the blocked node read as a Dep cycle that froze every sibling of the plan (AUTO
         json_parser, 2026-09-25). A confirmed record that would close a cycle refutes the plan's ordering,
         which only a re-decomposition restores (`dep_order_refutations`), and still counts in q_Dep."""
+        return list(self.kept(("dep_edges", adopted, closed), lambda: self._dep_edges(adopted, closed)))
+
+    def _dep_edges(self, adopted: bool, closed: bool) -> list:
         declared, stored = self._dep_records(ever=closed)
         if not closed:
             stored = [e for e in stored if not e.closed]
@@ -412,20 +416,15 @@ class Graph:
     def subtree_view(self, root_id: Optional[TaskId] = None) -> list[Task]:
         """`subtree` to READ, its nodes the store's own (`task_view`): a copy of every node at every call was the
         quadratic of a large graph's every question (measured 2026-11-13)."""
-        tasks = [t for t in self._storage.task_view().values() if t.state not in (State.CANCELLING, State.ABANDONED)]
         if root_id is None:
-            return tasks
-        root, by_parent = str(root_id), {}
-        for t in tasks:
-            by_parent.setdefault(str(t.parent_id), []).append(t)
-        seen, frontier = {root}, [root]
-        while frontier:
-            for child in by_parent.get(frontier.pop(), []):
-                if str(child.id) not in seen:
-                    seen.add(str(child.id))
-                    frontier.append(str(child.id))
-        seen |= {str(t.id) for t in tasks if str(t.id).startswith(root + ".")}
-        return [t for t in tasks if str(t.id) in seen]
+            return list(self.kept(("live",), lambda: [t for t in self._storage.task_view().values()
+                                                      if t.state not in (State.CANCELLING, State.ABANDONED)]))
+        return list(self.kept(("subtree", str(root_id)), lambda: subtree_of(live_index(self), str(root_id))))
+
+    def kept(self, key, read):
+        """`read()` kept until the store's next write (`StoragePort.kept`): a reading of the whole graph asked at each
+        node a question walks is made once."""
+        return self._storage.kept(key, read)
 
     def get_guard_context(self, task_id: TaskId) -> GuardContext:
         """What the FSM needs to decide a transition beyond the state itself: the rework counter and
@@ -638,6 +637,36 @@ class Graph:
 
 
 
+def live_index(graph: Graph) -> tuple[list, dict, list, dict]:
+    """(the live nodes in the store's order, {parent id: its live children}, their ids sorted, {id: its place}): the one
+    pass over every node each subtree is then walked in (`subtree_of`)."""
+    def read():
+        """The index, made from the live nodes."""
+        tasks = graph.subtree_view(None)
+        by_parent: dict = {}
+        for t in tasks:
+            by_parent.setdefault(str(t.parent_id), []).append(t)
+        return tasks, by_parent, sorted(str(t.id) for t in tasks), {str(t.id): j for j, t in enumerate(tasks)}
+    return graph.kept(("live_index",), read)
+
+
+def subtree_of(index: tuple, root: str) -> list[Task]:
+    """`root` and every live node beneath it by the parent edges, and every live node whose id spells it as an
+    ancestor (`Graph.subtree`), in the store's order — walked over `live_index`, not over every node."""
+    tasks, by_parent, ids, at = index
+    seen, frontier = {root}, [root]
+    while frontier:
+        for child in by_parent.get(frontier.pop(), []):
+            if str(child.id) not in seen:
+                seen.add(str(child.id))
+                frontier.append(str(child.id))
+    i = bisect.bisect_left(ids, root + ".")       # …the ids spelling its ancestry: one run of the sorted ids
+    while i < len(ids) and ids[i].startswith(root + "."):
+        seen.add(ids[i])
+        i += 1
+    return [tasks[j] for j in sorted(at[x] for x in seen if x in at)]
+
+
 def root_of(tasks: list[Task]) -> Optional[Task]:
     """THE root of this project — the one node that carries the goal, or None before there is one.
 
@@ -695,6 +724,10 @@ def parent_waits(graph: Graph) -> list:
     """(child → parent) for every live node under a parent: a parent waits on its parts, its PASS being their AND
     (Thm 1). Read beside E_Dep wherever a cycle of waits is asked — a Dep closing one through it is a wait no order
     ends (CHECK-2, §9.5)."""
+    return list(graph.kept(("parent_waits",), lambda: _parent_waits(graph)))
+
+
+def _parent_waits(graph: Graph) -> list:
     live = {str(t.id): t for t in graph.subtree_view(None) if t.state not in (State.CANCELLING, State.ABANDONED)}
     return [DepEdge(from_id=t.id, to_id=t.parent_id) for t in live.values()
             if t.parent_id is not None and str(t.parent_id) in live]
@@ -858,10 +891,26 @@ def dep_scope(graph: Graph, root_id: TaskId) -> tuple[list, dict[str, object]]:
     population is the SUBTREE: at the root that is the whole relation, and below it the seams
     that decomposition owns. Reported at the node whose plan declares them.
     """
+    edges, deadlines = graph.kept(("dep_scope", str(root_id)), lambda: _dep_scope(graph, root_id))
+    return list(edges), dict(deadlines)
+
+
+def _by_end(edges: list) -> tuple[list, dict]:
+    """(edges, {node id: the places in `edges` of those it is an end of})."""
+    by_end: dict = {}
+    for i, e in enumerate(edges):
+        for x in {str(e.from_id), str(e.to_id)}:
+            by_end.setdefault(x, []).append(i)
+    return edges, by_end
+
+
+def _dep_scope(graph: Graph, root_id: TaskId) -> tuple[list, dict[str, object]]:
     inside = {str(t.id): t for t in graph.subtree_view(root_id)}
-    known = {str(t.id) for t in graph.subtree_view(None)}
+    known = live_index(graph)[3]
+    adopted, by_end = graph.kept(("adopted_by_end",), lambda: _by_end(graph.dep_edges(adopted=True)))
     edges = []
-    for e in graph.dep_edges(adopted=True):
+    # …only the edges with an end inside can count: read off their ends, not by a pass over every edge at every node
+    for e in (adopted[i] for i in sorted({i for x in inside for i in by_end.get(x, ())})):
         ends = (str(e.from_id), str(e.to_id))
         if all(x in inside for x in ends):
             edges.append(e)

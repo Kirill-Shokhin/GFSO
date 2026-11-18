@@ -2363,8 +2363,12 @@ class Engine:
         return self._start_waits()[1]
 
     def _start_waits(self) -> tuple[dict, dict]:
-        edges = self._graph.dep_edges(adopted=True)
-        return start_waits(self._graph, lambda t: self.start_unit(t, edges))
+        """Read once per write of the graph: every reader of "may it start" walks it whole (`model.start_waits`)."""
+        def read():
+            """The waits, over E_Dep read once."""
+            edges = self._graph.dep_edges(adopted=True)
+            return start_waits(self._graph, lambda t: self.start_unit(t, edges))
+        return self._graph.kept(("start_waits",), read)
 
     def producers_awaited(self, task_id: TaskId, waits: "dict | None" = None) -> list[str]:
         """The producers whose pass this node's start waits on (`start_waits`). The one answer every reader of "may it

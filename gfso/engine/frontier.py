@@ -5,10 +5,11 @@ engine's doors, and every wait it names is read off the graph and the log. It wa
 second concern in the class that applies the signals (sync audit 2026-10-04, D-F10)."""
 from __future__ import annotations
 
+import weakref
 from typing import Optional
 
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
-from gfso.config import agent_id as _config_agent_id, how_it_is_waited
+from gfso.config import ONE_CALL, agent_id as _config_agent_id, how_it_is_waited
 from gfso.core.graph.model import root_of
 from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, Task, TaskId, Verdict, Wait,
                              settled_positive)
@@ -669,6 +670,22 @@ def _left_standing(left: list[str]) -> dict:
                                              "(§12.7), so no one is asked it any more; it is yours to weigh.")} if left else {}
 
 
+#: the last walk each frontier made in a door call, and what it was keyed on (`walked_once`)
+_WALKED: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def walked_once(frontier, root_id, walk):
+    """`walk()` once per door call (`ONE_CALL`) of a graph nothing wrote meanwhile: a move's reply and the news beside
+    it each walked the whole graph for one answer (measured 2026-11-18). Outside a call every walk is fresh — what a
+    walk reads besides the store (the claims, the clock) moves without a write."""
+    if (call := ONE_CALL.get()) is None:
+        return walk()
+    key = (call, root_id and str(root_id), frontier.engine.graph.kept(("written",), object))
+    if (last := _WALKED.get(frontier)) is None or last[0] != key:
+        _WALKED[frontier] = last = (key, walk())
+    return last[1]
+
+
 class Frontier:
     """The walk over the graph: every node that owes a move, in order, and — when none does — why nothing is open, how
     the root closed, or what holds it (`next_step(s)`)."""
@@ -1183,7 +1200,7 @@ class Frontier:
         Returns a dict: {complete, [task_id, name, state, action, criteria], directive}. `action` ∈
         {accept, execute, deliver, validate, resolve, rework, confirm_cancel}. For parallel delegation use
         next_steps (the full frontier)."""
-        result = self._frontier(root_id)
+        result = walked_once(self, root_id, lambda: self._frontier(root_id))
         if isinstance(result, dict):
             return result
         _, t, action, directive = result[0]
@@ -1199,7 +1216,7 @@ class Frontier:
         rework / resolve / deliver / confirm_cancel) are issuer-side and cheap — do them in the returned order
         before/between delegations. Returns {complete, steps: [step...]} (each step shaped like next_step's
         output + `parallel_ok`)."""
-        result = self._frontier(root_id)
+        result = walked_once(self, root_id, lambda: self._frontier(root_id))
         if isinstance(result, dict):
             # …the waits in EVERY answer: given only beside steps, a consumer's wait on its producer vanished for the
             # length of every validation, stuck or join (UI stream 2026-10-26)

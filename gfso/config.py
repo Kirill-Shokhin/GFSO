@@ -300,6 +300,9 @@ CLIENT_HEADER = "X-GFSO-Client"
 CLIENT_KINDS = ("code", "chat")
 #: the client kind of the connection whose call is being served, set by the MCP door for that call only
 CLIENT: contextvars.ContextVar = contextvars.ContextVar("gfso_client", default=None)
+#: the door call being served, set by the MCP door for that call only: what it reads twice of an unwritten graph — the
+#: frontier its move's reply and its news both carry — it reads once (`Frontier._frontier`)
+ONE_CALL: contextvars.ContextVar = contextvars.ContextVar("gfso_call", default=None)
 
 
 def launch_client() -> str | None:

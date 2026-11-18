@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
 
 from gfso import updates
 from gfso.config import (CALLER, CLIENT, CLIENT_HEADER, CLIENT_KINDS, DEFAULT_PROJECT, agent_id, caller_id, client_kind,
-                         how_it_is_waited, ROOT_ID, project_by_env)
+                         how_it_is_waited, ONE_CALL, ROOT_ID, project_by_env)
 from gfso.engine import Engine
 from gfso.engine.moves import SIGNERS
 from gfso import signin
@@ -342,6 +342,7 @@ def _bind(engine_or_registry, fn):
 
         A thread per call because a verb that blocks would otherwise stall the whole bridge.
         """
+        ONE_CALL.set(object())     # …this call's own: its reply and its news read one walk of an unwritten graph
         engine, call = _the_call(engine_or_registry, resolve, fn, project, ctx, args, kwargs)
         if call is None:
             return engine
