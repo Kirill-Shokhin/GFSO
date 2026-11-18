@@ -473,6 +473,7 @@ body.refused > :not(.refused-state) { display: none; }
 .stage { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 /* the deck dragged slides over a canvas sized once for its lowest (deck.js) */
 body.deck-drag .stage { position: relative; }
+body.deck-drag { user-select: none; cursor: ns-resize; }   /* …and while it is dragged nothing of the page is selected */
 body.deck-drag #cy { flex: none; }
 /* above the graph's tags (.cy-badges, z 5): the canvas now runs under the deck, so do they */
 body.deck-drag .deck { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; }

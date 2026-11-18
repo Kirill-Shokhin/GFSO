@@ -230,6 +230,8 @@ export function mountDeck() {
     // …by a pointer of any kind: a finger on a phone drags it as a mouse does on a desk (it took a mouse only)
     d.querySelector('.dk-grip').onpointerdown = e => {
         const y0 = e.clientY, h0 = d.offsetHeight;
+        // …a mouse's press starts no text selection: the drag swept the deck's words into one (the author, 2026-11-18)
+        e.preventDefault(); getSelection()?.removeAllRanges();
         // …over a canvas already as tall as the lowest deck leaves it (graph.js, gfso.css): nothing under the deck waits to be drawn
         const cv = document.getElementById('cy');
         cv.style.height = `${d.parentElement.clientHeight - 120}px`; document.body.classList.add('deck-drag');
