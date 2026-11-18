@@ -1394,8 +1394,10 @@ body.no-project .header > .role-select:not(.mine-as)::after { display: none; }
 .pl-row.cur { box-shadow: inset 2px 0 0 var(--acc); }
 .pl-time, .pl-mode, .pl-cost, .pl-res { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
 .pl-cost { text-align: right; }
-.pl-res { text-align: right; white-space: nowrap; }
-.pl-res .tally { margin-left: 8px; }
+/* a figure whole, the figures wrapping inside their column: nowrap over the row spilled «612 kB disk» into the cost, and a
+   margin before the first one set it off the row's other lines on a phone (critic, 2026-11-17) */
+.pl-res { text-align: right; }
+.pl-res .tally + .tally { margin-left: 8px; }
 .pn-round { margin-left: 12px; }
 .pn-round b { font-family: var(--font-display); font-weight: 650; color: var(--ui-text); }
 /* what Docker holds: the machine over the project list, a project's own in its deck view — counts as marks */
