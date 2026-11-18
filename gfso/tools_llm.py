@@ -1874,9 +1874,13 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
         engine.reviewed_in_its_file(root_id)
     if spec:
         pins = _decompose.PinsOnTheBase(execution_of(engine)).review(spec)
-        out[_planning.PINS] = pins if "run" in pins else {"not_run": [
-            "the checks were not run over the base: this project's work runs on this host, where the system runs no "
-            "check before the work — read each yourself: one that already holds on the base decides nothing"]}
+        # …on this host bash only read them (`PinsOnTheBase.here`): what it refused stands, none ran
+        if "run" not in pins:
+            pins = {**pins, "not_run": [*(pins["not_run"] if "parsed" in pins else ()),
+                                        "the checks were not run over the base: this project's work runs on this host, "
+                                        "where the system runs no check before the work — read each yourself: one that "
+                                        "already holds on the base decides nothing"]}
+        out[_planning.PINS] = pins
     if said:
         engine.emit_info("go", f"the go on the plan file, by the person: «{said[:300]}»")
         out["user_said"] = said

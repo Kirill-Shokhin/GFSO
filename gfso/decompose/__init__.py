@@ -34,7 +34,7 @@ from gfso.core.graph.model import root_of
 from gfso.core.protocol.procedure import admission_defects, criterionless
 from gfso.adapters.llm.stats import calls_of, fan, refused_by_limit
 from gfso.llm import llm_factory
-from gfso.observe import cannot_run, missing_program, on_the_base, printed, ran
+from gfso.observe import cannot_run, missing_program, on_the_base, parsed, printed, ran
 
 from .seams import deferral_problems, refused_deferrals, seam_problems, with_deferrals
 from gfso.inflight import staged
@@ -140,6 +140,11 @@ def _criterion(c: dict) -> Criteria:
     return Criteria(str(c.get("name", "")), check=tuple(Probe.of(p) for p in c.get("check") or ()))
 
 
+#: why a host project's pins are read and not run before the go (`PinsOnTheBase.review`)
+HERE = ("the project's work runs on this machine, and a plan's pins are a model's text no one has read yet: bash read "
+        "each one, running nothing of it — they run first at the work")
+
+
 class PinsOnTheBase:
     """The plan's pins run once each over the base before the go, where the checks run (`observe.on_the_base`). One that
     can run on no work, as bash or the place itself says (`observe.cannot_run`: bash refuses its text, the place its own
@@ -148,14 +153,16 @@ class PinsOnTheBase:
     (§12.16 (ii)); a closed plan's are said, not repaired. A program missing over no work is said, never repaired: the
     work or the pin itself may put it there. Never a gate: what the rounds leave is said in the plan's review (`review`).
     Lives across an authoring's rounds, a pin run once not run again. Nothing runs on this host: a plan's pins are text
-    a model wrote that no one has read yet — the review says they were not run."""
+    a model wrote that no one has read yet — on a host project bash only reads them (`observe.parsed`), so a text it
+    refuses is flagged as in a container, and the review says they were not run."""
 
     def __init__(self, execution):
         #: `seen` holds the rows of pins that ran (`observe.ran`); `skipped` why the others did not — retried next round
         self.ex, self.seen, self.skipped, self.spent = execution, {}, {}, 0.0
-        self.not_run = (None if execution is not None and execution.files is not HOST else
-                        "no execution apart from this host holds the project, and a plan's pins are a model's text no one "
-                        "has read yet — they run first at the work")
+        self.here = execution is not None and execution.files is HOST
+        self.not_run = (None if execution is not None else
+                        "no execution holds the project, and a plan's pins are a model's text no one has read yet — they "
+                        "run first at the work")
 
     @staticmethod
     def _pins(spec: dict, held: bool = False) -> list:
@@ -176,8 +183,8 @@ class PinsOnTheBase:
     @staticmethod
     def _flagged(rows: list) -> list[str]:
         """The repairer's line for each of `rows` [(node, criterion, probe, row)] that cannot run on any work."""
-        return [f"{node} / criterion {c.name}: its check `{p.command[:300]}` cannot run on any work — run once over the "
-                f"base before the go, it ended before anything the work builds could matter: {why}. Repair the check; no "
+        return [f"{node} / criterion {c.name}: its check `{p.command[:300]}` cannot run on any work — read before the "
+                f"go, it ends before anything the work builds could matter: {why}. Repair the check; no "
                 f"work can make it run" for node, c, p, row in rows if (why := cannot_run(row))]
 
     def _run(self, todo: list) -> None:
@@ -186,7 +193,7 @@ class PinsOnTheBase:
             return
         t0 = time.monotonic()
         try:
-            rows = on_the_base(self.ex, todo)
+            rows = (parsed if self.here else on_the_base)(self.ex, todo)
         except (OSError, RuntimeError, PlaceUnavailable, subprocess.TimeoutExpired) as e:
             # …this round's, not the plan's: what earlier rounds ran stands, and the next round copies the base again
             why = f"not run: the base could not be copied where the checks run ({str(e)[-200:]})"
@@ -199,7 +206,8 @@ class PinsOnTheBase:
 
     def review(self, spec: dict) -> dict:
         """What the plan file says of its pins: those that still cannot run, the programs bash found missing (for the
-        reader, never repaired), with the time they took, and those that did not run with why — or that none ran."""
+        reader, never repaired), with the time they took, and those that did not run with why — or that none ran. On a
+        host project bash only read them (`parsed`): none ran, and the review says so first."""
         if self.not_run:
             return {"not_run": [f"pins not run before the go: {self.not_run}"]}
         flags = self._flagged(rows := self._rows(spec))
@@ -211,9 +219,10 @@ class PinsOnTheBase:
                 if p.exact and row.get("rc") == 0 and "stdout" in row and printed(row, p.expect, True)]
         keys = {(p.command, p.inputs) for _, _, p, _ in rows}
         left = [f"`{k[0][:200]}`: {self.skipped[k]['note']}" for k in keys if k not in self.seen and k in self.skipped]
-        return {"run": sum(k in self.seen for k in keys), "seconds": round(self.spent, 1), "cannot_run": flags,
-                **({"programs_missing": missing} if missing else {}), **({"holds_on_the_base": held} if held else {}),
-                **({"not_run": [f"pins not run before the go: {x}" for x in left]} if left else {})}
+        not_run = [f"pins not run before the go: {x}" for x in ([HERE] if self.here else []) + left]
+        return {("parsed" if self.here else "run"): sum(k in self.seen for k in keys), "seconds": round(self.spent, 1),
+                "cannot_run": flags, **({"programs_missing": missing} if missing else {}),
+                **({"holds_on_the_base": held} if held else {}), **({"not_run": not_run} if not_run else {})}
 
 
 

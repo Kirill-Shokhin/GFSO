@@ -80,8 +80,8 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   `plan(request)` calls no model and hands back the plan file to fill — the goal in the person's words, a criterion
   with its check per thing they asked; the go on it calls none either. The system still fixes those checks in the graph
   before any work, runs them once over the base where a container holds the project — naming each that cannot run, or
-  already holds there and so decides nothing about the work; on this host it says none ran — never a gate, and a
-  validator other than the agent signs the root against them. `plan(request, model=...)` still has the system write it;
+  already holds there and so decides nothing about the work; on this host bash only reads each, running none, and it
+  says none ran — never a gate, and a validator other than the agent signs the root against them. `plan(request, model=...)` still has the system write it;
   `auto` keeps the system's planner. Measured on a fresh client: the system's plan took 10 of 18 minutes where the bare
   agent took half of one, and grew 3 asked requirements into 9 criteria.
 - Under `solo` and `semi` a new root's go, by any route (a plan file, a spec, a request), carries the person's own words
@@ -120,6 +120,11 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   the credential that lifted it.
 - `gfso doctor` no longer tells a person their own chat's work needs no credential: the system's own calls — a plan's
   author, every validator — need one in every mode.
+- On a project whose work runs on this machine, a plan's check that bash refuses as written (an unquoted `(`, an
+  unclosed quote) is found before the go and sent to the plan's repair, as on a container project: bash reads each
+  check (`bash -n`) and runs nothing of it. Such checks used to reach the go unrepaired, with the plan saying only
+  that its checks had not been run; it still says they have not been run, only read. A plan a solo chat filled
+  and handed in is read so too.
 - A customer's notes on a plan are read, beside its goal, for the demands they make on the delivered result, a later
   note standing over an earlier one it contradicts; a note's directive about the plan's own text (keep this check,
   change only that input, how a declaration is written) is answered by the plan's change and becomes no duty no check

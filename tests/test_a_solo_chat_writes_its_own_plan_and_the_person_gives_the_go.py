@@ -16,6 +16,7 @@ import time
 import pytest
 
 from gfso import decompose as DEC, tools_llm as TL
+from gfso.adapters import execution as E
 from gfso.core.types import AgentId, Mode, Signal, SignalData, TaskId
 from gfso.decompose import artifact as A
 from gfso.engine import PERSONS_WORDS
@@ -204,3 +205,21 @@ def test_a_record_made_before_roots_were_told_apart_is_its_one_roots(no_model):
     _gone(e, _filled(TL.plan(e, ASKED)["text"]))
     e.graph.store_setting("at_the_go", json.dumps({"goal_as_given": ASKED, "user_said": "старое", "not_imported": []}))
     assert TL._tools.at_the_go(e)["by_root"] == {"root": {"goal_as_given": ASKED, "user_said": "старое", "not_imported": []}}
+
+
+@pytest.mark.skipif(not E.LocalExecution().shell(), reason="no bash on this host")
+def test_a_host_projects_hand_filled_check_bash_refuses_is_named_at_the_go_and_nothing_runs(no_model, monkeypatch,
+                                                                                               tmp_path):
+    """The go on a plan the person filled, on a project whose work runs here: bash's reading of each check stands in
+    the go's answer, as for a plan the system wrote (`PinsOnTheBase.here`) — not replaced by a line that none ran."""
+    monkeypatch.setattr(DEC, "on_the_base", lambda *a: pytest.fail("a plan's check ran on this host before the go"))
+    monkeypatch.setattr(TL, "execution_of", lambda *a, **k: E.LocalExecution())
+    mark = tmp_path / "ran"
+    e = _engine(Mode.SOLO)
+    unclosed = f"command = \"touch '{mark.as_posix()}'; printf 'x | ./wc2\""
+    text = _filled(TL.plan(e, ASKED)["text"]).replace("command = 'seq 2 | ./wc2'", unclosed, 1)
+    assert TL.plan(e, plan=text)["refused_by_the_go"] == []
+    _, out = _gone(e, text)
+    pins = out[TL._planning.PINS]
+    assert pins["parsed"] == 1 and "counts" in pins["cannot_run"][0], pins
+    assert "this host" in pins["not_run"][-1] and not mark.exists(), pins

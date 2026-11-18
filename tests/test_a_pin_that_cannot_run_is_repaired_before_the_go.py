@@ -2,7 +2,8 @@
 itself says it — bash, and `bash -n`, refuse its text; the place refuses its own fixture by its name — decides nothing
 on any work (form item (1), §20.10). s16b lost ~7 min to two such, found only by the executor's dispute. Each goes to
 the planner's repair with bash's own words (§12.16 (ii)); what stays is said in the plan file's review and is open in
-the plan's answer; with nowhere to run them the review says they were not run. Nothing is read into a pin's output:
+the plan's answer. On a host project bash only reads them (`bash -n`), nothing of them runs before the go, and the
+review says they were not run; with no execution, that none was. Nothing is read into a pin's output:
 three critics' rounds found sound pins flagged by every such reading. A program missing over no work is said, never
 repaired. Never a gate.
 
@@ -10,8 +11,9 @@ CONTROLS: make `cannot_run` return None for a syntax error and the first classif
 `rc == 2` and the syntax line of a program the pin ran is flagged; drop its `bash_n == 2` and the nested shell's words
 are flagged; drop the `bash -n` run from `on_the_base` and s16b is no longer flagged live; read any OSError laying a
 pin alone as its own and "No space left on device" is flagged; drop `pins.flags` from `_repaired_before_build`'s list
-and the repair is never told; set `not_run` to None for a host execution and the on-the-base runner is reached; read a
-`PlaceUnavailable` laying inputs as the pin's own and the place's pins are flagged; keep a not-run row in `seen` and the
+and the repair is never told; run a host project's pins over the base (`on_the_base` for `parsed`) and they run
+before the go; drop `rc`'s default in `cannot_run` and a host's refused pin is not flagged; leave the path of a host's
+bash in its words and none is flagged; read a `PlaceUnavailable` laying inputs as the pin's own and the place's pins are flagged; keep a not-run row in `seen` and the
 later round never runs it; drop "did not finish" from `observe.ran` and a pin that hit its own limit is run again; latch
 a base-copy failure and the later round's pins never run; pass `None` for the pins in `planning.author`, in
 `planning.refine`, in `_pin_by_part` or in the sufficiency round and that path's repair is never told; drop the
@@ -297,12 +299,40 @@ def test_a_closed_plan_is_not_refused_for_a_pin_its_flags_are_said(monkeypatch, 
     assert len(pins.review(spec)["cannot_run"]) == 1
 
 
-@pytest.mark.parametrize("execution", [None, SimpleNamespace(files=HOST)])
-def test_with_nowhere_apart_to_run_them_the_plan_says_its_pins_were_not_run(monkeypatch, execution):
+def test_with_no_execution_the_plan_says_its_pins_were_not_run(monkeypatch):
     monkeypatch.setattr(D, "on_the_base", lambda *a: pytest.fail("a plan's pins ran on this host"))
-    pins = D.PinsOnTheBase(execution)
+    monkeypatch.setattr(D, "parsed", lambda *a: pytest.fail("no execution names a bash to read them"))
+    pins = D.PinsOnTheBase(None)
     assert pins.flags(_plan_of(_crit("a", S16B))) == []
     assert pins.review(_plan_of(_crit("a", S16B)))["not_run"][0].startswith("pins not run before the go")
+
+
+HOST_BASH = E.LocalExecution().shell()
+
+
+@pytest.mark.skipif(not HOST_BASH, reason="no bash on this host")
+def test_a_host_projects_pin_bash_refuses_is_flagged_before_the_go_and_nothing_of_any_pin_runs(monkeypatch, tmp_path):
+    """The author's own path (solo in_chat, executor on this machine): a pin no work can pass reaches the repair as in a
+    container, read by bash and never run — not one command of any pin, however it is written."""
+    monkeypatch.setattr(D, "on_the_base", lambda *a: pytest.fail("a plan's pins ran on this host before the go"))
+    mark = tmp_path / "ran"
+    pins = D.PinsOnTheBase(E.LocalExecution())
+    spec = _plan_of(_crit("a", S16B), _crit("b", f"touch '{mark.as_posix()}' && ./wordtop x"),
+                    *(_crit(k, v) for k, v in IMAGE_PINS.items() if k != "s16b"))
+    assert _names_of(pins.flags(spec)) == ["a"]
+    assert not mark.exists(), "a pin's command ran before the go"
+    review = pins.review(spec)
+    assert _names_of(review["cannot_run"]) == ["a"] and "syntax error" in review["cannot_run"][0], review
+    assert review["parsed"] == len(IMAGE_PINS) + 1 and "run" not in review, review
+    assert review["not_run"] == [f"pins not run before the go: {D.HERE}"], review
+
+
+def test_a_host_bash_naming_itself_by_its_path_is_read_as_bash():
+    said = "/usr/bin/bash: -c: line 1: syntax error near unexpected token `('\n/usr/bin/bash: -c: line 1: `x (y'\n"
+    host = SimpleNamespace(files=HOST, shell=lambda: "C:/Program Files/Git/bin/bash.exe", temp_root=lambda: ".",
+                           run=lambda *a, **k: subprocess.CompletedProcess(a, 2, "", said))
+    (row,) = O.parsed(host, [(None, SimpleNamespace(command="x (y", inputs=()))]).values()
+    assert cannot_run(row).startswith("bash: -c: line 1: syntax error"), row
 
 
 def test_a_base_that_cannot_be_copied_is_said_not_passed(monkeypatch):

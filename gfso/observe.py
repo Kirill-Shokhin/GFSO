@@ -26,6 +26,7 @@ from typing import Optional
 
 from dataclasses import replace
 
+from gfso.config import host_env
 from gfso.core.types import IN_THE_WORKS_PATH, PlaceUnavailable
 from gfso.adapters.execution import ended_by_watch, past_disk
 from gfso.adapters.snapshots import WATCHED, changed_or_unknown, on_disk, snapshot, swap
@@ -222,9 +223,34 @@ NOT_RUN = "not run: "
 
 
 def ran(row: dict) -> bool:
-    """Did this row's pin run, or fail on what is its own (its inputs)? Else the place or the time stopped it: nothing
-    of the pin is known."""
-    return "rc" in row or str(row.get("note") or "").startswith(("did not finish", NOT_LAID))
+    """Is what this row's pin decides known — it ran, failed on what is its own (its inputs), or bash read its text
+    (`parsed`)? Else the place or the time stopped it: nothing of the pin is known."""
+    return "rc" in row or "bash_n" in row or str(row.get("note") or "").startswith(("did not finish", NOT_LAID))
+
+
+def parsed(ex, probes) -> dict:
+    """{(command, inputs): {bash_n, stderr} or {note}} — each distinct pin of `probes` [(criterion, probe)] read by
+    `bash -n` alone where no place apart from this host holds the project: nothing of it runs — no expansion, no
+    program, no file it names — so a text bash refuses is known before the go, while what it does is left to the work
+    (the person's word to run agents here covers the work, not a model's text before they read it). No startup file is
+    read: an inherited BASH_ENV is the one script a non-interactive bash would source."""
+    if not (bash := ex.shell()):
+        return {}
+    env = {k: v for k, v in host_env().items() if k not in ("BASH_ENV", "ENV")}
+    out = {}
+    for _, p in probes:
+        try:
+            r = ex.run([bash, "--norc", "--noprofile", "-O", "extglob", "-n", "-c", p.command], cwd=ex.temp_root(),
+                       timeout=10, env=env)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            out[(p.command, p.inputs)] = {"note": f"{NOT_RUN}bash could not read it ({e})"}
+            continue
+        # …said as bash in a container says it: this host's bash names itself by its path
+        out[(p.command, p.inputs)] = {"bash_n": r.returncode, "stderr": _ITSELF.sub("bash: -c: ", r.stderr or "")}
+    return out
+
+
+_ITSELF = re.compile(r"^[^\n]*?bash(?:\.exe)?: -c: ", re.M)
 
 
 def _laid(ex, at: Path, todo: dict) -> dict:
@@ -284,13 +310,14 @@ def cannot_run(row: dict) -> Optional[str]:
     into its output: its own input file the place refused to lay by its name, or its text that `bash -n` refuses
     (`bash_n` 2) where the run ended 2 on bash's syntax line. Both, since either alone misreads: a shell the pin
     started refuses ITS text over no work (`bash -c "[[ $(./wordtop) == a ]]"`, `bash -n` 0), and `bash -n` refuses a
-    text a run accepts (`shopt -s extglob` then `!(x)`, run 0). None for any other run: a pin is not expected to pass
+    text a run accepts (`shopt -s extglob` then `!(x)`, run 0 — the parse now takes extglob too). A text read and not
+    run (`parsed`, no `rc`) has only bash's word: flagged on it. None for any other run: a pin is not expected to pass
     over no work; a failed redirect, a missing program, are no such run — the pin may yet go on, or put the program
     there (`missing_program`): three rounds of reading output flagged sound pins (critics)."""
     note, err = str(row.get("note") or ""), (row.get("stderr") or "").replace(IN_THE_WORKS_PATH, "")
     if note.startswith(NOT_LAID):
         return note
-    if row.get("rc") == 2 and row.get("bash_n") == 2 and _SYNTAX.search(err):
+    if row.get("rc", 2) == 2 and row.get("bash_n") == 2 and _SYNTAX.search(err):
         return " ".join(_SAID.findall(err))[:400]
     return None
 
