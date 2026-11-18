@@ -577,9 +577,10 @@ body.deck-drag .deck { position: absolute; left: 0; right: 0; bottom: 0; z-index
 /* the tag goes DOWN into the part: an arrow down after its count, as the panel's «Open its N parts ↓» — a ▸ before it read
    as unfolding in place (the author, 2026-11-17: «треугольник выглядит как для разворота а не погружения») */
 .cy-fold::after { content: '\00A0\2193'; }
-.cy-fold.pressing { background: var(--ink); color: var(--bg); }
-.cy-fold.pressing .tally, .cy-fold.pressing .tally b, .cy-fold.pressing .tally i,
-.cy-fold.pressing.asks .tally b, .cy-fold.pressing .acc, .cy-fold.pressing .acc .tally b, .cy-fold.pressing.asks { color: var(--bg); }
+/* pressed, and under a mouse the same: lit only on a press, hovering it said nothing (the author, 2026-11-18: «наведение на
+   parts не подсвечивает кнопку, хотя нажатие подсвечивает. контринтуитивно»); a finger never hovers it (pointer-events below) */
+.cy-fold:is(.pressing, :hover) { background: var(--ink); color: var(--bg); }
+.cy-fold:is(.pressing, :hover) :is(.tally, .tally b, .tally i, .acc, .acc .tally b), .cy-fold.asks:is(.pressing, :hover) { color: var(--bg); }
 /* glued to its node at any zoom: its width, a type that fits; what asks by its colour, the counts in its tip (the author, 11-04) */
 .cy-fold:not(.kf) { padding: 3px 0 4px; overflow: hidden; font-size: 10px; border-color: var(--ink-soft); }
 .cy-fold .tally { font-size: inherit; }
