@@ -714,7 +714,7 @@ def _told_resources(app, loop, q):
 
 
 def _told_list(loop, q, kind: str, field: str):
-    """A server-wide list changed — the work in flight, the nodes a live party works: the whole list after it, every
+    """A server-wide list changed — the work in flight: the whole list after it, every
     project's (the page keeps its own and marks the busy ones in its project list). It had polled `/api/runtime` every
     5 s for the first."""
     return lambda now: loop.call_soon_threadsafe(q.put_nowait, {"type": kind, field: now})
@@ -1345,7 +1345,7 @@ def _page_person() -> str | None:
 
 async def _pushed(websocket, q) -> None:
     """Send what the page is told until it closes — read as it closes, not at the next frame sent to it: a closed tab
-    stayed seen at work until a resources tick reached it, up to a minute, where a bridge's lease ends in seconds."""
+    held its queue until a resources tick reached it, up to a minute."""
     async def closed():
         """Until the page closes; then the push ends."""
         while (await websocket.receive())["type"] != "websocket.disconnect":
@@ -1362,8 +1362,8 @@ async def _pushed(websocket, q) -> None:
 
 
 async def _expiring(app, every: float = 3.0) -> None:
-    """Expire leases on the server's own clock: a console that died unannounced must stop being seen at work though
-    nobody reads `/api/runtime`."""
+    """Expire leases on the server's own clock: a console that died unannounced must stop counting as a session (a
+    restart's question, `sessions`) though nobody reads `/api/runtime`."""
     while True:
         await asyncio.sleep(every)
         try:

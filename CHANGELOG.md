@@ -13,6 +13,14 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 ## [Unreleased]
 
 ### Changed
+- What is in work is read from the log alone: a node taken (EXECUTING, REWORKING) is in work whoever holds it and however
+  they are connected. The server no longer keeps who is connected: the presence of 0.4.0 (a node a live party works over
+  the MCP door seen worked while connected) is removed, `working` in `/api/runtime` is an empty list, and the page's live
+  feed sends no `working` event.
+- The next step names the work in its holder's hands before any standing offer: a re-offered node is re-accepted first
+  only while consented work goes on beneath it, otherwise it is an offer taken when its work starts.
+- A server's start stops a project only where the system starts sessions of its own (SEMI, AUTO, a dispatched SOLO, or a
+  node the system holds): a SOLO performed in the chat runs on after a restart.
 - Running the system's executors on this machine, outside Docker, is the person's word given on their page (the projects
   list; `POST /api/local_agents`, a page session alone) and kept in `data/host_execution.json`. `GFSO_LOCAL_AGENTS` in the
   environment or `data/serve.json` no longer gives it: both are the agent's to write. Like the mode, it holds against
