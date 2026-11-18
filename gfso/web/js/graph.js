@@ -1,6 +1,6 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc, tally} from './dom.js';
-import {S, taskOf, whoOwes, mineNames, keep, nowOf, stateWord, handAsks, hasKids, goTo, goUp} from './state.js';
+import {S, taskOf, whoOwes, mineNames, keep, nowOf, inWorkOf, viewTasks, stateWord, handAsks, hasKids, goTo, goUp} from './state.js';
 import {bucketOf, contested, cancelled, nameOf, criteriaOf, delivered, closedByFail} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip, TOUCH} from './tip.js';
@@ -329,7 +329,11 @@ function placeBadges() {
     plane ??= layer.appendChild(Object.assign(document.createElement('div'), {className: 'cy-plane'}));
     // at work by the run's one rule; the pulse in the accent when this server has a process on it
     // (the graph may draw before the run is read: the same rule over the registry then)
-    const now = nowOf(), work = now.work;
+    // …and a node TAKEN and in work by the log is at work too, whoever took it — a person, an agent — with no process of this
+    // server on it: its dot unlit. Only the strip
+    // and the In work list said so, the graph showed nothing (the author, 2026-11-18: «задачи инженерки которые она взяла и
+    // подписаны in work никак не подсвечиваются»)
+    const now = nowOf(), work = new Set([...now.work, ...inWorkOf(viewTasks()).map(r => r.t.id)]);   // …the strip's own reading of this view
     // a narrow tag keeps its word in a smaller type: a bare «404» on the largest node read as an error's code (critic)
     const count = (w, n, word) => { const need = 22 + 6 * String(n).length + 6 * word.length;
         return tally(n, word, w < need ? ` style="font-size:${Math.max(7, 10 * w / need).toFixed(1)}px"` : ''); };
@@ -341,7 +345,7 @@ function placeBadges() {
         // …each a count as every count on the page (`tally`: the figure at its line's size — critic 5); a click on it unfolds
         const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="${hang}"${TIP.fold([f.held.length && `${f.held.length} in work`, f.work.length && `${f.work.length} acted on now`, f.decide.length && `${f.decide.length} waiting on a decision`, f.shut.length && `${f.shut.length} closed by FAIL`,
                 f.contested.length && `${f.contested.length} contested`, f.failing.length && `${f.failing.length} sent back`])}>${count(w, f.n, f.n > 1 ? 'parts' : 'part')}`
-            + (f.work.length ? `<i class="cy-live${f.work.some(now.lit) ? ' on' : ''}"${beat()}></i>` : '') + '</div>' : '';
+            + (f.work.length || f.held.length ? `<i class="cy-live${f.work.some(now.lit) ? ' on' : ''}"${beat()}></i>` : '') + '</div>' : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
         const shut = closedByFail(taskOf(id));
