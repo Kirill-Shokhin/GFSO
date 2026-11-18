@@ -5,7 +5,9 @@ places were made (`made`)."""
 from __future__ import annotations
 
 import json
+import logging
 import os
+import subprocess
 import uuid
 from pathlib import Path
 from gfso.adapters import worktrees as W
@@ -716,6 +718,31 @@ def drop_execution(project: str) -> None:
         hold_places(ex.files, False)
     drop_volumes(project)
     forget(project)
+
+
+def drop_node_branches(project: str, bases) -> list[str]:
+    """A deleted project's own refs in the person's repositories — every `gfso/<project>/*` branch but `accepted`, the
+    result that is theirs, and the system's `refs/gfso/<project>/*` — removed: kept, a project made again under the name
+    started its nodes from the old attempt's branches (`worktrees._start`); the author, 2026-11-18: «Давай удалять, это
+    разумно». The repositories: `bases` (its roles') and every base the system made a place of it beside (its record
+    under `<data>/places`, which a moved or project-less role is not on). A branch checked out in a worktree is the
+    person's in hand and stays; nothing here raises. The refs it removed."""
+    name, gone, here = component(project or DEFAULT_PROJECT), [], LocalExecution()
+    keep, places = f"refs/heads/gfso/{name}/accepted", data_dir() / PLACES
+    below = lambda d: [d / x for x in here.files.listdir(str(d))] if here.files.is_dir(str(d)) else []
+    made = [str(base_of_nodes(n)) for h in below(places) for n in below(h) if here.files.is_dir(str(n / name))]
+    for base in {str(b) for b in [*bases, *made] if b and here.files.is_dir(str(b)) and cheap_to_ask(str(b))}:
+        try:
+            refs = W.git(base, "for-each-ref", "--format=%(refname) %(worktreepath)", f"refs/heads/gfso/{name}/",
+                         f"refs/gfso/{name}/")
+            if refs.returncode:         # …a git older than `%(worktreepath)`: nothing removed, and said
+                logging.getLogger(__name__).warning(f"{base}: {name}'s node branches not read, kept: {refs.stderr.strip()}")
+            for ref, *held in (r.split(" ", 1) for r in (refs.stdout.splitlines() if refs.returncode == 0 else ())):
+                if ref != keep and not "".join(held).strip() and W.git(base, "update-ref", "-d", ref).returncode == 0:
+                    gone.append(f"{base}: {ref}")
+        except (OSError, subprocess.SubprocessError):
+            continue                    # …no git here, or one that hung: the deletion completes, the refs stay
+    return gone
 
 
 def rejected_reports_dir(project: str) -> Path:

@@ -35,6 +35,9 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   sequence as written; a report still unread after that repair is located where the model wrote the error.
 - A FAIL its build made, or a copy that is not the delivery, names no validator model and no tools: no model ran.
 - Inputs laid for a hand validation (`probe_inputs`) are kept under their project and go with its deletion.
+- Deleting a project removes its own branches and refs in the person's repositories (`gfso/<project>/*`,
+  `refs/gfso/<project>/*`), keeping `gfso/<project>/accepted` and any branch checked out in a worktree: a project made
+  again under the name started its nodes from the old attempt's code.
 
 ## [0.4.0] — 2026-11-17
 
