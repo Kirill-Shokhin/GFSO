@@ -192,7 +192,7 @@ def test_a_node_of_a_project_only_on_disk_covers_its_holders_write_and_its_recor
     recorded."""
     e = _in_chat(repo)
     _deliver(e)
-    (data := tmp_path / "data").mkdir()
+    (data := tmp_path / "data").mkdir(exist_ok=True)                   # …the roster's own, written while it delivered
     q = _in_chat(repo, project="q", storage=SqliteStorage(str(data / "q.db")))
     q.stop()
     monkeypatch.setenv("GFSO_DATA_DIR", str(data))

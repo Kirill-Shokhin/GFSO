@@ -636,6 +636,14 @@ def move_result(base, ref: str, sha: str) -> str | None:
     return kept
 
 
+def main_worktree(place) -> str:
+    """The repository the worktree `place` belongs to, named by its main worktree — which outlives every linked one,
+    as a linked worktree is removed when its work is merged; `place` itself where there is none (a bare repository's)."""
+    out = git(place, "worktree", "list", "--porcelain").stdout.splitlines()
+    top = out[0].removeprefix("worktree ") if out[:1] and out[0].startswith("worktree ") and "bare" not in out[1:2] else ""
+    return str(Path(top)) if top and is_repo_top(top) else str(place)
+
+
 def checked_out(base, ref: str) -> bool:
     """Is `ref` checked out in a worktree of the user's repository at `base`? The system lands only on a branch nobody
     works on: moved under their working tree, the files stay, and their next commit undoes what landed."""

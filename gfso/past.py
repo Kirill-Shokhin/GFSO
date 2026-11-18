@@ -14,10 +14,13 @@ landings, read by content below.
 
 - by the artifact (`past_the_system`): the commits made BY HAND in the repository during the project — those git's
   reflogs of the person's own lines — every worktree's HEAD and every branch but the system's — record as committed, amended, cherry-picked, rebased, not merely moved to by a
-  checkout, a reset, a fetch or a fast-forward pull; kept in the project's own record once read, as a reflog expires.
+  checkout, a reset, a fetch or a fast-forward pull; and, where no entry that made it survives (its worktree removed,
+  its branch deleted after its merge), one on those lines that no pull, fetch or clone brought, at the date git gave
+  it; kept in the project's own record once read, as a reflog expires.
   One made while a node attached there was taken is the obligation's — listed apart while that node is still taken
   (`in_work`). One made while none was is past the system unless its content is carried — its patch, or every path it
-  changes as it leaves it (a fold, a squash, an amend, a rebase's copy, a cherry-pick) —: by the system's work (each
+  changes as it leaves it, left by a commit outside its own history (a fold, a squash, an amend, a rebase's copy, a
+  cherry-pick; setting a path back to what a commit it stands on left is a change) —: by the system's work (each
   chat delivery's own range, from the HEAD its node's ACCEPT recorded to its delivered commit, and what its places'
   deliveries and its landings recorded, with what those reach — never a ref by its name alone, which any process can
   write under the system's), by what was made by hand while a node was taken
@@ -55,6 +58,8 @@ from gfso.witness import installed
 
 #: the reflog actions that make a commit where they are logged; the rest move a ref to one that stood
 MADE = re.compile(r"^(commit|cherry-pick|revert|am)\b|\((pick|squash|fixup|reword|edit|continue)\)")
+#: the reflog actions that bring onto a ref commits made elsewhere
+BROUGHT = re.compile(r"^(pull|fetch|clone)\b")
 #: the person's own branches: every one but the system's (`_theirs` adds every worktree's HEAD)
 THEIRS = ("--exclude=gfso/*", "--branches")
 #: the most commits past the system one read lists; `count` says how many there are
@@ -179,8 +184,9 @@ def spans(engine, agents) -> list[Span]:
 
 def at_work(spans_, repository_key: str, at: int, holders=None) -> list[Span]:
     """The one predicate: the spans attached to the repository that held the second `at` — of a holder in `holders`
-    where named. A change made when it is empty is attached to no obligation."""
-    return [s for s in spans_ if s.repository == repository_key and s.since <= at and (s.until is None or at < s.until)
+    where named. A change made when it is empty is attached to no obligation. Both ends' seconds are in: git keeps its
+    clock by whole seconds, and an agent's `commit` and the DELIVER after it fall in one."""
+    return [s for s in spans_ if s.repository == repository_key and s.since <= at and (s.until is None or at <= s.until)
             and (holders is None or s.holder in holders)]
 
 
@@ -232,14 +238,19 @@ def past_the_system(engine, agents) -> list[dict]:
 
 def _measured(engine, k, repo, window, chats, places, taken) -> dict:
     since, until = window
-    made, start = _kept(engine, k, repo, window)
+    logged, brought, start = _kept(engine, k, repo, window)
+    # …a commit on the person's lines that no surviving entry made — its worktree removed, its branch deleted after a
+    # merge — and none brought, was made here when git dated it
+    made = {**{c: int(t) for c, t in (ln.split() for ln in _git(
+        repo, "log", "--no-merges", f"--max-age={since}", "--format=%H %ct", *_theirs(k)).splitlines())
+        if c not in brought}, **logged}
     left = [c for c in _git(repo, "rev-list", "--no-merges", *_theirs(k)).split()
             if c in made and since <= made[c] and (until is None or made[c] <= until)]
     under = {c: at_work(taken, k, made[c]) for c in left}
     rest = [c for c in left if not under[c]]
     if rest:
         held = set(_git(repo, "rev-list", "--no-merges", "--ignore-missing", f"--max-age={since}", "--stdin",
-                        input="".join(f"{c}\n" for c in places)).split()) - made.keys() if places else set()
+                        input="".join(f"{c}\n" for c in places)).split()) - logged.keys() if places else set()
         for c, h in chats:
             held |= set(_git(repo, "rev-list", "--no-merges", "--ignore-missing", c, *([f"^{h}"] if h else ["-1"])).split())
         # …and what was made by hand while a node was taken there, delivered or not, the record's as much as git's
@@ -269,29 +280,53 @@ def _theirs(k) -> tuple:
 
 
 def _uncarried(repo, shas, by) -> list:
-    """Of `shas`, those whose change no commit of `by` carries: neither its patch nor every path's result."""
-    theirs, ours = _changes(repo, by), _changes(repo, shas)
-    patches, paths = {p for p, _ in theirs.values()} - {None}, set().union(*(q for _, q in theirs.values()))
-    return [c for c in shas if ours[c][0] not in patches and not ours[c][1] <= paths]
+    """Of `shas`, those whose change no commit of `by` carries: neither its patch nor every path's result — that one
+    left by a commit outside its own history: a copy (a fold, a squash, a rebase's) replaces what it copies, while a
+    commit that stands on one and sets a path back to what it left makes a change."""
+    theirs, ours, left = _changes(repo, by), _changes(repo, shas), {}
+    for c, (_, q) in theirs.items():
+        for x in q:
+            left.setdefault(x, set()).add(c)
+    patches = {p for p, _ in theirs.values()} - {None}
+
+    def _carried(c):
+        q = ours[c][1]
+        if not q <= left.keys():
+            return False
+        history = set(_git(repo, "rev-list", c).split())
+        return all(left[x] - history for x in q)
+    return [c for c in shas if ours[c][0] not in patches and not _carried(c)]
 
 
-def _kept(engine, k, repo, window) -> tuple[dict, int]:
-    """({commit: when} made by hand in the repository, from the reflogs of the person's lines and the project's record
-    of what they held before — a reflog expires (`gc.reflogExpire`), the record does not —, the time the record
-    begins). What falls in the window is kept."""
-    rec = json.loads(engine.graph.setting(KEPT + k) or '{"from": null, "made": {}}')
-    made, oldest = {}, None
-    for line in _git(repo, "log", "-g", "--date=unix", "--format=%H %gd %gs", *_theirs(k)).splitlines():
-        sha, at, what = (line.split(" ", 2) + ["", ""])[:3]
-        if t := re.search(r"@\{(\d+)\}$", at):
-            oldest = min(oldest or int(t[1]), int(t[1]))
-            if MADE.search(what):
-                made.setdefault(sha, int(t[1]))
+def _kept(engine, k, repo, window) -> tuple[dict, set, int]:
+    """({commit: when} made by hand in the repository, from the reflogs of the person's lines; {commit} brought in the
+    window onto any ref by a pull, a fetch or a clone — what the ref did not reach before, all it reaches where the
+    transfer first wrote it; the time the record begins), with the project's record of what they held before: a reflog
+    expires (`gc.reflogExpire`), the record does not. What falls in the window is kept."""
+    rec = {"from": None, "made": {}, "brought": [], **json.loads(engine.graph.setting(KEPT + k) or "{}")}
+    made, oldest, moves, mine = {}, None, {}, set(_theirs(k))
+    for line in _git(repo, "log", "-g", "--date=unix", "--format=%gD %H %gs", *_theirs(k), "--all").splitlines():
+        ref, sha, what = (line.split(" ", 2) + ["", ""])[:3]
+        if t := re.search(r"^(.+)@\{(\d+)\}$", ref):
+            name, at = t[1], int(t[2])
+            if name in mine or name.startswith("refs/heads/") and not name.startswith("refs/heads/gfso/"):
+                oldest = min(oldest or at, at)
+                if MADE.search(what):
+                    made.setdefault(sha, at)
+            moves.setdefault(name, {}).setdefault((at, sha), bool(BROUGHT.search(what)))
+    brought = set()
+    for line in moves.values():
+        line = list(line.items())                                     # …newest first: an entry's old value is the next's
+        for ((at, sha), transfer), ((_, was), _) in zip(line, [*line[1:], ((0, None), False)]):
+            if transfer and at >= window[0]:
+                brought |= set(_git(repo, "rev-list", "--no-merges", f"--max-age={window[0]}", sha,
+                                    *([f"^{was}"] if was else [])).split())
     start = min((x for x in (rec["from"], oldest) if x is not None), default=window[0])
     keep = {c: t for c, t in made.items() if t >= window[0]}
-    if not keep.keys() <= rec["made"].keys() or rec["from"] != start:
-        engine.graph.store_setting(KEPT + k, json.dumps({"from": start, "made": {**rec["made"], **keep}}))
-    return {**made, **rec["made"]}, start
+    if not (keep.keys() <= rec["made"].keys() and brought <= set(rec["brought"])) or rec["from"] != start:
+        engine.graph.store_setting(KEPT + k, json.dumps({"from": start, "made": {**rec["made"], **keep},
+                                                         "brought": sorted(brought | set(rec["brought"]))}))
+    return {**made, **rec["made"]}, brought | set(rec["brought"]), start
 
 
 def _changes(repo, shas) -> dict:

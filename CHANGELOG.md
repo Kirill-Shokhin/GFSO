@@ -21,7 +21,10 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   taken there is listed apart (`in_work`), whoever holds it, a direction taken for months included. A chat's ACCEPT now
   records the repository and HEAD it was taken in; a node taken before that record is attached to the repositories its
   project works in, where its holder performs in the chat. The reading is kept in the project's record, as a reflog
-  expires.
+  expires. A commit made in a worktree since removed, or on a branch deleted after its merge, is still read as made by
+  hand (at its own date) unless a pull or a fetch brought it; a chat's ACCEPT and DELIVER record the repository by its
+  main worktree, so its work stays the system's once a linked worktree is removed; a file set back to what an older
+  commit left is a change, not a copy of that commit; a commit in the second its node was delivered is that node's.
 - `gfso witness <project> --install`: a Claude Code hook the person installs in one repository — written into its
   `.claude/settings.local.json`, kept out of git, and recorded in `data/witness.json` as that project working there;
   `--remove` takes it out. After each tool call it compares git's status of the working tree; a change while the

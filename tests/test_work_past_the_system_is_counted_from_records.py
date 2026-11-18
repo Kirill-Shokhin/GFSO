@@ -1,7 +1,7 @@
 """Work past the system is counted from records, never refused (`past.past_the_system`, served in `metrics`): the
 commits made by hand in the repository during the project while no node attached there was taken, whose content no
 work of the system carries — a chat delivery's own range, what its places and landings made, by patch or every path's
-result — nor a commit that stood before the project, by patch; what is made while a node is taken there is listed
+result — nor a commit that stood before the project, likewise; what is made while a node is taken there is listed
 apart while it stays taken (`in_work`).
 
 Work before or outside consent cannot be gated (§16.9 #11, §12.16), and opacity inside the protocol is a measurable
@@ -75,6 +75,7 @@ def _take(e, node="root"):
 
 def _deliver(e):
     assert TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="f.txt", self_validation="PASS")["accepted"]
+    time.sleep(1.1)              # …git's clock is whole seconds: what is made in the DELIVER's second is the node's
 
 
 def _past(e) -> dict:
@@ -132,7 +133,7 @@ def test_a_fold_of_a_delivery_rebased_onto_a_moved_base_is_still_the_delivery(re
 def test_what_a_reflog_no_longer_holds_the_projects_record_keeps(repo):
     """A reflog expires (90 days by default) and took the hand commit with it; the reading it gave before is kept in
     the project's record. A record that begins after the project did says from when (`read_from`). CONTROL: `_kept`
-    reading the reflog alone — the count drops to 0."""
+    reading the reflog alone and `_measured` reading no commit's own date — the count drops to 0."""
     e = _in_chat(repo)
     _deliver(e)
     hand = _commit(repo, "hand.txt")
@@ -185,7 +186,9 @@ def test_a_squash_an_amend_a_rebase_and_a_cherry_pick_of_the_delivered_work_are_
 def test_a_pull_brings_no_work_past_the_system_and_a_push_hides_none(repo, tmp_path):
     """A fast-forward pull and a merge move the repository to commits made elsewhere — no reflog of it records making
     them —, while a commit made here and pushed to the person's own remote before any delivery is still made here
-    (excluding every remote hid it). CONTROL: `MADE` matching every reflog entry — the pulled commits count."""
+    (excluding every remote hid it). What a pull brought stays brought in the project's record once its entry expired.
+    CONTROL: `MADE` matching every reflog entry — the pulled commits count; the record's `brought` not read — they count
+    once the reflog expired."""
     up = tmp_path / "up"
     _git(tmp_path, "clone", "-q", str(repo), str(up))
     e = _in_chat(repo)
@@ -201,6 +204,10 @@ def test_a_pull_brings_no_work_past_the_system_and_a_push_hides_none(repo, tmp_p
     _git(repo, "push", "-q", "own", "main")
     got = _past(e)
     assert got["commits"] == [mine] and got["count"] == 1 and not set(far) & set(got["commits"]), got
+    _git(repo, "reflog", "expire", "--expire=now", "--all")                  # …the pulls' entries gone
+    later = _commit(repo, "later.txt")
+    got = _past(e)
+    assert got["commits"] == [later, mine] and not set(far) & set(got["commits"]), got
 
 
 def test_merging_a_delivered_branch_counts_neither_the_merge_nor_what_it_brings(repo):
@@ -244,6 +251,7 @@ def _cancelled(e):
     assert TL.TOOLS["signal"](e, "root", "CANCEL", "user", reason="dropped")["accepted"]
     assert TL.TOOLS["signal"](e, "root", "CONFIRM_CANCEL", "user", in_flight="nothing")["accepted"]
     assert e.graph.get_task("root").state.name == "ABANDONED"
+    time.sleep(1.1)              # …the cancel's second is the node's
 
 
 def test_a_node_taken_in_the_repository_holds_what_is_made_there_while_it_is_taken_on_any_line(repo, tmp_path,
@@ -446,3 +454,62 @@ def test_a_read_again_asks_git_one_rev_parse(repo, monkeypatch):
     _commit(repo, "g.txt")
     _past(e)
     assert len(ran) == 2
+
+
+def test_a_commit_made_in_a_worktree_since_removed_is_still_made_by_hand(repo, tmp_path):
+    """The everyday line here: a commit made on a temporary branch in a linked worktree, fast-forwarded into main, the
+    worktree removed and its branch deleted — every reflog entry that made it is gone with them. A commit on the
+    person's lines in the window that no record says was brought (a pull, a fetch) was made here, at its committer
+    date. CONTROL: `_made_here` reading nothing — the commit is made by no hand."""
+    e = _in_chat(repo)
+    _deliver(e)
+    _git(repo, "worktree", "add", "-q", "-b", "tmp", str(wt := tmp_path / "wt"))
+    hand = _commit(wt, "hand.txt")
+    _git(repo, "merge", "-q", "--ff-only", "tmp")
+    _git(repo, "worktree", "remove", str(wt))
+    _git(repo, "branch", "-q", "-d", "tmp")
+    got = _past(e)
+    assert (got["count"], got["commits"]) == (1, [hand]), got
+
+
+def test_a_node_taken_in_a_worktree_since_removed_still_holds_its_work(repo, tmp_path):
+    """A chat working in a linked worktree: its ACCEPT and DELIVER record the repository, which outlives the worktree —
+    the delivered commit, merged into main, and a commit made in main while the node was taken stay the
+    system's once the worktree is removed. CONTROL: the place recorded as is — the reading is lost with the worktree."""
+    _git(repo, "worktree", "add", "-q", "-b", "tmp", str(wt := tmp_path / "wt"))
+    e = _in_chat(wt)
+    _commit(wt, "f.txt", "v1\n")
+    main = _commit(repo, "m.txt")
+    time.sleep(1.1)                                            # …the reflog's clock is whole seconds
+    _deliver(e)
+    e.wait_idle()
+    _git(repo, "merge", "-q", "--no-edit", "tmp")
+    _git(repo, "worktree", "remove", str(wt))
+    _git(repo, "branch", "-q", "-d", "tmp")
+    assert {Path(x.repository).resolve() for x in e.audit_log() if x.repository} == {repo.resolve()}
+    got = _past(e)
+    assert (got["count"], main in got["commits"]) == (0, False), got
+
+
+def test_a_file_restored_to_what_a_commit_before_the_project_left_is_new_work(repo):
+    """A pre-project commit carries the content of a copy of it — a fold, a rebase — not of a commit standing on it: a
+    file set back to what an older commit left, that commit in its history, is a change made now. CONTROL: a carrier in
+    the commit's own history read as carrying it — the restore reads as carried."""
+    _commit(repo, "README", "y\n", when=OLD)
+    e = _in_chat(repo)
+    _deliver(e)
+    back = _commit(repo, "README", "x\n")
+    got = _past(e)
+    assert (got["count"], got["commits"]) == (1, [back]), got
+
+
+def test_a_commit_in_the_second_its_node_was_delivered_is_the_nodes(repo):
+    """The reflog's clock is whole seconds: a commit in the second the DELIVER closed its node's span cannot be read as
+    after it, and the agent's `commit && DELIVER` is the common case. CONTROL: the span's end read exclusively — the
+    commit reads past."""
+    e = _in_chat(repo)
+    _deliver(e)
+    at = int(next(x for x in e.audit_log() if x.signal.name == "DELIVER").timestamp.timestamp())
+    same = _commit(repo, "g.txt", when=f"@{at} +0000")
+    got = _past(e)
+    assert (got["count"], same in got["commits"]) == (0, False), got

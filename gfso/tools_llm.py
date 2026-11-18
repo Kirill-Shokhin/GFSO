@@ -2972,7 +2972,8 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
     session the system runs records its own place's commit (`reports.committed_place`); a directory that is no
     repository's top with a commit is read as before — said in the answer (`not_recorded`). An ACCEPT of such a chat
     carries the HEAD that repository stood on when the work was taken, and the repository: where and from when a node
-    is at work in it, as the system's own record (`past.spans`)."""
+    is at work in it, as the system's own record (`past.spans`). Either records the repository by its main worktree
+    (`W.main_worktree`): a linked worktree is removed once its work is merged, and the record must outlive it."""
     said, tid, sig = {}, TaskId(task_id), str(signal).strip().upper()
 
     def in_chat():
@@ -2981,7 +2982,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
         return performer(engine, agents, source)[0] is None and _delegation().validator_workdir(engine, agents, tid)
     if sig == "ACCEPT" and (place := in_chat()) and W.is_repo_top(place) and (
             head := W.git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()):
-        kw["_recorded"] = (None, head, str(place))
+        kw["_recorded"] = (None, head, W.main_worktree(place))
     if (sig == "DELIVER" and (st := engine.graph.get_state(tid)) in (State.EXECUTING, State.REWORKING)
             and (place := in_chat())):
         if W.is_repo_top(place):
@@ -2990,7 +2991,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
                 if inner := W.nested(place, commit):        # …refused where its sender lifts it, not FAILed at the copy
                     return {"accepted": False, "state": st.name, "error": f"NOT delivered — {W.nested_cause(inner)}"}
                 take_in(execution_of(engine), delivered_ref(engine, tid))   # …a project's volume, never this host
-                kw["_recorded"] = (tree, commit, str(place))
+                kw["_recorded"] = (tree, commit, W.main_worktree(place))
             except OSError as ex:
                 return {"accepted": False, "state": st.name,
                         "error": f"NOT delivered — the commit at {place} could not be recorded: {ex}"}
