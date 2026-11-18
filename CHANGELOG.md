@@ -63,6 +63,7 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   it allows it again on the page; until then such a project stops, saying so.
 
 ### Fixed
+- A verb that makes a project and is refused there (`create_task` on a name never opened) answers its refusal to a chat client, not "Cannot operate on a closed database": the reply read the news off the engine the refusal had just unmade.
 - A customer's notes on a plan are read, beside its goal, for the demands they make on the delivered result, a later
   note standing over an earlier one it contradicts; a note's directive about the plan's own text (keep this check,
   change only that input, how a declaration is written) is answered by the plan's change and becomes no duty no check

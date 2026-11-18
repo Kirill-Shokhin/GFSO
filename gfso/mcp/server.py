@@ -354,6 +354,8 @@ def _bind(engine_or_registry, fn):
         # checkpoint delivers the cancellation, which the SDK treats as the duplicate it suppresses.
         await anyio.lowlevel.checkpoint()
         out = _with_ui_link(fn.__name__, out, project or engine.project_name, engine)
+        if multi and not engine_or_registry.exists(engine.project_name):
+            return out             # …a refused call unmade the project it made (`kept_if_done`): its engine is closed, no news to read
         # …and the news read off the loop too: it reads the frontier under the storage's lock, as a verb does
         return await anyio.to_thread.run_sync(contextvars.copy_context().run, _with_news, ctx, fn.__name__, out, engine)
 
