@@ -161,14 +161,14 @@ class ProjectRegistry:
                         # …only where the system's own roles carry work: on a graph people hold the stop would stand
                         # their deadlines still, which the canon never suspends (§12.2), and there is no run to stop
                         # (the author, 2026-11-15: «там очевидно и часы вести не для кого»)
-                        if self._engines[name].system_carries_work():
+                        if self._engines[name].system_starts_sessions():
                             self._engines[name].pause("system", HELD_AT_START)
                     except Exception as ex:
                         print(f"gfso: project {name!r} could not be stopped at the server's start ({ex}) — it runs",
                               file=sys.stderr, flush=True)
                 # …and the same stop an earlier start left on a graph people hold comes off: nobody made it, and it
                 # stands their deadlines still (critic: the author's graphs kept it)
-                if _config.serves() and _held_at_start(self._engines[name].paused())                         and not self._engines[name].system_carries_work():
+                if _config.serves() and _held_at_start(self._engines[name].paused())                         and not self._engines[name].system_starts_sessions():
                     self._engines[name].resume("system")
                 try:  # delegation autostart rides with the engine (works under every entry point)
                     # LEFT: import cycle gfso.runtime ↔ gfso.delegate (delegate → gfso.tools_llm →
@@ -380,9 +380,9 @@ class ProjectRegistry:
             # …a project that stood at the server's start and is not opened yet is stopped as its first opening will
             # stop it — its file does not say so until then (PROJECT_CLOCK.md case 16), and the list read it running
             # — where a mode says the system carries it; a no-mode one is stopped only if its opening finds a machine's node
-            if p is not None and name in self._held and not p["stopped"] and p.get("mode"):
+            if p is not None and name in self._held and not p["stopped"] and p.get("starts_sessions"):
                 p = {**p, "stopped": {"by": "system", "at": self._started, "why": HELD_AT_START}}
-            elif p is not None and not p.get("mode") and _held_at_start(p["stopped"]) and name not in self._engines:
+            elif p is not None and not p.get("starts_sessions") and _held_at_start(p["stopped"]) and name not in self._engines:
                 p = {**p, "stopped": None}     # …as its opening will lift it, unless a machine's node holds it there
             eng = self._engines.get(name)
             if p is not None and eng is not None:     # …its stop as it stands: two writes in one tick of the file's stamp left a peek stale

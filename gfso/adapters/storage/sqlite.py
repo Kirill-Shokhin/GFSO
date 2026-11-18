@@ -20,7 +20,7 @@ from gfso.core.types import (
     TaskId, AgentId, Task, State, DoneReason, AutonomyLevel,
     Spec, Criteria, Probe, CriterionMapping, AcceptedRiskItem, Register,
     CheckResult, Recommendation, DepEdge, seams_apart,
-    StoragePort, TERMINAL_STATES, RETIRED_STATES, state_named,
+    StoragePort, TERMINAL_STATES, RETIRED_STATES, state_named, mode_starts_sessions,
 )
 from gfso.config import PIPELINE_PAGE, USAGE_PAGE
 from gfso.core.graph.model import PAUSE_KEY
@@ -168,6 +168,7 @@ def peek_project(db_path: str) -> Optional[dict]:
                                      default=None),
            "cost": round(spent[1] or 0.0, 2) if spent else 0.0,
            "mode": mode and _mode_named(mode[0]), "models": models, "moves": moves,
+           "starts_sessions": bool(mode) and mode_starts_sessions(_json_or_none(mode[0])),
            # the stop as set — {by, at, why} — the one record `Engine.paused` reads; None while it runs
            "stopped": _json_or_none(stop and stop[0])}
     if root is not None:

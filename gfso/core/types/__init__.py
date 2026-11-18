@@ -5,7 +5,7 @@ come to disagree, which this package exists to prevent.
 """
 from .enums import (
     State, Signal, Action, CriticVerdict, DoneReason, Verdict, Stage, FM,
-    AutonomyLevel, Mode, MutationType, Predictability, RevisionReason,
+    AutonomyLevel, Mode, mode_starts_sessions, MutationType, Predictability, RevisionReason,
     TERMINAL_STATES, NON_TERMINAL_STATES, REASSIGNABLE_STATES, QUASI_TERMINAL_STATES,
     RETIRED_STATES, state_named,
     EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS,

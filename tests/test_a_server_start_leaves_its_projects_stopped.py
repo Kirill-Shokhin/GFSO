@@ -15,11 +15,11 @@ from gfso.runtime import HELD_AT_START, ProjectRegistry
 from tests.support import make_engine
 
 
-def _stood(path, mode: str | None = "auto"):
+def _stood(path, mode: str | None = "auto", perform: str | None = None):
     """A project that stood when the server started; with a mode, the system carries its work."""
     e = make_engine(storage=SqliteStorage(str(path)))
     if mode:
-        e.graph.store_setting("mode", json.dumps({"mode": mode}))
+        e.graph.store_setting("mode", json.dumps({"mode": mode, **({"perform": perform} if perform else {})}))
     e.stop()
     return e
 
@@ -109,3 +109,18 @@ def test_the_stop_an_earlier_start_left_on_a_people_s_graph_comes_off(monkeypatc
     assert reg.about(["people"])["people"]["stopped"] is None, "listed as its opening will leave it"
     assert reg.engine("people").paused() is None, "the start's stop comes off at its opening"
     assert reg.engine("own").paused()["by"] == "someone", "a person's stop is never lifted for him"
+
+
+def test_solo_performed_in_the_chat_runs_on_and_the_modes_the_system_works_stand(monkeypatch, tmp_path):
+    """SOLO in the chat starts no session of the system's: a restart left the person's project «Stopped» over the nodes
+    their agent works, for nothing (ui's critic, 2026-11-18 — the author's next project runs exactly so). Where the
+    system starts sessions — SEMI, AUTO, a dispatched SOLO — the start's stop stands as before."""
+    for name, mode, perform in (("chat", "solo", "in_chat"), ("hands", "solo", "dispatch"), ("semi", "semi", "in_chat"),
+                                ("auto", "auto", None)):
+        _stood(tmp_path / f"{name}.db", mode=mode, perform=perform)
+    reg = _registry(monkeypatch, tmp_path)
+    about = reg.about(["chat", "hands", "semi", "auto"])
+    assert about["chat"]["stopped"] is None and reg.engine("chat").paused() is None, "solo in the chat runs on"
+    for name in ("hands", "semi", "auto"):
+        assert about[name]["stopped"]["by"] == "system", f"{name}: listed stopped before it is opened"
+        assert reg.engine(name).paused()["by"] == "system", f"{name}: opened stopped"

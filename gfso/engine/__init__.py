@@ -15,7 +15,7 @@ from gfso.core.types import (
     Spec, Criteria, Probe, AcceptedRiskItem, Register, register_of, Task, CheckResult, CriterionMapping, DepEdge, seams_apart,
     LLMProviderPort, AgentPort, StoragePort,
     ClockPort, SystemClock, RunnerPort, ThreadRunner,
-    TERMINAL_STATES, DoneReason, Mode, RevisionReason,
+    TERMINAL_STATES, DoneReason, Mode, RevisionReason, mode_starts_sessions,
 )
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
@@ -2785,8 +2785,16 @@ class Engine:
         """Do the system's own roles carry this project's work — a mode set, or a live node held or issued by a party
         the system moves for (`party_kind` machine or legacy)? Where none does, people hold everything and nothing of
         the system's would run into a refusal."""
-        if self.mode_kind() is not None:
-            return True
+        return self.mode_kind() is not None or self._machine_holds_a_live_node()
+
+    def system_starts_sessions(self) -> bool:
+        """Does the system start sessions of its own here (`mode_starts_sessions`), or hold a live node — what a server's
+        start stops until the person's Start. A SOLO performed in the chat starts none: after a restart it runs on, its
+        user-agent's next move meeting no stop the system made for nothing."""
+        return mode_starts_sessions(_project_mode(self._graph)) or self._machine_holds_a_live_node()
+
+    def _machine_holds_a_live_node(self) -> bool:
+        """A live node held or issued by a party the system moves for (`party_kind` machine or legacy)."""
         roster = self.workforce.roster()
         return any(party_kind(self._graph, str(p), roster) in ("machine", "legacy")
                    for t in self.all_tasks() if t.state not in TERMINAL_STATES
