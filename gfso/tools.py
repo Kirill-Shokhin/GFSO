@@ -2349,7 +2349,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
            blocker_task_ids: Optional[list] = None,
            external: bool = False, failed_criteria: Optional[list] = None,
            retire_findings: Optional[list] = None, build: Optional[str] = None,
-           _delivered: Optional[tuple] = None) -> dict:
+           _recorded: Optional[tuple] = None) -> dict:
     """Send a raw protocol signal (the lifecycle transaction): ACCEPT / DELIVER / PASS / FAIL / BLOCK /
     RESOLVE_BLOCK / CHALLENGE / ACCEPT_CHALLENGE / REJECT_CHALLENGE / CANCEL / CONFIRM_CANCEL. The lower-layer
     primitive. A signal is signed by the call's credential. The
@@ -2377,9 +2377,10 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
     with it, `justification` the recorded why; the only way a finding stops being demanded. The CHALLENGE must have
     named each by its id, and the ruling holds while its criterion reads as this act leaves it.
 
-    `_delivered`: (tree, commit, repository) the system recorded for a DELIVER (`tools_llm.signal`), never a caller's."""
+    `_recorded`: (tree, commit, repository) the system recorded for a DELIVER, or (None, the HEAD it was taken at, its
+    repository) for an ACCEPT — of a chat's work (`tools_llm.signal`), never a caller's."""
     sig = _p2p_signal(signal)
-    artifact, commit, repository = _delivered if sig == Signal.DELIVER and _delivered else (None, None, None)
+    artifact, commit, repository = _recorded if sig in (Signal.DELIVER, Signal.ACCEPT) and _recorded else (None, None, None)
     try:
         entry = engine.send_signal_sync(SignalData(
             signal=sig, task_id=TaskId(task_id), source=AgentId(source),

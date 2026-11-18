@@ -135,6 +135,12 @@ def root_issuer_key(task_id) -> str:
 PAUSE_KEY = "paused"
 #: The tech reports filed in the project — about the system, not the task (`Engine.tech_report`).
 TECH_KEY = "tech_reports"
+#: The writes a console's witness saw in the project's repository while no node of it was at work there (`Engine.witnessed`):
+#: work past the system, the project's own record — not the system's defect.
+WITNESS_KEY = "witnessed"
+#: Where the accepted result lies, kept for whoever reads the graph: {branch, sha, path} or {path} (`workspaces.land_accepted`);
+#: its sha is a commit the system made, as its deliveries' are (`past`).
+LANDED = "landed"
 #: The root whose plan the user handed in whole (`auto_decompose` with `spec`): under AUTO it is the user's, as the root's
 #: criteria are, and the system does not re-split it (`Engine.users_plan`).
 USERS_PLAN_KEY = "users_plan"

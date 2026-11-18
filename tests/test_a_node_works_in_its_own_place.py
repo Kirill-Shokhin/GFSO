@@ -725,7 +725,7 @@ def test_a_roots_commit_recorded_with_no_repository_is_said_never_landed_unsaid(
     base = _repo(tmp_path / "ws")
     e, agents = _by_hand_alone(tmp_path, base)
     tree, sha, _ = W.record_head(base, delivered_ref(e, "par"))
-    assert T.signal(e, "par", "DELIVER", "kirill", result="done", _delivered=(tree, sha, None))["accepted"]
+    assert T.signal(e, "par", "DELIVER", "kirill", result="done", _recorded=(tree, sha, None))["accepted"]
     _passed(e, "par")
     said = land_accepted(e, agents, e.graph.get_task(TaskId("par"))) or ""
     assert sha[:12] in said, "landed unsaid"
@@ -740,7 +740,7 @@ def test_a_roots_delivery_recorded_before_the_log_named_its_repository_is_found_
     base = _repo(tmp_path / "ws")
     e, agents = _by_hand_alone(tmp_path, base)
     tree, sha, _ = W.record_head(base, delivered_ref(e, "par"))
-    assert T.signal(e, "par", "DELIVER", "kirill", result="done", _delivered=(tree, sha, None))["accepted"]
+    assert T.signal(e, "par", "DELIVER", "kirill", result="done", _recorded=(tree, sha, None))["accepted"]
     _passed(e, "par")
     assert _name_the_delivery(e, e.graph.get_task(TaskId("par")), base) is None
     assert W.git(base, "rev-parse", "refs/heads/gfso/p/accepted").stdout.strip() == sha

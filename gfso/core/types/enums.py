@@ -34,6 +34,9 @@ class State(Enum):
 # exactly as CANCELLING is (§13.3: "CANCELLING is forced by IC (Inv-4), not by deadlock").
 TERMINAL_STATES = frozenset({State.DONE, State.ABANDONED})
 NON_TERMINAL_STATES = frozenset(s for s in State if s not in TERMINAL_STATES)
+# §12.1: consented work, REWORKING entered through a FAIL taken into rework — the executor still acting; the waits on an
+# issuer are steps of their own
+WORK_STATES = frozenset({State.EXECUTING, State.REWORKING})
 
 # R′ (§12.14 "Финальность"): DONE and ABANDONED are QUASI-terminal — a named extension of the
 # admissible set (Inv-6): re-ASSIGN (REOPEN) is admitted under a double gate (finality-gate of

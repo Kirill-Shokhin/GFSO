@@ -11,16 +11,13 @@ from typing import Optional
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.config import ONE_CALL, agent_id as _config_agent_id, how_it_is_waited
 from gfso.core.graph.model import root_of
-from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, Task, TaskId, Verdict, Wait,
-                             settled_positive)
+from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, WORK_STATES, Task, TaskId,
+                             Verdict, Wait, settled_positive)
 from .moves import Move
 from .parking import USERS_WAY
 from .validation import users_criteria, _l0_holes, _l2_undischarged, hole_kind, l2_gate_on, observation_blocker
 
 #: Actions whose signal is the ISSUER's to give (§11.2) — everything else is the executor's.
-
-#: Consented work (§12.1) — the executor still acting; the waits on an issuer are steps of their own.
-_UNDER_WAY = frozenset({State.EXECUTING, State.REWORKING})
 
 
 def _ancestors_of_work(tasks) -> set:
@@ -28,7 +25,7 @@ def _ancestors_of_work(tasks) -> set:
     parent = {str(t.id): str(t.parent_id) for t in tasks if t.parent_id}
     out: set = set()
     for t in tasks:
-        if t.state in _UNDER_WAY:
+        if t.state in WORK_STATES:
             p = parent.get(str(t.id))
             while p and p not in out:
                 out.add(p)

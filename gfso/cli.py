@@ -17,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from importlib.resources import files
+from pathlib import Path
 
 from gfso.adapters.children import bind_this_process, end_this_process, open_outside
 from gfso.adapters import resources
@@ -27,7 +28,7 @@ from gfso.adapters.storage import person
 from gfso.adapters.storage.sqlite import settings_of
 from gfso.adapters.llm import credentials, headless, registry
 from gfso.adapters.llm.conformance import assess, report
-from gfso import __version__, serverctl, signin
+from gfso import __version__, serverctl, signin, witness
 from gfso.config import (LOOPBACK, PERSON, UVICORN, admit_host, bind, data_dir, db_path, install_mcp_env,
                          install_serve_env, mark_the_server)
 from gfso.doctor import (BY_HAND, JUST_INSTALLED, claude_cli, console_script, doctor, kept_where, setup, sign_in, sign_in_here,
@@ -309,7 +310,8 @@ def _migrate(args) -> int:
 
 
 def _add_watch_parsers(sub) -> None:
-    """The two ways to watch a run without driving it: its log, and a wait that ends when the run needs you."""
+    """The ways to watch without driving: a run's log, a wait that ends when the run needs you, and the witness of a
+    console's writes."""
     logp = sub.add_parser("log", help="The log in the terminal — same persisted lines "
                                       "the UI panel shows (per project)")
     logp.add_argument("--project", default=None,
@@ -323,6 +325,18 @@ def _add_watch_parsers(sub) -> None:
                                         "stopped")
     waitp.add_argument("--project", default=None, help="project name (default: the active one); `project=<name>` too")
     waitp.add_argument("--hours", type=float, default=24.0, help="give up after this long (default 24)")
+
+    witp = sub.add_parser("witness", help="A Claude Code hook: a tool call that changed this repository's working tree "
+                                          "while no node of the project is at work in it is recorded in the project "
+                                          "and told to the agent; it never blocks. Installed only when you ask, in "
+                                          "this repository alone. Without a flag: one hook run (the event on stdin).")
+    witp.add_argument("project")
+    how = witp.add_mutually_exclusive_group()
+    how.add_argument("--install", action="store_true",
+                     help="write it into .claude/settings.local.json at the top of the worktree you run it in "
+                          "(a linked worktree's own top, where its console starts), kept out of git; a node is at "
+                          "work in the repository whichever of its worktrees it was taken in")
+    how.add_argument("--remove", action="store_true", help="take it out, your other hooks kept")
 
 
 def _add_provider_parser(sub) -> None:
@@ -761,9 +775,21 @@ def _end_with_the_children():
     end_this_process(code)
 
 
+def _witness(args) -> int:
+    """The witness hook run (`gfso.witness`), or written into this repository's own settings file."""
+    if not (args.install or args.remove):
+        sys.argv[1:] = [args.project]
+        witness.main()
+    if (top := witness.git(os.getcwd(), "rev-parse", "--show-toplevel")) is None:
+        print("gfso witness: not in a git repository — run it at the repository it watches", file=sys.stderr)
+        return 2
+    print(witness.install(Path(top.strip()), args.project, remove=args.remove))
+    return 0
+
+
 #: the commands that are one function of their arguments, exiting with what it returns
 _EXITS = {"wait": _wait, "ui": _ui, "agent": _agent, "provider-check": _provider_check, "credential": _credential,
-          "export-places": _export_places, "migrate": _migrate}
+          "export-places": _export_places, "migrate": _migrate, "witness": _witness}
 
 
 if __name__ == "__main__":

@@ -48,6 +48,21 @@ DIAGNOSTIC_MEANS = {
                         "the q_* above: HIGH is bad. It is the share of standing FAILs that a "
                         "recorded independent PASS contradicts. A low q_D beside a high share here "
                         "means the validator, not the decomposition (§16.9).",
+    "past_the_system": "work past the system, NOT a quality score: per repository this project works in, the "
+                       "commits made there by hand during the project (committed, amended, rebased — not a pull, a "
+                       "checkout or a merge) while no node attached to that repository was taken, whose content "
+                       "nothing carries: no chat delivery's own range (from its node's ACCEPT to the delivered "
+                       "commit), what the system's places or landings made, what was made while a node was taken "
+                       "there, nor a commit that stood before the project began — by patch or every path's result "
+                       "(`count`; `commits`, the newest). "
+                       "`in_work`: made while a node attached there was taken, that node still taken — the system "
+                       "cannot tell there a person's commit from the node's agent's; what the node delivers is in "
+                       "the system. `read_from`: the record of hand-made commits begins after the project did. "
+                       "Never refused: work outside consent cannot be gated (§16.9); it is counted, as an unrecorded "
+                       "decision is a defect (Thm 11).",
+    "witnessed": "work past the system as it happened, NOT a quality score: the writes a console's witness "
+                 "(`gfso witness`, installed by the person) saw in this project's repository while no node of it "
+                 "was at work there — `count`, and the `last` of them. Never refused (§16.9).",
 }
 
 Q_MEANS = {

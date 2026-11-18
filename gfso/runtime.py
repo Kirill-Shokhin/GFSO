@@ -296,6 +296,11 @@ class ProjectRegistry:
             if made and (out is None or is_refusal(out)):
                 self.unmake(eng.project_name)
 
+    def projects(self) -> list:
+        """Every project held: its engine where this process has it open, else its record's path — read, never opened
+        as a store (`about` says why)."""
+        return [self._engines.get(n) or self._file(n) for n in sorted(self.names())]
+
     def names(self) -> set:
         """Every project held: every .db in GFSO_DATA_DIR + the loaded ones (default always present) — no file peeked."""
         names = {"default", *self._engines.keys()}

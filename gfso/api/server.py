@@ -45,7 +45,7 @@ from gfso.tools_llm import validate_internal_on as _validate_internal_on, mode_s
 from gfso.adapters.children import end_this_process, reap as reap_children
 from gfso.adapters import resources as _resources
 from gfso.adapters.netrecord import said_apart
-from gfso import config as _config, signin
+from gfso import config as _config, past, signin
 from gfso.adapters.llm import credentials as _credentials, registry as _providers
 from gfso.config import LOOPBACK as _LOOPBACK, DEFAULT_PROJECT
 from gfso.engine import Engine
@@ -180,7 +180,9 @@ def _tool_index() -> dict:
 
 
 def _mount_wait(app, _e, _req_project, _scope_name) -> None:
-    """The one wait on a run, apart from the verbs: no verb holds a call for it."""
+    """A console's transports, apart from the verbs: the one wait on a run (no verb holds a call for it), and its
+    witness (`_mount_witness`)."""
+    _mount_witness(app, _e, _req_project)
     @app.post("/api/wait")
     def wait(body: dict = Body(default={})):
         """The one wait on a run (`tools_llm.wait_for_the_customer`): answers when the run needs the agent that gave
@@ -197,6 +199,25 @@ def _mount_wait(app, _e, _req_project, _scope_name) -> None:
             return _naming_the_scope(_tools.wait_for_the_customer(e, **body), _scope_name())
         except TypeError as ex:
             raise HTTPException(422, str(ex))
+
+
+def _mount_witness(app, _e, _req_project) -> None:
+    """The console's witness, apart from the verbs: its hook's transport (`gfso.witness`), no agent's move. Its
+    predicate reads every project this server holds (`past.OPEN`)."""
+    if app.state.registry:
+        past.OPEN = app.state.registry.projects
+    @app.post("/api/witness")
+    def witnessed(body: dict = Body(default={})):
+        """A write a console's hook saw in its repository (`past.witness`): {} where a node of the project is at work
+        there, else recorded and the line for the agent (`say`). Signed by the call's credential."""
+        body = dict(body or {})
+        if (_in_body := body.pop("project", None)):
+            _req_project.set(_in_body)
+        try:
+            return past.witness(_e(), str(body.get("repository") or ""), str(body.get("tool") or ""),
+                                body.get("paths") or (), str(body.get("key") or ""))
+        except KeyError as ex:
+            raise HTTPException(404, f"no such project {ex.args[0]!r}") from None
 
 
 def _mount_acts(app, _e, _req_project, _scope_name) -> None:

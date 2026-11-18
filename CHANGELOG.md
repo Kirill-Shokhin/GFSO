@@ -12,6 +12,23 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 
 ## [Unreleased]
 
+### Added
+- Work past the system is measured from records, never refused (§16.9 #11, Cor. to Thm 11): `metrics` serves
+  `past_the_system` per repository a project works in — the commits made there by hand during the project (git's
+  reflogs of every worktree's HEAD and the person's branches; a pull, a checkout or a merge is no such commit) while no
+  node attached there was taken, whose content (patch, or every path's result) neither the system's recorded work, nor
+  what was made while a node was taken, nor a commit from before the project carries. A commit made while a node is
+  taken there is listed apart (`in_work`), whoever holds it, a direction taken for months included. A chat's ACCEPT now
+  records the repository and HEAD it was taken in; a node taken before that record is attached to the repositories its
+  project works in, where its holder performs in the chat. The reading is kept in the project's record, as a reflog
+  expires.
+- `gfso witness <project> --install`: a Claude Code hook the person installs in one repository — written into its
+  `.claude/settings.local.json`, kept out of git, and recorded in `data/witness.json` as that project working there;
+  `--remove` takes it out. After each tool call it compares git's status of the working tree; a change while the
+  console's principal holds no node taken there is recorded once in the project (`witnessed` in `metrics`, through
+  `POST /api/witness`) and the agent is told to take the node or stop. It never blocks: it exits 0 whatever happens,
+  takes no index lock, and is silent on a settled project.
+
 ### Changed
 - Moves and the next steps stay fast on a large graph: a signal is answered in 0.6 s on a
   2,000-node graph where it took 10 s, `next_steps` in 0.5 s where it took 21 s, `get_graph` and `list_holes` likewise —

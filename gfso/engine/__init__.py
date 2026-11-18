@@ -20,7 +20,7 @@ from gfso.core.types import (
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
                                    start_waits,
-                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
+                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, WITNESS_KEY, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
 from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair
@@ -157,7 +157,7 @@ class Engine:
         self._stop_lock = threading.Lock()  # a person's stop and the system's start of its own stop never cross
         self._place_probe = None            # where the project runs, asked while it is down (`probe_the_place_with`)
         self._place_seen = None             # when the place probe last said it answers (`place_down`)
-        self._tech_lock = threading.Lock()  # one writer of the tech-report list (read-modify-write of one setting)
+        self._tech_lock = threading.Lock()  # one writer of each list kept in one setting (`_appended`)
         self._agents = agents
         self._llm = llm
         self._check_interval = check_interval
@@ -735,8 +735,7 @@ class Engine:
         where the system's maker reads it (`tech_reports`)."""
         rec = {"at": datetime.now().isoformat(timespec="seconds"), "node": str(task_id) if task_id else None,
                "role": str(role), "actor": str(actor), "text": str(text).strip()[:4000]}
-        with self._tech_lock:
-            self._storage.store_setting(TECH_KEY, json.dumps(self.tech_reports() + [rec]))
+        self._appended(TECH_KEY, rec)
         self.emit_info("tech_report", f"TECH REPORT from {role} {actor}" + (f" on {task_id}" if task_id else "")
                                       + f": {rec['text'][:300]}")
         return rec
@@ -751,8 +750,28 @@ class Engine:
 
     def tech_reports(self) -> list[dict]:
         """Every tech report filed in this project, oldest first."""
-        raw = self._storage.get_setting(TECH_KEY)
+        return self._records(TECH_KEY)
+
+    def witnessed(self, text: str, actor: str, key: str = "") -> dict:
+        """A write a console's witness saw in this project's repository while no node of it was at work there: work past
+        the system, the project's own record beside the commits no delivery holds — never the system's defect
+        (`tech_report`), and it moves nothing (§11.3); `key`, the write's own fingerprint. The last hundred are kept."""
+        rec = {"at": datetime.now().isoformat(timespec="seconds"), "actor": str(actor), "text": str(text).strip()[:4000],
+               "key": str(key)}
+        self._appended(WITNESS_KEY, rec, kept=100)
+        return rec
+
+    def witnessed_writes(self) -> list[dict]:
+        """The writes past the system the witness recorded in this project, oldest first."""
+        return self._records(WITNESS_KEY)
+
+    def _records(self, key: str) -> list[dict]:
+        raw = self._storage.get_setting(key)
         return json.loads(raw) if raw else []
+
+    def _appended(self, key: str, rec: dict, kept: Optional[int] = None) -> None:
+        with self._tech_lock:
+            self._storage.store_setting(key, json.dumps((self._records(key) + [rec])[-(kept or 0):]))
 
     def hands_of(self, party) -> Optional[str]:
         """The executor whose session performs `party`'s nodes, or None (`validation.hands_of`)."""

@@ -19,7 +19,7 @@ from gfso.adapters.execution import (IMPORTED, ContainerExecution, LocalExecutio
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, data_dir, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
-from gfso.core.graph.model import generation_of_task, grounds_key, root_of
+from gfso.core.graph.model import LANDED, generation_of_task, grounds_key, root_of
 from gfso.core.types import HOST, MADE, NODES, SCRATCH, THIS_HOST, VOLUME, PlaceUnavailable, Signal, TaskId, State, base_named, base_of_nodes, hold_places, nodes_root, PLACES
 from gfso.core.protocol.procedure import round_of
 from gfso.engine.findings import record_round
@@ -600,9 +600,6 @@ def root_created(engine, agents: "AgentRegistry", root) -> None:
 def root_key_of(root) -> str:
     """A root as its base's import is keyed: its id and its making — a root made again under the id is another."""
     return f"{root.id}@{root.created_at.isoformat()}"
-
-
-LANDED = "landed"   # where the accepted result lies, kept for whoever reads the graph: {branch, sha, path} or {path}
 
 
 def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:

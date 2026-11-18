@@ -20,10 +20,10 @@ from gfso.core.types import (
     TaskId, AgentId, Task, State, DoneReason, AutonomyLevel,
     Spec, Criteria, Probe, CriterionMapping, AcceptedRiskItem, Register,
     CheckResult, Recommendation, DepEdge, seams_apart,
-    StoragePort, TERMINAL_STATES, RETIRED_STATES, state_named, mode_starts_sessions,
+    StoragePort, TERMINAL_STATES, WORK_STATES, RETIRED_STATES, state_named, mode_starts_sessions,
 )
 from gfso.config import PIPELINE_PAGE, USAGE_PAGE
-from gfso.core.graph.model import PAUSE_KEY
+from gfso.core.graph.model import LANDED, PAUSE_KEY
 from gfso.adapters.storage import person
 
 log = logging.getLogger(__name__)
@@ -92,6 +92,28 @@ def settings_of(db_path: str) -> Optional[dict]:
                 return {}
             return dict(c.execute("SELECT key, value FROM settings").fetchall())
     except sqlite3.Error:
+        return None
+
+
+def peek_work(db_path: str) -> Optional[dict]:
+    """A project's work as its file records it, read without opening it as a store (`peek_project` says why):
+    {"taken": {node: holder} of its nodes in a work state, "log": [(node, signal, old state, new state, commit,
+    repository, signer, ts)] of its accepted ACCEPTs, DELIVERs and moves into or out of a work state, oldest first,
+    "landed": the commit its accepted result landed as, or None}; None where no file stands or none reads."""
+    if not os.path.exists(db_path):
+        return None
+    try:
+        with _looked_at(db_path) as c:
+            work = ", ".join(f"'{s.name}'" for s in WORK_STATES)
+            named = lambda s: s and state_named(s).name                                       # noqa: E731
+            landed = _one(c, f"SELECT value FROM settings WHERE key = '{LANDED}'")
+            return {"taken": {r[0]: r[1] for r in _all(c, f"SELECT id, assignee FROM tasks WHERE state IN ({work})")},
+                    "log": [(r[0], r[1], named(r[2]), named(r[3]), *r[4:]) for r in _all(
+                        c, "SELECT task_id, signal, old_state, new_state, delivered_commit, delivered_repository, "
+                           "source, ts FROM audit_log WHERE rejected = 0 AND (signal IN ('ACCEPT', 'DELIVER') OR "
+                           f"old_state IN ({work}) OR new_state IN ({work})) ORDER BY id")],
+                    "landed": landed and landed[0] and json.loads(landed[0]).get("sha")}
+    except (sqlite3.Error, KeyError, ValueError, AttributeError):
         return None
 
 
