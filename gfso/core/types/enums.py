@@ -226,7 +226,8 @@ class Mode(StrEnum):
 def mode_starts_sessions(mode: "dict | None") -> bool:
     """Does this mode record (the project's `mode` setting) have the system start sessions of its own — SEMI and AUTO
     hold nodes, a dispatched SOLO performs the user-agent's nodes in the system's sessions; a SOLO performed in the chat
-    starts none: the user-agent works, and the system only judges what it hands in."""
+    starts none of its own: the user-agent works, and the system only judges what it hands in — a validation of a
+    delivery waiting at a restart runs, one session the user asked for by delivering, its verdict theirs to sign."""
     return bool(mode) and (mode.get("mode") != Mode.SOLO or mode.get("perform") == "dispatch")
 
 

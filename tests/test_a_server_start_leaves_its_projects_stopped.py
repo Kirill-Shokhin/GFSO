@@ -9,10 +9,12 @@ import inspect
 import json
 
 import gfso.cli as cli
+from gfso import tools as T
+from gfso.delegate import default_agents
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.config import SERVES_ENV, serves, subprocess_env
 from gfso.runtime import HELD_AT_START, ProjectRegistry
-from tests.support import make_engine
+from tests.support import criterion, make_engine
 
 
 def _stood(path, mode: str | None = "auto", perform: str | None = None):
@@ -124,3 +126,18 @@ def test_solo_performed_in_the_chat_runs_on_and_the_modes_the_system_works_stand
     for name in ("hands", "semi", "auto"):
         assert about[name]["stopped"]["by"] == "system", f"{name}: listed stopped before it is opened"
         assert reg.engine(name).paused()["by"] == "system", f"{name}: opened stopped"
+
+
+def test_a_node_a_registered_executor_holds_stops_its_project_at_the_start(monkeypatch, tmp_path):
+    """No mode, a node held by a registered executor: the roster was published by the dispatcher's first round, after the
+    stop's question, so the node read as a person's and its paid session started unattended (critic over 880df12)."""
+    monkeypatch.setenv("GFSO_HOME", str(tmp_path / "home"))
+    e = make_engine(storage=SqliteStorage(str(tmp_path / "bobs.db")))
+    e.start()
+    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("g")]}, assignee="bob", agent="alice")
+    e.wait_idle()
+    e.stop()
+    e.graph._storage.close()
+    reg = _registry(monkeypatch, tmp_path)
+    default_agents().register("bob", "llm-executor", workdir=str(tmp_path))
+    assert reg.engine("bobs").paused()["by"] == "system", "a machine holds its node: stopped until the person's Start"

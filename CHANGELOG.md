@@ -20,7 +20,8 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 - The next step names the work in its holder's hands before any standing offer: a re-offered node is re-accepted first
   only while consented work goes on beneath it, otherwise it is an offer taken when its work starts.
 - A server's start stops a project only where the system starts sessions of its own (SEMI, AUTO, a dispatched SOLO, or a
-  node the system holds): a SOLO performed in the chat runs on after a restart.
+  node the system holds — the roster now read before that question, so a node a registered executor holds is stopped
+  too): a SOLO performed in the chat runs on after a restart, a delivery it left waiting judged as it was asked.
 - Running the system's executors on this machine, outside Docker, is the person's word given on their page (the projects
   list; `POST /api/local_agents`, a page session alone) and kept in `data/host_execution.json`. `GFSO_LOCAL_AGENTS` in the
   environment or `data/serve.json` no longer gives it: both are the agent's to write. Like the mode, it holds against

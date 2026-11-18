@@ -155,6 +155,15 @@ class ProjectRegistry:
                 self._engines[name] = build_engine_from_env(**kw)
                 self._engines[name].project_name = name    # per-project instruments key off it
                 self._engines[name]._project_name = name    # (the older spelling, still read downstream)
+                # LEFT: import cycle gfso.runtime ↔ gfso.delegate (delegate → gfso.tools_llm → gfso.runtime), so the
+                # dispatcher's module is reached from here only at call time — once, for the roster and the dispatcher.
+                from gfso.delegate import default_agents, ensure_dispatcher, publish_the_workforce
+                try:  # …who is a machine, read before the stop's question: the roster was published only by the
+                    # dispatcher's first round, AFTER it, so a node a registered executor held read as a person's and its
+                    # paid session started unattended at the restart (critic over 880df12)
+                    publish_the_workforce(self._engines[name], default_agents().list())
+                except Exception as ex:
+                    print(f"gfso: the roster could not be read for project {name!r} ({ex})", file=sys.stderr, flush=True)
                 if name in self._held:       # …before its dispatcher: a project that stood is opened stopped, once —
                     self._held.discard(name)  # one deleted and made again after the start runs
                     try:
@@ -171,9 +180,6 @@ class ProjectRegistry:
                 if _config.serves() and _held_at_start(self._engines[name].paused())                         and not self._engines[name].system_starts_sessions():
                     self._engines[name].resume("system")
                 try:  # delegation autostart rides with the engine (works under every entry point)
-                    # LEFT: import cycle gfso.runtime ↔ gfso.delegate (delegate → gfso.tools_llm →
-                    # gfso.runtime), so delegation is reached from here only at call time.
-                    from gfso.delegate import ensure_dispatcher
                     ensure_dispatcher(self._engines[name])
                 except Exception as ex:
                     # Swallowed, this left a project that never auto-executes and never auto-validates
