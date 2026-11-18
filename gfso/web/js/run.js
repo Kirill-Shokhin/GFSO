@@ -195,11 +195,13 @@ export function runNow(tasks, procs = [], sessions = [], present = []) {
 // «как из ui понимать над чем вообще идет работа? это ложное готово»: 35 held nodes read «Nothing at work»).
 // …and what a process or a console acts on outside a working state (a plan authored over an offered root) is in work too.
 // Lit: acted on now, by its own process or console or by the session that carries its part (one session runs a whole part).
-export function inWork(tasks, audit = [], now = null) {
+// `owed`: a node that is not in work though its state is (a delivery owed to a person's verdict) — left out of BOTH readings:
+// counted below, it hid the taken node above it, then was dropped itself, and the stream it sat in read as idle (a critic)
+export function inWork(tasks, audit = [], now = null, owed = () => false) {
     const up = ancestorsIn(tasks), below = new Set(), entered = {};
-    for (const t of tasks) if (working(t.state)) up(t.id).forEach(a => below.add(a));
+    for (const t of tasks) if (working(t.state) && !owed(t)) up(t.id).forEach(a => below.add(a));
     for (const a of audit) if (!a.rejected && a.new_state) entered[a.task_id] = a;          // the log in its order: the last
-    return tasks.filter(t => !below.has(t.id) && (working(t.state) || now?.lit(t.id))).map(t => { const a = entered[t.id];
+    return tasks.filter(t => !below.has(t.id) && !owed(t) && (working(t.state) || now?.lit(t.id))).map(t => { const a = entered[t.id];
         return {t, holder: t.assignee || '', lit: !!now && (now.lit(t.id) || now.carrier(t.id).length > 0),
                 since: a?.new_state === t.state ? a.t : t.state_entered_at ? at(t.state_entered_at) : null}; });
 }

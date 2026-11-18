@@ -55,7 +55,7 @@ export const handAsks = t => !personHolds(t);
 export const owedVerdict = (t, at = nowOf()) => t.state === 'VALIDATING' && !at.lit(t.id) && !at.carrier(t.id).length && issuerIsPerson(t);
 // IN WORK, the page's one reading: what the log holds in work (run.js `inWork`) lit by what is acted on now, less a delivery
 // owed to a person, which is on the issuer — the deck's line, its IN WORK tab and the fold tags read this and nothing else
-export const inWorkOf = (tasks = S.tasks) => inWork(tasks, S.run?.audit, nowOf()).filter(r => !owedVerdict(taskOf(r.t.id)));
+export const inWorkOf = (tasks = S.tasks) => { const at = nowOf(); return inWork(tasks, S.run?.audit, at, t => owedVerdict(taskOf(t.id), at)); };
 export const issuerIsPerson = t => !t.parent_id || (S.graph.mode?.mode !== 'auto' && personHolds(taskOf(t.parent_id)));
 // what runs now is the run's one reading; before the run is read, the same rule over the registry
 // the parties working nodes of this project through their live consoles now — the presence registry, the one reading of it
