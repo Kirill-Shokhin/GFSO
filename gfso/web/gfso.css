@@ -365,8 +365,8 @@ body.project-missing #hd-quality, body.project-missing .deck { display: none; }
 .cv-shut { border: 1.5px solid var(--ink); background: linear-gradient(45deg, transparent 42%, var(--ink) 42% 58%, transparent 58%), linear-gradient(-45deg, transparent 42%, var(--ink) 42% 58%, transparent 58%); }
 /* «nothing needs you» or the red chip, never both: what calls a person is the engine's (`calls_person`), said by the chip */
 body:has(.hd-q.acc) .hd-quiet { display: none; }
-/* …but never how to sign in: it is how to act at all, not a calm word */
-body:has(.hd-q.acc) .hd-quiet.hd-signin { display: revert; }
+/* …but never how to sign in: it is how to act at all, not a calm word; nor work past the system: a count, not a calm word */
+body:has(.hd-q.acc) .hd-quiet:is(.hd-signin, .hd-past) { display: revert; }
 /* a line of its own under the search: beside it, it squeezed the search to a box and the count to «137/1» (the author's phone, 2026-11-17) */
 .pl-signin { flex-basis: 100%; font-size: 12px; font-style: italic; color: var(--ink-caption); }
 .pl-signin code { white-space: nowrap; }

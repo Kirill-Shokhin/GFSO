@@ -203,6 +203,8 @@ export const H = {
         contested: 'A PASS its own record contradicts, or a hand over an instrument', 'closed by hand': 'Closed by a hand, not an instrument',
         stuck: 'Nothing can move', stalled: 'Stalled: the goal is open and nothing has happened',
     }[kind] || 'Your moves, as the engine names them', rows),
+    // work past the system: what it is, then where (`pastTheSystem`, header.js)
+    past: rows => hover('Made where no node was taken', 'Never refused: counted, as a decision with no record is a defect', rows),
     stuck: 'No actionable node and the root is not DONE',
     stalled: 'Nobody owes a move the engine names, and no one acts on any node — a run that stopped without an end; Events shows its last act',
     stop: hover('Stop the run', 'Nothing new starts: no executor, validator or issuer session, no timeout',

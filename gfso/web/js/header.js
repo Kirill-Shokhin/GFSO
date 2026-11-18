@@ -260,7 +260,7 @@ export async function drawHeader() {
     const root = rootOf(S.tasks), failed = root && terminal(root.state) && !delivered(root);
     // …the sign-in line stands beside any chip: it says how to act at all, not that all is calm (critic 3)
     $('hd-needs').innerHTML = (small ? runState : '') + status + chips + (lift() ? (reader() ? `<span class="hd-quiet hd-signin"${hover('Read only', lift().replace(/`/g, ''))}>read only</span>` : `<span class="hd-quiet hd-signin">${coded(lift())}</span>`)
-        : !chips && heard && !failed && !others && S.runState?.state === 'running' ? '<span class="hd-quiet">nothing needs you</span>' : '');
+        : !chips && heard && !failed && !others && S.runState?.state === 'running' ? '<span class="hd-quiet">nothing needs you</span>' : '') + pastTheSystem();
 }
 
 // The quality metrics. What each MEANS, how far it can be trusted (§15.8's grade) and which of them call a person are the
@@ -287,6 +287,21 @@ const readMeans = r => { const [, first, rest] = /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*
     const when = r.none && /(?:^|\s)(⊥[^.]*\.)/.exec(row.more || '');
     // (said as words: the row's dash already marks the empty value)
     return when ? {...row, means: `${row.means} No value ${when[1].slice(1).trim()}`, more: row.more.replace(when[1], '').trim()} : row; };
+
+// WORK PAST THE SYSTEM, the server's reading (`metrics`: past_the_system, witnessed): commits made by hand in a repository
+// the project works in while no node there was taken, and writes a console's witness saw so — never refused, counted, as an
+// unrecorded decision is a defect (Thm 11). A quiet line, not a call: nothing on the page clears it and the engine names no
+// move for it (JOINT in-work 11-15 §2: «N commits outside any node»); the two measures apart (one edit may be both); the
+// project's whole, so not in a part's view; said only when there is some
+function pastTheSystem() {
+    const m = S.metrics, repos = (m?.past_the_system || []).filter(r => r.count), seen = m?.witnessed?.count || 0;
+    if (FOCUS || !repos.length && !seen) return '';
+    const n = repos.reduce((s, r) => s + r.count, 0);
+    const said = [n && `${n} commit${n > 1 ? 's' : ''} outside any node`, seen && `${seen} write${seen > 1 ? 's' : ''} seen outside any node`].filter(Boolean);
+    const rows = [...repos.map(r => `${r.count} in ${r.repository}${r.read_from ? ` (its record since ${clockAt(r.read_from * 1e3)})` : ''}${r.commits?.length ? `: ${r.commits.map(c => c.slice(0, 8)).join(', ')}` : ''}`),
+        ...(m.witnessed?.last || []).map(w => `${clockAt(at(w.at))} ${w.actor}: ${w.text}`)];
+    return `<span class="hd-quiet hd-past"${H.past(rows)}>${said.join(' · ')}</span>`;
+}
 
 export function drawQuality() {
     const m = S.metrics;
