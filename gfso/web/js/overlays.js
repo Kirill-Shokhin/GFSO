@@ -36,13 +36,29 @@ export async function act(req, {what = '', note = '', ok = () => S.reload(), to 
 }
 
 // `field`: a line of text to ask for beside the question — then the answer is that text ('' allowed), false on Cancel
+// …a question a keyboard and a screen reader meet too: said as a dialog, focus inside it (Cancel, the safe answer, unless
+// there is a field), Esc is Cancel, and focus goes back where it was (a critic: the box was silent, 13 Tabs from its button,
+// and Esc closed the drawer under it while «Allow» stayed live)
+// …Tab stays inside it while it is up, and a question that replaces an open one answers that one Cancel first (a critic:
+// its Esc listener outlived it and ate the next Esc)
+let closeAsk = null;
 export const askInPage = (question, {yes = 'Run it', field} = {}) => new Promise(resolve => {
-    const b = box('ask-box');
-    b.innerHTML = `<div class="ask-q">${question}</div>`
+    closeAsk?.(false);
+    const b = box('ask-box'), back = document.activeElement;
+    b.setAttribute('role', 'alertdialog'); b.setAttribute('aria-modal', 'true'); b.setAttribute('aria-labelledby', 'ask-q');
+    b.innerHTML = `<div class="ask-q" id="ask-q">${question}</div>`
         + (field ? `<input id="ask-text" class="ask-text" placeholder="${field}">` : '')
         + `<div class="actions"><button class="btn btn-sm" id="ask-yes">${yes}</button><button class="btn btn-sm btn-muted" id="ask-no">Cancel</button></div>`;
-    const done = v => { b.remove(); resolve(v); };
-    $('ask-text')?.focus();
+    const esc = e => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); return done(false); }
+        if (e.key !== 'Tab') return;
+        const f = [...b.querySelectorAll('input, button')], i = f.indexOf(document.activeElement);
+        e.preventDefault(); f[(i + (e.shiftKey ? -1 : 1) + f.length) % f.length].focus();
+    };
+    const done = v => { removeEventListener('keydown', esc, true); closeAsk = null; b.remove(); back?.focus?.(); resolve(v); };
+    closeAsk = done;
+    addEventListener('keydown', esc, true);
+    (field ? $('ask-text') : $('ask-no')).focus();
     $('ask-yes').onclick = () => done(field ? $('ask-text').value.trim() : true);
     $('ask-no').onclick = () => done(false);
 });

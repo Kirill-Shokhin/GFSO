@@ -9,7 +9,7 @@ import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuil
 import {isHidden} from './fold.js';
 import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
 import {drawHeader, drawQuality, toggleReports, stopRun, startRun, setMode} from './header.js';
-import {refreshProjects, offerNew, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject, listOnly} from './projects.js';
+import {refreshProjects, offerNew, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject, listOnly, switchHostRuns, rereadHostRuns} from './projects.js';
 import {selectTask, panelOpened, closeSidebar, resign, openReader, closeReader} from './panel.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
 import * as author from './author.js';
@@ -154,14 +154,18 @@ const ACT = {
     'run-stop': async () => { if (await stopRun() === '') await refreshHeader(); },
     'run-start': async () => { if (await startRun() === '') await refreshHeader(); },
     // …the popover it was pressed in closes first: the question stood under it, its «Change» out of reach (probe)
-    'set-mode': async (d, b) => { const pop = b.closest('.hd-quality'); pop?.classList.remove('open'); pop?.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', 'false');
+    // …focus on the popover's own button before it asks: the pressed mode button is hidden with the popover, and the answer's
+    // focus went to the page's body (critic)
+    'set-mode': async (d, b) => { const pop = b.closest('.hd-quality');
+        pop?.classList.remove('open'); pop?.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', 'false');
+        pop?.querySelector('[data-action="pop"]')?.focus();
         if (await setMode(d) === '') { await S.reload(); await refreshHeader(); } },
     close: () => point('select', null), select: d => point('select', d.id), view: d => goTo(d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip'), d.to),
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,
     mine: toggleMine, pop: (d, b) => b.setAttribute('aria-expanded', b.closest('.hd-quality').classList.toggle('open')), reports: toggleReports, 'close-modal': author.closeModal,
-    projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects, 'project-delete': deleteProject,
+    projects: toggleProjects, 'projects-close': closeProjects, 'projects-more': moreProjects, 'local-agents': switchHostRuns, 'local-agents-read': rereadHostRuns, 'project-delete': deleteProject,
     'project-new': () => (closeProjects(), askProjectName({goal: true})),
     goal: goal.openGoal, 'goal-close': goal.closeGoal, 'gp-crit': () => goal.addCrit(), 'gp-suggest': goal.suggestCrits,
     'gp-scope': goal.addScope, 'gp-risk': goal.addRisk, 'gp-create': goal.createGoal, 'gp-plan': goal.planGoal,

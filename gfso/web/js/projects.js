@@ -4,7 +4,7 @@
 // builds its engine, so a look sets nothing running.
 import {$, esc, coded, morph, tally} from './dom.js';
 import {TIP} from './hints.js';
-import {PROJECT, getJSON, api, leave} from './api.js';
+import {PROJECT, getJSON, api, leave, post, bounded} from './api.js';
 import {S, procs, signsAs, lift} from './state.js';
 import {notice, askInPage, act} from './overlays.js';
 import {modelName, goalWord, terminal} from './vocab.js';
@@ -18,11 +18,14 @@ export const busyByProject = () => S.inflight.reduce((m, w) => (m[w.project] = (
 const SHOWN = 40;           // rows before "more": the newest runs are the ones looked for
 let all = null, shown = SHOWN;
 const panel = () => $('project-panel');
-whileShown(() => { if (!panel().hidden) draw(); });   // a new reading redraws the list while it is open
+// a new reading redraws the list while it is open, and reads the host switch again: a change made elsewhere on a quiet
+// installation has no event of its own (critic: Off stood 16 s over a server turned on)
+whileShown(() => { if (!panel().hidden) readHostRuns().then(draw); });
 
 export async function refreshProjects() {
     let d;
     try { d = await getJSON('/api/projects?limit=0'); } catch (e) { return; }   // single-project server
+    await readHostRuns();
     S.project = PROJECT;
     all = d.projects.map(n => ({n, t: d.last_active?.[n], ...(d.about?.[n] || {})}));
     $('project-open').textContent = S.project || 'Projects';
@@ -127,7 +130,7 @@ function draw() {
     });
     // one head over the columns: the mode's column said nowhere else (audit AQ4)
     const head = '<div class="pl-row pl-head"><span></span><span>run</span><span>where it stands</span><span>mode</span><span>resources</span><span>cost</span></div>';
-    morph($('pl-list'), machine() + (html ? head + html : '<div class="pn-meta">no project matches</div>'));
+    morph($('pl-list'), machine() + hostLine() + (html ? head + html : '<div class="pn-meta">no project matches</div>'));
     $('pl-count').innerHTML = tally(`${hits.length}/${(all || []).length}`, 'shown');
     $('pl-more').hidden = hits.length <= shown;
     $('pl-more').textContent = `show ${Math.min(SHOWN, hits.length - shown)} more`;
@@ -164,4 +167,56 @@ export async function listOnly() {
     connectWS({inflight: moved, resources: onReading, projects: refreshProjects, opened: again, resync: again});
 }
 export const moreProjects = () => { shown += SHOWN; draw(); };
+
+// AGENTS ON THIS MACHINE, OUTSIDE DOCKER: the installation's one switch of isolation, the person's act on the page alone —
+// an environment variable or a file the code client can write is no record of the person's (instruction audit row 7). Off
+// by default; on, it says on every look that the work it lets run is not isolated. A reader sees where it stands, no switch.
+// ITS STATE IS THE SERVER'S WORD, READ IN ONE PLACE: the answer to the move, else the runtime — read when the list draws,
+// when the tab is looked at again, and before a move is asked; a read begun before the last move is dropped (it could only
+// say the old state); a server that did not answer, or answered not-ok, is «not known», never the last state seen (two
+// critics: the page said Off over a server turned on — stale, raced, or a 500 taken for «no switch»)
+let hostRuns = null, hostSeq = 0;     // null: this server has no such switch; 'unknown': it did not say
+const readHostRuns = async () => {
+    const n = ++hostSeq;
+    const r = await api('/api/runtime', bounded()).then(async x => x.ok ? x.json() : 'unknown').catch(() => 'unknown');
+    if (n !== hostSeq) return hostRuns;
+    hostRuns = r === 'unknown' ? r : typeof r?.local_agents === 'boolean' ? r.local_agents : r && !('local_agents' in r) ? null : 'unknown';
+    return hostRuns;
+};
+addEventListener('visibilitychange', async () => { if (!document.hidden && !panel().hidden) { await readHostRuns(); draw(); } });
+// what the switch governs, as SECURITY.md states it: the work the system dispatches; a person's own agent works here either way
+const HOST_NOTE = {
+    true: 'ON — work the system dispatches (an executor\'s, a scope\'s, a parent\'s consent) with no container declared runs here as you: your files, your network, your accounts. It is not isolated.',
+    false: 'Off — work the system dispatches runs only in a container; with none declared it is refused, not run here. On this machine either way: work your own agent does in its chat, its checks, the system’s answer to a dispute that work raises, and, for a project with no execution declared, the reader of the plan’s documents.',
+    unknown: 'Not known — the server did not say where dispatched work may run now.'};
+const hostLine = () => { if (hostRuns == null) return '';
+    const can = signsAs().length && hostRuns !== 'unknown', on = hostRuns === true;
+    return `<div class="rs-host${on ? ' on' : ''}${hostRuns === 'unknown' ? ' unknown' : ''}">`
+        + (can ? `<button class="rs-switch" role="switch" aria-checked="${on}" aria-describedby="rs-host-note" data-action="local-agents">` : '<span class="rs-switch">')
+        + `<span class="rs-knob"></span>Run agents on this machine, outside Docker${can ? '</button>' : '</span>'}`
+        + `<div class="pn-meta rs-note" id="rs-host-note">${HOST_NOTE[hostRuns]}`
+        + (hostRuns === 'unknown' ? ' <button class="rs-reread" data-action="local-agents-read">read it again</button>' : '') + '</div></div>'; };
+export const rereadHostRuns = async () => { await readHostRuns(); draw(); };
+export async function switchHostRuns() {
+    const shown_ = hostRuns;
+    // …it moved elsewhere since it was drawn: shown and said, never switched blind nor changed under the finger in silence
+    if (await readHostRuns() !== shown_) { draw(); return typeof hostRuns === 'boolean' && notice(`It was changed elsewhere: now ${hostRuns ? 'ON' : 'Off'}.`); }
+    if (typeof hostRuns !== 'boolean') return draw();
+    const allow = !hostRuns;
+    const yes = await askInPage((allow
+        ? 'Let agents run on this machine, outside Docker? Work the system dispatches with no container declared then runs here as you — '
+          + 'with your files, your network and your accounts — and nothing it does is isolated.'
+        : 'Stop agents running on this machine? Work the system dispatches then runs only in a container, and is refused without one.')
+        + ` Signed as <b>${esc(S.me?.name || '')}</b>.`, {yes: allow ? 'Allow' : 'Turn off'});
+    if (!yes) return;
+    const n = ++hostSeq;                  // …every read begun before the move is now stale
+    let said;
+    const no = await act(post('/api/local_agents', {allow}, bounded()).then(r => (said = r.clone(), r)),
+        {what: allow ? 'Agents on this machine' : 'Agents back in Docker', ok: null});
+    const answer = no ? undefined : (await said?.json().catch(() => null))?.local_agents;
+    if (typeof answer === 'boolean' && n === hostSeq) hostRuns = answer; else await readHostRuns();
+    if (!no && hostRuns !== allow)        // …asked one way, answered the other: said, not left to be noticed
+        notice(`The server ${typeof hostRuns !== 'boolean' ? 'did not say where dispatched work may run now' : `kept agents ${hostRuns ? 'on this machine' : 'in Docker'}`}.`, 'bad');
+    draw();
+}
 export const searchProjects = () => { shown = SHOWN; draw(); };
