@@ -160,3 +160,105 @@ def test_the_projects_own_bounds_and_deadline_win_over_a_persons(tmp_path):
         assert PERSON_DEADLINE_S > 3 * DAY
     finally:
         e.stop()
+
+
+def _plain(**publish):
+    """A project with no mode, its roster published as the dispatcher publishes it."""
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    e.project_name = "p"
+    e.workforce.publish_roster(publish)
+    return e
+
+
+def _span(e, tid):
+    return (e.graph.get_task(TaskId(tid)).deadline - datetime.now()).total_seconds()
+
+
+def test_a_reassign_to_another_performer_chooses_the_supplied_deadline_for_the_new_one():
+    """A supplied deadline is chosen for its performer: handed from a person to a session, or back, it is chosen anew."""
+    e = _plain(**{"p-exec-1": "llm-executor"})
+    try:
+        T.TOOLS["create_task"](e, "root", {"description": "g", "accepted_risks": REGISTER,
+                                           "criteria": [criterion("a", "A"), criterion("b", "B")]}, assignee="bob")
+        e.wait_idle()
+        T.TOOLS["decompose"](e, "root", [_kid("root.a", ["a"], criterion("a1", "A1")) | {"assignee": "bob"},
+                                         _kid("root.b", ["b"], criterion("b1", "B1")) | {"assignee": "p-exec-1"}],
+                             accepted_risks=REGISTER)
+        e.wait_idle()
+        assert _span(e, "root.a") > 100 * DAY and _span(e, "root.b") < 2 * DAY
+        T.TOOLS["reassign"](e, "root.a", "p-exec-1", agent="bob")
+        T.TOOLS["reassign"](e, "root.b", "bob", agent="bob")
+        e.wait_idle()
+        assert str(e.graph.get_task(TaskId("root.a")).assignee) == "p-exec-1"
+        assert _span(e, "root.a") < 2 * DAY, "the session's work keeps the server's deadline"
+        assert _span(e, "root.b") > 100 * DAY, "the person's work gets a person's"
+    finally:
+        e.stop()
+
+
+def test_a_tree_made_before_the_mode_keeps_its_deadlines_and_the_answer_names_them(tmp_path):
+    """A deadline is a packet field: moved only by its issuer's revision (Inv-1), never rewritten by the system — so
+    set_mode names the live nodes left on a short supplied one, and how they are extended."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _commit(repo, "README")
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    e.project_name = "p"
+    try:
+        assert not TL.TOOLS["register_agent"](e, "val-1", "llm-validator", workdir=str(repo)).get("refused")
+        T.TOOLS["create_task"](e, "root", {"description": "g", "accepted_risks": REGISTER,
+                                           "criteria": [criterion("g", "G")]})
+        T.TOOLS["decompose"](e, "root", [_kid("kid", ["g"], criterion("k", "K"))], accepted_risks=REGISTER)
+        e.wait_idle()
+        for tid, hours in (("root", 24), ("kid", 23)):      # as a server before this choice wrote them: a day
+            t = e.graph.get_task(TaskId(tid))
+            t.deadline = datetime.now() + timedelta(hours=hours)
+            e._graph.save_task(t)
+        was = {t: e.graph.get_task(TaskId(t)).deadline for t in ("root", "kid")}
+        got = TL.TOOLS["set_mode"](e, "solo", perform="in_chat", user_said="mine")
+        assert not got.get("refused"), got
+        assert {t: e.graph.get_task(TaskId(t)).deadline for t in ("root", "kid")} == was, "no deadline is rewritten"
+        assert got.get("short_deadlines") == ["kid", "root"], got
+        assert "revise" in got.get("say", ""), got
+    finally:
+        e.stop()
+
+
+def test_with_no_mode_the_standing_agent_is_the_person():
+    """Since 0.4.0 `user` is the person on a local server (the page's signer, the connection's OS owner): its own
+    graph with no mode runs on its clock, as a holder's does."""
+    e = _plain()
+    try:
+        T.TOOLS["create_task"](e, "root", {"description": "g", "criteria": [criterion("g", "G")]})
+        e.wait_idle()
+        root = e.graph.get_task(TaskId("root"))
+        assert str(root.assignee) == "user" and _span(e, "root") > 100 * DAY
+        for state in ("OFFERED", "VALIDATING", "ESCALATED"):
+            assert _bound(e.graph, state, root) == PERSON_BOUNDS[state], state
+    finally:
+        e.stop()
+
+
+def test_dispatched_hands_keep_the_sessions_work_on_the_servers_clock():
+    """SOLO performed by dispatch: the holder consents and signs, the system's session does the work — the deadline and
+    the cancel's handshake are the session's; the consent, the verdict and the decisions stay the person's."""
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    e.project_name = "p"
+    try:
+        e.workforce.publish_executor_pool({"exec-1": "p"})
+        e.set_mode(Mode.SOLO, None, AgentId("user"), hands="exec-1")
+        T.TOOLS["create_task"](e, "root", {"description": "g", "criteria": [criterion("g", "G")]})
+        T.TOOLS["decompose"](e, "root", [_kid("kid", ["g"], criterion("k", "K"))], accepted_risks=REGISTER)
+        e.wait_idle()
+        kid = e.graph.get_task(TaskId("kid"))
+        assert str(kid.assignee) == "user"
+        assert _span(e, "kid") < 2 * DAY, "the session's work keeps the server's deadline"
+        assert _bound(e.graph, "CANCELLING", kid) == state_bound("CANCELLING")
+        for state in ("OFFERED", "VALIDATING", "ESCALATED"):
+            assert _bound(e.graph, state, kid) == PERSON_BOUNDS[state], state
+    finally:
+        e.stop()

@@ -246,9 +246,11 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple], declared
     for cid, spec, whose[str(cid)], *rest in children:
         cid, t, given = str(cid), graph.get_task(cid), (rest[0] if rest else None)
         stands = t.deadline if t is not None and t.deadline is not None and t.deadline > now and not given else None
+        # …a supplied one stands only for the performer it was chosen for (`project_deadline_s`)
+        same = t is not None and (whose[cid] is None or str(whose[cid]) == str(t.assignee))
         act[cid] = (given or (stands if stands and not t.deadline_supplied else None),
                     reads_of(graph, declared or {}, cid, spec),
-                    stands if stands and t.deadline_supplied else None)
+                    stands if stands and t.deadline_supplied and same else None)
         if given:
             typed[cid] = given
     if spent := [cid for cid, dl in typed.items() if dl <= now]:

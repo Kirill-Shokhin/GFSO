@@ -31,13 +31,16 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   live feed, so an open page re-reads the count at once; the count is every write ever recorded, the last hundred kept.
 
 ### Changed
-- A wait a person owns runs on a person's clock: where the party a waiting state waits on is the user-agent holding
-  nodes (SOLO, the part of SEMI it holds, its issuer moves over the children it issues) or a person no registered role
-  stands for, a project that sets no bounds of its own waits OFFERED, CHALLENGED and BLOCKED 180 days, VALIDATING 14,
-  ESCALATED 30 and CANCELLING 7, and writes a default deadline 180 days ahead for that party's work. The waits the
-  system's own sessions own (AUTO, the part of SEMI the system holds) keep the server's. Before, a person away one night
-  had their node's deadline lapse, and two days later the node and its subtree were abandoned. A project's own
-  `bounds` and `deadline_s` win over both.
+- A wait a person owns runs on a person's clock: where the party a waiting state waits on is the user-agent outside
+  AUTO (SOLO, the part of SEMI it holds, its issuer moves over the children it issues, and a graph with no mode, where it
+  is the person) or a person no registered role stands for, a project that sets no bounds of its own waits OFFERED,
+  CHALLENGED and BLOCKED 180 days, VALIDATING 14, ESCALATED 30 and CANCELLING 7, and writes a default deadline 180 days
+  ahead for that party's work. The waits the system's own sessions own (AUTO, the part of SEMI the system holds, and
+  under `perform="dispatch"` the session's work and its cancel handshake) keep the server's. A node handed to another
+  performer gets its supplied deadline chosen for the new one. A deadline already written is never rewritten:
+  `set_mode` names the live nodes left on a supplied deadline under half the new default (`short_deadlines`) and says
+  their issuer extends them by `revise`. Before, a person away one night had their node's deadline lapse, and two days
+  later the node and its subtree were abandoned. A project's own `bounds` and `deadline_s` win over all of it.
 - Moves and the next steps stay fast on a large graph: a signal is answered in 0.6 s on a
   2,000-node graph where it took 10 s, `next_steps` in 0.5 s where it took 21 s, `get_graph` and `list_holes` likewise —
   a question about the whole graph is read once per change to it, no longer again at every node it walks.

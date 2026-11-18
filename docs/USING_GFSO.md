@@ -444,10 +444,12 @@ sets its default. Where the system's own sessions answer (`auto`, the part of `s
 holds), an answer owed (`OFFERED`, `CHALLENGED`, `BLOCKED`) and the issuer's decision in `ESCALATED`
 are each a day, a verdict in `VALIDATING` an hour, counted from the delivery, a cancel's handshake two
 minutes, and the deadline a day; `GFSO_BOUND_<STATE>` (seconds, `0` = no bound for that state) and
-`GFSO_DEFAULT_DEADLINE_S` set these for the server. Where you answer — `solo`, the part of `semi` you
-hold, a person no registered role stands for — your agent moves only when you write, so the waits are
-yours: an answer 180 days, `VALIDATING` 14, `ESCALATED` 30, `CANCELLING` 7, the deadline 180, so a week
-away loses nothing. When `VALIDATING` runs out the node is handed back to its issuer, never accepted:
+`GFSO_DEFAULT_DEADLINE_S` set these for the server, and they hold for the work a dispatched session
+does in your name. Where you answer — `solo`, the part of `semi` you hold, a graph with no mode, a
+person no registered role stands for — your agent moves only when you write, so the waits are yours:
+an answer 180 days, `VALIDATING` 14, `ESCALATED` 30, `CANCELLING` 7, the deadline 180, so a week away
+loses nothing. A deadline already written stays: `set_mode` names the nodes left on a short one, and
+their issuer extends each with `revise(id, deadline=…)`. When `VALIDATING` runs out the node is handed back to its issuer, never accepted:
 the clock does not sign a verdict for anyone. A project sets its own over both, `set_mode(bounds=,
 deadline_s=)` — the numbers are ours, the rule that a wait ends is the canon's.
 

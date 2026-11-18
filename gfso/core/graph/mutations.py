@@ -234,7 +234,8 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
     # Inv-1 says a revision must not do. `None` means KEEP, exactly as it does for `assignee` above:
     # a revision that does not mention the date is not a revision that clears it. (Clearing one has
     # no carrier and is not claimed here — a deadline-less node is not defective, `formal/README` #6.)
-    task.deadline, task.deadline_supplied = version_deadline(graph, effect.deadline, task, supplied=effect.deadline_supplied)
+    task.deadline, task.deadline_supplied = version_deadline(graph, effect.deadline, task, supplied=effect.deadline_supplied,
+                                                             assignee=effect.assignee)
     # …AND THE REWORKING BOUND, for the same reason. Running past the budgeted attempts has two
     # readings — the plan is wrong, or the forecast was — and only the issuer can say which.
     # With the bound unrevisable the engine answered for them, and a missed forecast cost a
@@ -306,7 +307,7 @@ def _reopen(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[Tas
     task.done_reason = None
     task.iteration = 0        # a reopen is a new packet version too (Φ3, §12.15)
     task.deadline, task.deadline_supplied = version_deadline(graph, effect.deadline, task, spec=effect.spec,
-                                                             supplied=effect.deadline_supplied)
+                                                             supplied=effect.deadline_supplied, assignee=effect.assignee)
     if effect.max_iterations is not None:
         task.max_iterations = effect.max_iterations
     # THE MAPPINGS THAT POINT AT NOTHING GO, as they do on any other re-authorship: a reopened node
@@ -638,13 +639,15 @@ def version_deadline(graph: Graph, deadline: Optional[datetime], task: Optional[
     kept = (task.deadline, task.deadline_supplied) if task is not None else (None, False)
     tid = str(task_id if task_id is not None else task.id if task is not None else "")
     live = task is not None and task.deadline is not None and task.deadline > project_now(graph)
+    # …a supplied one was chosen for its performer (`project_deadline_s`): a version handing the node to another is chosen anew
+    moved = task is not None and assignee is not None and str(assignee) != str(task.assignee)
     if live and not task.deadline_supplied:
         return kept
     pid = parent_id if parent_id is not None else (task.parent_id if task is not None else None)
     parent = graph.get_task(pid) if (pid and graph is not None) else None
     reads = producers_of(spec if spec is not None else task.spec if task is not None else None,
                          graph.declared_edges(tid) if graph is not None else ())
-    chosen = Schedule(graph, parent, {tid: (None, reads, task.deadline if live else None)},
+    chosen = Schedule(graph, parent, {tid: (None, reads, task.deadline if live and not moved else None)},
                       whose={tid: assignee if assignee is not None else task.assignee if task is not None else None}
                       ).defaults()[tid]
     return (chosen, True) if chosen is not None else kept

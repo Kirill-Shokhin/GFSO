@@ -25,7 +25,7 @@ from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import (PAUSE_KEY, party_kind, USERS_PLAN_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+from gfso.core.graph.model import (PAUSE_KEY, hands_of, party_kind, USERS_PLAN_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer, logged_criteria, parent_waits)
 from gfso.engine.audit import VERSION_INSTALLING
 
@@ -1270,17 +1270,6 @@ def mode_kind(graph: Graph) -> Optional[Mode]:
     string (ortho audit, D-F9: raw `"semi"` / `"auto"` compares in eight places)."""
     m = project_mode(graph)
     return Mode(m["mode"]) if m else None
-
-
-def hands_of(graph: Graph, party) -> Optional[str]:
-    """The registered executor whose session performs the nodes `party` holds, or None — the party performs them
-    itself. Only the standing agent under a mode that DISPATCHES has hands: it consents and stays Del, every signal
-    its own (§10.1), and the work runs in a clean session the system starts after its ACCEPT — no seam inside one
-    agent (§10.3), so how it performs is its own. In its own chat nothing structural keeps the work inside the
-    contract (§16.9 exception 11); a session the system starts only after consent does."""
-    m = project_mode(graph)
-    return (m.get("hands") if m and m.get("perform") == "dispatch" and str(party) == str(_config_agent_id())
-            else None)
 
 
 def depth_of(graph: Graph, task_id: TaskId) -> int:

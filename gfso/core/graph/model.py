@@ -235,9 +235,24 @@ def party_kind(graph: "Graph", party: str, registered=None) -> str:
     The standing agent is read first: a role registered under the user's own id does not make it a machine.
     `registered` is the registry consulted (the dispatcher's own; the engine's published roster by default)."""
     if str(party) == str(agent_id()):
-        mode = json.loads(graph.setting("mode") or "null") if graph is not None else None
+        mode = _mode(graph)
         return "legacy" if not mode else "machine" if mode["mode"] == Mode.AUTO else "holder"
     return "machine" if (registered or {}).get(str(party)) is not None else "person"
+
+
+def _mode(graph: Optional["Graph"]) -> Optional[dict]:
+    """The project's mode record as set (`Engine.set_mode`), or None."""
+    return json.loads(graph.setting("mode") or "null") if graph is not None else None
+
+
+def hands_of(graph: Optional["Graph"], party) -> Optional[str]:
+    """The registered executor whose session performs the nodes `party` holds, or None — the party performs them
+    itself. Only the standing agent under a mode that DISPATCHES has hands: it consents and stays Del, every signal
+    its own (§10.1), and the work runs in a clean session the system starts after its ACCEPT — no seam inside one
+    agent (§10.3), so how it performs is its own. In its own chat nothing structural keeps the work inside the
+    contract (§16.9 exception 11); a session the system starts only after consent does."""
+    m = _mode(graph)
+    return m.get("hands") if m and m.get("perform") == "dispatch" and str(party) == str(agent_id()) else None
 
 
 #: the states whose wait the ASSIGNEE ends (its consent, its handshake); every other bounded state waits on the issuer —
@@ -246,23 +261,28 @@ _ASSIGNEE_WAITS = ("OFFERED", "CANCELLING")
 
 
 def waits_on_a_person(graph: Optional["Graph"], party) -> bool:
-    """Is `party` one whose moves come only when a person writes — the user-agent holding nodes (SOLO, SEMI's top) or a
-    person the published roster does not carry? Their waits run on a person's scale (`PERSON_BOUNDS`); the system's own
-    sessions keep the server's. Before the dispatcher publishes a roster nobody is taken for a person by absence from it."""
+    """Is `party` one whose moves come only when a person writes — the standing agent, unless AUTO makes it the system's
+    customer, or a person the published roster does not carry? Their waits run on a person's scale (`PERSON_BOUNDS`);
+    the system's own sessions keep the server's. With no mode the standing agent IS the person (the page's signer, the
+    OS owner of a local connection): the system answers some of its moves (`legacy`), and a longer bound on a wait it
+    answers costs nothing while it answers — a hung validator is still cut by the server's T_validate
+    (`tools_llm._validation_cap`). Before the dispatcher publishes a roster nobody else is taken for a person by
+    absence from it."""
     if graph is None or party is None:
         return False
     kind = party_kind(graph, str(party), graph.roster or {})
-    return kind == "holder" or kind == "person" and graph.roster is not None
+    return kind in ("holder", "legacy") or kind == "person" and graph.roster is not None
 
 
 def project_deadline_s(graph: "Graph", party=None) -> float:
     """How far ahead a deadline nobody typed is written in this project for work `party` performs: its own setting,
-    else a person's scale where a person performs it (`waits_on_a_person`), else the server's — whose 0 writes none."""
+    else a person's scale where a person performs it (`waits_on_a_person`) — not where the system's session does it in
+    the holder's name (`hands_of`) — else the server's, whose 0 writes none."""
     v = graph.setting("deadline_s")
     if v is not None:
         return float(v)
     server = default_deadline_s()
-    return PERSON_DEADLINE_S if server and waits_on_a_person(graph, party) else server
+    return PERSON_DEADLINE_S if server and waits_on_a_person(graph, party) and not hands_of(graph, party) else server
 
 
 def project_bounds(graph: Optional["Graph"]) -> dict:
@@ -302,8 +322,9 @@ def project_state_bound(graph: Optional["Graph"], state_name: str, task: Optiona
     if own := project_bounds(graph).get(state_name):
         return own
     party = task and (task.assignee if state_name in _ASSIGNEE_WAITS else graph.issuer_of(task.id))
-    return PERSON_BOUNDS[state_name] if state_name in PERSON_BOUNDS and waits_on_a_person(graph, party) \
-        else state_bound(state_name)
+    # …a cancel's handshake is the performer's: under dispatch the system's session answers it in the holder's name
+    person = waits_on_a_person(graph, party) and not (state_name == "CANCELLING" and hands_of(graph, party))
+    return PERSON_BOUNDS[state_name] if state_name in PERSON_BOUNDS and person else state_bound(state_name)
 
 
 def bounds_refusal(bounds) -> Optional[str]:

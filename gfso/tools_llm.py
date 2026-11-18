@@ -36,7 +36,7 @@ from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snaps
 from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, committed, left_out,
                                      scratch_of)
 from gfso.issuer import CONTACT_ROUND as _CONTACT
-from gfso.core.types import (BATCH, HOST, LAID, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
+from gfso.core.types import (BATCH, HOST, LAID, TERMINAL_STATES, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
                              Verdict, passed)
 from gfso.core.protocol.invariants import RED_SET, criterion_meant, probes_of, red_set, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (SYSTEMS_ACT, canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
@@ -52,7 +52,8 @@ from gfso.engine.findings import record_round
 from gfso.engine.moves import DOOR_KEYS, READS, SIGNERS, door_holder, door_role, role_holder, signer_arg, signer_due
 from gfso.engine.validation import _l0_holes, _l2_undischarged, whole_waits_for_its_parts
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS
-from gfso.core.graph.model import MAX_ITERATIONS_CEILING, bounds_refusal, project_now, project_state_bound, witnessed_count
+from gfso.core.graph.model import (MAX_ITERATIONS_CEILING, bounds_refusal, project_deadline_s, project_now,
+                                   project_state_bound, witnessed_count)
 from gfso.engine.loop import state_bound_left
 from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.engine import Engine
@@ -2790,7 +2791,7 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
         if not settings:
             return {"refused": True, "error": "name a mode, or a setting of this project to change"}
         rec = engine.set_settings(settings, AgentId(agent or _agent_id()), said=str(user_said).strip())
-        return {**rec, **(_turn_the_way_out(engine) if network is not None else {})}
+        return {**rec, **(_turn_the_way_out(engine) if network is not None else {}), **_short_supplied(engine)}
     # …the project's executors that name no execution placed in the default as the mode is set — the door registers
     # first and sets the mode after, and a registration saw no mode (critic); moved back where the mode is refused, or
     # a refusal shut the user's other choices — in their chat, on this host (critic)
@@ -2812,7 +2813,26 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
                           "semi": f"you hold depths below {engine.holder_boundary()}; the system the rest",
                           "auto": "the system holds every node; you are the customer"}[m.value]}
     out = _in_the_default(engine, {"mode": m.value, **({} if m == Mode.AUTO else {"perform": perform})}, held)
-    return {**out, **(_turn_the_way_out(engine) if network is not None and not out.get("refused") else {})}
+    return {**out, **(_turn_the_way_out(engine) if network is not None and not out.get("refused") else {}),
+            **({} if out.get("refused") else _short_supplied(engine))}
+
+
+def _short_supplied(engine: Engine) -> dict:
+    """The live nodes standing on a deadline the engine supplied with under half of the default now written for their
+    performer left. A deadline is a packet field: it moves by a revision, the issuer's act, re-offered for consent
+    (Inv-1) — never by the system rewriting it under the choice just made — so they are named, and how to extend them."""
+    g, now = engine.graph, project_now(engine.graph)
+    short = sorted(str(t.id) for t in engine.all_tasks() if t.state not in TERMINAL_STATES and t.deadline_supplied
+                   and t.deadline is not None and (span := project_deadline_s(g, t.assignee))
+                   and (t.deadline - now).total_seconds() < span / 2)
+    if not short:
+        return {}
+    days = round(max(project_deadline_s(g, t.assignee) for t in engine.all_tasks() if str(t.id) in short) / 86_400)
+    return {"short_deadlines": short,
+            "say": (f"Tell the person: {len(short)} live node(s) ({', '.join(short[:10])}{', …' if len(short) > 10 else ''}) "
+                    f"keep the deadline written before this choice, under half of the {days} day(s) now written for such "
+                    f"work. A deadline changes only by its issuer's revision — `revise(id, deadline=…)`, which re-offers "
+                    f"the node — so the system leaves them as they are.")}
 
 
 def _not_the_persons(engine: Engine, m: Optional[Mode], user_said: str) -> Optional[dict]:

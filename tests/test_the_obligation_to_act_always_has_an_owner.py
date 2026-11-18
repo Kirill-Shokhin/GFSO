@@ -14,7 +14,7 @@ leaves open is either a stall or an invention by an executor who cannot see the 
 """
 from __future__ import annotations
 
-import os
+import json
 import time
 from datetime import datetime
 
@@ -24,27 +24,16 @@ import gfso.engine.loop as engine_loop
 import gfso.tools as T
 from gfso.core.protocol.fsm import available_signals, transition
 from gfso.core.types import (
-    DoneReason, GuardContext, Signal, SignalData, State, TaskId,
+    AgentId, DoneReason, GuardContext, Signal, SignalData, State, TaskId,
     TERMINAL_STATES, NON_TERMINAL_STATES,
 )
 from tests.support import criterion, make_engine
 
 
-def _shorten_the_bounds(seconds: float) -> dict:
-    """The per-state bounds are protocol PARAMETERS (§12.2), set by environment; a test that waits
-    for one shortens it rather than waiting a day."""
-    was = {k: os.environ.get(f"GFSO_BOUND_{k}") for k in ("ESCALATED", "CANCELLING")}
-    for k in was:
-        os.environ[f"GFSO_BOUND_{k}"] = str(seconds)
-    return was
-
-
-def _restore_the_bounds(was: dict) -> None:
-    for k, v in was.items():
-        if v is None:
-            os.environ.pop(f"GFSO_BOUND_{k}", None)
-        else:
-            os.environ[f"GFSO_BOUND_{k}"] = v
+def _shorten_the_bounds(e, seconds: float) -> None:
+    """The per-state bounds are protocol PARAMETERS (§12.2); a test that waits for one shortens it rather than waiting a
+    month. The waits here are the person's own (`user`, no mode), so it is the project's setting that shortens them."""
+    e.set_settings({"bounds": json.dumps({"ESCALATED": seconds, "CANCELLING": seconds})}, AgentId("user"))
 
 
 SETTLEMENTS = {State.DONE, State.ABANDONED}
@@ -206,9 +195,9 @@ def test_the_issuers_silence_has_a_bottom_on_a_default_install():
     demands finiteness of a live state, and a bound that can be switched off is not a bound — the
     same reasoning that gave CANCELLING its own grace, and for the same reason: the only other exits
     belong to a party that may never answer."""
-    was = _shorten_the_bounds(0.05)          # the same bounds, shortened so the test is finite
     e = make_engine(None, llm=None, validate_signals=False, check_interval=0.05, state_timeout=0)
     e.start()
+    _shorten_the_bounds(e, 0.05)              # the same bounds, shortened so the test is finite
     try:
         T.create_task(e, "root", {"description": "g",
                                   "criteria": [criterion("c", "d")]})
@@ -223,7 +212,6 @@ def test_the_issuers_silence_has_a_bottom_on_a_default_install():
             time.sleep(0.05)
         assert e.graph.get_state(TaskId("root")) == State.ABANDONED, "the issuer's silence must CLOSE it"
     finally:
-        _restore_the_bounds(was)
         e.stop()
 
 
@@ -235,9 +223,9 @@ def test_the_silence_takes_the_subtree_with_it():
     leaves the frontier handing out work under a goal nobody owns any more, indefinitely, and the
     "the goal itself is settled" answer never fires because something IS actionable. Routing the
     silence through CANCELLING is what makes the cascade reach them."""
-    was = _shorten_the_bounds(0.05)
     e = make_engine(None, llm=None, validate_signals=False, check_interval=0.05, state_timeout=0)
     e.start()
+    _shorten_the_bounds(e, 0.05)              # the same bounds, shortened so the test is finite
     try:
         T.create_task(e, "root", {"description": "g",
                                   "criteria": [criterion("c", "d")]})
@@ -257,7 +245,6 @@ def test_the_silence_takes_the_subtree_with_it():
         assert e.graph.get_state(TaskId("kid")) == State.ABANDONED, (
             "the child is still live under a goal that has been closed")
     finally:
-        _restore_the_bounds(was)
         e.stop()
 
 
