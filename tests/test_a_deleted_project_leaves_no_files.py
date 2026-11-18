@@ -24,11 +24,12 @@ def test_a_deleted_projects_places_and_refused_reports_go_and_anothers_stand(tmp
         for base in ("a1b2c3d4e5/.gfso-nodes-repo", "f6a7b8c9d0/.gfso-nodes-other"):
             _lay(tmp_path / PLACES / base / name / "node")
         assert TL._keep_rejected_report(name, "root", "not a verdict", "text")
+        _lay(tmp_path / "probe_inputs" / name / "root_1")
     reg.delete("doomed")
     left = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file() and "doomed" in p.as_posix())
     assert left == [], left
     assert len(list((tmp_path / PLACES).glob("*/*/kept/node/f.txt"))) == 2
-    assert list((tmp_path / "rejected_verdicts" / "kept").iterdir())
+    assert list((tmp_path / "rejected_verdicts" / "kept").iterdir()) and (tmp_path / "probe_inputs" / "kept").is_dir()
 
 
 def test_a_file_a_process_holds_keeps_only_its_directory_and_the_deletion_whole(tmp_path, monkeypatch):

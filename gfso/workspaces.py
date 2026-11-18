@@ -726,12 +726,13 @@ def rejected_reports_dir(project: str) -> Path:
 
 def drop_host_files(project: str) -> list[str]:
     """A deleted project's files in the installation's own state: its places on this machine under every base
-    (`<data>/places/<base's parent>/<base>/<project>`) and its refused reports — a volume holds the rest. Each directory
+    (`<data>/places/<base's parent>/<base>/<project>`), its refused reports and its hand-laid probe inputs — a
+    volume holds the rest. Each directory
     on its own: one a process still holds (a lock on Windows) stays, and is returned, while the rest go."""
     name, places, left, here = component(project or DEFAULT_PROJECT), data_dir() / PLACES, [], LocalExecution()
     below = lambda d: [d / x for x in here.files.listdir(str(d))] if here.files.is_dir(str(d)) else []
     ours = [b / name for h in below(places) for b in below(h) if here.files.is_dir(str(b / name))]
-    for d in ours + [rejected_reports_dir(project)]:
+    for d in ours + [rejected_reports_dir(project), data_dir() / "probe_inputs" / name]:
         try:
             here.remove_tree(str(d))
         except OSError:

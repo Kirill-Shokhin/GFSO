@@ -27,7 +27,7 @@ from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_as
 from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
                                           probes_from as _checks_of)
 from gfso.core.protocol.validation import P2P_SIGNALS, Role
-from gfso.config import (CALLER, data_dir as _data_dir, for_the_hands, how_it_is_waited,
+from gfso.config import (CALLER, DEFAULT_PROJECT, data_dir as _data_dir, for_the_hands, how_it_is_waited,
                          VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE,
                          caller_id as _config_caller_id)
 from gfso.engine import Engine
@@ -2733,7 +2733,8 @@ def probe_inputs(engine: Engine, task_id: str) -> dict:
     if t is None:
         return {"error": f"unknown task {task_id}"}
     # under the STATE directory: the home of a source checkout is the repository itself
-    base = _data_dir() / "probe_inputs" / f"{task_id}_{int(time.time())}"
+    # …under its project: a node id names a node in every project, and a deleted project takes its own (`drop_host_files`)
+    base = _data_dir() / "probe_inputs" / (engine.project_name or DEFAULT_PROJECT) / f"{task_id}_{int(time.time())}"
     # …the DONE parts' too, each reported under the criterion of this node it rests on (`Engine.parts_procedure`)
     under = [(c.name, c) for c in t.spec.criteria] + [
         (name, pc) for name, pcs in engine.parts_procedure(TaskId(task_id)).items() for pc in pcs]

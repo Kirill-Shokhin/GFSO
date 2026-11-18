@@ -16,26 +16,46 @@ import re
 # silently fails closed. Blocks are tried in order; the first that satisfies the schema wins.
 FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
-#: a backslash and the character after it, read in pairs as JSON's own lexer reads them
-_ESCAPE = re.compile(r"\\(.)", re.S)
+#: a backslash and what it escapes, read as JSON's own lexer reads them: `\u` only with its four hex digits
+_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|.)", re.S)
+#: the parser's words for an escape JSON does not have — `\u` with no four hex digits after it is the second
+_UNKNOWN_ESCAPE = ("Invalid \\escape", "Invalid \\uXXXX escape")
+
+
+def _kept(m: re.Match) -> bool:
+    return len(m[1]) == 5 or m[1] in "\"\\/bfnrt"
 
 
 def kept_escapes(raw: str) -> str:
     """`raw` with every escape JSON does not have written so it reads as its two literal characters — a model quoting
-    `\\xNN` in prose made a whole report unread (s18b2). It changes no valid document: there every backslash starts an
-    escape JSON has."""
-    return _ESCAPE.sub(lambda m: m[0] if m[1] in "\"\\/bfnrtu" else "\\\\" + m[1], raw)
+    `\\xNN` in prose made a whole report unread (s18b2), and so did `\\u` with no hex after it (a path, `\\user`). It
+    changes no valid document: there every backslash starts an escape JSON has."""
+    return _ESCAPE.sub(lambda m: m[0] if _kept(m) else "\\\\" + m[1], raw)
+
+
+def _as_written(raw: str, pos: int) -> int:
+    """The position in `raw` of `pos` in `kept_escapes(raw)`: the parser's diagnostic after the repair pointed into the
+    repaired text, one column right of the model's for every backslash the repair added before it."""
+    added = 0
+    for m in _ESCAPE.finditer(raw):
+        if m.start() + added >= pos:
+            break
+        added += not _kept(m)
+    return pos - added
 
 
 def _loads(raw: str, **kw):
     """`json.loads` as every structured reply is read — control characters inside strings kept, an escape JSON does not
-    have kept as written (`kept_escapes`)."""
+    have kept as written (`kept_escapes`); a failure after that repair is located in `raw`, as the model wrote it."""
     try:
         return json.loads(raw, strict=False, **kw)
     except json.JSONDecodeError as e:
-        if e.msg != "Invalid \\escape":
+        if e.msg not in _UNKNOWN_ESCAPE:
             raise
-    return json.loads(kept_escapes(raw), strict=False, **kw)
+    try:
+        return json.loads(kept_escapes(raw), strict=False, **kw)
+    except json.JSONDecodeError as e:
+        raise json.JSONDecodeError(e.msg, raw, _as_written(raw, e.pos)) from None
 
 
 RETRY_SUFFIX = ("\n\nYour previous output could not be parsed against the schema "

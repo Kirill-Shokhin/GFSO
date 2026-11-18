@@ -31,6 +31,10 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   are now kept under the project's name; a file a process still holds keeps only its own directory, and the deletion
   completes.
 - The instructions name this machine where the person chose it (`in_chat`, an executor with no container).
+- A report holding a backslash-u with no four hex digits after it (a Windows path's user directory) is read, the
+  sequence as written; a report still unread after that repair is located where the model wrote the error.
+- A FAIL its build made, or a copy that is not the delivery, names no validator model and no tools: no model ran.
+- Inputs laid for a hand validation (`probe_inputs`) are kept under their project and go with its deletion.
 
 ## [0.4.0] — 2026-11-17
 

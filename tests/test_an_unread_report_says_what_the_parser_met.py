@@ -82,3 +82,20 @@ def test_the_error_is_located_in_the_object_after_the_prose():
     why = why_unread('I checked it all.\n{"status": "delivered", "summary": "ran "x" twice"}', EXECUTOR_SCHEMA)
     assert why.startswith("The JSON is invalid: Expecting ',' delimiter at line 1 column 42"), why
     assert "I checked" not in why, why
+
+
+BS = chr(92)
+
+
+def test_a_u_with_no_four_hex_digits_is_read_as_written_and_a_real_one_decodes():
+    """A backslash-u before no four hex digits (a Windows path's user directory) is no escape JSON has: it made the
+    report unread (11-17)."""
+    raw = "{\"a\": \"C:" + BS + "user and " + BS + "u12 and " + BS + "u00e9\"}"
+    assert parse_structured(raw, {"type": "object", "required": ["a"]}) == {"a": "C:" + BS + "user and " + BS + "u12 and " + chr(0xE9)}
+
+
+def test_an_error_after_the_escape_repair_is_located_where_the_model_wrote_it():
+    """The repair adds a backslash per unknown escape, and the parser's column pointed into the repaired text."""
+    raw = "{\"a\": \"" + BS + "x " + BS + "q\", \"b\": 1,, \"c\": 2}"
+    why = why_unread(raw, {})
+    assert f"at line 1 column {raw.index(',,') + 2}," in why, why

@@ -13,6 +13,7 @@ import pytest
 
 import gfso.adapters.llm.headless as _headless
 from gfso.adapters.execution import LocalExecution, scratch_of
+from gfso.adapters.snapshots import BuildFailed
 from gfso.core.types import HostFiles
 from gfso import tools as T
 from gfso import tools_llm as TL
@@ -1165,4 +1166,22 @@ def test_the_validators_process_cap_is_t_validate(monkeypatch):
     caps.clear()
     TL.validate_result(e, "n1", _llm=_Capped("no report"))
     assert caps and all(c <= 321 for c in caps)
+    e.stop()
+
+
+def test_a_fail_its_build_made_names_no_model_and_no_tools(monkeypatch):
+    """A delivery whose build failed is FAILed with nothing checked and no model asked: the verdict was signed with the
+    requested validator's model and the tools of a call before it (11-17)."""
+    e = _eng()
+    _delivered_node(e)
+
+    def built_nothing(*a, **k):
+        raise BuildFailed("the judge built with `make`, and it exited 2", "make")
+    monkeypatch.setattr(TL, "_validator_texts", built_nothing)
+    llm = _ValidatorLLM("never read")
+    llm._model, llm.last_tool_calls = "claude-haiku-5-5", {"Read": 3}
+    llm.tag_last = lambda stage: None             # …no call to label: the port's own `tag_last` skips an empty ledger
+    out = TL.validate_result(e, "n1", _llm=llm)
+    rec = e.current_exec_verdict(T.TaskId("n1")) or {}
+    assert out.get("verdict") == "FAIL" and not rec.get("validator_model") and not rec.get("tools_used"), (out, rec)
     e.stop()

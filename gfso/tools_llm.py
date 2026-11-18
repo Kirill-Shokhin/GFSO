@@ -1501,8 +1501,10 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
         left[str(t.id)][1] + _conjoined(entries[str(t.id)]), t.spec.criteria, engine.parts_procedure(t.id),
         {pid: o for (tid, pid), o in observed.items() if tid == str(t.id)}, moved[:10]) for t, _ in nodes}
     out["reports"] = {tid: {**said[tid], "per_criterion": whole[tid]} for tid in entries}
-    out["verdicts"] = {str(t.id): _record_node(engine, t, whole[str(t.id)], said[str(t.id)], validator, llm,
-                                               claims[str(t.id)], model, workdir, scratch, text)
+    # …a FAIL the build or the copy made ran no model: it names none (one never asked was signed as the judge)
+    out["verdicts"] = {str(t.id): _record_node(engine, t, whole[str(t.id)], said[str(t.id)], validator,
+                                               None if unbuilt else llm, claims[str(t.id)],
+                                               None if unbuilt else model, workdir, scratch, text)
                        for t, _ in nodes}
     return out, text
 

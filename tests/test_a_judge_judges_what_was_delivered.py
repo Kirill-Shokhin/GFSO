@@ -111,6 +111,8 @@ def test_live_a_failing_build_is_the_deliverys_fail_and_its_executors_next_packe
     try:
         assert judge.seen == [], "no check ran over a delivery whose build failed"
         assert out["verdict"] == "FAIL" and out["failed_criteria"] == ["one"], out
+        # …a FAIL the build made ran no model, and names none (one never asked was signed as the judge, 11-17)
+        assert not (e.current_exec_verdict(TaskId("big")) or {}).get("validator_model"), e.current_exec_verdict(TaskId("big"))
         said = P._last_delivery_text(e, [e.graph.get_task(TaskId("big"))])
         assert "Makefile's default target" in said and "exited 2" in said and "no-compiler" in said, said
         # …and nothing stands on the node: the next delivery's own build is the re-check — a `make` kept as a finding
