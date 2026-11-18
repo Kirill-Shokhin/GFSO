@@ -115,6 +115,30 @@ def test_next_step_re_accepts_reauthored_parent_first():
     assert s["task_id"] == "root" and s["action"] == "accept"       # re-accept parent BEFORE its child executes
 
 
+def test_a_standing_offer_never_outranks_the_work_in_hand():
+    """A person-held graph: a direction re-offered with nothing under way beneath it is a standing offer (its owner may
+    abstain, §12.9) — the step is the work already consented, not "RE-ACCEPT" of the offer (gfso-dev-draft
+    2026-11-18: the step said re-accept the first offered direction while the stream's taken node went unnamed)."""
+    A = AgentId("exec")
+    e = make_engine(llm=StubLLM(), validate_signals=False)
+    e.start()
+    e.assign_task(TaskId("root"), _sp("root", ("ra", "a"), ("rp", "p")), A); e.wait_idle()
+    e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("root"), source=A)); e.wait_idle()
+    e.decompose_task(TaskId("root"), [(TaskId("a"), _sp("a", ("x", "x")), A), (TaskId("p"), _sp("p", ("y", "y")), A)],
+                     [CriterionMapping("ra", TaskId("a")), CriterionMapping("rp", TaskId("p"))],
+                     register=REGISTER_SPLIT); e.wait_idle()
+    e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("p"), source=A)); e.wait_idle()
+    e.decompose_task(TaskId("p"), [(TaskId("q"), _sp("q", ("z", "z")), A)],
+                     [CriterionMapping("y", TaskId("q"))], register=REGISTER_SPLIT); e.wait_idle()
+    e.edit_accepted_risks(TaskId("p"), (), A); e.wait_idle()           # p re-offered, nothing under way beneath it
+    e.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=TaskId("a"), source=A)); e.wait_idle()  # a in hand
+    assert e.graph.get_task(TaskId("p")).state.name == "OFFERED"
+    s = e.next_step(TaskId("root"))
+    assert (s["task_id"], s["action"]) == ("a", "execute"), s
+    p = next(x for x in e.next_steps(TaskId("root"))["steps"] if x["task_id"] == "p")
+    assert p["action"] == "accept" and "split stands" in p["directive"] and "RE-ACCEPT" not in p["directive"]
+
+
 def test_next_step_no_graph_and_complete():
     e = make_engine(llm=StubLLM(), validate_signals=False)
     e.start()

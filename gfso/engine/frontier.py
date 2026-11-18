@@ -18,6 +18,22 @@ from .validation import users_criteria, _l0_holes, _l2_undischarged, hole_kind, 
 
 #: Actions whose signal is the ISSUER's to give (§11.2) — everything else is the executor's.
 
+#: Consented work (§12.1) — the executor still acting; the waits on an issuer are steps of their own.
+_UNDER_WAY = frozenset({State.EXECUTING, State.REWORKING})
+
+
+def _ancestors_of_work(tasks) -> set:
+    """Ids of every node with work under way somewhere beneath it, in one pass over the parent edges."""
+    parent = {str(t.id): str(t.parent_id) for t in tasks if t.parent_id}
+    out: set = set()
+    for t in tasks:
+        if t.state in _UNDER_WAY:
+            p = parent.get(str(t.id))
+            while p and p not in out:
+                out.add(p)
+                p = parent.get(p)
+    return out
+
 
 def step_role(engine, task: Optional[Task], action) -> str:
     """WHOSE ROLE a step's move is (§12.13, the state's owner) — `issuer` or `executor` — read once for every reader
@@ -244,7 +260,7 @@ class NodeSteps:
                         lead="The moves are its issuer's: ") + ".")
         return None
 
-    def _step_for(self, t, kids, crits, nm, cands, held, _deps_ready, _passed):
+    def _step_for(self, t, kids, crits, nm, cands, held, _deps_ready, _passed, work_beneath=False):
         """What the holder of this node is asked to do next — one answer per state.
 
         Sign a verdict already on the record · validate one that is not · repair a plan a
@@ -327,14 +343,16 @@ class NodeSteps:
                     f"run it, read the ACTUAL output, and signal from what you OBSERVED — not from "
                     f"'I implemented it' (an optimistic self-pass the root later fails drops q_D). "
                     f"DELIVER with, per criterion, the check you ran and what it printed.")
-        elif t.state == State.OFFERED and kids:
-            # a re-authored parent dropped back to OFFERED — re-ACCEPT it BEFORE driving its subtree, so the
-            # graph doesn't finish all children while the parent still shows 'accept' (obs: odd ordering).
+        elif t.state == State.OFFERED and kids and work_beneath:
+            # a re-authored parent dropped back to OFFERED while work goes on beneath it — re-ACCEPT it BEFORE driving
+            # its subtree, so the graph doesn't finish all children while the parent still shows 'accept' (obs: odd
+            # ordering). With nothing under way beneath, it is a standing offer like any other (below): its owner may
+            # abstain (§12.9), so it never outranks work already consented (a person-held graph, 2026-11-18)
             cand = (0, t, Action.ACCEPT,
                     f"RE-ACCEPT '{t.id}' ({nm}): it was re-authored → signal ACCEPT to put it back to work "
                     f"(its existing subtree is retained). Then its children proceed.")
         elif t.state == State.OFFERED:
-            if not _deps_ready(t.id):
+            if not kids and not _deps_ready(t.id):
                 return None  # a leaf whose producers have not passed is not takeable yet — the
                           # frontier used to hand it out anyway, and whoever took it discovered
                           # the missing input by BLOCKing on it. (The re-ACCEPT of a PARENT above
@@ -353,6 +371,11 @@ class NodeSteps:
                                  why=_shut["why"], opens_with=_shut["opens_with"]).as_dict())
                 return None
             cand = (4, t, Action.ACCEPT,
+                    f"TAKE '{t.id}' ({nm}) when you start its work: signal ACCEPT (or CHALLENGE if its spec is "
+                    f"wrong). Its split stands"
+                    + ("; its parts are taken as their work starts." if not all(_passed(k) for k in kids) else
+                       ", every part passed: take it to hand the whole in.")
+                    if kids else
                     f"TAKE '{t.id}' ({nm}): signal ACCEPT (or CHALLENGE if its spec is wrong). Then "
                     f"decide by the criteria {crits}: DECOMPOSE it into subtasks if that fits the goal "
                     f"(their number is YOUR call — then review_decomposition checks the split for "
@@ -1063,6 +1086,8 @@ class Frontier:
             """A consumer is executable only once every producer it depends on has PASSED (dep order)."""
             return not self._open_producers(tid, waits)
 
+        under_way = _ancestors_of_work(tasks)   # once per walk: a question must not grow with the graph
+
         cands = []  # (priority, task, action, directive); lower priority acts first
         for t in tasks:
             kids = self.engine.graph.get_active_children(t.id)
@@ -1075,7 +1100,8 @@ class Frontier:
                 continue
             if self._waits_on_work_in_progress(t, kids, held, _passed):
                 continue
-            _c = self.steps._step_for(t, kids, crits, nm, cands, held, _deps_ready, _passed)
+            _c = self.steps._step_for(t, kids, crits, nm, cands, held, _deps_ready, _passed,
+                                      str(t.id) in under_way)
             if _c is not None:
                 cands.append(_c)
 
