@@ -444,8 +444,8 @@ sets its default. Where the system's own sessions answer (`auto`, the part of `s
 holds), an answer owed (`OFFERED`, `CHALLENGED`, `BLOCKED`) and the issuer's decision in `ESCALATED`
 are each a day, a verdict in `VALIDATING` an hour, counted from the delivery, a cancel's handshake two
 minutes, and the deadline a day; `GFSO_BOUND_<STATE>` (seconds, `0` = no bound for that state) and
-`GFSO_DEFAULT_DEADLINE_S` set these for the server, and they hold for the work a dispatched session
-does in your name. Where you answer — `solo`, the part of `semi` you hold, a graph with no mode, a
+`GFSO_DEFAULT_DEADLINE_S` set these for the server; the last also cuts every executor session the
+system starts, a dispatched one working in your name included. Where you answer — `solo`, the part of `semi` you hold, a graph with no mode, a
 person no registered role stands for — your agent moves only when you write, so the waits are yours:
 an answer 180 days, `VALIDATING` 14, `ESCALATED` 30, `CANCELLING` 7, the deadline 180, so a week away
 loses nothing. A deadline already written stays: `set_mode` names the nodes left on a short one, and

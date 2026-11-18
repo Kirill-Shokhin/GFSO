@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from gfso.config import MODEL_DEFAULT
+from gfso.config import MODEL_DEFAULT, default_deadline_s
 from gfso.inflight import _inflight
 from gfso.llm import session_calls
 from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut
@@ -58,12 +58,19 @@ EXECUTOR_SCHEMA = {
 
 
 def _session_cap(engine, tasks) -> int | None:
-    """The process cap of an executor session: the earliest deadline among the nodes it holds, else the
-    adapter's default. No second clock (§12.2): on expiry the process is killed, NO signal forged, and the FSM
-    timeout monitor escalates — and a session holding several nodes cannot run past the contract of any of
-    them, so none lapses while the session that would deliver it is still working."""
+    """The process cap of an executor session: what is left of the earliest deadline among the nodes it holds, and
+    never more than the server's own session bound (`GFSO_DEFAULT_DEADLINE_S`, what the system's runs are tuned for);
+    with no deadline the adapter's default. No second clock (§12.2): on expiry the process is killed, NO signal forged,
+    and the FSM timeout monitor escalates — and a session holding several nodes cannot run past the contract of any of
+    them, so none lapses while the session that would deliver it is still working.
+    The bound is the system's safety on its own process, never a packet field: a deadline is written for whoever owns
+    the waits inside the contract (`project_deadline_s`), a person's months included, and a session it is dispatched to
+    in the holder's name is still cut on the server's scale."""
     deadlines = [t.deadline for t in tasks if t.deadline]
-    return int((min(deadlines) - project_now(engine.graph)).total_seconds()) if deadlines else None
+    if not deadlines:
+        return None
+    left = (min(deadlines) - project_now(engine.graph)).total_seconds()
+    return int(min(left, own) if (own := default_deadline_s()) else left)
 
 
 #: The shortest session worth spawning: one with less left before its deadline is killed before it can report — floored

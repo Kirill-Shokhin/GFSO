@@ -23,7 +23,7 @@ def _type_revision(task: Task, effect: MutateGraph, criteria_changed: bool, del_
         task.reassign_reason_typed = True
         if r == RevisionReason.CAPABILITY_MISMATCH:
             task.reassign_capability_mismatch = True
-from .model import Graph, logged_declarations, project_deadline_s, project_now
+from .model import Graph, logged_declarations, project_deadline_s, project_now, root_issuer_key
 from gfso.core.types import settled_positive
 from gfso.config import default_deadline_s
 
@@ -527,7 +527,11 @@ class Schedule:
         # …each node's default span its performer's (`project_deadline_s`): `whose` names the act's unissued ones
         whose = whose or {}
         held = lambda x: whose[x] if x in whose else (t.assignee if (t := graph.get_task(TaskId(x))) else None)
-        span = lambda x: project_deadline_s(graph, held(x)) if graph is not None else default_deadline_s()
+        # …and its issuer: the act's parent's Del, or at a root the one recorded for it (else its own Del, `issuer_of`)
+        issued_by = lambda x: (parent.assignee if parent is not None
+                               else graph.setting(root_issuer_key(x)) or held(x))
+        span = lambda x: (project_deadline_s(graph, held(x), issued_by(x)) if graph is not None
+                          else default_deadline_s())
         self.want = {x: want or (self.now + timedelta(seconds=s) if (s := span(x)) else None) for x in self.act}
         edges = graph.dep_edges(adopted=True) if graph is not None else []
         self.reads = {x: set(r) | {str(e.from_id) for e in edges if str(e.to_id) == x and e.discovered}

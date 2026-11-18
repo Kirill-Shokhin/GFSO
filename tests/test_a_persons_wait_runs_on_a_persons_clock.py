@@ -18,9 +18,10 @@ import pytest
 
 import gfso.tools as T
 import gfso.tools_llm as TL
-from gfso.config import PERSON_BOUNDS, PERSON_DEADLINE_S, state_bound
+from gfso.config import PERSON_BOUNDS, PERSON_DEADLINE_S, default_deadline_s, state_bound
+from gfso.sessions import _session_cap
 from gfso.engine.loop import state_bound_left
-from gfso.core.types import AgentId, Mode, Signal, State, TaskId
+from gfso.core.types import AgentId, Mode, Signal, SignalData, State, TaskId
 from tests.support import criterion, make_engine, REGISTER
 
 DAY = 86_400
@@ -143,8 +144,8 @@ def test_the_systems_waits_keep_the_servers_and_the_holders_go_to_a_persons(mode
         for state in ("VALIDATING", "ESCALATED", "CHALLENGED", "BLOCKED"):
             assert _bound(g, state, kid) == want(state, person), f"{state}: the child's issuer moves"
         span = lambda t: (t.deadline - datetime.now()).total_seconds()
-        assert (span(root) > 100 * DAY) is person, "the root's deadline follows who performs it"
-        assert span(kid) < 2 * DAY, "the system's work keeps the server's deadline"
+        assert (span(root) > 100 * DAY) is person, "the root's deadline follows who owns its waits"
+        assert (span(kid) > 100 * DAY) is person,             "the child's answers are its issuer's, the holder's under SEMI: its deadline a person's; all the system's under AUTO"
     finally:
         e.stop()
 
@@ -176,19 +177,20 @@ def _span(e, tid):
 
 
 def test_a_reassign_to_another_performer_chooses_the_supplied_deadline_for_the_new_one():
-    """A supplied deadline is chosen for its performer: handed from a person to a session, or back, it is chosen anew."""
-    e = _plain(**{"p-exec-1": "llm-executor"})
+    """A supplied deadline is chosen for the node's parties: handed from a person to a session, or back, under a machine
+    issuer, it is chosen anew."""
+    e = _plain(**{"p-exec-0": "llm-executor", "p-exec-1": "llm-executor"})
     try:
         T.TOOLS["create_task"](e, "root", {"description": "g", "accepted_risks": REGISTER,
-                                           "criteria": [criterion("a", "A"), criterion("b", "B")]}, assignee="bob")
+                                           "criteria": [criterion("a", "A"), criterion("b", "B")]}, assignee="p-exec-0")
         e.wait_idle()
         T.TOOLS["decompose"](e, "root", [_kid("root.a", ["a"], criterion("a1", "A1")) | {"assignee": "bob"},
                                          _kid("root.b", ["b"], criterion("b1", "B1")) | {"assignee": "p-exec-1"}],
                              accepted_risks=REGISTER)
         e.wait_idle()
         assert _span(e, "root.a") > 100 * DAY and _span(e, "root.b") < 2 * DAY
-        T.TOOLS["reassign"](e, "root.a", "p-exec-1", agent="bob")
-        T.TOOLS["reassign"](e, "root.b", "bob", agent="bob")
+        T.TOOLS["reassign"](e, "root.a", "p-exec-1", agent="p-exec-0")
+        T.TOOLS["reassign"](e, "root.b", "bob", agent="p-exec-0")
         e.wait_idle()
         assert str(e.graph.get_task(TaskId("root.a")).assignee) == "p-exec-1"
         assert _span(e, "root.a") < 2 * DAY, "the session's work keeps the server's deadline"
@@ -242,23 +244,67 @@ def test_with_no_mode_the_standing_agent_is_the_person():
         e.stop()
 
 
-def test_dispatched_hands_keep_the_sessions_work_on_the_servers_clock():
-    """SOLO performed by dispatch: the holder consents and signs, the system's session does the work — the deadline and
-    the cancel's handshake are the session's; the consent, the verdict and the decisions stay the person's."""
-    e = make_engine(validate_signals=True, state_timeout=0)
+def _dispatched():
+    e = make_engine(validate_signals=True, check_interval=0.05, state_timeout=0)
+    e.start()
+    e.project_name = "p"
+    e.workforce.publish_executor_pool({"exec-1": "p"})
+    e.set_mode(Mode.SOLO, None, AgentId("user"), hands="exec-1")
+    T.TOOLS["create_task"](e, "root", {"description": "g", "criteria": [criterion("g", "G")]})
+    T.TOOLS["decompose"](e, "root", [_kid("kid", ["g"], criterion("k", "K"))], accepted_risks=REGISTER)
+    e.wait_idle()
+    return e
+
+
+def test_dispatched_hands_the_persons_consent_waits_and_the_session_is_cut_on_the_servers_clock():
+    """SOLO performed by dispatch: the holder consents and signs, the system's session does the work. The deadline is
+    the contract's — OFFERED ends at it, and the consent is the person's — so a person's; the session's process is cut
+    by the server's own bound, never by a deadline chosen short (`sessions._session_cap`)."""
+    e = _dispatched()
+    try:
+        kid = e.graph.get_task(TaskId("kid"))
+        assert str(kid.assignee) == "user" and kid.state.name == "OFFERED"
+        assert _bound(e.graph, "CANCELLING", kid) == state_bound("CANCELLING"), "the session's handshake"
+        for state in ("OFFERED", "VALIDATING", "ESCALATED"):
+            assert _bound(e.graph, state, kid) == PERSON_BOUNDS[state], state
+        assert _session_cap(e, [kid]) <= default_deadline_s(), "the session is cut on the server's scale"
+        _the_person_is_away(e, 1.5 * DAY)
+        time.sleep(1.0)
+        assert not _timeouts(e), f"the person's consent lapsed in a night and a half: {_timeouts(e)}"
+    finally:
+        e.stop()
+
+
+def test_a_semi_childs_challenge_waits_for_the_person_who_answers_it():
+    """SEMI: the system's executor challenges a child the holder issued — the answer is the person's, so the deadline
+    the challenge ends at is a person's."""
+    e = make_engine(validate_signals=True, check_interval=0.05, state_timeout=0)
     e.start()
     e.project_name = "p"
     try:
-        e.workforce.publish_executor_pool({"exec-1": "p"})
-        e.set_mode(Mode.SOLO, None, AgentId("user"), hands="exec-1")
+        e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
+        e.set_mode(Mode.SEMI, None, AgentId("user"))
         T.TOOLS["create_task"](e, "root", {"description": "g", "criteria": [criterion("g", "G")]})
         T.TOOLS["decompose"](e, "root", [_kid("kid", ["g"], criterion("k", "K"))], accepted_risks=REGISTER)
         e.wait_idle()
         kid = e.graph.get_task(TaskId("kid"))
-        assert str(kid.assignee) == "user"
-        assert _span(e, "kid") < 2 * DAY, "the session's work keeps the server's deadline"
-        assert _bound(e.graph, "CANCELLING", kid) == state_bound("CANCELLING")
-        for state in ("OFFERED", "VALIDATING", "ESCALATED"):
-            assert _bound(e.graph, state, kid) == PERSON_BOUNDS[state], state
+        e.send_signal_sync(SignalData(signal=Signal.CHALLENGE, task_id=kid.id, source=kid.assignee, reason="K is vague"))
+        assert e.graph.get_state(kid.id).name == "CHALLENGED"
+        _the_person_is_away(e, 1.5 * DAY)
+        time.sleep(1.0)
+        assert not _timeouts(e), f"the person's answer lapsed in a night and a half: {_timeouts(e)}"
+    finally:
+        e.stop()
+
+
+def test_after_in_chat_turns_to_dispatch_a_hung_session_is_still_cut_on_the_servers_clock(tmp_path):
+    """A tree made in the chat stands on a person's deadlines; dispatched afterwards, its session must not run for months."""
+    e, _ = _solo_in_chat(tmp_path)
+    try:
+        kid = e.graph.get_task(TaskId("root.b"))
+        assert (kid.deadline - datetime.now()).total_seconds() > 100 * DAY
+        e.workforce.publish_executor_pool({"exec-1": "p"})
+        e.set_mode(Mode.SOLO, None, AgentId("user"), hands="exec-1")
+        assert _session_cap(e, [kid]) <= default_deadline_s(), "a hung session runs to the person's deadline"
     finally:
         e.stop()

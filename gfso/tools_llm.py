@@ -2823,11 +2823,12 @@ def _short_supplied(engine: Engine) -> dict:
     (Inv-1) — never by the system rewriting it under the choice just made — so they are named, and how to extend them."""
     g, now = engine.graph, project_now(engine.graph)
     short = sorted(str(t.id) for t in engine.all_tasks() if t.state not in TERMINAL_STATES and t.deadline_supplied
-                   and t.deadline is not None and (span := project_deadline_s(g, t.assignee))
+                   and t.deadline is not None and (span := project_deadline_s(g, t.assignee, g.issuer_of(t.id)))
                    and (t.deadline - now).total_seconds() < span / 2)
     if not short:
         return {}
-    days = round(max(project_deadline_s(g, t.assignee) for t in engine.all_tasks() if str(t.id) in short) / 86_400)
+    days = round(max(project_deadline_s(g, t.assignee, g.issuer_of(t.id)) for t in engine.all_tasks()
+                     if str(t.id) in short) / 86_400)
     return {"short_deadlines": short,
             "say": (f"Tell the person: {len(short)} live node(s) ({', '.join(short[:10])}{', …' if len(short) > 10 else ''}) "
                     f"keep the deadline written before this choice, under half of the {days} day(s) now written for such "

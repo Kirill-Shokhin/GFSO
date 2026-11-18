@@ -274,15 +274,18 @@ def waits_on_a_person(graph: Optional["Graph"], party) -> bool:
     return kind in ("holder", "legacy") or kind == "person" and graph.roster is not None
 
 
-def project_deadline_s(graph: "Graph", party=None) -> float:
-    """How far ahead a deadline nobody typed is written in this project for work `party` performs: its own setting,
-    else a person's scale where a person performs it (`waits_on_a_person`) — not where the system's session does it in
-    the holder's name (`hands_of`) — else the server's, whose 0 writes none."""
+def project_deadline_s(graph: "Graph", assignee=None, issuer=None) -> float:
+    """How far ahead a deadline nobody typed is written in this project for a node between `assignee` and `issuer`: its
+    own setting, else a person's scale where any wait inside the contract falls on a person (`waits_on_a_person`: the
+    consent and the handshake on the assignee, the answers, the verdict and the decision on the issuer — OFFERED,
+    CHALLENGED and BLOCKED end at the deadline too, §12.2), else the server's, whose 0 writes none. The deadline is the
+    contract's; the system's session is cut by its own bound (`sessions._session_cap`), never by choosing it shorter."""
     v = graph.setting("deadline_s")
     if v is not None:
         return float(v)
     server = default_deadline_s()
-    return PERSON_DEADLINE_S if server and waits_on_a_person(graph, party) and not hands_of(graph, party) else server
+    person = waits_on_a_person(graph, assignee) or waits_on_a_person(graph, issuer)
+    return PERSON_DEADLINE_S if server and person else server
 
 
 def project_bounds(graph: Optional["Graph"]) -> dict:
