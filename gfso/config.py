@@ -24,6 +24,7 @@ import re
 import threading
 import time
 import typing
+from datetime import datetime, timezone
 from pathlib import Path
 
 # The installation root — the package's parent, used when the checkout itself is the home.
@@ -520,12 +521,26 @@ def network_record_off() -> bool:
         return False
 
 
-def local_agents(declared: str = "") -> bool:
+#: the person's word that this host runs dispatched work, written only from their page (`set_local_agents`)
+HOST_EXECUTION = "host_execution.json"
+
+
+def local_agents() -> bool:
     """May this host run the work the system dispatches — executors' sessions, nobody watching their commands
-    (`LocalExecution.agents_refused`)? Only on its user's word, `GFSO_LOCAL_AGENTS=allow`: unattended work runs in a
-    container (the author, 2026-10-27: autonomous runs only in a container, Local only with a person).
-    `declared`: the value a server spawned from here takes where none is exported (`install_spawned_server_env`)."""
-    return (os.environ.get("GFSO_LOCAL_AGENTS") or declared).strip().lower() == "allow"
+    (`LocalExecution.agents_refused`)? Only on the person's word, given on their page: unattended work runs in a
+    container (the author, 2026-10-27: autonomous runs only in a container, Local only with a person). An environment
+    variable or `data/serve.json` decided it before 0.4.1, and both are the agent's to write — it starts the server
+    with its own environment and declares through the CLI (instruction audit 2026-11-17, row 7)."""
+    try:
+        return json.loads((data_dir() / HOST_EXECUTION).read_text(encoding="utf-8")).get("allow") is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def set_local_agents(allow: bool, by: str) -> None:
+    """Record the person's word on host execution (`local_agents`); the page's door is its one writer."""
+    write_atomic(data_dir() / HOST_EXECUTION, json.dumps(
+        {"allow": bool(allow), "by": by, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}) + "\n")
 
 
 #: how every server of this package is run by uvicorn: its client the connection's real other end, never a forwarding

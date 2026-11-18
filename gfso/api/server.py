@@ -1085,12 +1085,28 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
                 "agents_version": _agents_fingerprint()}
 
 
+def _mount_local_agents(app) -> None:
+    @app.post("/api/local_agents")
+    def set_local_agents(body: dict = Body(...)):
+        """The person's word that this host runs the work the system dispatches, unisolated (`config.local_agents`):
+        taken from their page alone, as who holds a project's work is — an agent's connection, the CLI and a token
+        are the agent's own doors, and the agent runs as the person."""
+        if (person := _page_person()) is None:
+            raise HTTPException(403, "whether this machine runs agents' work outside Docker is the person's choice, "
+                                     "made on their page (the projects list); tell them, and leave it to them")
+        if not isinstance(allow := body.get("allow"), bool):
+            raise HTTPException(422, "`allow` is true or false")
+        _config.set_local_agents(allow, person)
+        return {"local_agents": _config.local_agents()}
+
+
 def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
     """The server's own life: leases, shutdown, the roster and what this process is serving.
 
     One of the six questions `create_app` used to answer in a single body of 270
     statements; the routes it registers are unchanged.
     """
+    _mount_local_agents(app)
     app.state.leases = {}
     app.state.lease_holders = {}          # lease id → the principal its bridge declared
     app.state.exit_fn = end_this_process

@@ -12,6 +12,14 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 
 ## [Unreleased]
 
+### Changed
+- Running the system's executors on this machine, outside Docker, is the person's word given on their page (the projects
+  list; `POST /api/local_agents`, a page session alone) and kept in `data/host_execution.json`. `GFSO_LOCAL_AGENTS` in the
+  environment or `data/serve.json` no longer gives it: both are the agent's to write. Like the mode, it holds against
+  an agent using gfso's own tools; a process of the person's that acts as their page is the person here
+  (SECURITY.md). An installation that relied on
+  it allows it again on the page; until then such a project stops, saying so.
+
 ### Fixed
 - A customer's notes on a plan are read, beside its goal, for the demands they make on the delivered result, a later
   note standing over an earlier one it contradicts; a note's directive about the plan's own text (keep this check,

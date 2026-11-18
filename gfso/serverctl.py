@@ -36,7 +36,7 @@ from gfso import __version__
 from gfso.adapters.children import run
 from gfso.config import agents_path as _roster
 from gfso.adapters.children import open_outside
-from gfso.config import (LOOPBACK, data_dir, flag, home, local_agents, opens_the_page, page_auth, shared_url,
+from gfso.config import (LOOPBACK, data_dir, flag, home, opens_the_page, page_auth, shared_url,
                          windows_allowed, write_atomic)
 
 def _address() -> tuple[str, int]:
@@ -269,10 +269,6 @@ def drift(rt: dict, env: dict, fingerprint: str) -> list[str]:
     if "no_windows" in rt and "GFSO_NO_WINDOWS" in (d := declared()) and \
             rt["no_windows"] != (want := flag("GFSO_NO_WINDOWS", env=d)):
         out.append(f"no_windows={rt['no_windows']} != {want}")
-    # …the word as the server it would spawn takes it: exported here, else declared (`install_spawned_server_env`)
-    word = local_agents(str(env.get("GFSO_LOCAL_AGENTS", "")))
-    if "local_agents" in rt and bool(rt["local_agents"]) != word:
-        out.append(f"local_agents={bool(rt['local_agents'])} != {not rt['local_agents']}")
     if "page_auth" in rt and rt["page_auth"] != (want := page_auth(str(env.get("GFSO_PAGE_AUTH", "")))):
         out.append(f"page_auth={rt['page_auth']} != {want}")
     if (rt.get("agents_path") or "") != env.get("GFSO_AGENTS_PATH", ""):

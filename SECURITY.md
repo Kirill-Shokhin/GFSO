@@ -11,7 +11,7 @@
 ## What it promises, in short
 
 Work the system dispatches runs unattended, so it runs in Docker, which the installation requires (the one exception is your
-word, `GFSO_LOCAL_AGENTS=allow`, which puts it on your machine, with none of what follows). Under either network switch, for that work:
+word, given on your page (the projects list: run agents on this machine), which puts it on your machine, with none of what follows). Under either network switch, for that work:
 - Nothing of your disk is mounted where an agent runs. Your repository enters as its committed HEAD with all its history, so a shallow clone or a sha256 repository is refused at import with that cause, which
   every session can read: clean a secret out of the history first. What is uncommitted does not enter, and the project's log says so.
   The root's accepted result comes back as the branch `gfso/<project>/accepted`, your working tree and branches untouched.
@@ -115,10 +115,15 @@ will reach a model with a shell.
 
 Unattended work runs in a container. The work the system dispatches — an executor's session, a
 scope's, a system-held parent's consent — is a model with tools whose commands nobody watches, and
-before it the plan's checks of its place run; on your machine none of it starts unless the server
-was started with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json` (or that variable in its
-environment; `data/serve.json` is where `gfso up` keeps it, and
-a server started without it is restarted). Without that, the first such round stops its project with
+before it the plan's checks of its place run; on your machine none of it starts unless you allowed it on your
+page (the projects list: run agents on this machine), the one door that writes that word
+(`data/host_execution.json`): an agent's connection, the CLI and a token are refused, and neither an
+environment variable nor `data/serve.json` gives it, since your agent starts the server with its own
+environment and declares through the CLI. This holds against an agent that uses gfso's own tools, as the
+mode does, not against one that acts as your page: on a loopback server any process of yours is you from
+a page (above) — one HTTP request with a page's headers, or under `--protected` a code `gfso ui --host`
+prints — and so is one that rewrites the file. A proof of your presence no process of yours can replay
+is not built yet. Without that word, the first such round stops its project with
 the cause named, nothing of the node having run or been consented to, and the project stays
 stopped until the word is given or an execution is declared; a mode that would dispatch such work
 is not set as ready. Work your own agent does in its chat, the validator that
@@ -384,7 +389,7 @@ What one session can still reach:
 Under a container execution a node performed in your own chat (`perform="in_chat"`) is carried into the
 volume by the commit it delivered (`refs/gfso/<project>/delivered/<node>`); what is not committed is no part of it.
 
-Without an execution, and with `"GFSO_LOCAL_AGENTS": "allow"` in `data/serve.json`, sessions run as you, on your machine, with nothing between them and the rest
+Without an execution, and with host execution allowed on your page, sessions run as you, on your machine, with nothing between them and the rest
 of it: a validation's copy is still the recorded commit where a scratch for it can be made, but nothing
 is read-only to it, no container ends with its run, and a validation with no scratch runs in the
 place itself.

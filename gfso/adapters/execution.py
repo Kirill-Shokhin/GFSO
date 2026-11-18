@@ -30,7 +30,8 @@ from pathlib import Path
 
 from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, WORK_PATH, ExecutionPort,
                              FilesPort, PlaceUnavailable, base_named, base_of_nodes, nodes_dir, nodes_root, place_name)
-from gfso.config import (for_the_hands, CONTAINER_LOG, DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits, local_agents,
+from gfso import config as _config_module
+from gfso.config import (for_the_hands, CONTAINER_LOG, DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits,
                          memory_ceiling, network_record_off, new_flows, HELD_FLOWS, node_disk, executions, executions_path, host_env, subprocess_env,
                          write_atomic)
 from gfso.adapters import door, egress, lfs, shell
@@ -1257,16 +1258,16 @@ class LocalExecution(ExecutionPort):
 
     def agents_refused(self):
         """Unattended work runs in a container; this host runs it only on its user's word, given where the server
-        starts (`config.local_agents`). The user's own agent runs as the user and could write that word too — the
-        system cannot tell the two apart — so the refusal is the person's to read: it names the choice, addressed to
-        them. Work a person does in their own chat, and what judges it, runs here as before: it is attended."""
-        if local_agents():
+        gives on their page (`config.local_agents`): the agent's own doors (its connection, the CLI, a token, the
+        environment it starts the server with) cannot give it, and the refusal is the person's to read: it names the
+        choice, addressed to them. Work a person does in their own chat, and what judges it, runs here as before: it is attended."""
+        if _config_module.local_agents():
             return None
         return ("this host runs no dispatched work unattended: an executor's commands would run as the person, on "
                 "their machine, with nothing between them and the rest of it. Run the project in a container (its "
                 "executor registered with `execution=\"default\"`, which `gfso setup` declares). Running it on this "
-                "host instead is the PERSON's choice, never an agent's — their `GFSO_LOCAL_AGENTS` word in "
-                "data/serve.json: tell them, and leave it to them (SECURITY.md, \"Unattended work runs in a container\")")
+                "host instead is the PERSON's choice, never an agent's — made on their page (the projects list: "
+                "run agents on this machine): tell them, and leave it to them (SECURITY.md, \"Unattended work runs in a container\")")
 
     def unavailable(self, storage: bool = False):
         # …so a project this refusal stopped stays stopped until the word is given or an execution is declared

@@ -1,7 +1,7 @@
 """A new installation runs delegated work in a container with no hand step but Docker (the author, 2026-10-30: «для
 нового пользователя будет стоять обязательным докер в установке»): `gfso setup` builds the shipped agent image and
 declares the execution "default" on it, an executor registered naming no execution takes it, and `gfso doctor` names
-in one line what is missing. The user's word for this host (GFSO_LOCAL_AGENTS=allow) is the explicit opt-out.
+in one line what is missing. The person's word for this host, given on their page, is the explicit opt-out.
 """
 import json
 import subprocess
@@ -10,6 +10,7 @@ import subprocess
 import pytest
 
 import gfso.adapters.execution as E
+from gfso import config
 import gfso.adapters.llm.headless as H
 import gfso.doctor as D
 import gfso.tools_llm as TL
@@ -23,7 +24,7 @@ from tests.support import make_engine
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("GFSO_EXECUTIONS_PATH", str(tmp_path / "executions.json"))
     monkeypatch.setenv("GFSO_AGENTS_PATH", str(tmp_path / "agents.json"))
-    monkeypatch.delenv("GFSO_LOCAL_AGENTS", raising=False)
+    monkeypatch.setattr(config, "local_agents", lambda: False)
     monkeypatch.setattr(WS, "_EXECUTIONS", {})
     (tmp_path / "w").mkdir()
     return tmp_path
@@ -61,7 +62,7 @@ def test_the_default_is_not_taken_where_the_work_is_attended_or_placed_already(h
     assert _registered(e, home, "p-x", execution="other") == "other"
     assert _registered(e, home, "p-exec") is None, "a project runs in one execution: the one it declared"
     monkeypatch.setenv("GFSO_AGENTS_PATH", str(home / "agents-q.json"))     # …a project with no role yet
-    monkeypatch.setenv("GFSO_LOCAL_AGENTS", "allow")
+    monkeypatch.setattr(config, "local_agents", lambda: True)
     assert _registered(_dispatching(), home, "q-exec") is None, "the user's word for this host is the opt-out"
 
 

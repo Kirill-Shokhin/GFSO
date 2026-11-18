@@ -227,7 +227,7 @@ def declare_default(tag: str) -> str:
 
 def local_word() -> bool:
     """Has the user said unattended work may run on this host (`config.local_agents`), as the server would take it?"""
-    return _config.local_agents(str(serverctl.declared().get("GFSO_LOCAL_AGENTS", "")))
+    return _config.local_agents()
 
 
 def _execution_report() -> tuple[list[tuple[str, str]], list[str]]:
@@ -243,7 +243,7 @@ def _execution_report() -> tuple[list[tuple[str, str]], list[str]]:
         declared = {}
         blocking.append(f"executions.json does not read ({ex})")
     if word:
-        rows.append(("execution", "THIS HOST — GFSO_LOCAL_AGENTS=allow: delegated sessions run as you, unisolated"))
+        rows.append(("execution", "THIS HOST — allowed on the page: delegated sessions run as you, unisolated"))
     elif DEFAULT_EXECUTION in declared:
         tag = declared[DEFAULT_EXECUTION].get("image", "")
         present = ok and image_present(tag)
@@ -529,7 +529,7 @@ def install_execution() -> str:
         ok, line = docker_state()
     if not ok:
         return (f"Docker: {line}. Delegated work will not start until it runs; then `gfso setup` again. "
-                "(GFSO_LOCAL_AGENTS=allow in data/serve.json runs it on this host instead, unisolated.)")
+                "(the person can allow it on this host instead from the page's projects list, unisolated.)")
     tag = agent_image()
     if not image_present(tag) and (left := image_built_detached(tag)):
         return left

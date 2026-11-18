@@ -155,7 +155,7 @@ _BOTH = ("auto_decompose(plan=path)", "its `say` asks",
          "https://github.com/Kirill-Shokhin/GFSO/tree/main/docs", "THEORY.md", "applied_gfso_v4_en.md", "Lean 4",
          "never route around a rule", "You speak for GFSO", "canon(section)",
          # …and the one rule a host executor rests on, which stood under the cut (critic, 11-15)
-         "GFSO_LOCAL_AGENTS", "never set it yourself")
+         "the person's choice, made on their page", "never make it yourself")
 #: what one kind's agent must read and the other's must not: a wake or a shell it lacks, it would act on
 _ONLY = {"code": ("gfso wait project=<project>", "`gfso doctor`. No Docker", "git init", "`path` if none"),
          "chat": ("are theirs, in a terminal", "gfso setup --desktop", "the person opens `path`",

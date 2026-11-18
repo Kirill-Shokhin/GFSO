@@ -61,7 +61,8 @@ from gfso.tools import _agent_id
 from gfso.config import CALLER, agent_id as _config_agent_id, caller_id, client_kind, how_it_is_waited, reserved_refusal
 from gfso.config import WRITTEN_IN_THE_CALL as _config_written_in_the_call
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
-from gfso.config import (DEFAULT_EXECUTION, DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, executions, local_agents,
+from gfso import config as _config_module
+from gfso.config import (DEFAULT_EXECUTION, DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, executions,
                          validation_batch, validate_internal, state_bound, WAIT_MAX_SECONDS, WAIT_POLL_SECONDS)
 from gfso.packets import (BUILT, UNCOPIED, TECH_REPORT, _last_deliver_result, _scope_validator_packet, _validator_packet, file_tech_reports,
                           owed_probes, snapshot_note)
@@ -2539,7 +2540,7 @@ def _default_execution(engine: Engine, mode: Optional[dict], agents) -> Optional
     that work (critic). `in_chat` too: its chat's deliveries are taken into the volume (`take_in`) and its parts' work
     lands back (`workspaces._to_the_chat`). Not where the project already runs somewhere, nor where the user said
     unattended work may run on this host."""
-    if not mode or local_agents() or declaring_role(engine, agents) is not None:
+    if not mode or _config_module.local_agents() or declaring_role(engine, agents) is not None:
         return None
     try:
         return DEFAULT_EXECUTION if DEFAULT_EXECUTION in executions() else None

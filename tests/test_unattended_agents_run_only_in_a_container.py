@@ -2,7 +2,7 @@
 author, 2026-10-27: autonomous runs only in a container, Local only with a person). An executor's session, a scope's,
 a system-held parent's consent: a model with tools whose commands nobody watches, and before it the plan's checks of its
 place — on this host all of it runs as the user, with nothing between it and the rest of the machine. Without the word
-(`GFSO_LOCAL_AGENTS=allow`, declared in `data/serve.json`) none of it starts here: the round is its project's stop with
+(given on their page: `POST /api/local_agents`, a page session alone) none of it starts here: the round is its project's stop with
 the cause named, nothing of the node runs first, and the stop holds until the word is given or an execution is
 declared. Work a person does in their own chat, and the validator that judges it, run here as before."""
 from __future__ import annotations
@@ -13,19 +13,24 @@ import time
 
 import pytest
 
-from gfso import serverctl, sessions as S, tools_llm as TL
+from starlette.testclient import TestClient
+
+from gfso import config, signin, sessions as S, tools_llm as TL
+from gfso.api.server import create_app
 from gfso.adapters import execution as E
 from gfso.core.types import THIS_HOST, PlaceUnavailable
 import gfso.delegate as D
 from gfso.delegate import Dispatcher
 from tests.support import make_engine
 from tests.test_a_cut_call_does_not_spend_the_nodes_retry import _an_offer
+from tests.conftest import REAL_LOCAL_AGENTS
 from tests.test_delegate import _agents
+from tests.test_the_person_is_the_os_user_at_the_loopback_door import PAGE
 
 
 @pytest.fixture
 def no_word(monkeypatch):
-    monkeypatch.delenv("GFSO_LOCAL_AGENTS", raising=False)
+    monkeypatch.setattr(config, "local_agents", lambda: False)
 
 
 def _nothing_runs(monkeypatch):
@@ -46,13 +51,13 @@ def test_dispatched_work_does_not_start_on_this_host_without_the_word(no_word, m
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
     with pytest.raises(PlaceUnavailable) as got:
         getattr(S, runner)(e, S.TaskId("kid"), "exec-1", agents)
-    assert got.value.place == THIS_HOST and "GFSO_LOCAL_AGENTS" in got.value.why
+    assert got.value.place == THIS_HOST and "their page" in got.value.why
     assert ran == [], f"{ran} ran on this host before the refusal"
     e.stop()
 
 
 def test_the_word_lets_it_start(monkeypatch, tmp_path):
-    monkeypatch.setenv("GFSO_LOCAL_AGENTS", "allow")
+    monkeypatch.setattr(config, "local_agents", lambda: True)
     ran = _nothing_runs(monkeypatch)
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
@@ -82,7 +87,7 @@ def test_the_refusal_is_the_projects_stop_until_the_word_is_given(no_word, monke
     assert e.graph.get_task(S.TaskId("kid")).state.name == "OFFERED", "consented in its executor's name, then refused"
     e.lift_the_system_stop(time.time())
     assert e.paused(), "the stop lifted with nothing changed"
-    monkeypatch.setenv("GFSO_LOCAL_AGENTS", "allow")
+    monkeypatch.setattr(config, "local_agents", lambda: True)
     e.lift_the_system_stop(time.time())
     assert e.paused() is None
     e.stop()
@@ -94,9 +99,9 @@ def test_a_mode_that_dispatches_is_not_ready_where_its_work_would_be_refused(no_
                                                               ("exec-2", "llm-executor"), ("val-1", "llm-validator")))
     for mode, perform in (("solo", "dispatch"), ("semi", "dispatch"), ("auto", "dispatch")):
         got = TL.mode_staffing(e, mode, perform)
-        assert not got["ready"] and "GFSO_LOCAL_AGENTS" in got["missing"], (mode, got)
+        assert not got["ready"] and "their page" in got["missing"], (mode, got)
     assert TL.mode_staffing(e, "solo", "in_chat")["ready"], "work done in the chat is attended"
-    monkeypatch.setenv("GFSO_LOCAL_AGENTS", "allow")
+    monkeypatch.setattr(config, "local_agents", lambda: True)
     assert TL.mode_staffing(e, "auto", "dispatch")["ready"]
 
 
@@ -108,19 +113,31 @@ def test_a_container_execution_over_a_repository_needs_no_word(no_word, tmp_path
     assert E.LocalExecution().agents_refused()
 
 
-def test_a_server_without_the_declared_word_is_not_the_declared_one(monkeypatch):
-    monkeypatch.delenv("GFSO_LOCAL_AGENTS", raising=False)
-    said = lambda rt, env: [w for w in serverctl.drift(rt, env, "fp") if "local_agents" in w]
-    rt = {"code_version": "fp", "local_agents": False}
-    assert said(rt, {"GFSO_LOCAL_AGENTS": "allow"}), "a restart that lost the word reads as correct"
-    assert not said(rt, {})
-    assert said({"code_version": "fp", "local_agents": True}, {})
+def test_the_word_is_the_persons_page_alone_and_read_from_its_record(tmp_path, monkeypatch):
+    """Host execution was decided by `GFSO_LOCAL_AGENTS` in the environment or data/serve.json — both the agent's to
+    write: it starts the server with its own environment and declares through the CLI (instruction audit, row 7)."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "local_agents", REAL_LOCAL_AGENTS)
     monkeypatch.setenv("GFSO_LOCAL_AGENTS", "allow")
-    assert not said({"code_version": "fp", "local_agents": True}, {}), "an exported word is the spawned server's too"
-    assert not said({"code_version": "fp"}, {"GFSO_LOCAL_AGENTS": "allow"}), "a server that says nothing of it"
-    monkeypatch.setenv("GFSO_LOCAL_AGENTS", "no")
-    assert not said({"code_version": "fp", "local_agents": False}, {"GFSO_LOCAL_AGENTS": "allow"}), (
-        "an exported value wins in the spawned server: drift by the declared one would restart it for ever")
+    (tmp_path / "serve.json").write_text('{"GFSO_LOCAL_AGENTS": "allow"}', encoding="utf-8")
+    assert not config.local_agents(), "the agent's own words decide nothing"
+    e = make_engine(validate_signals=True)
+    e.start()
+    app = create_app(e)
+    agent = TestClient(app, base_url="http://127.0.0.1:8000")
+    agent.cookies.clear()
+    assert agent.post("/api/local_agents", json={"allow": True}).status_code == 403
+    _, token = signin.issue("engineering")
+    assert TestClient(app, base_url="http://127.0.0.1:8000", headers={"Authorization": f"Bearer {token}"}).post(
+        "/api/local_agents", json={"allow": True}).status_code == 403
+    assert not config.local_agents()
+    page = TestClient(app, base_url="http://127.0.0.1:8000", headers=PAGE)
+    page.cookies.clear()
+    assert page.post("/api/local_agents", json={"allow": True}).json() == {"local_agents": True}
+    assert config.local_agents() and page.get("/api/runtime").json()["local_agents"] is True
+    assert page.post("/api/local_agents", json={"allow": False}).json() == {"local_agents": False}
+    assert page.post("/api/local_agents", json={"allow": "yes"}).status_code == 422
+    e.stop()
 
 
 def test_a_container_runs_no_dispatched_work_over_a_base_that_is_no_repository(tmp_path):

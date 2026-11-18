@@ -47,8 +47,8 @@ auto_decompose(plan=path) # the go
 ```
 5. **The plan.** You are its customer, answerable for the result. READ `text` WHOLE, <!-- code -->`path` if none.<!-- chat -->with none, the person opens `path`.<!-- both --> Tell the
 person what its `say` asks. A `refine_plan(plan=path, note)` (`model=` for a stronger author) only for the person's result; the rest goes to them in one line. A refused go names why: that is the note.
-6. **The go.** Say what its `say` asks. An executor on this machine is the person's `GFSO_LOCAL_AGENTS`
-(data/serve.json): never set it yourself.
+6. **The go.** Say what its `say` asks. An executor on this machine is the person's choice, made on their page:
+never make it yourself.
 7. **The end.** <!-- code -->`gfso wait project=<project>` in the background exits when the run needs you. <!-- chat -->After the
 go and after `plan`, hand the turn back to the person: read the run when they ask. <!-- both -->A stop or `stuck`
 goes to the person with its `directive`; in `auto` you do not intervene. Report the verdict (`get_verdict("root")`), the link, and the end as its `say` asks.

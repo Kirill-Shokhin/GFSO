@@ -68,7 +68,11 @@ def _no_thread_writes_through_the_interpreters_end():
 atexit.register(_no_thread_writes_through_the_interpreters_end)
 
 from gfso.adapters import execution as E  # noqa: E402
+from gfso import config as _config  # noqa: E402
 from gfso.config import agents_path  # noqa: E402
+
+#: the person's page word on host execution as the product reads it, before the suite stands in for it
+REAL_LOCAL_AGENTS = _config.local_agents
 from gfso.decompose import kept as _kept_store  # noqa: E402
 from gfso.adapters.llm import chat as _chat  # noqa: E402
 from gfso.delegate import _DISPATCHERS, Dispatcher  # noqa: E402
@@ -116,7 +120,8 @@ def _own_state_home():
     (Path(mine) / OWNER).write_text(str(os.getpid()), encoding="utf-8")
     os.environ["GFSO_ALLOWED_HOSTS"] = "testserver"     # the name Starlette's TestClient sends; the door refuses others
     E.CEILING_GROUP = "gfso/suite"                      # its live containers under the machine's ceiling, never its limit
-    os.environ["GFSO_LOCAL_AGENTS"] = "allow"           # the suite's sessions are fakes on this host, by its own word
+    _config.local_agents = lambda: True                 # the suite's sessions are fakes on this host, by its own word;
+                                                        # a test without it sets it False, the record is read in its own
     os.environ["GFSO_NETWORK_RECORD"] = "off"           # …a listener for each worker's live tests; its own file asks for it
     os.environ["GFSO_NO_UPDATE_CHECK"] = "1"            # …nor PyPI asked by a doctor or a use_project under test
     os.environ["GFSO_OPEN_PAGE"] = "0"                  # …nor a browser opened by a go under test
