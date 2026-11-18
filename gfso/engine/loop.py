@@ -516,7 +516,7 @@ _OWN_BOUND_ONLY = (State.VALIDATING, State.ESCALATED, State.CANCELLING)
 
 def state_bound_left(task, now: float, graph=None) -> Optional[float]:
     """Seconds this visit has left under the state's OWN bound (§12.2) — None where there is none."""
-    bound = project_state_bound(graph, task.state.name)
+    bound = project_state_bound(graph, task.state.name, task)
     if not bound:
         return None
     return bound - (now - (task.state_entered_at or task.created_at).timestamp())

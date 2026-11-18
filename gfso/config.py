@@ -443,6 +443,22 @@ _STATE_BOUND_DEFAULTS = {
 }
 #: the states that carry a bound of their own; a project may set any of them (`project_state_bound`)
 BOUNDED_STATES = tuple(_STATE_BOUND_DEFAULTS)
+#: THE SAME WAITS WHEN A PERSON OWNS THEM — the party a state waits on is a person, or a user-agent that moves only when
+#: its person writes (`model.waits_on_a_person`). The numbers above are tuned for the system's own sessions; under them a
+#: person away one night lost the node and its subtree. These are the project's, not the server's (no variable): the
+#: values the author's own people-held graph runs on, each outlasting a person's week away.
+PERSON_BOUNDS = {
+    # an answer a person gives: half a year, the dev graph's OFFERED — and the deadline still runs beside it
+    "OFFERED": 180 * 86_400.0, "CHALLENGED": 180 * 86_400.0, "BLOCKED": 180 * 86_400.0,
+    # the issuer signs the verdict (`Engine.holder_signs`): two weeks, two weeks away covered
+    "VALIDATING": 14 * 86_400.0,
+    # the issuer's decision on a lapsed node, before its subtree is cancelled: a month
+    "ESCALATED": 30 * 86_400.0,
+    # a cancel's handshake a person answers: their next week
+    "CANCELLING": 7 * 86_400.0,
+}
+#: the deadline written into a packet a person performs (§2.5): as long as the offer it rides on may wait
+PERSON_DEADLINE_S = 180 * 86_400.0
 
 
 def state_bound(state_name: str) -> float:

@@ -11,10 +11,10 @@ import time
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
-from gfso.config import BOUNDED_STATES, default_deadline_s, state_bound
+from gfso.config import BOUNDED_STATES, PERSON_BOUNDS, PERSON_DEADLINE_S, agent_id, default_deadline_s, state_bound
 
 from gfso.core.types import (
-    TaskId, AgentId, Task, State, Signal, Verdict,
+    TaskId, AgentId, Task, State, Signal, Verdict, Mode,
     GuardContext, GraphContext, CheckResult, Recommendation,
     DispatchPayload, DepEdge, StoragePort, DEFAULT_MAX_ITERATIONS, TERMINAL_STATES,
 )
@@ -225,10 +225,44 @@ def on_the_wall(graph: Optional["Graph"], at: datetime) -> datetime:
     return at + timedelta(seconds=door_off_s(graph))
 
 
-def project_deadline_s(graph: "Graph") -> float:
-    """How far ahead a deadline nobody typed is written in this project: its own setting, else the server's."""
+def party_kind(graph: "Graph", party: str, registered=None) -> str:
+    """WHO makes a party's issuer moves — the one owner of a question four places answered four ways (D-F9):
+    `holder` — the user's standing agent under SOLO/SEMI, whose moves the system never makes;
+    `machine` — the standing agent under AUTO (the customer, who does not intervene), or a registered participant;
+    `legacy` — the standing agent with no mode set: as before modes, the system answers its disputes at a seam (one its
+    own node raises is its own, §10.3) and resolves its mechanical blocks, the instrument signs, and its plan moves stay its own;
+    `person` — anyone else, unregistered: the system is passive.
+    The standing agent is read first: a role registered under the user's own id does not make it a machine.
+    `registered` is the registry consulted (the dispatcher's own; the engine's published roster by default)."""
+    if str(party) == str(agent_id()):
+        mode = json.loads(graph.setting("mode") or "null") if graph is not None else None
+        return "legacy" if not mode else "machine" if mode["mode"] == Mode.AUTO else "holder"
+    return "machine" if (registered or {}).get(str(party)) is not None else "person"
+
+
+#: the states whose wait the ASSIGNEE ends (its consent, its handshake); every other bounded state waits on the issuer —
+#: its answer to a dispute or a block, its decision on a lapsed node, its signature on a verdict (`Engine.holder_signs`)
+_ASSIGNEE_WAITS = ("OFFERED", "CANCELLING")
+
+
+def waits_on_a_person(graph: Optional["Graph"], party) -> bool:
+    """Is `party` one whose moves come only when a person writes — the user-agent holding nodes (SOLO, SEMI's top) or a
+    person the published roster does not carry? Their waits run on a person's scale (`PERSON_BOUNDS`); the system's own
+    sessions keep the server's. Before the dispatcher publishes a roster nobody is taken for a person by absence from it."""
+    if graph is None or party is None:
+        return False
+    kind = party_kind(graph, str(party), graph.roster or {})
+    return kind == "holder" or kind == "person" and graph.roster is not None
+
+
+def project_deadline_s(graph: "Graph", party=None) -> float:
+    """How far ahead a deadline nobody typed is written in this project for work `party` performs: its own setting,
+    else a person's scale where a person performs it (`waits_on_a_person`), else the server's — whose 0 writes none."""
     v = graph.setting("deadline_s")
-    return float(v) if v is not None else default_deadline_s()
+    if v is not None:
+        return float(v)
+    server = default_deadline_s()
+    return PERSON_DEADLINE_S if server and waits_on_a_person(graph, party) else server
 
 
 def project_bounds(graph: Optional["Graph"]) -> dict:
@@ -262,9 +296,14 @@ MAX_BOUND_S = 365 * 86_400
 MAX_ITERATIONS_CEILING = 1_000
 
 
-def project_state_bound(graph: Optional["Graph"], state_name: str) -> float:
-    """One state's own bound (§12.2) in this project: its setting, else the server's (`state_bound`)."""
-    return project_bounds(graph).get(state_name) or state_bound(state_name)
+def project_state_bound(graph: Optional["Graph"], state_name: str, task: Optional[Task] = None) -> float:
+    """One state's own bound (§12.2) in this project: its setting, else — on `task` — a person's scale where the party
+    the state waits on is a person (`waits_on_a_person`), else the server's (`state_bound`)."""
+    if own := project_bounds(graph).get(state_name):
+        return own
+    party = task and (task.assignee if state_name in _ASSIGNEE_WAITS else graph.issuer_of(task.id))
+    return PERSON_BOUNDS[state_name] if state_name in PERSON_BOUNDS and waits_on_a_person(graph, party) \
+        else state_bound(state_name)
 
 
 def bounds_refusal(bounds) -> Optional[str]:
@@ -301,6 +340,9 @@ class Graph:
         # reading it defensively, which is how a rule silently becomes "empty set" on any graph the
         # dispatcher never touched.
         self.authorized_validators: set[str] = set()
+        # WHO OF THE NON-HUMAN PARTICIPANTS IS WHAT, {id: kind} — published by the dispatcher (`Workforce.publish_roster`);
+        # None before it first does, so no party reads as a person by absence from a roster nobody wrote
+        self.roster: Optional[dict] = None
 
     def setting(self, key: str) -> Optional[str]:
         """A setting of this graph's project as stored, or None — the user's choices for it (`set_mode`)."""

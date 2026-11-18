@@ -242,8 +242,8 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple], declared
     # THE ACT: every child this admission gives a version — a re-issued one too, standing on its own deadline, typed
     # as it was or, where supplied, re-chosen if it no longer fits (critic r2 over F3: left out, a re-issued child's
     # new Dep was invisible to the writer)
-    act, typed = {}, {}
-    for cid, spec, _a, *rest in children:
+    act, typed, whose = {}, {}, {}
+    for cid, spec, whose[str(cid)], *rest in children:
         cid, t, given = str(cid), graph.get_task(cid), (rest[0] if rest else None)
         stands = t.deadline if t is not None and t.deadline is not None and t.deadline > now and not given else None
         act[cid] = (given or (stands if stands and not t.deadline_supplied else None),
@@ -261,7 +261,7 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple], declared
                 raise ValueError(f"{cid}'s deadline {on_the_wall(graph, dl):%Y-%m-%d %H:%M} is not inside its parent "
                                  f"{parent.id}'s ({on_the_wall(graph, parent.deadline):%Y-%m-%d %H:%M}) — a child that may finish when its parent is "
                                  f"due cannot compose into it (§11.5, item (6)); give one before it")
-    sched = Schedule(graph, parent, act)
+    sched = Schedule(graph, parent, act, whose=whose)
     defaults = sched.defaults()
     # A STANDING DEADLINE STAYS unless the order this act leaves crosses it — a producer due at or after it, a consumer
     # at or before it, or the parent's bound (item (6)): a deadline is a packet field, so moving it is a version, made
@@ -285,7 +285,7 @@ def deadlines_the_act_sets(graph: Graph, parent, children: list[tuple], declared
     # fixed — its re-issue is a revision, whose crossing is a flag (§12.10), at this door as at `add_dependency`
     issued = {c for c in act if graph.get_task(c) is not None}
     free = Schedule(graph, parent, {c: ((sets.get(c) if c in issued else None), r, None)
-                                          for c, (_d, r, _k) in act.items()})
+                                          for c, (_d, r, _k) in act.items()}, whose=whose)
     dl = lambda tid: sets.get(tid) or free.standing(tid)
     # gated "where some such choice orders every edge" (§11.5): the system, the deadlines it sets freed, not each
     # edge — bounded by the parent only while its deadline is ahead; the defaults are ordered wherever an order

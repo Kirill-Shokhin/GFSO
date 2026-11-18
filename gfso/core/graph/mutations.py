@@ -515,15 +515,19 @@ class Schedule:
     crossing standing at the producer's edge as CHECK-3's flag for the issuers whose deadlines bound it (§11.5). Only a
     live deadline ahead bounds anything: a settled end orders nothing to come (§11.5), a spent one is re-issued."""
 
-    def __init__(self, graph: Graph, parent: Optional[Task], act: dict, want: Optional[datetime] = None):
+    def __init__(self, graph: Graph, parent: Optional[Task], act: dict, want: Optional[datetime] = None,
+                 whose: Optional[dict] = None):
         self.now = project_now(graph)
         self.graph = graph
         self.act = {str(k): (typed, tuple(str(p) for p in reads), keep) for k, (typed, reads, keep) in act.items()}
         dated = parent is not None and parent.deadline is not None
         self.spent = dated and parent.deadline <= self.now
         self.due = parent.deadline if dated and not self.spent else None
-        span = project_deadline_s(graph) if graph is not None else default_deadline_s()
-        self.want = want or (self.now + timedelta(seconds=span) if span else None)
+        # …each node's default span its performer's (`project_deadline_s`): `whose` names the act's unissued ones
+        whose = whose or {}
+        held = lambda x: whose[x] if x in whose else (t.assignee if (t := graph.get_task(TaskId(x))) else None)
+        span = lambda x: project_deadline_s(graph, held(x)) if graph is not None else default_deadline_s()
+        self.want = {x: want or (self.now + timedelta(seconds=s) if (s := span(x)) else None) for x in self.act}
         edges = graph.dep_edges(adopted=True) if graph is not None else []
         self.reads = {x: set(r) | {str(e.from_id) for e in edges if str(e.to_id) == x and e.discovered}
                       for x, (_t, r, _k) in self.act.items()}
@@ -549,7 +553,7 @@ class Schedule:
             left -= set(ready)
         return out
 
-    def _solve(self, margin: timedelta, lead: timedelta, want: Optional[datetime], free: bool,
+    def _solve(self, margin: timedelta, lead: timedelta, want: Optional[dict], free: bool,
                outside: frozenset = frozenset({"floors", "ceilings"})) -> Optional[dict]:
         """Each variable node's deadline at this margin — the untyped, or every one of the act's (`free`) — or None
         where no choice orders every edge it holds. The edges among the act's own variable nodes and the parent's
@@ -581,7 +585,8 @@ class Schedule:
             earliest = max([self.now + lead] + [d + margin for d in after])
             if earliest > latest[x]:
                 return None
-            out[x] = min(max(want, earliest), latest[x]) if want else latest[x]
+            w = want and want[x]
+            out[x] = min(max(w, earliest), latest[x]) if w else latest[x]
         return out
 
     def defaults(self) -> dict:
@@ -590,7 +595,7 @@ class Schedule:
         then the consumers' too — the act's own edges and the parent's bound never; each crossing so written stands as
         CHECK-3's flag. Past that, the parent's bound alone."""
         untyped = [x for x, (typed, _r, _k) in self.act.items() if typed is None]
-        if self.want is None or self.spent:
+        if self.spent or not any(self.want.values()):
             return dict.fromkeys(untyped)
         for outside in (frozenset({"floors", "ceilings"}), frozenset({"ceilings"}), frozenset()):
             margin = _CHILD_MARGIN
@@ -598,8 +603,8 @@ class Schedule:
                 if (out := self._solve(margin, _CHILD_MARGIN, self.want, free=False, outside=outside)) is not None:
                     return out
                 margin /= 2
-        top = min(self.want, self.due - _CHILD_MARGIN) if self.due else self.want
-        return dict.fromkeys(untyped, top if top > self.now else None)
+        top = {x: min(self.want[x], self.due - _CHILD_MARGIN) if self.due else self.want[x] for x in untyped}
+        return {x: t if t > self.now else None for x, t in top.items()}
 
     def orderable(self) -> bool:
         """Does some choice of the deadlines this act leaves free (the untyped) order every edge, strictly (§11.5's
@@ -614,7 +619,8 @@ class Schedule:
 
 
 def version_deadline(graph: Graph, deadline: Optional[datetime], task: Optional[Task] = None,
-                     parent_id=None, spec=None, task_id=None, supplied: bool = False) -> tuple[Optional[datetime], bool]:
+                     parent_id=None, spec=None, task_id=None, supplied: bool = False,
+                     assignee=None) -> tuple[Optional[datetime], bool]:
     """The deadline this packet version enters OFFERED with (§12.3).
 
     "Every entry into OFFERED carries a live deadline": T carries the deadline as the bound of the
@@ -638,7 +644,9 @@ def version_deadline(graph: Graph, deadline: Optional[datetime], task: Optional[
     parent = graph.get_task(pid) if (pid and graph is not None) else None
     reads = producers_of(spec if spec is not None else task.spec if task is not None else None,
                          graph.declared_edges(tid) if graph is not None else ())
-    chosen = Schedule(graph, parent, {tid: (None, reads, task.deadline if live else None)}).defaults()[tid]
+    chosen = Schedule(graph, parent, {tid: (None, reads, task.deadline if live else None)},
+                      whose={tid: assignee if assignee is not None else task.assignee if task is not None else None}
+                      ).defaults()[tid]
     return (chosen, True) if chosen is not None else kept
 
 
@@ -647,7 +655,7 @@ def _create_task(graph: Graph, effect: MutateGraph) -> list[TaskId]:
         log.error(f"CREATE_TASK without spec for {effect.task_id}")
         return []
     _deadline = version_deadline(graph, effect.deadline, parent_id=effect.parent_id, spec=effect.spec,
-                                 task_id=effect.task_id, supplied=effect.deadline_supplied)
+                                 task_id=effect.task_id, supplied=effect.deadline_supplied, assignee=effect.assignee)
     task = Task(
         id=effect.task_id,
         spec=effect.spec,

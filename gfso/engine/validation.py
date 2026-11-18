@@ -25,7 +25,7 @@ from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import (PAUSE_KEY, USERS_PLAN_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+from gfso.core.graph.model import (PAUSE_KEY, party_kind, USERS_PLAN_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer, logged_criteria, parent_waits)
 from gfso.engine.audit import VERSION_INSTALLING
 
@@ -1270,21 +1270,6 @@ def mode_kind(graph: Graph) -> Optional[Mode]:
     string (ortho audit, D-F9: raw `"semi"` / `"auto"` compares in eight places)."""
     m = project_mode(graph)
     return Mode(m["mode"]) if m else None
-
-
-def party_kind(graph: Graph, party: str, registered=None) -> str:
-    """WHO makes a party's issuer moves — the one owner of a question four places answered four ways (D-F9):
-    `holder` — the user's standing agent under SOLO/SEMI, whose moves the system never makes;
-    `machine` — the standing agent under AUTO (the customer, who does not intervene), or a registered participant;
-    `legacy` — the standing agent with no mode set: as before modes, the system answers its disputes at a seam (one its
-    own node raises is its own, §10.3) and resolves its mechanical blocks, the instrument signs, and its plan moves stay its own;
-    `person` — anyone else, unregistered: the system is passive.
-    The standing agent is read first: a role registered under the user's own id does not make it a machine.
-    `registered` is the registry consulted (the dispatcher's own; the engine's published roster by default)."""
-    if str(party) == str(_config_agent_id()):
-        kind = mode_kind(graph)
-        return "legacy" if kind is None else "machine" if kind == Mode.AUTO else "holder"
-    return "machine" if (registered or {}).get(str(party)) is not None else "person"
 
 
 def hands_of(graph: Graph, party) -> Optional[str]:

@@ -18,15 +18,10 @@ class Workforce:
 
     def __init__(self, graph: Graph, project: Callable[[], Optional[str]]):
         self._graph, self._project = graph, project
-        # WHO, OF THE NON-HUMAN PARTICIPANTS, IS WHAT — {id: kind}, published downward by the
-        # dispatcher each round. Declared here because three surfaces read it (the frontier's
-        # in-flight view, the affordance layer's "a human or a machine holds this", the tool door's
-        # wait message) and a field born in the dispatcher had all three reading it defensively —
-        # which reads as "nobody is registered" on any engine the dispatcher has not touched yet.
-        self._roster: dict[str, str] = {}
-        self._roster_was: dict | None = None    # the roster last published, None before the first (`publish_roster`)
+        # WHO, OF THE NON-HUMAN PARTICIPANTS, IS WHAT — {id: kind}, published downward by the dispatcher each round and
+        # kept on the graph (`Graph.roster`): the surfaces read it here, the clocks there (`model.waits_on_a_person`)
         #: WHOSE each published instrument is — `{validator id: project or None}`, written by
-        #: the dispatcher beside `_roster`. Declared here rather than read defensively, because
+        #: the dispatcher beside the roster. Declared here rather than read defensively, because
         #: a field a reader has to guess at is a field two readers will guess differently.
         #: `None` for an entry means UNSCOPED, which is shared by design; an empty dict means
         #: no dispatcher has published yet, which is not the same as "no instruments".
@@ -41,13 +36,13 @@ class Workforce:
     def publish_roster(self, kinds: dict) -> bool:
         """The dispatcher's answer to "who of the non-human participants is what" — `{id: kind}`. True when it changes
         a roster already published — the first publication after a start is no change."""
-        kinds, was = dict(kinds or {}), self._roster_was
-        self._roster, self._roster_was = kinds, kinds
+        kinds, was = dict(kinds or {}), self._graph.roster
+        self._graph.roster = kinds
         return was is not None and was != kinds
 
     def roster(self) -> dict:
-        """`{id: kind}` as last published — what `validation.party_kind` reads."""
-        return self._roster
+        """`{id: kind}` as last published — what `party_kind` reads."""
+        return self._graph.roster or {}
 
     def publish_bound_validator(self, task_id: TaskId, validator: Optional[dict]) -> None:
         """The dispatcher's half of `bound_validator` — who it will send at this node, for the doors.
@@ -64,7 +59,7 @@ class Workforce:
         """The instrument the dispatcher bound to this node, as facts a door may read: id, project,
         workdir. `{}` when nothing is bound.
 
-        Published FROM the dispatcher, exactly like `_roster` and `authorized_validators`, because
+        Published FROM the dispatcher, exactly like the roster and `authorized_validators`, because
         the doors may not reach into the delegation layer to ask (the mechanical layer gate) and the
         answer depends on the roster, which is that layer's. What the doors do with it is say WHOSE
         validator is about to read their work — a role registered for another project, standing in a
@@ -140,7 +135,7 @@ class Workforce:
         a human (an unregistered Del IS a human, §10.4). The roster is the dispatcher's, published
         downward; this is the question the read surfaces actually ask, so they ask it rather than
         reading the map."""
-        return self._roster.get(str(agent_id))
+        return self.roster().get(str(agent_id))
 
     def signs_as_instrument(self, agent_id: str) -> bool:
         """Is this id the issuer's authorized role-V instrument (§10.3)? One owner for the question:

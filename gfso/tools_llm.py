@@ -2749,8 +2749,9 @@ def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int]
     Level-2 review gates execution (off: the plan was verified where it was authored); `deadline_s` — how far ahead a
     deadline nobody typed is written (0 = none); `bounds` — each waiting state's own bound here, `{STATE: seconds}` over
     OFFERED, CHALLENGED, BLOCKED, VALIDATING, ESCALATED, CANCELLING (a person who signs answers in days, a run's
-    validator in minutes), replacing the project's previous `bounds` whole, `{}` = the server's; OFFERED, CHALLENGED and
-    BLOCKED also end at the packet deadline, whichever comes first (§12.2), so a long wait needs `deadline_s` too; `max_iterations` — the rework rounds a node issued here
+    validator in minutes), replacing the project's previous `bounds` whole, `{}` = the defaults — days to months where
+    a person owns the wait (you under solo, or over what you hold under semi), the server's where the system does; OFFERED, CHALLENGED and
+    BLOCKED also end at the packet deadline, whichever comes first (§12.2), so a long wait the system owns needs `deadline_s` too; `max_iterations` — the rework rounds a node issued here
     without its own bound gets; `observe` — whether the system runs a node's pinned checks once on its
     place before an executor session and hands it what they printed (on unless set off; `observe.observe_place`);
     `network` — how far this project's container reaches out, where its execution is a container: `open` (everything but

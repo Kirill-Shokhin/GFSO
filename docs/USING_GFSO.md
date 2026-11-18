@@ -439,12 +439,17 @@ criteria (`revise`) if the plan is what is wrong; or close it (`signal(id, "CANC
 the live subtree). Silence closes it too, by the state's own timeout — it never drifts to a pass.
 
 **Every state has a clock.** The packet carries a deadline — you give one or the engine writes a
-default inside the parent's — and each waiting state has its own bound as well: an answer you owe
-(`OFFERED`, `CHALLENGED`, `BLOCKED`) and the issuer's decision in `ESCALATED` are each a day by
-default, a verdict in `VALIDATING` an hour, counted from the delivery. When `VALIDATING` runs out the
-node is handed back to its issuer, never accepted: the clock does not sign a verdict for anyone. Set
-`GFSO_BOUND_<STATE>` (seconds, `0` = no bound for that state) and `GFSO_DEFAULT_DEADLINE_S` to your
-own working rhythm — the numbers are ours, the rule that a wait ends is the canon's.
+default inside the parent's — and each waiting state has its own bound as well. Who owns the wait
+sets its default. Where the system's own sessions answer (`auto`, the part of `semi` the system
+holds), an answer owed (`OFFERED`, `CHALLENGED`, `BLOCKED`) and the issuer's decision in `ESCALATED`
+are each a day, a verdict in `VALIDATING` an hour, counted from the delivery, a cancel's handshake two
+minutes, and the deadline a day; `GFSO_BOUND_<STATE>` (seconds, `0` = no bound for that state) and
+`GFSO_DEFAULT_DEADLINE_S` set these for the server. Where you answer — `solo`, the part of `semi` you
+hold, a person no registered role stands for — your agent moves only when you write, so the waits are
+yours: an answer 180 days, `VALIDATING` 14, `ESCALATED` 30, `CANCELLING` 7, the deadline 180, so a week
+away loses nothing. When `VALIDATING` runs out the node is handed back to its issuer, never accepted:
+the clock does not sign a verdict for anyone. A project sets its own over both, `set_mode(bounds=,
+deadline_s=)` — the numbers are ours, the rule that a wait ends is the canon's.
 
 `metrics()` reads the quality vector off the execution trace — including `q_D`, which is where a
 decomposition that looked fine and did not hold shows up after the fact.
