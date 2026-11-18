@@ -484,6 +484,10 @@ body.deck-drag .deck { position: absolute; left: 0; right: 0; bottom: 0; z-index
 .cy-path button { font: inherit; color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer; }
 .cy-path button:hover { text-decoration: underline; }
 .cy-path b { color: var(--ink); font-weight: 600; }
+/* the way up, as visible as a part's tag is on the way down (graph.js drawPath) */
+.cy-path .cy-up { flex: none; padding: 2px 10px; margin-right: 6px; border: 1px solid var(--ink); border-radius: var(--radius); font-weight: 600; }
+.cy-path .cy-up:hover { background: var(--ink); color: var(--bg); text-decoration: none; }
+@media (pointer: coarse) { .cy-path .cy-up { padding: 7px 14px; } }   /* a finger's target */
 .deck { position: relative; height: 30vh; min-height: 34px; display: flex; flex-direction: column; border-top: 1px solid var(--hair); background: var(--ui-page); }
 .deck.closed { height: auto !important; }
 .deck.closed .dk-body, .deck.closed .dk-grip { display: none; }

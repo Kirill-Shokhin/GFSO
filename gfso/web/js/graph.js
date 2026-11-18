@@ -403,7 +403,10 @@ function drawPath() {
     pathEl.hidden = !t?.id;
     if (!t?.id) return;
     const up = ancestorsIn(S.tasks)(t.id).reverse().slice(1);   // the goal is the whole graph: named once, first
-    pathEl.innerHTML = `<button data-focus=""${TIP.pathWhole}>The whole graph</button>`
+    // …and ONE plain way up first, a step as one click on a tag is a step down: on a desk the way up was the path's small
+    // links or a double-click on the part's top (the author, 2026-11-18: «на пк удобнее вниз ходить чем вверх»)
+    pathEl.innerHTML = `<button class="cy-up" data-focus="${esc(up.at(-1) || '')}">↑ Up</button>`
+        + `<button data-focus=""${TIP.pathWhole}>The whole graph</button>`
         + up.map(id => `<span>›</span><button data-focus="${esc(id)}">${esc(nameOf(taskOf(id)) || id)}</button>`).join('')
         + `<span>›</span><b>${esc(nameOf(t) || t.id)}</b>`;
     pathEl.onclick = e => { const b = e.target.closest('[data-focus]'); if (b) goTo(b.dataset.focus, true); };   // the path goes up
