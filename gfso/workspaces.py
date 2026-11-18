@@ -13,7 +13,7 @@ from gfso.adapters.worktrees import base_of
 from gfso.adapters.netrecord import forget
 from gfso.adapters.execution import (IMPORTED, ContainerExecution, LocalExecution, component, node_key, drop_volumes,
                                      held_as_tree, network_of, scratch_of, stricter)
-from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, executions
+from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, data_dir, executions
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask, same_place
 from gfso.core.graph.model import generation_of_task, grounds_key, root_of
@@ -707,7 +707,8 @@ def node_temp(engine, task) -> str:
 
 def drop_execution(project: str) -> None:
     """The project is gone: its containers go, and the objects that held them, and every volume of it by its label
-    (`drop_volumes`) — the one removal of its places, its roster read or not."""
+    (`drop_volumes`) — the one removal of its places in volumes, its roster read or not (those on this machine go at
+    the deletion's end, `drop_host_files`)."""
     for key in [k for k in _EXECUTIONS.copy() if k[1] == project]:   # …a copy: other threads make executions
         if not (ex := _EXECUTIONS.pop(key, None)):
             continue
@@ -715,6 +716,27 @@ def drop_execution(project: str) -> None:
         hold_places(ex.files, False)
     drop_volumes(project)
     forget(project)
+
+
+def rejected_reports_dir(project: str) -> Path:
+    """Where a project's reports refused as verdicts are kept (`tools_llm._keep_rejected_report`): under the project's
+    own name, a node's id naming a node in every project."""
+    return data_dir() / "rejected_verdicts" / component(project or DEFAULT_PROJECT)
+
+
+def drop_host_files(project: str) -> list[str]:
+    """A deleted project's files in the installation's own state: its places on this machine under every base
+    (`<data>/places/<base's parent>/<base>/<project>`) and its refused reports — a volume holds the rest. Each directory
+    on its own: one a process still holds (a lock on Windows) stays, and is returned, while the rest go."""
+    name, places, left, here = component(project or DEFAULT_PROJECT), data_dir() / PLACES, [], LocalExecution()
+    below = lambda d: [d / x for x in here.files.listdir(str(d))] if here.files.is_dir(str(d)) else []
+    ours = [b / name for h in below(places) for b in below(h) if here.files.is_dir(str(b / name))]
+    for d in ours + [rejected_reports_dir(project)]:
+        try:
+            here.remove_tree(str(d))
+        except OSError:
+            left.append(str(d))
+    return left
 
 
 def project_llm(engine, model: str, agents: "AgentRegistry | None" = None):

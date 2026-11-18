@@ -17,6 +17,7 @@ import pytest
 import gfso.tools_llm as TL
 from gfso.adapters.execution import LocalExecution
 from gfso.adapters.snapshots import snapshot
+from gfso.adapters import snapshots as S
 from gfso.core.types import AgentId, Mode, TaskId
 import gfso.tools as T
 from tests.support import criterion, make_engine, REGISTER
@@ -168,3 +169,11 @@ def test_a_deliver_the_machine_refuses_records_nothing(tmp_path):
     e = _in_chat(tmp_path, repo)
     out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="before consent")
     assert not out["accepted"] and not _git(repo, "for-each-ref", "refs/gfso/"), "a refused DELIVER moved a ref"
+
+
+@pytest.mark.parametrize("declared", ["\"\"", "''", " \"\" ", "``"])
+def test_a_build_declared_as_only_quotes_is_nothing_to_build_not_a_command(tmp_path, declared):
+    """A live in_chat delivery (Haiku, 2026-11-17) declared `build` as a literal pair of quotes — its way of saying "none"
+    — and the judge ran it as a command: 127, and every criterion failed on a build nobody asked for."""
+    said = S._build(tmp_path, declared, LocalExecution())
+    assert said.startswith("nothing:"), said

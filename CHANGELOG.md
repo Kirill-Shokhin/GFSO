@@ -12,6 +12,18 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 
 ## [Unreleased]
 
+### Fixed
+- A customer's notes on a plan are read, beside its goal, for the demands they make on the delivered result, a later
+  note standing over an earlier one it contradicts; a note's directive about the plan's own text (keep this check,
+  change only that input, how a declaration is written) is answered by the plan's change and becomes no duty no check
+  of the work could decide — such notes came back NOT ANSWERED on every round.
+- A delivery whose `build` is only quotes (`""`, a client's way of saying none) builds nothing; it was run as a
+  command, exited 127, and failed every criterion.
+- Deleting a project removes its places on this machine under every base and the reports refused as verdicts, which
+  are now kept under the project's name; a file a process still holds keeps only its own directory, and the deletion
+  completes.
+- The instructions name this machine where the person chose it (`in_chat`, an executor with no container).
+
 ## [0.4.0] — 2026-11-17
 
 ### Changed

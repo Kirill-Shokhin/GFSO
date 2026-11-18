@@ -25,3 +25,13 @@ it looks for a check that refuses exactly that result.
 - **Excluded is not an obligation.** The goal's declared scope-boundary exclusions are deliberate absences (§9.2).
 - **Exhaustive over the text.** Walk the goal from its first line to its last; an obligation left out here is one no
   later step can name.
+
+## When you are given the customer's notes on a plan
+
+Then your list is the demands on the delivered result that the NOTES themselves state — an output a note states or
+corrects ("for this input it must print 1") included, and one the goal states too when a note states it again. The goal
+is there so you know what the result is: list nothing the notes do not say. The notes are numbered in the order they
+were sent; where two disagree, the later one stands and the earlier is no demand. A demand worded as a change to the
+plan ("add a check that an empty file prints 0") is a demand on the result. A directive about the plan's own text —
+which criterion, check or input to change or keep, a hash, how a declaration is written, what stays as it was — is no
+demand on the result. Notes with none give an empty list, and that is the right answer.

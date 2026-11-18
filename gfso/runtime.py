@@ -28,7 +28,7 @@ from gfso.llm import llm_factory
 from gfso.roster import AgentRegistry
 from gfso.decompose import kept as _kept_plans
 from gfso.tools import is_refusal
-from gfso.workspaces import drop_execution
+from gfso.workspaces import drop_execution, drop_host_files
 
 log = logging.getLogger(__name__)
 
@@ -227,6 +227,10 @@ class ProjectRegistry:
         drop_execution(name)       # …its engine loaded or not: a new project of the name inherits no volume
         AgentRegistry().forget_project(name)    # …nor roles
         _kept_plans.forget_project(name)        # …nor a plan it waited on
+        # …and its files in the installation's state, LAST and never raising: a file a process still holds (a lock on
+        # Windows) left a deletion half-done — the database gone, its roles inherited by a project made again (critic)
+        if left := drop_host_files(name):
+            log.warning(f"{name!r} is deleted; these of its files stay, a process holding them: {left}")
         return self.list()
 
     def unmake(self, name: str) -> None:

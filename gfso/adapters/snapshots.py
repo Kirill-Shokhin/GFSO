@@ -633,7 +633,8 @@ def _build(at: Path, declared: Optional[str], execution) -> str:
     in this copy."""
     if declared is None and any(execution.files.exists(str(at / m)) for m in MAKEFILES):
         declared, which = "make", "the delivered Makefile's default target (`make`: no `build` was declared at DELIVER)"
-    elif (declared or "").strip():
+    # …a build of quotes alone is how a client writes "none" (`""` from a live in_chat run): run, it is 127, not a build
+    elif (declared or "").strip(" \t\r\n\"'`"):
         which = f"the build declared at DELIVER (`{declared}`)"
     else:
         return ("nothing: DELIVER declared nothing to build (`build: \"\"`)" if declared is not None else

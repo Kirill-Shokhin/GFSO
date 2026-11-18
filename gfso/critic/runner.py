@@ -839,14 +839,29 @@ def undecided_of(engine, task, llm, obligations) -> tuple[dict, ...]:
     return _still_undecided(engine, task, llm, tuple(obligations))
 
 
-def goal_obligations(llm, goal: str) -> list:
+#: what a customer's notes are, read for what they require: a note on a PLAN asks the plan to change, and only what it
+#: requires of the delivered result is a duty a pinned check can decide — read as a goal, «fix only this input, keep
+#: every other check» became duties no check of the work decides, and every note came back NOT ANSWERED (in_chat, haiku,
+#: 2026-11-17: undecided 0 → 2 → 5)
+NOTES = ("# THE GOAL — what the delivered result is\n{goal}\n\n# THE CUSTOMER'S NOTES ON THE PLAN FOR IT\n{notes}\n\n"
+         "These notes ask the plan to change. Name every demand on the DELIVERED RESULT the notes themselves state — "
+         "what the work must do or produce, an output included — whether or not the goal says it too, each with the "
+         "result that would break it; the goal is shown so you know what the result is, and nothing the notes do not "
+         "say is listed. A directive about the plan's own text — which criterion, check or input to change or keep, a "
+         "hash, how a declaration is written, what else stays as it was — is answered by the plan's change and is no "
+         "demand. Notes with no demand on the result give an empty list.")
+
+
+def goal_obligations(llm, goal: str, notes: str = "") -> list:
     """The obligations a goal carries, each with the result that would break it — read from the goal alone, with the
-    gate's own question, before any plan exists (the authoring's first fold takes them as its findings). [] where the
-    reading did not run or parse: no list is no claim that the goal carries none."""
+    gate's own question, before any plan exists (the authoring's first fold takes them as its findings); given `notes`,
+    what the customer's notes on a plan for that goal require of its result (`NOTES`). [] where the reading did not run
+    or parse: no list is no claim that the goal carries none."""
     system = (Path(__file__).parent / "prompts" / "undecided.md").read_text(encoding="utf-8")
-    user = (f"# THE NODE: {ROOT_ID}\n\n# GOAL\n{goal}\n\n# DECLARED SCOPE EXCLUSIONS (deliberate absences — never "
-            f"obligations)\n- (none declared)\n\nName every obligation of the GOAL, each with the result that would "
-            f"break it." + schema_instruction(UNDECIDED_SCHEMA))
+    user = (f"# THE NODE: {ROOT_ID}\n\n" + (NOTES.format(goal=goal, notes=notes) if notes else
+            f"# GOAL\n{goal}\n\n# DECLARED SCOPE EXCLUSIONS (deliberate absences — never obligations)\n- (none "
+            f"declared)\n\nName every obligation of the GOAL, each with the result that would break it.")
+            + schema_instruction(UNDECIDED_SCHEMA))
     try:
         return list((parse_structured(llm.complete(prompt=user, context=system) or "", UNDECIDED_SCHEMA) or {})
                     .get("gaps") or ())

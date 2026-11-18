@@ -78,7 +78,10 @@ def refine(text: str, note: str, model: str, review_model: str = "", progress=No
     # alone, the AUTO run delivered an engine without it (FM-1.f, regex, haiku, 2026-11-13). Every note, since a later
     # round may drop what carried an earlier one's.
     with _booked(ledger, llm):
-        asked = runner.goal_obligations(llm, "\n\n".join([n.get("note", "") for n in p["notes"]] + [note.strip()]))
+        noted = "\n\n".join(f"Note {i}: {n}" for i, n in enumerate(
+            (n for n in [*(n.get("note", "") for n in p["notes"]), note] if n.strip()), 1))
+        # …blank notes read nothing: with none, the goal-only reading ran and the goal's duties were said the note's
+        asked = runner.goal_obligations(llm, p["goal"], notes=noted) if noted else []
     findings = "# THE CUSTOMER'S NOTE ON THIS PLAN\n" + note.strip() + (
         "\n\n# WHAT THE CUSTOMER'S NOTES REQUIRE (a criterion with a pinned check probing it carries each)\n"
         + "\n".join(f"- {g.get('obligation')} — breaks if: {g.get('admits')}" for g in asked) if asked else "") + (

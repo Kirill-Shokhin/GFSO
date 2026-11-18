@@ -30,7 +30,7 @@ from typing import Optional, Union
 
 from gfso import canon as _canon, runtime
 from gfso.llm import llm_factory
-from gfso.workspaces import declaring_role, delivered_ref, execution_of, performer, where_it_runs
+from gfso.workspaces import declaring_role, delivered_ref, execution_of, performer, where_it_runs, rejected_reports_dir
 from gfso.adapters import worktrees as W
 from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snapshot, swap
 from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, committed, left_out,
@@ -425,7 +425,7 @@ def _keep_a_report_that_decided_nothing(engine, task_id: str, defects: str, text
     is what `get_verdict` is built from, and under delegation the tool's caller is the dispatcher,
     which reads a verdict and nothing else. Keeping only the first is how an ordinary user came to
     poll `get_verdict` for four minutes on a node whose validation had already died."""
-    kept = _keep_rejected_report(task_id, defects, text)
+    kept = _keep_rejected_report(engine.project_name, task_id, defects, text)
     try:
         engine.record_rejected_report(TaskId(task_id), defects, None)
     except Exception:
@@ -435,7 +435,7 @@ def _keep_a_report_that_decided_nothing(engine, task_id: str, defects: str, text
             "refusals_on_this_node": engine.refusals_on_this_delivery(TaskId(task_id))}
 
 
-def _keep_rejected_report(task_id: str, defects: str, text: str) -> "Optional[str]":
+def _keep_rejected_report(project: str, task_id: str, defects: str, text: str) -> "Optional[str]":
     """Persist a report the engine refused to record as a verdict, and return its path.
 
     ⊥ is not pass (§2), so a refused report ends the node's automatic progress and the issuer must
@@ -446,7 +446,7 @@ def _keep_rejected_report(task_id: str, defects: str, text: str) -> "Optional[st
     report is, beside the state, with its path named in the log.
     """
     try:
-        d = runtime.data_dir() / "rejected_verdicts"
+        d = rejected_reports_dir(project)    # …under its project: a node id names a node in every project
         d.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         f = d / f"{task_id}_{stamp}.txt"
@@ -1230,7 +1230,7 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
                                          inputs_dirs=laid_down_dirs(
                                              engine.validation_procedure(task.id), scratch)) or {}
     except ValueError as e:
-        kept = _keep_rejected_report(str(task.id), str(e), text)
+        kept = _keep_rejected_report(engine.project_name, str(task.id), str(e), text)
         try:
             engine.record_rejected_report(task.id, str(e), entries, tools_used=tools,
                                           validated_by={"validator": validator or "validate_result", "model": _model})
