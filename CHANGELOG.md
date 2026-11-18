@@ -66,9 +66,29 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   an agent using gfso's own tools; a process of the person's that acts as their page is the person here
   (SECURITY.md). An installation that relied on
   it allows it again on the page; until then such a project stops, saying so.
+- Under `solo` with `perform="in_chat"` the plan is the person's own agent's, written with the person (§4.5, §11.5):
+  `plan(request)` calls no model and hands back the plan file to fill — the goal in the person's words, a criterion
+  with its check per thing they asked; the go on it calls none either. The system still fixes those checks in the graph
+  before any work, runs them once over the base where a container holds the project (said, never a gate), and a
+  validator other than the agent signs the root against them. `plan(request, model=...)` still has the system write it;
+  `auto` keeps the system's planner. Measured on a fresh client: the system's plan took 10 of 18 minutes where the bare
+  agent took half of one, and grew 3 asked requirements into 9 criteria.
+- Under `solo` and `semi` the go on a plan file is the person's: `auto_decompose(plan=, user_said=)` carries their own
+  words agreeing to the plan they were shown, recorded with the go; without them it is refused, nothing built.
+- Work done in the person's own chat goes on the branch the system names, `gfso/<project>/work`: the go and an ACCEPT
+  say so where the repository stands on a branch of theirs. README, SECURITY.md and USING_GFSO.md say what holds there:
+  the agent's commits are its own, and nothing of the system's keeps them off the person's branches.
+- The go on a plan file whose review the system ran turns the Level-2 gate off under that plan alone, never for the
+  project's other goals; a file with no review is gated as any split.
 
 ### Fixed
 - A verb that makes a project and is refused there (`create_task` on a name never opened) answers its refusal to a chat client, not "Cannot operate on a closed database": the reply read the news off the engine the refusal had just unmade.
+- A missing or refused credential stops the project once and says so once (one booked authoring wrote five STOPPED
+  lines), the plan's authoring ends at the first refused call instead of folding and repairing over empty answers, and
+  the stop lifts as soon as a credential is set, saying so, not "the account's limit lifted" — it held ten minutes past
+  the credential that lifted it.
+- `gfso doctor` no longer tells a person their own chat's work needs no credential: the system's own calls — a plan's
+  author, every validator — need one in every mode.
 - A customer's notes on a plan are read, beside its goal, for the demands they make on the delivered result, a later
   note standing over an earlier one it contradicts; a note's directive about the plan's own text (keep this check,
   change only that input, how a declaration is written) is answered by the plan's change and becomes no duty no check

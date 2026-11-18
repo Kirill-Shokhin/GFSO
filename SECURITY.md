@@ -15,6 +15,9 @@ word, given on your page (the projects list: run agents on this machine), which 
 - Nothing of your disk is mounted where an agent runs. Your repository enters as its committed HEAD with all its history, so a shallow clone or a sha256 repository is refused at import with that cause, which
   every session can read: clean a secret out of the history first. What is uncommitted does not enter, and the project's log says so.
   The root's accepted result comes back as the branch `gfso/<project>/accepted`, your working tree and branches untouched.
+  Work your own agent does in its chat (`perform="in_chat"`) is its own commits in your repository: the system names
+  the branch for it, `gfso/<project>/work`, and says so when your repository stands on a branch of yours; nothing of the
+  system's can stop an agent in your chat committing elsewhere.
 - No agent process holds your provider's credential: one small container does, and it passes the model's messages alone.
 - A role's name is the installation's, and registering one another project holds is refused; a role registered again keeps where it runs, and a project deleted takes its roles with it. A project whose places stand in volumes and that has lost its roles does no work and validates nothing on this host: it says so and waits for them. No session reads another node's files but by the plan's edges (two ids that differ only by case are refused at the plan, a finished one's among them), nor reaches the log of signals and verdicts, and no one validates its own
   delivery: the check is on a copy of the commit delivered, in a container of its own.

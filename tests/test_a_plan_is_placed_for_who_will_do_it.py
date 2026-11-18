@@ -68,7 +68,7 @@ def test_held_in_its_own_chat_nobody_is_assumed(seen):
     e = _staffed(None)
     try:
         e.set_mode(Mode.SOLO, None, AgentId("user"))
-        written(TL.plan, e, "sort a file")
+        written(TL.plan, e, "sort a file", model="claude-haiku-5-5")   # …named: a solo chat's own plan asks no model
         assert seen["executor"] == ""
     finally:
         e.stop()

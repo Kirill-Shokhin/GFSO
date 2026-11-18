@@ -150,6 +150,9 @@ LANDED = "landed"
 #: The root whose plan the user handed in whole (`auto_decompose` with `spec`): under AUTO it is the user's, as the root's
 #: criteria are, and the system does not re-split it (`Engine.users_plan`).
 USERS_PLAN_KEY = "users_plan"
+#: the nodes whose plan was built from a file carrying its own Level-2 review (`Engine.reviewed_in_its_file`): the gate
+#: is off under each of them alone — a go on one file turned it off for every goal of a shared graph (s20g1)
+REVIEWED_IN_FILE_KEY = "reviewed_in_file"
 
 
 #: The seconds this project did NOT run, kept off its clocks. ONE RULE: its time runs only while its own monitor ticks

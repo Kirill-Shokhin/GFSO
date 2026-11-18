@@ -481,7 +481,7 @@ class NodeSteps:
                           f"REPAIR THE PLAN of '{t.id}' ({nm}): its decomposition no longer passes the Syntactic "
                           f"level (§9.5) — " + "; ".join(f"{h.check_name}: {h.details}" for h in _holes)
                           + f". `list_holes` shows them across the graph."))
-        if _gating and l2_gate_on(self.engine.graph) and self.engine.claims.review_in_flight(t.id):
+        if _gating and l2_gate_on(self.engine.graph, t) and self.engine.claims.review_in_flight(t.id):
             # A CHECK ALREADY RUNNING IS NOT A STEP. The frontier kept saying "call
             # review_decomposition" while one was mid-flight — a duplicate paid round over a
             # plan that had not changed, and the other in-flight surface (`validate_result`)
@@ -493,7 +493,7 @@ class NodeSteps:
                                   "same plan twice and cost twice"),
                              opens_with="nothing: its verdict arrives by itself").as_dict())
             return True
-        if _gating and l2_gate_on(self.engine.graph) and not _l0_holes(self.engine.graph, t):
+        if _gating and l2_gate_on(self.engine.graph, t) and not _l0_holes(self.engine.graph, t):
             open_l2 = _l2_undischarged(self.engine.graph, t)
             if open_l2 is None:
                 cands.append((2.5, t, Action.CHECK_PLAN,
@@ -622,7 +622,7 @@ class NodeSteps:
                                                       f"and their `covers`, `accepted_risks` and `drops`; a child "
                                                       f"named unchanged keeps working)"))
                           + ("; until then no Level-2 review runs, and children the decomposer executes himself "
-                             "wait for one" if l2_gate_on(self.engine.graph) else ""))
+                             "wait for one" if l2_gate_on(self.engine.graph, t) else ""))
         if flags:
             directive += (f" | DEADLINE FLAG for the consumer's issuer (§12.10): {flags} — re-ASSIGN the consumer "
                           f"with a deadline after its producer's, or let it run on its own; nothing is refused")

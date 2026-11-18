@@ -25,7 +25,7 @@ from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import (PAUSE_KEY, hands_of, party_kind, USERS_PLAN_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+from gfso.core.graph.model import (PAUSE_KEY, hands_of, party_kind, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer, logged_criteria, parent_waits)
 from gfso.engine.audit import VERSION_INSTALLING
 
@@ -74,14 +74,28 @@ def hole_kind(check_name: str) -> str:
             "flag" if check_name.startswith("CHECK-3") else "advisory")
 
 
-def l2_gate_on(graph: "Graph | None" = None) -> bool:
-    """Is the Level-2 execution gate active? `GFSO_L2_GATE=0` opts out — the canon's EXPLORE branch
-    (§9.9): the plan's causal verification is bought with contact instead of with c_check. Off is
+def l2_gate_on(graph: "Graph | None" = None, node=None) -> bool:
+    """Is the Level-2 execution gate active — over `node`'s plan, where one is named? `GFSO_L2_GATE=0` opts out — the
+    canon's EXPLORE branch (§9.9): the plan's causal verification is bought with contact instead of with c_check. Off is
     also the honest setting where no checker instrument exists at all (a pure-human graph). A project's own choice
-    (`set_mode(l2_gate=)`) holds for it whatever the server's switch says: rows of one server differ in it."""
+    (`set_mode(l2_gate=)`) holds for it whatever the server's switch says: rows of one server differ in it. Under a node
+    whose plan was built from a file its own review was run over (`reviewed_in_file`), that review is its gate."""
+    if graph is not None and node is not None and reviewed_in_file(graph, node):
+        return False
     if graph is not None and (v := graph.setting("l2_gate")) is not None:
         return v == "1"
     return flag("GFSO_L2_GATE", True)
+
+
+def reviewed_in_file(graph: "Graph", node) -> bool:
+    """Was `node`, or a node above it, built from a plan file carrying its own Level-2 review (`auto_decompose(plan=)`)?"""
+    marked = set(json.loads(graph.setting(REVIEWED_IN_FILE_KEY) or "[]"))
+    t = node
+    while marked and t is not None:
+        if str(t.id) in marked:
+            return True
+        t = graph.get_parent(t.id)
+    return False
 
 
 def _l2_undischarged(graph: Graph, node) -> Optional[list[str]]:
@@ -144,7 +158,7 @@ def execution_admitted(graph: Graph, node) -> bool:
     """
     if node is None:
         return False
-    return not l2_gate_on(graph) or _l2_undischarged(graph, node) == []
+    return not l2_gate_on(graph, node) or _l2_undischarged(graph, node) == []
 
 
 def _fail_extension_shrank(old_desc: str, new_desc: str) -> bool:
@@ -673,7 +687,7 @@ def _refuted_coverage_refusal(graph: Graph, task, rec: dict, audit) -> Optional[
         return (f"cannot re-DELIVER {task.id}: the refuted criteria were LOOSENED to what the current "
                 f"result already delivers ({', '.join(loosened)}) — the bound moved, the work did not. "
                 f"That is a false close in the shape of a repair (§1.3 fail-extension). " + revision)
-    if edited and l2_gate_on(graph):
+    if edited and l2_gate_on(graph, task):
         if (holes := _l0_holes(graph, task)):
             return (f"cannot re-DELIVER {task.id}: its criteria were revised after contact refuted "
                     f"them ({', '.join(edited)}), and the revised plan does not pass Level 0 — "
@@ -1035,7 +1049,7 @@ def _accept_rules(signal_data: SignalData, graph: Graph) -> None:
             # the decomposer's moves, so the refusal binds a child his own executor takes (an internal node). A child
             # under another executor is not refused for its issuer's missing review — the system holds its own spawn
             # there (`Engine.execution_blocked_by`, read by the dispatcher), and a person taking it explores (§9.9).
-            if (l2_gate_on(graph) and str(signal_data.source) == str(parent.assignee)
+            if (l2_gate_on(graph, parent) and str(signal_data.source) == str(parent.assignee)
                     and not (checked_by_contact(graph, graph.get_task(signal_data.task_id))
                              and not _l0_holes(graph, parent))):   # L2 only: the Syntactic level always runs (§9.9)
                 gaps = _l2_undischarged(graph, parent)

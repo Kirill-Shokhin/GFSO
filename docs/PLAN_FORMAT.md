@@ -158,7 +158,7 @@ plan is good: that is the review's.
 
 ## After the go
 
-`auto_decompose(plan=file)` builds the project from the goal and plan the file holds, as they stand, and sets the project's Level-2 gate off, its review being in the file. Everything in the file is then in
+`auto_decompose(plan=file)` builds the project from the goal and plan the file holds, as they stand, and, where the file carries the system's review (`[review]` with its `by`), turns the Level-2 gate off under the plan's root alone (`Engine.reviewed_in_its_file`): another goal of the same project keeps its gate. A file with no review is gated as any split. Everything in the file is then in
 the graph exactly: the criteria with their pinned checks, the mappings, the Dep edges with glue and reads, the register
 and the scope. What the build adds is what the file leaves out: each part's Del, from the mode, and the nodes' states. No
 model is called: a plan the admission would refuse (`procedure.admission_defects`, for instance two probes of one criterion

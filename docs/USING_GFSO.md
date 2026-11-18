@@ -119,8 +119,8 @@ not know simply waits for that person — which is the honest state of the graph
 ## 3. Check the plan before writing any code
 
 Two levels: the engine admits a split only whole and clean at Level 0, and a child does not start executing
-until its parent's decomposition has a current Level-2 verdict. A project built from a plan file has that review in the
-file: its go sets the gate off.
+until its parent's decomposition has a current Level-2 verdict. A plan file the system wrote has that review in the
+file: its go sets the gate off under that plan alone. A file you wrote has none, and its split is reviewed here.
 
 **Level 0 — structure.** `list_holes()` answers `{holes, count}` — every unmet structural check
 across the graph at once: an uncovered criterion, an orphan child, a cycle, incoherent deadlines, a missing risk
@@ -292,7 +292,8 @@ when you choose; a later root's PASS moves that branch, and an earlier result it
 kept as `gfso/<project>/accepted-<UTC time>`, which deleting the project keeps too, and the landing is
 refused while the branch is checked out in any worktree of yours. So two projects on one project dir no longer see each other's
 accepted work until you merge their branches. Under `perform="in_chat"` your own agent works in your repository on this
-host, and its delivery is the commit it stands on at DELIVER (what is not committed is no part of it and is named): the
+host, on the branch the system names for it, `gfso/<project>/work` (the go and its ACCEPT say so where the repository
+stands on a branch of yours: its commits are its own, and nothing of the system's keeps them off your branches), and its delivery is the commit it stands on at DELIVER (what is not committed is no part of it and is named): the
 system keeps that commit under `refs/gfso/<project>/delivered/<node>` and carries it into the volume, where it is judged;
 parts a system executor did under a node your agent holds land in your repository as the branch
 `gfso/<project>/joined/<node>` for your agent to read and merge. To read the places, write them out:

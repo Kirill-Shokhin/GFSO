@@ -260,8 +260,9 @@ def _execution_report() -> tuple[list[tuple[str, str]], list[str]]:
         # …and a container holds no login of this machine: its model is reached only on a credential of the one store
         has = bool(credentials.held())
         rows.append(("credential", "set (`gfso credential` names them)" if has else
-                     "none — work in a container reaches a model only on one: `gfso credential claude --sign-in` (a window where you sign in and paste it) "
-                     "(work in your own chat uses your CLI's login)"))
+                     "none — the system's calls (a plan's author, every validator) run in a container and reach a model "
+                     "only on one, in every mode — `in_chat` too, where only your own chat's work runs on your CLI's own "
+                     "sign-in: `gfso credential claude --sign-in` (a window where you sign in and paste it)"))
     return rows, blocking
 
 

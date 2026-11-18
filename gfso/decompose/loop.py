@@ -23,7 +23,7 @@ import logging
 import sys
 from pathlib import Path
 
-from gfso.adapters.llm.stats import _hint, _stat_line, tag_stage
+from gfso.adapters.llm.stats import _hint, _stat_line, calls_of, refused_by_limit, tag_stage
 from gfso.inflight import staged
 from gfso.core.protocol.procedure import EXACT_TEXT, PROBE_S, pinned_files, with_named_files
 from gfso.core.types import LLMProviderPort, Stage
@@ -584,6 +584,8 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
         tag_stage(llm, Stage.AUTHORING_OBLIGATIONS)
     holes = "\n\n".join(x for x in (found, owed) if x)
     _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
+    if refused_by_limit(calls_of(llm)):
+        return {}                   # …what stops the project stops the round: no fold is asked of refused calls
     _progress(f"{label} auditor (fold, first round)…", progress)
     _stage(llm, f"{label} auditor")
     patch = _audit_fold(llm, request, "", holes, fast=fast, executor=executor, ground=ground) or {}

@@ -36,6 +36,7 @@ from gfso.core.types import (HOST, TaskId, AgentId, Criteria, Signal, SignalData
                              SPAWNABLE_ACTIONS, files_at, passed, register_of, system_decides)
 from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, answer_owed_first, signal_ok as _signal, system_mover,
                           split_has_a_mover)
+from gfso.adapters.llm import credentials
 from gfso.adapters.llm.chat import answers, is_address
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, torn_among, what_stopped
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
@@ -764,6 +765,8 @@ class Dispatcher:
         self._engine.probe_the_place_with(lambda place: (answers(place) if is_address(place)
                                                          else execution_of(self._engine, self._agents).unavailable(
                                                              storage=True)))
+        # …and the credential store, read while an account's refusal stops it
+        self._engine.probe_the_account_with(credentials.stamp)
         # Subscribed HERE, not in `start()`: the callback no longer only sets a flag — it is what
         # makes a cleared block executable again (see `_on_bus`), and that must not depend on
         # whether this dispatcher's poll loop was ever started.

@@ -49,6 +49,15 @@ def where() -> Path:
     return data_dir() / "credentials.json"
 
 
+def stamp() -> str:
+    """The store's state as one string, changed by every write — a stop an account's refusal made lifts once a person
+    set a credential (`Engine.probe_the_account_with`); no value is in it."""
+    try:
+        return str(where().stat().st_mtime_ns)
+    except OSError:
+        return "none"
+
+
 def _read(path: Path | None = None) -> dict:
     """The store as it stands; none yet — empty. A store that is there and does not read RAISES: read as "nothing set",
     a call ran on the host's login and a change wrote the whole store back near-empty (critic, two processes)."""

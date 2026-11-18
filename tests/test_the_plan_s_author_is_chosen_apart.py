@@ -107,7 +107,8 @@ def test_the_go_on_a_plan_file_stands_on_the_review_in_the_file(monkeypatch):
     monkeypatch.setattr(TL._artifact, "parse", lambda text: {"goal": "the goal", "spec": {"subtasks": []}})
     monkeypatch.setattr(TL._planning, "text_of", lambda p: p)
     assert TL._the_go(e, "a file", "", None) == ("the goal", {"subtasks": []})
-    assert e.graph.setting("l2_gate") == "0" and l2_gate_on(e.graph) is False
+    # …the review stands under its own plan alone (`reviewed_in_its_file`), never the project's switch for every goal
+    assert e.graph.setting("l2_gate") is None, "the go turned the project's own gate"
 
 
 def test_a_dispute_a_closed_plan_cannot_answer_stops_the_run_and_says_why(monkeypatch):

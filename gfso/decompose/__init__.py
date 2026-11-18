@@ -32,7 +32,7 @@ from gfso.core.types import HOST, Criteria, PlaceUnavailable, Probe, Signal, Sta
 from gfso.engine import Engine
 from gfso.core.graph.model import root_of
 from gfso.core.protocol.procedure import admission_defects, criterionless
-from gfso.adapters.llm.stats import calls_of, fan
+from gfso.adapters.llm.stats import calls_of, fan, refused_by_limit
 from gfso.llm import llm_factory
 from gfso.observe import cannot_run, missing_program, on_the_base, ran
 
@@ -1003,6 +1003,14 @@ def _refuse_what_cannot_be_built(engine: Engine, root_id: str, existing, request
                          f"an undecomposed target.")
 
 
+def _not_stopped(llm, spec: dict) -> dict:
+    """`spec` as the init round authored it — or NoPlan where what stops the project refused its calls: with no
+    credential the repairer ran two rounds more over an empty fold, each call refused again (s20g1)."""
+    if refused_by_limit(calls := calls_of(llm)):
+        raise NoPlan("the authoring's calls were refused", list(calls))
+    return spec
+
+
 def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assignee: str = "human",
                    depth: int = 1, model: str = MODEL_DEFAULT, llm=None, progress=None,
                    fast: bool = False, max_iterations: int | None = None,
@@ -1055,8 +1063,8 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
                 break
     else:
         # the combined text is what the DECOMPOSER reads; the goal text a build keeps is the caller's (critic round 13)
-        authored = given if given is not None else decompose_spec(
-            contract, llm=llm, progress=progress, fast=fast, label=f"1/{depth}", executor=executor, ground=contact)
+        authored = given if given is not None else _not_stopped(llm, decompose_spec(
+            contract, llm=llm, progress=progress, fast=fast, label=f"1/{depth}", executor=executor, ground=contact))
         whole = authored if given is not None else _one_part_is_the_whole(authored)
         rid, spec, holes = _build_verified(whole if given is not None else with_deferrals(whole), request, engine,
                                            root_id, assignee, llm, progress=progress, max_iterations=max_iterations,

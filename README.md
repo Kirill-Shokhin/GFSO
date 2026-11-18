@@ -67,7 +67,7 @@ You need Python 3.11–3.14, [pipx](https://pipx.pypa.io), [Claude Code][cc] and
 1. `pipx run gfso setup` (or `uvx gfso setup`): one command installs gfso and sets it up. It registers the tools with Claude Code, starts Docker Desktop if it is installed, and tells you what remains. `gfso demo human_only` needs no model: one person signs off her own work, the engine refuses, a second signs, and the `PASS` is recorded.
 2. `gfso credential claude --sign-in`. A window opens where you sign in and paste a token (on Linux it prints the two commands instead). gfso's agents run separately from your Claude Code login, on their own token; they spend your subscription's usage, as Claude Code does.
 3. Restart Claude Code, which loads the tools at its start: inside a session `/exit`, then `claude -c`, and the conversation resumes; otherwise just `claude`.
-4. Describe the task and say "use gfso". Your agent reads the plan the system writes, gives the go-ahead, and hands you a link to watch. The verdict and the branch come back in the chat.
+4. Describe the task and say "use gfso". Your agent reads the plan the system writes, gives the go-ahead, and hands you a link to watch. The verdict and the branch come back in the chat. To have your own agent do the work itself, checked, say "gfso solo, in chat": it writes the plan's criteria with you instead of the system, and your words start the work.
 
 Or let your agent do it:
 
@@ -83,7 +83,8 @@ Agents here run unattended, with no one to approve a command, so the work runs i
 - **No agent holds your credential.** One small container holds the key and passes only the model's messages.
 - **Each validation runs in its own container**, on a copy of the delivered commit. No one validates their own delivery.
 - **Network `off` or `open`, per project.** `off` reaches only the model.
-- **The result is its own branch**, `gfso/<project>/accepted`. Your branches and working tree stay as they were.
+- **The result is its own branch**, `gfso/<project>/accepted`. Your branches and working tree stay as they were; when your
+  own agent does the work in its chat (`solo`, `in_chat`), its commits go on `gfso/<project>/work`, the branch the system names for it.
 
 There is no per-task VM, your repository's full history goes in, and the model's provider reads what the agents send it. What is and is not guaranteed: [`SECURITY.md`][security].
 

@@ -45,7 +45,7 @@ from gfso.observe import FRESH_S, OBSERVE_S, run_checks
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
-from gfso.adapters.execution import network_of, node_key, take_in
+from gfso.adapters.execution import component, network_of, node_key, take_in
 from gfso.decompose import NoPlan, decompose_into, artifact as _artifact, planning as _planning, kept as _kept
 from gfso.engine.events import emit_cb
 from gfso.engine.findings import record_round
@@ -1715,7 +1715,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                    depth: int = 1, model: Optional[str] = None, fast: bool = False,
                    max_iterations: Optional[int] = None, spec: Optional[dict] = None,
                    _progress=None, author: Optional[str] = None, open_plan: bool = False,
-                   plan: Optional[str] = None, _contact: str = "") -> dict:
+                   plan: Optional[str] = None, _contact: str = "", user_said: str = "") -> dict:
     """THE one decomposition verb — dispatched by the target's state (one operation over graph state):
     (a) empty project / undecomposed node → authors a real GFSO subtree from `request` (the root node
     itself is created from the request — no hand create_task needed), builds INTO the live CORE through
@@ -1750,8 +1750,9 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     `export_plan` then reads back as the plan to hand in closed.
 
     `plan` is THE GO on a plan file (`plan` / `refine_plan`, a path or the text): the project is built from the goal
-    and the plan the file holds, exactly or refused; from then on contact may repair it, for the system wrote it."""
-    request, spec = (_the_go(engine, plan, request, spec) if plan is not None
+    and the plan the file holds, exactly or refused; from then on contact may repair it, for the system wrote it. Under
+    `solo` and `semi` the go is the person's: `user_said`, their own words agreeing to the plan they were shown."""
+    request, spec = (_the_go(engine, plan, request, spec, user_said) if plan is not None
                      else (request, _no_deferral_nobody_makes(spec, open_plan or engine.mode_kind() != Mode.AUTO)))
     given, model = request, model or engine.planner_model()
     _cb = emit_cb(engine, "decompose", _progress)
@@ -1855,9 +1856,65 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     # GOAL ("nothing to split") rather than about the installation. It is what a fresh install
     # without credentials hits, on the one verb it is told to start with.
     out.update(_no_provider_answer(out["subtasks"], res.stats, spec))
-    if plan is not None and (left := open_at_the_go(plan)):
-        out["open_at_the_go"] = left
+    if plan is not None:
+        out.update(_built_from_a_file(engine, plan, spec, res.root_id, user_said))
     return {**out, **(recorded_at_the_go(engine, given) if fresh else {})}
+
+
+def _built_from_a_file(engine: Engine, plan: str, spec: dict, root_id, user_said: str) -> dict:
+    """What the go on a plan file adds once built: the gate off under it where the file carries the system's review
+    (never for the project's other goals: one go turned it off for every goal of a shared graph); the person's words,
+    recorded; a file with none — the customer's own — its checks run once over the base, a check no work can make run
+    said now, never a gate (`PinsOnTheBase`); and, to a chat performing the work itself, where it goes on."""
+    out, said = ({"open_at_the_go": left} if (left := open_at_the_go(plan)) else {}), str(user_said).strip()
+    if reviewed(plan):
+        engine.reviewed_in_its_file(root_id)
+    elif spec and "run" in (pins := _decompose.PinsOnTheBase(execution_of(engine)).review(spec)):
+        out[_planning.PINS] = pins
+    if said:
+        engine.emit_info("go", f"the go on the plan file, by the person: «{said[:300]}»")
+        out["user_said"] = said
+    if holds_its_work(engine):
+        place = _delegation().validator_workdir(engine, _delegation().default_agents(), TaskId(str(root_id)))
+        theirs = on_their_branch(engine, place) if place else ""
+        out["say"] = (theirs + ". " if theirs else "") + (
+            f"The checks the person agreed are the contract now, fixed in the graph before the work. Do the work "
+            f"yourself on the branch `{work_branch(engine)}`, commit, and DELIVER `{root_id}`; a validator other than "
+            f"you signs it against those checks.")
+    return out
+
+
+def _the_go_is_the_persons(engine: Engine, user_said: str) -> None:
+    """The refusal of a go on a plan file, under a mode where the person's own agent holds the plan (`solo`, `semi`),
+    given with no words of theirs: told "write to the person now, before any other call", a fresh client summarized the
+    plan in the same turn as its go, and the person never saw it before the work (s20g1). An instruction cannot hold
+    that; the go carrying their words, recorded with it, does."""
+    if engine.mode_kind() in (Mode.SOLO, Mode.SEMI) and not str(user_said).strip():
+        raise ValueError("auto_decompose: under solo and semi the go is the person's — show them the plan's criteria "
+                         "and checks, end your turn, and give the go with their own words agreeing to it as "
+                         "`user_said`, recorded with the project")
+
+
+def work_branch(engine: Engine) -> str:
+    """The branch of the person's repository the work performed in their own chat goes on (`in_chat`): the system's, by
+    name, so their checked-out branches stay theirs; what its root's PASS accepts is named `accepted_branch` there."""
+    return f"gfso/{component(engine.project_name or DEFAULT_PROJECT)}/work"
+
+
+def on_their_branch(engine: Engine, place) -> str:
+    """What a chat performing its work at `place` hears where that repository stands on a branch of the person's — or
+    "". Said, never refused: the repository is the chat's own tools', and no check of where it stands holds what is
+    committed next; their branches stay theirs by the work going where the system names (`work_branch`). A client told
+    the person "your main did not change" over commits it made on main (s20g1)."""
+    if not (place and W.is_repo_top(place)):
+        return ""
+    on = W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
+    if on.startswith(work_branch(engine).rpartition("/")[0] + "/"):
+        return ""
+    return (f"{place} stands on {f'their branch `{on}`' if on else 'a detached HEAD'}: what you commit there lands on "
+            f"it. Work on the system's branch, `git switch -c {work_branch(engine)}` (`git switch "
+            f"{work_branch(engine)}` once it exists), before your first commit, and tell the person in one line which "
+            f"branch holds the work")
 
 
 def recorded_at_the_go(engine: Engine, goal: str) -> dict:
@@ -2004,6 +2061,8 @@ def plan(engine: Engine, request: str = "", model: Optional[str] = None, executo
         return _by_handle(writing, engine.project_name)
     if not str(request or "").strip():
         return {"refused": True, "error": "plan needs the request, or `writing=<handle>` to read one being written"}
+    if model is None and holds_its_work(engine):
+        return yours_to_write(engine, request)
     model = model or engine.planner_model()
     # …the fit judged against WHO WILL DO the parts (§3.7: a leaf is within its holder's κ) — under a mode, the executor
     # the go hands the root's children to, as `auto_decompose` defaults it. Unnamed, the planner judged against an
@@ -2039,6 +2098,52 @@ def plan(engine: Engine, request: str = "", model: Optional[str] = None, executo
         return _shown(engine, _plan_written(text))
     return _once(("plan", engine.project_name, request, model, executor, depth, review_model or engine.system_model()),
                  write, engine)
+
+
+def holds_its_work(engine: Engine) -> bool:
+    """Does the person's own agent hold and perform this project's work in its chat — `solo`, `in_chat`? Then the plan's
+    content is its own, written with the person (§4.5: a split's content is its author's; §11.5: its executor may author
+    it in performing it), and the system's planner is not asked: on a fresh solo run it wrote for 10 of 18 minutes,
+    turning 3 asked requirements into 9 criteria and a suite nobody asked for (s20g1)."""
+    return engine.mode_kind() == Mode.SOLO and (engine.mode() or {}).get("perform") == "in_chat"
+
+
+#: the plan file a solo in_chat agent fills with the person: every field left empty is refused by the go's reading (`form`)
+YOURS = """format = "gfso-plan/1"
+goal = {goal}
+
+[plan]
+name = ""
+
+# One criterion per thing the person asked for, in their words; nothing they did not ask. Each carries a check fixed
+# now: a command someone else can run on the result and what it must print (exact = true: the whole output, decided by
+# running it; false: described in words, judged by a reader). Copy the block for the next criterion.
+[[plan.root_criteria]]
+name = ""
+description = ""
+
+[[plan.root_criteria.check]]
+behaviour = ""
+command = ""
+expect = ""
+exact = true
+
+# Parts ([[plan.subtasks]], with [[plan.mappings]] and accepted_risks) only where one session cannot carry the whole:
+# https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/PLAN_FORMAT.md
+"""
+
+
+def yours_to_write(engine: Engine, request: str) -> dict:
+    """The answer of `plan` where the person's own agent holds the work (`holds_its_work`): no model is called — the file
+    to fill with the person, the goal in their words, and how its go goes."""
+    goal = json.dumps(str(request).strip(), ensure_ascii=False)
+    return {"yours": True, "text": YOURS.format(goal=goal),
+            "say": "No model writes this plan: you hold the work, so its criteria are yours, written with the person. "
+                   "Fill `text`: each thing they asked for as a criterion with its check, nothing they did not ask; a "
+                   "piece one session carries has no parts. Show the person the criteria and checks, and give the go "
+                   "with their own words agreeing: `auto_decompose(plan=<the filled text>, user_said=<their words>)`. "
+                   "The system then fixes those checks in the graph before any work, and a validator other than you "
+                   "signs the root against them. `plan(request, model=...)` has the system write it instead."}
 
 
 def refine_plan(engine: Engine, plan: str = "", note: str = "", model: Optional[str] = None,
@@ -2101,8 +2206,8 @@ def _no_provider_answer(subtasks, stats, spec) -> dict:
 
 def open_at_the_go(plan: str) -> list[str]:
     """What the plan's own review left open when the go was given: each criterion its children were judged not to
-    secure (`insufficient`), or were not judged on (`uncertain`). The go runs the plan as it stands (`_the_go` turns the
-    gate off, its review in the file), so each goes in carrying its FM-1.d (§11.5): the root's checks still decide the
+    secure (`insufficient`), or were not judged on (`uncertain`). The go runs the plan as it stands (the gate off
+    under it, its review in the file), so each goes in carrying its FM-1.d (§11.5): the root's checks still decide the
     result, but a failure there names no part. Said, never silent — a tester's run started on two such criteria with
     nothing said, and its failures pointed nowhere."""
     review = _artifact.parse(_planning.text_of(plan)).get("review") or {}
@@ -2110,8 +2215,16 @@ def open_at_the_go(plan: str) -> list[str]:
     return [x[:300] for x in lines if x.startswith(("[insufficient]", "[uncertain]"))]
 
 
-def _the_go(engine: Engine, plan: str, request: str, spec) -> tuple[str, dict]:
-    """The goal and the plan a plan file holds, for the go — refused beside a second plan or another goal."""
+def reviewed(plan: str) -> bool:
+    """Does the plan file carry its own Level-2 review — one the system ran where it wrote it? A file its customer wrote
+    carries none, and its split is reviewed in the project as any other (`review_decomposition`)."""
+    return bool((_artifact.parse(_planning.text_of(plan)).get("review") or {}).get("by"))
+
+
+def _the_go(engine: Engine, plan: str, request: str, spec, user_said: str = "") -> tuple[str, dict]:
+    """The goal and the plan a plan file holds, for the go — refused beside a second plan or another goal, or under
+    `solo` and `semi` without the person's words (`_the_go_is_the_persons`)."""
+    _the_go_is_the_persons(engine, user_said)
     if spec is not None:
         raise ValueError("auto_decompose: pass the plan file (`plan`) or a spec (`spec`), not both")
     p = _artifact.parse(_planning.text_of(plan))
@@ -2124,7 +2237,6 @@ def _the_go(engine: Engine, plan: str, request: str, spec) -> tuple[str, dict]:
     # system wrote it (`auto_decompose`): a check of its own that contact refutes is repaired, where a closed plan spun on
     # a true CHALLENGE, its issuer's right answer thrown away 29 times, 27 min (tracker, 2026-11-03; the author:
     # «подчинять систему безоговорочно этому плану нельзя, он может быть сильным но не идеальным»). `spec` stays closed.
-    engine.set_settings({"l2_gate": "0"}, AgentId(_agent_id()), "the go on a plan file: its review is in the file")
     return p["goal"], p["spec"]
 
 
@@ -2983,6 +3095,8 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
     if sig == "ACCEPT" and (place := in_chat()) and W.is_repo_top(place) and (
             head := W.git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()):
         kw["_recorded"] = (None, head, W.main_worktree(place))
+        if theirs := on_their_branch(engine, place):
+            said["say"] = theirs
     if (sig == "DELIVER" and (st := engine.graph.get_state(tid)) in (State.EXECUTING, State.REWORKING)
             and (place := in_chat())):
         if W.is_repo_top(place):

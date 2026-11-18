@@ -20,7 +20,7 @@ from gfso.core.types import (
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
                                    start_waits,
-                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
+                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
 from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair
@@ -85,6 +85,8 @@ SETTINGS = ("system_model", "planner_model", "l2_gate", "network", "deadline_s",
 
 #: How long after the account's limit says it lifts the system starts the project it stopped: a clock or two apart.
 LIFT_MARGIN_S = 30
+#: what of a stop's record the system lifts it by: a time, an execution place, a credential store's stamp
+LIFTS = ("until", "place", "account")
 #: How long what the place probe said stands for R′'s gate (`place_down`): each asking is a container of its own.
 PLACE_SEEN_S = 60
 
@@ -157,6 +159,7 @@ class Engine:
         self._stop_lock = threading.Lock()  # a person's stop and the system's start of its own stop never cross
         self._place_probe = None            # where the project runs, asked while it is down (`probe_the_place_with`)
         self._place_seen = None             # when the place probe last said it answers (`place_down`)
+        self._account_probe = None          # the credential store's stamp, asked under an account's stop
         self._tech_lock = threading.Lock()  # one writer of each list kept in one setting (`_appended`)
         self._agents = agents
         self._llm = llm
@@ -605,26 +608,32 @@ class Engine:
         """The project's stop as set — {by, at, why} — or None while it runs (`validation.pause_record`)."""
         return pause_record(self._graph)
 
-    def pause(self, by: str, why: str = "", until: Optional[float] = None, place: Optional[str] = None) -> dict:
+    def pause(self, by: str, why: str = "", until: Optional[float] = None, place: Optional[str] = None,
+              account: Optional[str] = None) -> dict:
         """STOP: the system starts no session of any role here — sessions already running finish and their signals land
         — and the clock fires no timeout; its time is left off the project's clocks, tick by tick. It writes
         nothing into the graph: a stop is the user's act on the run, not a protocol move. A stop standing already is
         kept as it was: a second one would lose the time of the first — except one the system starts again by itself
         (`until`, the account's limit; `place`, an execution place down): a later lift extends it, and any other stop
         over it takes it, keeping its start, so the system never starts what a person stopped. `off_s`: the doors' off
-        time while it stands (`model.door_off_s`)."""
+        time while it stands (`model.door_off_s`). `account`: the credential store's stamp an account's stop was made
+        on — a person setting a credential changes it, and the stop lifts then (`lift_the_system_stop`)."""
         with self._stop_lock:
             was = self.paused()
-            held = {k: was[k] for k in ("until", "place") if (was or {}).get(k)}
+            held = {k: was[k] for k in LIFTS if (was or {}).get(k) or k == "account" and (was or {}).get(k) is not None}
             lifts = {**held, **({"until": max(until, held.get("until", 0))} if until else {}),
-                     **({"place": place} if place else {})} if until or place else {}
+                     **({"place": place} if place else {}),
+                     **({"account": account} if account is not None else {})} if until or place else {}
             if was and (not held or lifts == held):
                 return was
             rec = {**{k: v for k, v in (was or {"at": datetime.now().isoformat(timespec="seconds"),
                                                 "off_s": clock_off_s(self._graph)}).items() if k not in held},
                    "by": str(by), "why": str(why or ""), **lifts, **_via()}
             self._storage.store_setting(PAUSE_KEY, json.dumps(rec))
-        self.emit_info("pause", f"STOPPED by {by}{_via_said()}" + (f": {why}" if why else "") + " — nothing new starts")
+        # …ONE LINE PER STOP: the system's own stop only extended by the same cause says nothing new — one refused
+        # authoring booked its calls at once and wrote five STOPPED lines for one missing credential (s20g1)
+        if not (was and held and str(by) == "system" and set(lifts) == set(held)):
+            self.emit_info("pause", f"STOPPED by {by}{_via_said()}" + (f": {why}" if why else "") + " — nothing new starts")
         return rec
 
     def resume(self, by: str) -> Optional[dict]:
@@ -649,12 +658,25 @@ class Engine:
         """AN ACCOUNT THAT REFUSES AUTHENTICATION IS A STOP IN SUBSTANCE, as the limit is: no call of any role answers
         until a person sets its credential (`remedy`, the provider's words), and the redials of a cut call spent an hour
         on it while every bound ran (GB_c_compiler_tncfs1160, 2026-10-23 11:29–12:29: four nodes timed out). Stopped, and
-        asked again after LIMIT_RETRY_S — the next refused call stops it again."""
+        asked again after LIMIT_RETRY_S — the next refused call stops it again — or at once when a credential is set: a
+        stop timed alone held a project ten minutes past the credential that lifted it (s20g1, 01:47→01:57)."""
         until = time.time() + LIMIT_RETRY_S
         said = remedy or (f"the account refused authentication ({why[:160]}): set its credential again "
                           f"(`gfso credential <provider>`)")
-        return self.pause("system", f"{role}'s call: {said}; asked again {datetime.fromtimestamp(until):%Y-%m-%d %H:%M}",
-                          until)
+        return self.pause("system", f"{role}'s call: {said}; asked again {datetime.fromtimestamp(until):%Y-%m-%d %H:%M}, "
+                                    f"or once a credential is set", until, account=self._account_stamp() or "")
+
+    def probe_the_account_with(self, stamp) -> None:
+        """Hand the engine `stamp()`: the credential store's state as one string, changed by any credential set
+        (`credentials.stamp`) — from the layer that knows the store, as the place probe is handed."""
+        self._account_probe = stamp
+
+    def _account_stamp(self) -> Optional[str]:
+        """The credential store's stamp now, or None where no layer handed a probe or it did not answer."""
+        try:
+            return None if self._account_probe is None else str(self._account_probe())
+        except Exception:                               # noqa: BLE001 — a probe that fails says nothing changed
+            return None
 
     def stop_for_the_place(self, place: str, why: str) -> dict:
         """AN EXECUTION PLACE DOWN IS A STOP IN SUBSTANCE, as the limit is: no session of any role can start, so nobody
@@ -717,7 +739,10 @@ class Engine:
         answering its probe (`place`) — only that stop: a person's never. The monitor asks at every tick under a stop,
         so an engine started over a standing one re-arms it from its record."""
         was = self.paused()
-        if not (was and (was.get("until") or was.get("place"))) or (was.get("until") or 0) > wall:
+        # …an account's stop lifts too once its credential store moved: a person set what it waited for
+        now = self._account_stamp() if was and was.get("account") is not None else None
+        moved = now is not None and now != was["account"]
+        if not (was and (was.get("until") or was.get("place"))) or (was.get("until") or 0) > wall and not moved:
             return
         if was.get("place") and (self._place_probe is None or self._probe_says(was["place"]) is not None):
             return
@@ -727,7 +752,9 @@ class Engine:
             self._storage.store_setting(PAUSE_KEY, "")
         self.emit_info("pause", "STARTED again by system: " + " and ".join(
             ([f"the execution place {was['place']} answers"] if was.get("place") else [])
-            + (["the account's limit lifted"] if was.get("until") else [])) + f" (stopped since {was.get('at')})")
+            + ([] if not was.get("until") else ["a credential was set"] if moved else
+               ["the time to ask the account again came"] if was.get("account") is not None else
+               ["the account's limit lifted"])) + f" (stopped since {was.get('at')})")
 
     def tech_report(self, text: str, role: str, actor: str, task_id=None) -> dict:
         """A report about the SYSTEM, not the task — a check contradicting its contract, a tool that cannot run, an answer
@@ -743,6 +770,12 @@ class Engine:
     def users_plan(self) -> bool:
         """Is this project's plan the user's (`validation.users_plan`)?"""
         return _users_plan(self._graph)
+
+    def reviewed_in_its_file(self, node_id) -> None:
+        """Record that the plan just built under `node_id` came from a file its own Level-2 review was run over: the
+        gate is off under it alone (`validation.l2_gate_on`), never for the project's other goals."""
+        marked = json.loads(self._storage.get_setting(REVIEWED_IN_FILE_KEY) or "[]")
+        self._storage.store_setting(REVIEWED_IN_FILE_KEY, json.dumps(sorted({*marked, str(node_id)})))
 
     def give_users_plan(self, root_id) -> None:
         """Record that the plan just built under `root_id` was the user's, handed in whole."""
@@ -1674,7 +1707,7 @@ class Engine:
         parent = self._graph.get_parent(task_id)
         if parent is None:
             return None                          # a root has no plan above it to admit it
-        if not l2_gate_on(self._graph):          # the Syntactic level gates the admission, not this ACCEPT (corner 9)
+        if not l2_gate_on(self._graph, parent):  # the Syntactic level gates the admission, not this ACCEPT (corner 9)
             return None
         if t is None or (str(t.assignee) != str(parent.assignee)
                          and not self.workforce.is_system_executor(t.assignee)):
