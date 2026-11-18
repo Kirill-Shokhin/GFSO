@@ -22,8 +22,9 @@ export function render(el, run, nodes, tasks) {
     // …a part in work with no worked part under it stands among the top's own rows: one header a leaf over its one row,
     // its own name twice, read as noise inside a part of leaves (critic)
     for (const r of rows) { const s = streamOf(r.t.id); (groups[s === r.t.id ? top.id : s] ??= []).push(r); }
-    const row = r => { const lit = r.lit, path = up(r.t.id).slice(0, -2).reverse().map(x => nameOf(by[x]));
-        return `<button class="iw-row${lit ? ' on' : ''}" data-node="${esc(r.t.id)}"><i${beat()}></i><em>${esc(nameOf(r.t))}`
+    // one mark for whatever is in work, a session of this server or a node someone took (the author, 11-18)
+    const row = r => { const path = up(r.t.id).slice(0, -2).reverse().map(x => nameOf(by[x]));
+        return `<button class="iw-row on" data-node="${esc(r.t.id)}"><i${beat()}></i><em>${esc(nameOf(r.t))}`
             + (path.length ? `<small>${esc(path.join(' › '))}</small>` : '') + '</em>'
             + `<span>${esc(r.holder || '—')}</span><span>${esc(stateWord(r.t))}</span>`
             + `<span${r.since ? hover('Since', clockAt(r.since)) : ''}>${r.since ? since(r.since) : ''}</span></button>`; };

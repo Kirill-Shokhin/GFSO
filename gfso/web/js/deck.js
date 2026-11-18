@@ -56,7 +56,7 @@ function strip() {
         // …a running session's age and a live console's both are how long the work has gone on
         // a console's work: the node's own word; a node held with no one acting on it: who holds it, since when
         const k = !w && !h && !by && held[t.id], what = w ? doingOf(w) : h ? stateWord(t).toLowerCase() : k ? esc(k.holder || stateWord(t).toLowerCase()) : doing(t.state);
-        return `<button class="dk-live${w || h ? ' on' : ''}" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(clockAt(w.since * 1e3), PROC_KIND[w.verb], what) : h ? STRIP.hand(h.party, clockAt(h.at)) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), doingOf(by)) : k ? STRIP.held(k.holder, stateWord(t), k.since && clockAt(k.since)) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
+        return `<button class="dk-live on" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(clockAt(w.since * 1e3), PROC_KIND[w.verb], what) : h ? STRIP.hand(h.party, clockAt(h.at)) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), doingOf(by)) : k ? STRIP.held(k.holder, stateWord(t), k.since && clockAt(k.since)) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
             + `<span>${what}${w ? `<b class="dk-age">${since(w.since * 1e3)}</b>` : h ? `<b class="dk-age">${since(h.at)}</b>` : k?.since ? `<b class="dk-age">${since(k.since)}</b>` : ''}</span></button>`;
     });
     // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too

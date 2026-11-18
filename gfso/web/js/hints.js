@@ -72,8 +72,7 @@ const KEY = [
     {group: 'The graph'},
     {glyph: '<i class="lg-split"></i>', head: 'Split into its parts', means: 'from a node to each of its parts'},
     {glyph: '<i class="lg-dep"></i>', head: 'Uses the result of', means: 'the node using it waits until its producer passes (Dep)'},
-    {glyph: '<i class="cy-live"></i>', head: 'In work', means: 'taken by its holder, by the log — counted in the deck as «N in work»; a parent only waiting on its parts is not'},
-    {glyph: '<i class="cy-live on"></i>', head: 'Acted on now', means: 'a process of this server works on it, or its holder works it through a live console'},
+    {glyph: '<i class="cy-live on"></i>', head: 'In work', means: 'taken by its holder — a person, an agent, a session of this server — counted in the deck as «N in work»; on a part’s tag, work goes on inside it. A parent only waiting on its parts is not'},
     // one mark, the round count; its accent is a state of it, not a second mark (the author: «почему это две разные и одинаковой иконкой»)
     {glyph: '<span class="kb">3</span>', head: 'Delivery rounds', means: 'from the second on; in the accent while the last one failed'},
     {glyph: '<svg class="glyph" width="22" height="11" viewBox="0 0 22 11"><rect class="tl-exec" x="0" y="3" width="22" height="5" rx="1.5"/><line class="tl-hand" x1="11" x2="11" y1="1" y2="10"/></svg>',
@@ -293,7 +292,7 @@ export const STRIP = {
     running: (at, model, what) => `${cap(what)}: ${model ? 'a session of this server' : "the server's own step, no model"}, since ${at}`,
     carried: (top, act) => `Carried by the session on ${top}, ${act}`,
     idle: 'In a working state; no process of this server runs it',
-    hand: (party, at) => `Worked by ${party} through its live console, since ${at}`,
+    hand: (party, at) => `Worked by ${party}, since ${at}`,
     // a role a line: its share of the spend drawn, its sum at the end; sessions in the label (the author: no figures run on
     // after each other with dots)
     spend: (roles, running) => hover('Spend by role', roles.map(([k, p, share]) => meter(sessionsOf(k, p.calls), share,
