@@ -5,7 +5,7 @@ import {FOCUS} from './api.js';
 import {$, esc, tally, since, lasting, phone} from './dom.js';
 import {frame, frameText, TAB, STRIP, doing} from './hints.js';
 import {S, nowOf, kept, keep, owedVerdict, whoOwes, inWorkOf, viewTasks, inView, stateWord, viewNodes, viewTree, viewProcs} from './state.js';
-import {nameOf, label} from './vocab.js';
+import {nameOf, label, working} from './vocab.js';
 import {point, release, forgetBrought} from './store.js';
 import {firstTap} from './tip.js';
 import {said, blockers, failingNow, PROC_KIND, byRole} from './run.js';
@@ -44,20 +44,21 @@ function strip() {
     // …unless no process validates it and its issuer is a person: then the delivery waits on that person's verdict
     // (§12.1: "one wait on the issuer"), and outside both lists it vanished from the strip (critic)
     const owed = t => owedVerdict(t, at);
-    // IN WORK by the log (run.js `inWork`), what a process or a console acts on besides; acted on first — a session hidden
-    // under "+2" behind the leaves it carries told nothing (critic) — then the latest taken
+    // IN WORK by the log (run.js `inWork`), the latest taken first, whoever works it — what this server runs is told by the
+    // chip's tip and the timeline, never by the order (JOINT in-work rework 11-18, W2/W3)
     // …one reading with the list the count opens (inwork.js): the count and the list say the same nodes (critic)
     const held = Object.fromEntries((run ? inWorkOf(viewTasks()) : []).map(h => [h.t.id, h]));
     const busy = viewTasks().filter(t => (run ? held[t.id] : work.has(t.id)) && !owed(t))
-        .sort((a, b) => (held[b.id]?.lit ?? runs(b)) - (held[a.id]?.lit ?? runs(a)) || (held[b.id]?.since ?? 0) - (held[a.id]?.since ?? 0));
+        .sort((a, b) => run ? (held[b.id]?.since ?? 0) - (held[a.id]?.since ?? 0) : runs(b) - runs(a));   // by the log alone (JOINT W2)
     const issuer = viewTasks().filter(t => (run?.waits[t.id]?.decides === 'issuer' || owed(t)) && !runs(t));
     const live = busy.map(t => {
-        const w = at.on(t.id), h = !w && at.hand?.(t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : at.carrier(t.id);
-        // …a running session's age and a live console's both are how long the work has gone on
-        // a console's work: the node's own word; a node held with no one acting on it: who holds it, since when
-        const k = !w && !h && !by && held[t.id], what = w ? doingOf(w) : h ? stateWord(t).toLowerCase() : k ? esc(k.holder || stateWord(t).toLowerCase()) : doing(t.state);
-        return `<button class="dk-live on" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(clockAt(w.since * 1e3), PROC_KIND[w.verb], what) : h ? STRIP.hand(h.party, clockAt(h.at)) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), doingOf(by)) : k ? STRIP.held(k.holder, stateWord(t), k.since && clockAt(k.since)) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
-            + `<span>${what}${w ? `<b class="dk-age">${since(w.since * 1e3)}</b>` : h ? `<b class="dk-age">${since(h.at)}</b>` : k?.since ? `<b class="dk-age">${since(k.since)}</b>` : ''}</span></button>`;
+        const w = at.on(t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : at.carrier(t.id);
+        // the chip says the log's — who holds it, since when — whoever works it; what this server runs is its tip (JOINT W3);
+        // a node no one took that a session acts on (a consent, the issuer's turn, a plan) says the act: no holder to name
+        const h = held[t.id], taken = h && working(t.state), k = !w && !by && h,
+              what = taken ? esc(h.holder || stateWord(t).toLowerCase()) : w ? doingOf(w) : doing(t.state);
+        return `<button class="dk-live on" data-node="${esc(t.id)}" data-k="live|${esc(t.id)}"${w && taken ? ` data-run="${esc(doingOf(w))}"` : ''}${STRIP.live(nameOf(t), tk?.msg || (w ? STRIP.running(clockAt(w.since * 1e3), PROC_KIND[w.verb], doingOf(w)) : by ? STRIP.carried(nameOf(S.tasks.find(x => x.id === top)), doingOf(by)) : k ? STRIP.held(k.holder, stateWord(t), k.since && clockAt(k.since)) : STRIP.idle))}><i${beat()}></i><em>${esc(name(t))}</em>`
+            + `<span>${what}${taken && h.since ? `<b class="dk-age">${since(h.since)}</b>` : w ? `<b class="dk-age">${since(w.since * 1e3)}</b>` : ''}</span></button>`;
     });
     // a process on no node drawn yet — the goal's own plan being authored before its root exists — is work too
     const drawn = new Set(S.tasks.map(t => t.id));
@@ -133,7 +134,7 @@ function drawStrip() {
     box.classList.add('fit');
     while (all.length > 1 && over()) gone.unshift(all.pop()), gone[0].remove(), more.textContent = `+${gone.length}`;
     if (over()) box.classList.remove('fit');
-    if (gone.length) more.outerHTML = `<span class="dk-more"${STRIP.more(gone.map(c => `${c.dataset.tip.split('\n')[0]}: ${[...c.querySelector('span').childNodes].map(n => n.textContent).join(', ')}`))}>+${gone.length}</span>`;
+    if (gone.length) more.outerHTML = `<span class="dk-more"${STRIP.more(gone.map(c => `${c.dataset.tip.split('\n')[0]}: ${[...c.querySelector('span').childNodes].map(n => n.textContent).join(', ')}${c.dataset.run ? ` — ${c.dataset.run} now` : ''}`))}>+${gone.length}</span>`;   // a session under «+N» still said
 }
 
 const TIMED = new Set(['timeline', 'progress']);

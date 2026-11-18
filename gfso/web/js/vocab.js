@@ -15,18 +15,19 @@ const BLOCK = A('BLOCK', 'red', 'Block', 'reason');
 // BLOCKED is (§12.1); under a mode that issuer is the machine.
 // Moves — the panel's controls that are no signal: E Edit (a re-ASSIGN, §12.3), D Decompose, V Record verdict (the
 // human counterpart of validate_result).
-// A STATE'S WORD IS WHAT THE RECORD SAYS, and a state alone never says that work goes on: it is a waiting point between two
-// signals (§12.1). So the word below is the state at rest — accepted, delivered, sent back — and `WORKED` its word while
-// the page sees the work going on (`now.lit`: a process, a presence). "In Progress" on every accepted node was true only
-// under AUTO, where a session takes a node the moment it is accepted; on a graph people hold, hundreds "were in progress"
-// while two were worked (the author, 2026-11-13/14); a word naming whose move it was read worse (2026-11-14).
+// A STATE'S WORD IS WHAT THE RECORD SAYS, the same whoever holds the node and however they are connected (the author,
+// 11-18: «любой юзер хоть human хоть ai … трекался в ui нормально … никаких консольных коннектов и костылей»): consented
+// work reads «In progress» by the log alone, in this one table — taking a node when its work starts and delivering it when it lands
+// keeps that true (the graph's discipline, not the page's guess; hundreds «in progress» while two were worked was a record
+// built taken, 11-13). A delivery reads «Delivered» whoever checks it; what this server runs is a detail of the strip's tip
+// and the timeline, never a word (JOINT in-work rework 11-18, W1/W3).
 const ROWS = {
     //           bucket       label          moves
     DONE:       ['done',      'Done',        ''],
-    EXECUTING:  ['busy',      'Accepted',    'ED'],
+    EXECUTING:  ['busy',      'In progress', 'ED'],
     OFFERED:    ['attend',    'Not started', 'ED'],
     BLOCKED:    ['pathology', 'Blocked',     'ED'],
-    REWORKING:  ['busy',      'Sent back',   'ED'],
+    REWORKING:  ['busy',      'Rework',      'ED'],
     CHALLENGED: ['pathology', 'Challenged',  'ED'],
     VALIDATING: ['busy',      'Delivered',   'EV'],
     IDLE:       ['quiet',     'Waiting',     ''],
@@ -34,7 +35,6 @@ const ROWS = {
     ABANDONED:  ['quiet',     'Cancelled',   ''],
     ESCALATED:  ['pathology', 'Escalated',   'E'],
 };
-export const WORKED = {EXECUTING: 'In progress', REWORKING: 'Rework', VALIDATING: 'Validating'};
 // WHICH signals a node admits is the engine's answer (`/api/tasks/{id}/actions`): a copy of the FSM here had drifted —
 // no Challenge after consent (ortho audit). What stays here is how each signal is offered; ASSIGN is not offered as a
 // signal (Edit is the re-ASSIGN); on a closed node the ASSIGN the engine admits its issuer is a REOPEN (R′, §12.14) and

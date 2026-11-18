@@ -1,7 +1,7 @@
 // THE PAGE'S MODEL, READ: the graph and its tasks, the frontier the engine names, and the run built from the log and
 // the ledger. Each read writes S (state.js) and draws nothing; the views render what S holds, and main.js orders the
 // reads and the drawings.
-import {S, procs, presence, minePerformer, begun, inView, viewNodes, viewTree} from './state.js';
+import {S, procs, minePerformer, begun, inView, viewNodes, viewTree} from './state.js';
 import {api, getJSON, post, bounded, FOCUS} from './api.js';
 import {buildRun, busyNow} from './run.js';
 import {contested, isVerdict, terminal} from './vocab.js';
@@ -100,7 +100,7 @@ export async function loadRun() {
 // the deck's tabs and sum give (spend, models, progress, timeline) — its log keeps the whole log's positions, which a
 // verdict's history counts in.
 export const rebuildRun = () => { if (!read) return;
-    const common = {pipeline: S.pipeline, verdicts, waiting: S.waiting, steps: S.steps, present: presence(),
+    const common = {pipeline: S.pipeline, verdicts, waiting: S.waiting, steps: S.steps,
                     auto: S.graph.mode?.mode === 'auto', mode: S.graph.mode};
     S.run = buildRun({nodes: S.graph.nodes, edges: S.graph.edges, tasks: S.tasks, ...read, procs: procs(), ...common});
     const mine = id => inView(id);

@@ -142,12 +142,9 @@ async function applyInFlight(list) {
     if (here() !== was) { await S.reload(); refreshDeck().then(afterDeck); }
     if (S.runState?.state === 'stopping') refreshHeader();   // until the last session the stop let finish has ended
 }
-// …and who works what through a live console, pushed the same way (`working`)
-// …an open panel too: its node's word (In progress / Accepted) is read from the same presence
-const applyWorking = list => { const was = JSON.stringify(S.working); S.working = list || [];
-    if (JSON.stringify(S.working) === was) return;
-    rebuildRun(); onInflight(); annotate(); if (focus().select) selectTask(focus().select); };
-const readInFlight = () => getJSON('/api/runtime').then(r => { applyWorking(r.working); return applyInFlight(r.in_flight); })
+// who works what is the log's (a node taken), never a party's connection (the author, 11-18: «никаких консольных
+// коннектов и костылей … инвариантно от исполнителя»; JOINT in-work rework, 11-18)
+const readInFlight = () => getJSON('/api/runtime').then(r => applyInFlight(r.in_flight))
     .catch(() => { /* the strip keeps its last count; the socket banner says when the server is gone */ });
 
 const ACT = {
@@ -280,7 +277,6 @@ const LIVE = {
     // this tab's own project came to exist while the feed was refused: nothing of it was pushed here, so read it all
     async reopened() { await S.reload(); await readInFlight(); refreshDeck().then(afterDeck); },
     inflight: d => applyInFlight(d.in_flight),         // a process of the server started or ended
-    working: d => applyWorking(d.working),             // a party's console took a node in work, or left it
     opened: () => readInFlight(),
     // a plan was written or refined for this project: the canvas shows it until the go
     async plan_written() { await S.reload(); drawPlanning(); },

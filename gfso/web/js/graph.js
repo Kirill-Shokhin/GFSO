@@ -1,6 +1,6 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc, tally} from './dom.js';
-import {S, taskOf, whoOwes, mineNames, keep, nowOf, inWorkOf, viewTasks, stateWord, handAsks, hasKids, goTo, goUp} from './state.js';
+import {S, taskOf, whoOwes, mineNames, keep, inWorkOf, viewTasks, stateWord, handAsks, hasKids, goTo, goUp} from './state.js';
 import {bucketOf, contested, cancelled, nameOf, criteriaOf, delivered, closedByFail} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip, TOUCH} from './tip.js';
@@ -327,13 +327,12 @@ function placeBadges() {
     if (!cy) return;
     layer ??= $('cy').appendChild(Object.assign(document.createElement('div'), {className: 'cy-badges'}));
     plane ??= layer.appendChild(Object.assign(document.createElement('div'), {className: 'cy-plane'}));
-    // at work by the run's one rule; the pulse in the accent when this server has a process on it
-    // (the graph may draw before the run is read: the same rule over the registry then)
+    // in work by the page's one reading (the log), whoever works it; what this server runs is the strip's tip and the timeline
     // …and a node TAKEN and in work by the log is at work too, whoever took it — a person, an agent — process of this server
     // or none: ONE mark, the pulse (the author, 11-18: «а чем красная мигающая отличается? … ничего не понимаю»). Only the strip
     // and the In work list said so, the graph showed nothing (the author, 2026-11-18: «задачи инженерки которые она взяла и
     // подписаны in work никак не подсвечиваются»)
-    const now = nowOf(), work = new Set([...now.work, ...inWorkOf(viewTasks()).map(r => r.t.id)]);   // …the strip's own reading of this view
+    const work = new Set(inWorkOf(viewTasks()).map(r => r.t.id));   // …the strip's and the list's one reading of this view (JOINT W3: what runs is no mark)
     // a narrow tag keeps its word in a smaller type: a bare «404» on the largest node read as an error's code (critic)
     const count = (w, n, word) => { const need = 22 + 6 * String(n).length + 6 * word.length;
         return tally(n, word, w < need ? ` style="font-size:${Math.max(7, 10 * w / need).toFixed(1)}px"` : ''); };
@@ -343,9 +342,9 @@ function placeBadges() {
         const b = n.boundingBox(BODY), f = foldOf(id), w = b.x2 - b.x1 - 2 * TAG_IN, hang = `left:${b.x1 + TAG_IN}px;top:${b.y2 - 1}px;width:${w}px`;
         // the folded parts hang under the node: their count, and those failing now in the accent
         // …each a count as every count on the page (`tally`: the figure at its line's size — critic 5); a click on it unfolds
-        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="${hang}"${TIP.fold([f.held.length && `${f.held.length} in work`, f.work.length && `${f.work.length} acted on now`, f.decide.length && `${f.decide.length} waiting on a decision`, f.shut.length && `${f.shut.length} closed by FAIL`,
+        const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="${hang}"${TIP.fold([f.held.length && `${f.held.length} in work`, f.decide.length && `${f.decide.length} waiting on a decision`, f.shut.length && `${f.shut.length} closed by FAIL`,
                 f.contested.length && `${f.contested.length} contested`, f.failing.length && `${f.failing.length} sent back`])}>${count(w, f.direct, f.direct > 1 ? 'parts' : 'part')}`
-            + (f.work.length || f.held.length ? `<i class="cy-live on"${beat()}></i>` : '') + '</div>' : '';
+            + (f.held.length ? `<i class="cy-live on"${beat()}></i>` : '') + '</div>' : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
         const shut = closedByFail(taskOf(id));

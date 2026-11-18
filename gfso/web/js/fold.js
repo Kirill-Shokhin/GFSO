@@ -87,7 +87,7 @@ export const foldOf = id => { const xs = partsOf(id);
         ...Object.fromEntries(Object.entries(LOOKS).map(([k, f]) => [k, xs.filter(f)]))}; };
 
 // What asks for the reader among drawn nodes, its own or folded inside: the most pressing look that any of them shows.
-const PRESSING = [LOOKS.failing, x => LOOKS.decide(x) || LOOKS.contested(x), LOOKS.work];
+const PRESSING = [LOOKS.failing, x => LOOKS.decide(x) || LOOKS.contested(x), x => LOOKS.held(x) || LOOKS.work(x)];   // in work by the log, whoever works it
 export function asking(ids) {
     for (const f of PRESSING) {
         const c = ids.filter(id => [id, ...partsOf(id)].some(f));

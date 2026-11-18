@@ -72,7 +72,7 @@ const KEY = [
     {group: 'The graph'},
     {glyph: '<i class="lg-split"></i>', head: 'Split into its parts', means: 'from a node to each of its parts'},
     {glyph: '<i class="lg-dep"></i>', head: 'Uses the result of', means: 'the node using it waits until its producer passes (Dep)'},
-    {glyph: '<i class="cy-live on"></i>', head: 'In work', means: 'taken by its holder — a person, an agent, a session of this server — counted in the deck as «N in work»; on a part’s tag, work goes on inside it. A parent only waiting on its parts is not'},
+    {glyph: '<i class="cy-live on"></i>', head: 'In work', means: 'taken by its holder — a person, an agent, a session of this server — counted in the deck as «N in work»; on a part’s tag, work goes on inside it. Where a node’s parts are taken, the mark is theirs'},
     // one mark, the round count; its accent is a state of it, not a second mark (the author: «почему это две разные и одинаковой иконкой»)
     {glyph: '<span class="kb">3</span>', head: 'Delivery rounds', means: 'from the second on; in the accent while the last one failed'},
     {glyph: '<svg class="glyph" width="22" height="11" viewBox="0 0 22 11"><rect class="tl-exec" x="0" y="3" width="22" height="5" rx="1.5"/><line class="tl-hand" x1="11" x2="11" y1="1" y2="10"/></svg>',
@@ -93,7 +93,7 @@ const KEY = [
     {group: 'Nodes'},
     node('done', 'Closed, passed', ''),
     {glyph: '<i class="kn kn-done kn-x"></i>', head: 'Closed by FAIL', means: 'closed on its FAIL; the cross is the FAIL mark of every view'},
-    node('busy', 'Taken, not closed', 'busy', 'pulsing while worked now'),
+    node('busy', 'Taken, not closed', 'busy'),
     node('attend', 'Handed over, not taken yet', 'attend'),
     node('pathology', 'Waits on a decision', 'pathology'),
     node('quiet', 'Not handed over yet', 'quiet'),
@@ -131,7 +131,7 @@ export function mountHints() {
 }
 // a deck tab is named by the question it answers: the hover asks it, the tab's name is not said again
 export const TAB = {
-    'in work': hover('What is in work, by stream', 'From the log: who holds each node and since when; lit where someone acts on it now'),
+    'in work': hover('What is in work, by stream', 'From the log: who holds each node and since when'),
     timeline: hover('Which nodes ran when, and at once'),
     progress: hover("How the goal's criteria came to pass"),
     spend: hover('Where the money and session time went', 'By node, by level of the plan, by role and by assignee'),
@@ -284,15 +284,14 @@ export const STRIP = {
     issuer: (n, rows) => hover(STRIP.onIssuer(n), rows),
     back: rows => hover(STRIP.sentBack(rows.length), rows, 'Their last round failed'),
     more: rows => hover(`${rows.length} more in work`, rows),
-    // held in the log with no one acting on it this minute: still in work, its pulse dark
-    held: (holder, word, at) => `${word}${holder ? ` by ${holder}` : ''}${at ? `, since ${at}` : ''}; no one acts on it this minute`,
-    list: hover('In work', 'What the log holds in work, by stream: who holds it and since when. Lit: someone acts on it now'),
+    // taken in the log with no process of this server on it: who holds it and since when — the page cannot know more
+    held: (holder, word, at) => `${word}${holder ? ` by ${holder}` : ''}${at ? `, since ${at}` : ''}`,
+    list: hover('In work', 'What the log holds in work, by stream: who holds it and since when'),
     // what the chip does not say: where the session runs and since when — its act is the chip's own words (critic, 2026-11-01:
     // «auto_decompose — a session…» beside «planning» named one act two ways)
     running: (at, model, what) => `${cap(what)}: ${model ? 'a session of this server' : "the server's own step, no model"}, since ${at}`,
     carried: (top, act) => `Carried by the session on ${top}, ${act}`,
     idle: 'In a working state; no process of this server runs it',
-    hand: (party, at) => `Worked by ${party}, since ${at}`,
     // a role a line: its share of the spend drawn, its sum at the end; sessions in the label (the author: no figures run on
     // after each other with dots)
     spend: (roles, running) => hover('Spend by role', roles.map(([k, p, share]) => meter(sessionsOf(k, p.calls), share,

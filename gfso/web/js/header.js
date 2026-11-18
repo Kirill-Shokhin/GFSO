@@ -24,8 +24,8 @@ const named = id => taskOf(id).name ? `${taskOf(id).name} (${id})` : id;
 function standing(root) {
     const parts = viewTasks().filter(t => !isRoot(t) && t.id !== FOCUS && !cancelled(t)), k = parts.filter(delivered).length;   // closed by FAIL is not done: the engine holds its consumers (settled_positive)
     const said = s => label(s).toLowerCase(), word = stateWord(root).toLowerCase(), it = FOCUS ? 'the part' : 'the goal';
-    // …the node's word is the one rule every view says (Accepted / In progress, Delivered / Validating, Sent back / Rework:
-    // vocab WORKED) — the header said «Accepted» beside a strip and a panel saying «in progress» (critic)
+    // …the node's word is the one rule every view says (vocab ROWS, by the log) — the header said «Accepted» beside a strip
+    // and a panel saying «in progress» (critic)
     const phrase = {
         // a split goal not yet taken has its parts at work: "not started" alone read beside "1 at work" (live AUTO row)
         OFFERED: parts.length ? `${it} itself ${word}` : word, IDLE: said('OFFERED'),

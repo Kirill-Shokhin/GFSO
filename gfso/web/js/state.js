@@ -3,7 +3,7 @@
 import {$} from './dom.js';
 import {PROJECT, FOCUS, openFocus} from './api.js';
 import {childrenOf, depths, ancestorsIn, rootOf} from './tree.js';
-import {cancelled, statusLabel, delivered, WORKED} from './vocab.js';
+import {cancelled, statusLabel, delivered} from './vocab.js';
 import {runNow, heldByPerson, inWork} from './run.js';
 import {bare} from './fmt.js';
 
@@ -32,11 +32,11 @@ export const moverOf = a => {
 // a node's word now, as `enteredWord` says it of the move: a contract the log shows brought back by anything but its first offer has started
 // …`audit` where the caller holds the node's own: a panel draws before the run is rebuilt (critic)
 export const stateWord = (t, audit = S.run?.audit) => t.state === 'OFFERED' && audit?.some(a => (a.task_id ?? t.id) === t.id && a.new_state === 'OFFERED' && a.old_state && a.old_state !== 'IDLE')
-    ? 'Offered again' : WORKED[t.state] && nowOf().lit?.(t.id) ? WORKED[t.state] : statusLabel(t.state, delivered(t) ? null : t.done_reason);
+    ? 'Offered again' : statusLabel(t.state, delivered(t) ? null : t.done_reason);
 export const S = {tasks: [], graph: {nodes: [], edges: []}, closures: [], missing: '',
                   frontier: null, runState: null, waiting: null, steps: null, mySteps: new Map(),
                   run: null, pipeline: [], reports: [], metrics: null,
-                  inflight: [], working: [], me: null, project: PROJECT, mineOnly: false, mineName: '', plan: {}, reload: async () => {}};
+                  inflight: [], me: null, project: PROJECT, mineOnly: false, mineName: '', plan: {}, reload: async () => {}};
 
 // the processes this server runs in this project now — the in-flight registry, the one reading of it
 export const procs = () => S.inflight.filter(w => w.project === S.project);
@@ -53,14 +53,12 @@ export const handAsks = t => !personHolds(t);
 // a delivery no process validates whose issuer is a person waits on that person's verdict (§12.1: one wait on the issuer):
 // it is on the issuer, not in work — one rule for the strip and the list of what is in work
 export const owedVerdict = (t, at = nowOf()) => t.state === 'VALIDATING' && !at.lit(t.id) && !at.carrier(t.id).length && issuerIsPerson(t);
-// IN WORK, the page's one reading: what the log holds in work (run.js `inWork`) lit by what is acted on now, less a delivery
+// IN WORK, the page's one reading: what the log holds in work (run.js `inWork`), less a delivery
 // owed to a person, which is on the issuer — the deck's line, its IN WORK tab and the fold tags read this and nothing else
 export const inWorkOf = (tasks = S.tasks) => { const at = nowOf(); return inWork(tasks, S.run?.audit, at, t => owedVerdict(taskOf(t.id), at)); };
 export const issuerIsPerson = t => !t.parent_id || (S.graph.mode?.mode !== 'auto' && personHolds(taskOf(t.parent_id)));
 // what runs now is the run's one reading; before the run is read, the same rule over the registry
-// the parties working nodes of this project through their live consoles now — the presence registry, the one reading of it
-export const presence = () => S.working.filter(w => w.project === S.project);
-export const nowOf = () => S.run?.now ?? runNow(S.tasks, procs(), [], presence());
+export const nowOf = () => S.run?.now ?? runNow(S.tasks, procs(), []);
 // the project's work has begun: a node exists, or a process runs here — the goal's own plan authored before its root
 // exists is work; read as «nothing yet», the page offered «Pose the goal» and no Stop over a planning run (a live row)
 export const begun = () => S.tasks.length > 0 || procs().length > 0;

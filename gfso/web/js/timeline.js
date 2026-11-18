@@ -6,9 +6,8 @@ import {bindFocus, bringSelected} from './store.js';
 import {tip, untip} from './tip.js';
 import {frame, axisWidth, mark, pinLeft} from './draw.js';
 import {trim} from './fmt.js';
-import {S, agentName} from './state.js';
+import {S, agentName, inWorkOf, stateWord, taskOf} from './state.js';
 import {failedOf} from './run.js';
-import {label} from './vocab.js';
 import {TIP, KIND} from './hints.js';
 
 // the side kinds (a consent, an issuer's turn, a planning session) run on a thin lane of their own under the row's work:
@@ -19,11 +18,11 @@ const gutter = W => Math.round(Math.min(260, Math.max(140, W * 0.16)));
 const ROW = 34, CONC = 34, TOP = 30 + CONC + 14, AXIS = 20, BAR = {exec: 9, consent: 5, val: 4, issuer: 5, plan: 5};
 const STEM = 7, JOIN = 3 * 60e3;                                   // a verdict's mark stands this far above its row's bar line
 
-// Rows: the goal's first; then what is at work now; then every node that has worked, in the order it
+// Rows: the goal's first; then what is in work by the log, whoever works it (JOINT in-work rework 11-18); then every node that has worked, in the order it
 // first started; the nodes that never ran last, saying what they wait on.
 function rows(run, nodes) {
     const first = id => Math.min(...run.sessions.filter(s => s.node === id).map(s => s.start), Infinity);
-    const now = run.now.work, rank = id => run.depth[id] === 0 ? 0 : now.has(id) ? 1 : first(id) < Infinity ? 2 : 3;
+    const now = new Set(inWorkOf().map(r => r.t.id)), rank = id => run.depth[id] === 0 ? 0 : now.has(id) ? 1 : first(id) < Infinity ? 2 : 3;
     return nodes.map(n => n.id).sort((a, b) => rank(a) - rank(b) || first(a) - first(b) || run.depth[a] - run.depth[b]);
 }
 
@@ -83,7 +82,7 @@ export function render(el, run, nodes) {
     // commas ran a row out to 1000 px and could not be counted (audit B8; the graph's tip and the panel say it so too)
     const idle = id => { const deps = run.waits[id]?.deps || [];
         return run.sessions.some(s => s.node === id) || state[id] === 'DONE' ? '' : !deps.length
-        ? `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}">${esc(label(state[id]).toLowerCase())}</text>`
+        ? `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}">${esc(stateWord(taskOf(id)).toLowerCase())}</text>`
         : `<text class="tl-wait" x="${LEFT + 8}" y="${Y(id) + 4}"${deps.length > 1 || name(deps[0]).length > 32 ? TIP.waits(deps.map(name)) : ''}>waits on ${esc(trim(name(deps[0]), 32))}${deps.length > 1 ? ` +${deps.length - 1}` : ''}</text>`; };
     // the bar kinds are a LABEL (hints.js): read each time, so drawn beside the bars; PASS and FAIL are the key's
     // consent shown only where a run has it: rows recorded before it was booked apart have none

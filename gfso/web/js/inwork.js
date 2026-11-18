@@ -1,5 +1,5 @@
 // IN WORK, by stream: what the log holds in work under each part of the view's top — a node at the deepest level that is
-// worked, who holds it, its state, since when — lit where someone acts on it this minute (the author, 11-15: «как из ui
+// worked, who holds it, its state, since when, the same whoever works it (the author, 11-15: «как из ui
 // понимать над чем вообще идет работа?»). Read from the log alone, it holds through a restart and a closed console.
 import {esc, tally, since, morph} from './dom.js';
 import {nowOf, stateWord, viewProcs, inWorkOf} from './state.js';
@@ -28,7 +28,7 @@ export function render(el, run, nodes, tasks) {
             + (path.length ? `<small>${esc(path.join(' › '))}</small>` : '') + '</em>'
             + `<span>${esc(r.holder || '—')}</span><span>${esc(stateWord(r.t))}</span>`
             + `<span${r.since ? hover('Since', clockAt(r.since)) : ''}>${r.since ? since(r.since) : ''}</span></button>`; };
-    const order = (a, b) => b.lit - a.lit || (b.since ?? 0) - (a.since ?? 0);
+    const order = (a, b) => (b.since ?? 0) - (a.since ?? 0);   // by the log alone, whoever works it (JOINT W2)
     const block = (id, rs = []) => `<section class="iw-s"><h4>${esc(nameOf(by[id]))}${by[id].assignee ? `<span>${esc(by[id].assignee)}</span>` : ''}`
         + `${rs.length ? tally(rs.length, 'in work') : '<span class="iw-none">nothing in work</span>'}</h4>${rs.sort(order).map(row).join('')}</section>`;
     // the parts with work first, those with none named once on one line: a part of a dozen leaves read as a dozen headers

@@ -6,7 +6,7 @@
 import {$, el, esc, coded, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task, FOCUS} from './api.js';
-import {S, hasKids, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord} from './state.js';
+import {S, hasKids, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf} from './state.js';
 import {bucketOf, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label, enteredWord} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
@@ -43,9 +43,10 @@ const prop = (k, html, attrs = '') => html ? `<div class="pn-k">${k}</div><div c
 
 function head({d, rounds}) {
     const v = vNow(d, d.audit), name = nameOf(d), note = closureNote(d.closure), bad = contested(d.closure), live = !terminal(d.state);
-    // the round is an ordinal, its figure the eye looks for; «in work» only where the run has it at work (audit D8), no round 0 (D9)
+    // the round is an ordinal, its figure the eye looks for; «in work» where the page's one reading has it, whoever holds it
+    // (audit D8: a parent waiting on its parts is not; JOINT in-work rework 11-18), no round 0 (D9)
     const [wait, waitText] = waiting(d), next = consented(d.state) && (!rounds.length || rounds.at(-1).verdict),
-          n = rounds.length + (next ? 1 : 0), inWork = next && !!S.run?.now?.work.has(d.id);
+          n = rounds.length + (next ? 1 : 0), inWork = next && inWorkOf().some(r => r.t.id === d.id);
     return `<div class="sidebar-header"><h2${PANEL.full(name)}>${esc(name)}</h2><button class="sidebar-close" data-action="close"${frame('close')}>&times;</button></div>`
         + `<div class="pn-status">${pill(d, v)}<span class="v-badge v-${v}"><span class="v-symbol">${V_SYMBOL[v]}</span>V = ${v === 'undef' ? '⊥' : v}</span>`
         + `<span class="pn-id"${PANEL.full(d.id)}>${esc(d.id)}</span></div>`
