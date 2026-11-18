@@ -183,7 +183,8 @@ body {
 .hq-row { padding: 10px 0; border-bottom: 1px solid var(--hair-soft); }
 .hq-row:last-child { border-bottom: none; }
 .hq-head { display: flex; align-items: baseline; gap: 10px; }
-.hq-head b { font-family: var(--font-mono); font-size: 11px; font-weight: 500; min-width: 44px; }
+/* who filed it, whole: the node's link beside it gives way, the name never (a critic: «engineer / ing») */
+.hq-head b { flex: none; font-family: var(--font-mono); font-size: 11px; font-weight: 500; min-width: 44px; }
 .hq-val { font-family: var(--font-display); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; flex: 1; }
 .hq-val.acc { color: var(--acc); }
 .hq-val:has(+ .hq-nil) { flex: none; margin-right: 6px; }
@@ -1422,6 +1423,9 @@ button.rs-switch { cursor: pointer; min-height: 32px; }   /* a finger's target, 
 /* the separator stands before a part, and a part starting a line has it outside the box: no «·» dangles at a wrap (audit A13) */
 .pl-what i span { white-space: nowrap; position: relative; }
 .pl-what i span + span::before { content: '·'; position: absolute; left: -10px; }
+/* …a project's name longer than the whole line (a 360 px phone) ends in an ellipsis, not mid-letter — the first part only:
+   the others carry their dot outside their box */
+.pl-what i span:first-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .pl-where { font-size: 11.5px; color: var(--ink-soft); }
 .pl-where.done, .pl-where.live { color: var(--ink); }
 .pl-where.bad { color: var(--ink); font-weight: 650; }
