@@ -344,7 +344,7 @@ function placeBadges() {
         // the folded parts hang under the node: their count, and those failing now in the accent
         // …each a count as every count on the page (`tally`: the figure at its line's size — critic 5); a click on it unfolds
         const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="${hang}"${TIP.fold([f.held.length && `${f.held.length} in work`, f.work.length && `${f.work.length} acted on now`, f.decide.length && `${f.decide.length} waiting on a decision`, f.shut.length && `${f.shut.length} closed by FAIL`,
-                f.contested.length && `${f.contested.length} contested`, f.failing.length && `${f.failing.length} sent back`])}>${count(w, f.n, f.n > 1 ? 'parts' : 'part')}`
+                f.contested.length && `${f.contested.length} contested`, f.failing.length && `${f.failing.length} sent back`])}>${count(w, f.direct, f.direct > 1 ? 'parts' : 'part')}`
             + (f.work.length || f.held.length ? `<i class="cy-live on"${beat()}></i>` : '') + '</div>' : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
@@ -356,7 +356,10 @@ function placeBadges() {
             + (work.has(id) ? `<i class="cy-live on"${beat()}></i>` : '')
             + (rs.length > 1 || failing ? `<span${failing ? ' class="cy-fails"' : ''}>${rs.length}</span>` : '') + '</div>' + tag;
     }).join('');
-    if (html !== shown) plane.innerHTML = shown = html;
+    // …redrawn only when what it says changes: the pulse's phase (`beat`) is new on every call, and a rewrite on each render
+    // replaced the tag under the mouse — its hover blinked two or three times (the author, 2026-11-18)
+    const said = html.replace(/ style="animation-delay:-\d+ms"/g, '');
+    if (said !== shown) { plane.innerHTML = html; shown = said; }
     ride();
 }
 let shown = '', drawing = false;

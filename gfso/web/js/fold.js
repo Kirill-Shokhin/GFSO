@@ -5,7 +5,7 @@
 import {S, taskOf, nowOf, kept, keep, inView, inWorkOf} from './state.js';
 import {bucketOf, cancelled, contested, closedByFail} from './vocab.js';
 import {failingNow} from './run.js';
-import {depths, ancestorsIn} from './tree.js';
+import {depths, ancestorsIn, childrenOf} from './tree.js';
 import {FOCUS} from './api.js';
 
 let folding = false, plan = null;
@@ -81,7 +81,10 @@ const LOOKS = {
     work: x => nowOf().work.has(x),
 };
 export const foldOf = id => { const xs = partsOf(id);
-    return {n: xs.length, ...Object.fromEntries(Object.entries(LOOKS).map(([k, f]) => [k, xs.filter(f)]))}; };
+    // `direct`: the parts one step down, the number the node's panel says and going down shows (the tag said every part on
+    // every level — 430 against the panel's 18, the author 2026-11-18); the looks still read everything inside
+    return {n: xs.length, direct: childrenOf(S.tasks, id).filter(t => t.state !== 'ABANDONED').length,   // …counted as the panel counts
+        ...Object.fromEntries(Object.entries(LOOKS).map(([k, f]) => [k, xs.filter(f)]))}; };
 
 // What asks for the reader among drawn nodes, its own or folded inside: the most pressing look that any of them shows.
 const PRESSING = [LOOKS.failing, x => LOOKS.decide(x) || LOOKS.contested(x), LOOKS.work];
