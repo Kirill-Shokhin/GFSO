@@ -81,8 +81,8 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   with its check per thing they asked; the go on it calls none either. The system still fixes those checks in the graph
   before any work, runs them once over the base where a container holds the project — naming each that cannot run, or
   already holds there and so decides nothing about the work; on this host bash only reads each, running none, and it
-  says none ran — never a gate, and a validator other than the agent signs the root against them. `plan(request, model=...)` still has the system write it;
-  `auto` keeps the system's planner. Measured on a fresh client: the system's plan took 10 of 18 minutes where the bare
+  says none ran — never a gate, and a validator other than the agent signs the root against them.
+  `plan(request, model=...)` still has the system write it; `auto` keeps the system's planner. Measured on a fresh client: the system's plan took 10 of 18 minutes where the bare
   agent took half of one, and grew 3 asked requirements into 9 criteria.
 - Under `solo` and `semi` a new root's go, by any route (a plan file, a spec, a request), carries the person's own words
   agreeing to the plan they were shown (`user_said`), and a root's criteria change after it only with such words
@@ -120,6 +120,14 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   the credential that lifted it.
 - `gfso doctor` no longer tells a person their own chat's work needs no credential: the system's own calls — a plan's
   author, every validator — need one in every mode.
+- A plan no longer passes off the system's own requirements as the person's. Each criterion names the words of the
+  request (or of a note) that it states (`asked`), and the system checks them against the request word for word, with
+  no model. When the system writes a plan from the request alone, any criterion whose words are not there goes to the
+  plan's repair. Whatever survives the repair is listed in the plan file (`review.beyond_the_request`) and in the
+  plan's answer as the system's own, for the person to keep or strike with a note; the plan is never refused for
+  it. A three-criterion task used to come back with nine criteria, and a stranger's run once spent 57 minutes on
+  escaping rules nobody had asked for. A plan a solo chat filled with the person is theirs: never repaired for it,
+  nothing of it said to be the system's.
 - On a project whose work runs on this machine, a plan's check that bash refuses as written (an unquoted `(`, an
   unclosed quote) is found before the go and sent to the plan's repair, as on a container project: bash reads each
   check (`bash -n`) and runs nothing of it. Such checks used to reach the go unrepaired, with the plan saying only

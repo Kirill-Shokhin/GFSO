@@ -34,6 +34,8 @@ _REVIEW_KEYS = ("gate_passed", "l0l1_failures", "semantic_covered", "semantic_fi
                 "conflicts", "undecided_obligations")
 #: the review's key for what the plan's pins did over the base before the go (`PinsOnTheBase.review`)
 PINS = "pins_on_the_base"
+#: the review's key for the criteria the request does not ask (`decompose.beyond_the_request`)
+BEYOND = "beyond_the_request"
 
 
 def author(request: str, model: str, executor: str = "", depth: int = 1, review_model: str = "",
@@ -46,8 +48,9 @@ def author(request: str, model: str, executor: str = "", depth: int = 1, review_
     with _booked(ledger, llm):
         res = _decompose.decompose_into(e, request, root_id=ROOT_ID, assignee=agent_id(), depth=depth, model=model,
                                         llm=llm, progress=back, executor=executor, pins=pins)
-    spec = extract_spec(e, str(res.root_id))
+    spec = _asked_kept(extract_spec(e, str(res.root_id)), res.spec)
     return artifact.render(request, spec, back.into(_review(e, res.root_id, review_model or model, execution, ledger,
+                                                            beyond=beyond_said(spec, request),
                                                             pins=pins.review(spec)), spec), executor=executor)
 
 
@@ -91,10 +94,10 @@ def refine(text: str, note: str, model: str, review_model: str = "", progress=No
         "the criterion that already states the clause — the root's, or that of the part that builds it; a new root "
         "criterion only where none states it.\n" + "\n".join(open_) if open_ else "")
     with _booked(ledger, llm):
-        changed, _, problems = _decompose.refine_with(e, p["goal"], rid, agent_id(), llm,
+        changed, made, problems = _decompose.refine_with(e, p["goal"], rid, agent_id(), llm,
                                                       findings, progress=back, executor=p["executor"], pins=pins)
     changed = changed or spec != p["spec"]        # …the repair before the build changed it too
-    after = _exact_kept(before, extract_spec(e, str(rid)))
+    after = _asked_kept(_exact_kept(before, extract_spec(e, str(rid))), made, before)
     pinned = pins.review(after)
     # …said as what it is: one round read the note TOGETHER with the review's open findings, so a change is the round's,
     # not proven the note's; and an unchanged plan is the system's answer to the note, the review below its reasons
@@ -102,7 +105,8 @@ def refine(text: str, note: str, model: str, review_model: str = "", progress=No
             "the plan is unchanged: the round that read this note folded nothing into it — the plan as it stands, "
             "and the review below, are the answer; send a sharper note, or name a stronger model")
     answer = [head] + (changes(before, after) if changed else [])
-    review = _review(e, rid, review_model or model, execution, ledger, asked, pinned)
+    review = _review(e, rid, review_model or model, execution, ledger, asked, pinned,
+                     beyond_said(after, p["goal"] + "\n\n" + noted))
     if left := unrepaired(before, after, [c for c, v in gaps.items() if v["verdict"] == "insufficient"]):
         wider = [c["name"] for c in after.get("root_criteria") or () if c["name"] not in _crits(_parts(before)[ROOT_ID])]
         answer.append(f"NOT REPAIRED — the review found the parts do not secure {', '.join(left)}, and the round "
@@ -141,6 +145,27 @@ def unrepaired(before: dict, after: dict, gaps: list[str]) -> list[str]:
 def _pairs(s: dict) -> set:
     """{(root criterion, part id)} of a spec's mappings."""
     return {(m["criterion"], m["child_id"]) for m in s.get("mappings") or ()}
+
+
+def _asked_kept(spec: dict, *authored: dict) -> dict:
+    """`spec` (as built, `extract_spec`) with each criterion's `asked` as `authored` wrote it, the first that names it:
+    the graph keeps no such field, and the plan file is where the person reads whose demand each criterion is."""
+    said = {}
+    for a in reversed(authored):
+        said |= {(n, c.get("name")): c["asked"] for n, x in _parts(a or {}).items() for c in x.get("criteria") or ()
+                 if "asked" in c}
+    for n, x in _parts(spec).items():
+        for c in x.get("criteria") or ():
+            if (n, c.get("name")) in said:
+                c["asked"] = said[(n, c.get("name"))]
+    return spec
+
+
+def beyond_said(spec: dict, request: str) -> list[str]:
+    """Each criterion of `spec` the request (with the customer's notes) does not ask, as the plan file says it: the
+    system's own requirement, not the person's (`decompose.beyond_the_request`). Never a gate."""
+    return [f"{n} / {c.get('name')}: {c.get('description', '')[:200]}"
+            for n, c in _decompose.beyond_the_request(spec, request)]
 
 
 def _exact_kept(before: dict, after: dict) -> dict:
@@ -271,7 +296,8 @@ def _back_in(line: str, spec: dict) -> bool:
     return bool((m := re.match(r"(\S+) leaves: the part", line)) and m[1] in parts)
 
 
-def _review(e: Engine, rid, model: str, execution=None, ledger=None, asked=(), pins: dict | None = None) -> dict:
+def _review(e: Engine, rid, model: str, execution=None, ledger=None, asked=(), pins: dict | None = None,
+            beyond: list | None = None) -> dict:
     """The Level-2 review of the plan, its open obligations those of the goal and those of `asked` — what the customer's
     notes require (`refine`) — that no pinned check decides, the latter marked `of = "note"`; with what its pins did over
     the base (`pins_on_the_base`, `PinsOnTheBase.review`) — written where the customer reads the plan, never a gate."""
@@ -280,4 +306,5 @@ def _review(e: Engine, rid, model: str, execution=None, ledger=None, asked=(), p
         c = json.loads(json.dumps(asdict(runner.review_decomposition(e, TaskId(str(rid)), llm=llm)), default=str))
         noted = runner.undecided_of(e, e.graph.get_task(TaskId(str(rid))), llm, asked) if asked else ()
     c["undecided_obligations"] = [*(c["undecided_obligations"] or ()), *({**g, "of": "note"} for g in noted)]
-    return {"by": model, **{k: c[k] for k in _REVIEW_KEYS}, **({PINS: pins} if pins else {})}
+    return {"by": model, **{k: c[k] for k in _REVIEW_KEYS}, **({PINS: pins} if pins else {}),
+            **({BEYOND: beyond} if beyond else {})}

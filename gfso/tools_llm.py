@@ -2404,10 +2404,16 @@ def _plan_written(text: str) -> dict:
     # never run pass no one silently
     nr, cannot = pins.get("not_run") or [], len(pins.get("cannot_run") or ())
     pinned = f" {nr[0]}" + (f" (and {len(nr) - 1} more, review.{_planning.PINS})" if len(nr) > 1 else "") + "." if nr else ""
+    # …and what the plan demands that the person never asked, by rule: the system's own, theirs to keep or strike
+    beyond = r.get(_planning.BEYOND) or []
+    unasked = (f" {len(beyond)} criterion(s) state nothing their request asks (review.{_planning.BEYOND}): the "
+               "system's own requirements, not theirs — name each to them; a note strikes any they do not want."
+               if beyond else "")
     return {"path": str(path), "chars": len(text), "parts": [s["id"] for s in p["spec"].get("subtasks") or ()],
             "undecided_obligations": undecided,
             **({_planning.PINS: {**pins, **({"cannot_run": len(pins["cannot_run"])} if "cannot_run" in pins else {})}}
                if pins else {}),
+            **({_planning.BEYOND: beyond} if beyond else {}),
             "covered": r.get("semantic_covered"), "notes": len(p["notes"]),
             "how_to_read": "read `text` whole, the file at `path` if there is none (the [inputs] at its end are the "
                            "checks' files, named by hash); "
@@ -2420,7 +2426,7 @@ def _plan_written(text: str) -> dict:
                       f"accepted — made with those results in hand, their split rounds run after them and lengthen "
                       f"the run; " if deferred else "")
                    + "and any "
-                   "decision in the file they never asked for." + pinned + " " + _after_the_plan(undecided, p["notes"], cannot),
+                   "decision in the file they never asked for." + unasked + pinned + " " + _after_the_plan(undecided, p["notes"], cannot),
             **({"text": text} if len(text) <= PLAN_TEXT_MAX else {})}
 
 

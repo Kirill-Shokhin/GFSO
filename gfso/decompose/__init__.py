@@ -24,6 +24,7 @@ import json
 import re
 import subprocess
 import time
+import unicodedata
 from dataclasses import dataclass, field
 
 from gfso.adapters.agents.human import HumanAgent
@@ -138,6 +139,34 @@ def _nodes(spec: dict, held: bool = False) -> list[tuple[str, list]]:
 def _criterion(c: dict) -> Criteria:
     """A spec's criterion as the admission reads it: its name and its checks."""
     return Criteria(str(c.get("name", "")), check=tuple(Probe.of(p) for p in c.get("check") or ()))
+
+
+def _words(text: str) -> str:
+    """`text` as words alone — case, punctuation, quote and dash forms and spacing dropped — framed by spaces."""
+    return " " + " ".join(_NON_WORD.split(unicodedata.normalize("NFKC", text).casefold())).strip() + " "
+
+
+_NON_WORD = re.compile(r"[\W_]+")
+
+
+def beyond_the_request(spec: dict, request: str) -> list[tuple[str, dict]]:
+    """[(node, criterion)] of `spec` whose `asked` — the request's words it says it states — is not in `request`, each
+    part between `…` found there as written: no model reads it. A goal's criteria are the person's, and a capability
+    outside the goal's scope is absent from it (§2.2); one demanding beyond what the goal needs lies in the goal's
+    setting (§6.7), and the system that wrote it is its author (the author, 11-04: «есть исходные критерии а есть
+    придуманные походу»). A criterion with no `asked` (a plan file of before, a hand-written one) is not read."""
+    said = _words(request)
+    return [(node, c) for node, crits in _nodes(spec) for c in crits if "asked" in c and not (
+        (parts := [w for x in re.split(r"…|\.\.\.", str(c.get("asked") or "")) if (w := _words(x)).strip()])
+        and all(w in said for w in parts))]
+
+
+def _beyond(spec: dict, request: str) -> list[str]:
+    """The repairer's line for each criterion of `spec` the request does not ask (`beyond_the_request`)."""
+    return [f"{node} / criterion {c.get('name')}: states nothing the request asks — its `asked` "
+            f"({str(c.get('asked') or '')[:200]!r}) is not words of the request. The goal's criteria are the person's: "
+            f"quote the request's words it states; or make it the form of the criterion whose words it serves; or "
+            f"remove it, with every check that demands it" for node, c in beyond_the_request(spec, request)]
 
 
 #: why a host project's pins are read and not run before the go (`PinsOnTheBase.review`)
@@ -430,15 +459,18 @@ def admission_refusals(spec: dict, contract_fixed: bool = False) -> list[str]:
 
 def _repaired_before_build(spec: dict, request: str, llm, executor: str, progress, contract_fixed: bool,
                            agree: _Agreement, closed: bool = False, pins: "PinsOnTheBase | None" = None) -> dict:
-    """What the admission would refuse, a seam its files contradict, a criterion its own checks deny (`agree`) and a pin
-    that cannot run on any work (`pins`), repaired before anything is built (bounded by REPAIR_ROUNDS); a patch that
+    """What the admission would refuse, a seam its files contradict, a criterion its own checks deny (`agree`), a pin
+    that cannot run on any work (`pins`) and a criterion the request does not ask (`beyond_the_request`), repaired
+    before anything is built (bounded by REPAIR_ROUNDS); a patch that
     rewrote criteria is judged again. `closed`: the plan is the user's, handed in whole — refused as it stands, never
     rewritten by a model; a pin of it that cannot run is no refusal, said in its review."""
     agree.judge(spec)
     history = [spec]
     for r in range(REPAIR_ROUNDS):
         if not (refused := admission_refusals(spec, contract_fixed) + agree.repair()
-                + (pins.flags(spec, contract_fixed) if pins and not closed else [])):
+                + (pins.flags(spec, contract_fixed) if pins and not closed else [])
+                # …only where the request alone is what the system writes from (`agree.on`): a customer's note asks too
+                + (_beyond(spec, request) if agree.on else [])):
             break
         if closed:
             # …THE USER'S PLAN IS NOT REPAIRED BEHIND HIS BACK: the go called a model and patched a handed-in plan the

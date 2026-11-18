@@ -84,6 +84,15 @@ Reduce everything to a canonical, non-redundant **BASIS**:
       child can fail those while the goal is fully met, which breaks `V(parent) = AND(V(children))` from
       the other side. If you are unsure whether the goal requires it, KEEP it — dropping a real
       obligation is the worse error.
+      **Whose demand it is (`asked`).** Every criterion carries in `asked` the words of the task
+      statement whose demand it states or makes decidable, copied as written. The goal's criteria
+      are the person's: the exact form a criterion pins for what those words ask (its output, its
+      errors, its edge cases) is the plan's decision and quotes them; a child's finer criterion quotes
+      the same words. A requirement no words of the statement demand — a format, an encoding, a
+      limit, a robustness property nobody named — is no criterion of this plan: a capability outside
+      the goal's scope is absent from it, and extending the scope means the person giving the goal new
+      criteria. The system reads `asked` against the statement word for word and names to the person
+      every criterion whose words it does not find there.
       The same applies to a criterion's QUANTIFIER, and it cuts both ways. A criterion never ranges wider
       than the goal (that is the hardening above) and never NARROWER: where the goal's own clause ranges
       over every input of a kind ("rejects any invalid input with error X", "accepts any valid

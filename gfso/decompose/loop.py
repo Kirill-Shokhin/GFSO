@@ -70,6 +70,12 @@ AGREE_SCHEMA = {"type": "object", "required": ["contradictions"], "properties": 
                                    "node", "criterion", "description_says", "check_requires", "task_says")},
                                    "task_takes": {"enum": ["description", "check", "open", "both"]}}}}}}
 
+#: what a criterion's `asked` holds — read by rule against the request (`decompose.beyond_the_request`)
+ASKED = ("the words of the TASK STATEMENT (the request, or a file it hands in) whose demand this criterion states or "
+         "makes decidable, copied verbatim in their own language, a part left out marked `…`. A criterion on how the "
+         "result does what those words ask — its exact output, its errors, its edge cases — quotes them; so does a "
+         "child's finer criterion. Empty when no words of the statement demand it: then the requirement is the "
+         "system's, not the person's, and the plan tells them so")
 _NAME_DESC = {"type": "object", "properties": {
     "name": {"type": "string"}, "description": {"type": "string"},
     # THE PROCEDURE, WRITTEN WITH THE CRITERION AND BEFORE ANY WORK. A criterion is a DECIDABLE
@@ -113,7 +119,10 @@ _NAME_DESC = {"type": "object", "properties": {
                        "items": {"type": "object", "properties": {
                            "path": {"type": "string"}, "content": {"type": "string"}},
                            "required": ["path", "content"]}}},
-            "required": ["behaviour", "command", "expect"]}}},
+            "required": ["behaviour", "command", "expect"]}},
+    # WHOSE DEMAND IT IS. A goal's criteria are the person's (§2.2: a capability outside the goal's scope is absent
+    # from it); one the system adds is its own, and the person hears it as such (`decompose.beyond_the_request`)
+    "asked": {"type": "string", "description": ASKED}},
     "required": ["name", "description", "check"]}
 
 # THE SEAM'S INPUT, COUNTED IN THE SAME CALL. A seam — an independent validation, and a wait for it — belongs
