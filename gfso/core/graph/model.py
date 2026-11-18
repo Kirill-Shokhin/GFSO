@@ -138,6 +138,12 @@ TECH_KEY = "tech_reports"
 #: The writes a console's witness saw in the project's repository while no node of it was at work there (`Engine.witnessed`):
 #: work past the system, the project's own record — not the system's defect.
 WITNESS_KEY = "witnessed"
+
+
+def witnessed_count(seen: list[dict]) -> int:
+    """How many writes the witness ever recorded: the last kept record's running `n` (records before it count by length)."""
+    return seen[-1].get("n", len(seen)) if seen else 0
+
 #: Where the accepted result lies, kept for whoever reads the graph: {branch, sha, path} or {path} (`workspaces.land_accepted`);
 #: its sha is a commit the system made, as its deliveries' are (`past`).
 LANDED = "landed"

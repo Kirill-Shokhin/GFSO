@@ -52,7 +52,7 @@ from gfso.engine.findings import record_round
 from gfso.engine.moves import DOOR_KEYS, READS, SIGNERS, door_holder, door_role, role_holder, signer_arg, signer_due
 from gfso.engine.validation import _l0_holes, _l2_undischarged, whole_waits_for_its_parts
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS
-from gfso.core.graph.model import MAX_ITERATIONS_CEILING, bounds_refusal, project_now, project_state_bound
+from gfso.core.graph.model import MAX_ITERATIONS_CEILING, bounds_refusal, project_now, project_state_bound, witnessed_count
 from gfso.engine.loop import state_bound_left
 from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.engine import Engine
@@ -2992,7 +2992,7 @@ def metrics(engine: Engine) -> dict:
     seen = engine.witnessed_writes()
     return {**(out := _tools.metrics(engine)),
             "past_the_system": past.past_the_system(engine, _delegation().default_agents()),
-            "witnessed": {"count": len(seen), "last": seen[-5:]},
+            "witnessed": {"count": witnessed_count(seen), "last": seen[-5:]},
             "means": {**out["means"], **{k: DIAGNOSTIC_MEANS[k] for k in ("past_the_system", "witnessed")}}}
 
 

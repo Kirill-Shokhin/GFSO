@@ -67,6 +67,20 @@ def test_a_write_with_no_node_at_work_is_recorded_and_said_and_one_under_a_node_
     assert seen["count"] == 1 and "a.txt" in seen["last"][0]["text"], seen
 
 
+def test_a_witnessed_write_is_news_an_open_page_hears(repo):
+    """An open page re-reads the count on the engine's news, never by polling: a recorded write is a `witnessed` line,
+    and a write under a node at work is none. CONTROL: `Engine.witnessed` without its line — red."""
+    e = _in_chat(repo)
+    lines = lambda: [r for r in e.pipeline_log() if r["source"] == "witnessed"]
+    _call(e, repo, lambda: (repo / "a.txt").write_text("a"))
+    assert lines() == []
+    _deliver(e)
+    _call(e, repo, lambda: (repo / "a.txt").write_text("b"))
+    said = lines()
+    assert len(said) == 1 and "a.txt" not in said[0]["message"], said   # the count moved; what was written stays in metrics
+    assert TL.TOOLS["metrics"](e)["witnessed"]["count"] == 1
+
+
 def test_a_node_taken_before_its_accept_named_a_repository_covers_its_holders_write_where_the_hook_stands(repo):
     """Finding A: a node taken before an ACCEPT recorded its repository — a direction held for months, in a project with
     no role registered anywhere — was at work nowhere, and its holder was told to take a node the protocol refuses (it

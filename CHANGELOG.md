@@ -27,7 +27,8 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   `--remove` takes it out. After each tool call it compares git's status of the working tree; a change while the
   console's principal holds no node taken there is recorded once in the project (`witnessed` in `metrics`, through
   `POST /api/witness`) and the agent is told to take the node or stop. It never blocks: it exits 0 whatever happens,
-  takes no index lock, and is silent on a settled project.
+  takes no index lock, and is silent on a settled project. Each recorded write is a `witnessed` line on the project's
+  live feed, so an open page re-reads the count at once; the count is every write ever recorded, the last hundred kept.
 
 ### Changed
 - Moves and the next steps stay fast on a large graph: a signal is answered in 0.6 s on a

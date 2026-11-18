@@ -20,7 +20,7 @@ from gfso.core.types import (
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
                                    start_waits,
-                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, WITNESS_KEY, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
+                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, replaces_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
 from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair
@@ -755,10 +755,14 @@ class Engine:
     def witnessed(self, text: str, actor: str, key: str = "") -> dict:
         """A write a console's witness saw in this project's repository while no node of it was at work there: work past
         the system, the project's own record beside the commits no delivery holds — never the system's defect
-        (`tech_report`), and it moves nothing (§11.3); `key`, the write's own fingerprint. The last hundred are kept."""
-        rec = {"at": datetime.now().isoformat(timespec="seconds"), "actor": str(actor), "text": str(text).strip()[:4000],
-               "key": str(key)}
-        self._appended(WITNESS_KEY, rec, kept=100)
+        (`tech_report`), and it moves nothing (§11.3); `key`, the write's own fingerprint. The last hundred are kept, each
+        carrying `n`, how many were ever seen; an open page hears it as the `witnessed` line."""
+        with self._tech_lock:
+            seen = self._records(WITNESS_KEY)
+            rec = {"at": datetime.now().isoformat(timespec="seconds"), "actor": str(actor),
+                   "text": str(text).strip()[:4000], "key": str(key), "n": witnessed_count(seen) + 1}
+            self._storage.store_setting(WITNESS_KEY, json.dumps((seen + [rec])[-100:]))
+        self.emit_info("witnessed", f"WITNESSED write #{rec['n']} past the system by {rec['actor']}")
         return rec
 
     def witnessed_writes(self) -> list[dict]:
