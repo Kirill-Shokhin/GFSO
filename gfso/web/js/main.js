@@ -99,6 +99,7 @@ const later = (o = {}) => {
         const w = {...want};
         for (const k in want) want[k] = false;
         if (w.all) { await S.reload(); goal.recheckHolds(); w.header = true; }   // …and the header again over the run read below
+        if (w.quality) await refreshQuality();   // …the metrics first: the header's line on work past the system reads them
         if (!w.all && w.header) await refreshHeader();
         // …a transition read the panel just now: the line narrating it adds nothing
         if (!w.all && w.panel && focus().select && Date.now() - paneled > 3e3) await selectTask(focus().select);
@@ -260,6 +261,8 @@ const NEWS = {
     // a mode or its settings set anywhere: who holds what, what each node offers, the goal form's readiness
     mode: () => ({all: true}),
     tech_report: () => ({header: true}),
+    // a console's witness saw a write past the system: its count is the metrics' (engineering's push, 11-19)
+    witnessed: () => ({quality: true, header: true}),
     // a call booked: a project that "never ran" has run now, and its Delete goes
     usage: () => { if (!$('project-delete').hidden) projects(); },
     // the plan changed with no transition — a Dep edge, an assignee, a criterion, a node created, an agent registered
