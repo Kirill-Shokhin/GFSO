@@ -523,8 +523,7 @@ async def _relay(url: str, client_read, client_write) -> None:
 
 def _heartbeat(url: str, lease_id: str, stop) -> None:
     """Hold this session's LEASE on the shared server (every ~4s). The server self-exits once the
-    last lease expires — the whole lifecycle mirrors the sessions with zero manual management. The lease carries the
-    connection's credential, so what the party it signs as works is seen while it is alive (`gfso.presence`)."""
+    last lease expires — the whole lifecycle mirrors the sessions with zero manual management."""
     u = urlparse(url)
     api = f"http://{u.hostname}:{u.port or 8000}/api/lease"
     body = json.dumps({"id": lease_id}).encode()

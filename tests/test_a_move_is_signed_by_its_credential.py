@@ -117,15 +117,6 @@ def test_a_token_signs_as_its_one_name_through_every_door_and_the_log_names_it(d
     assert _client(app, Authorization=f"Bearer {token}").get("/api/whoami").json()["signs_as"] == []
 
 
-def test_the_lease_is_held_by_the_resolved_name_never_the_bodys(door):
-    _, app = door
-    _, token = signin.issue("engineering")
-    c = _client(app)
-    c.post("/api/lease", json={"id": "a", "principal": "mallory"})
-    _client(app, Authorization=f"Bearer {token}").post("/api/lease", json={"id": "b"})
-    assert app.state.lease_holders == {"a": "user", "b": "engineering"}
-
-
 def test_the_systems_names_are_issued_to_no_one(door):
     e, _ = door
     T.TOOLS["register_agent"](e, "exec-1", "llm-executor", workdir=".")
@@ -194,15 +185,13 @@ def test_a_person_never_signs_as_a_system_role_whatever_the_old_graphs_named(doo
     assert _client(app, Authorization=f"Bearer {token}").get("/api/whoami").json()["signs_as"] == []
 
 
-def test_through_a_front_a_caller_signed_by_no_one_ends_no_lease_stops_no_server_and_holds_no_presence(door):
+def test_through_a_front_a_caller_signed_by_no_one_ends_no_lease_stops_no_server(door):
     e, app = door
     front, ended = _client(app, "http://testserver"), []
     app.state.exit_fn = lambda: ended.append(True)          # …a stop let through ends this test, not the process
     assert front.post("/api/shutdown", json={"force": True}).status_code == 403
     _client(app).post("/api/lease", json={"id": "mine"})
     assert front.delete("/api/lease/mine").status_code == 403 and "mine" in app.state.leases
-    front.post("/api/lease", json={"id": "theirs"})
-    assert "theirs" not in app.state.lease_holders
     assert _client(app).delete("/api/lease/mine").status_code == 200      # …a local client still ends its own
 
 

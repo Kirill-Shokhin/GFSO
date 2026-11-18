@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import collections
-import contextlib
 import contextvars
 import inspect
 import json
@@ -53,7 +51,6 @@ from gfso.config import LOOPBACK as _LOOPBACK, DEFAULT_PROJECT
 from gfso.engine import Engine
 from gfso import tools_llm as _tools
 from gfso.tools import task_out
-from gfso.presence import working, gone, moved as _moved, page_gone, LISTENERS as WORKING_LISTENERS
 from gfso.inflight import in_flight, LISTENERS as INFLIGHT_LISTENERS  # the COMPLETE action surface (structural + LLM) — the HTTP mutation surface is generated from it
 
 from .models import (
@@ -287,8 +284,6 @@ def _mount_acts(app, _e, _req_project, _scope_name) -> None:
                 return JSONResponse(status_code=500 if out.get("unexpected") else 422,
                                     content=json.loads(json.dumps(_naming_the_scope(out, scope),
                                                                   default=str)))
-            if body.get("task_id") and not _tools.is_refusal(out):
-                _page_moved(app.state, e, str(body["task_id"]))
             return _naming_the_scope(out, scope)
         except TypeError as ex:
             # A call that does not fit the verb is answered in the verb's OWN terms. Python says
@@ -789,7 +784,6 @@ def _mount_events(app) -> None:
                                       else {"type": "pipeline", "source": source, "msg": message})
 
         server_wide = ((INFLIGHT_LISTENERS, _told_list(loop, q, "inflight", "in_flight")),
-                       (WORKING_LISTENERS, _told_list(loop, q, "working", "working")),
                        (_resources.LISTENERS, _told_resources(app, loop, q)))
         if eng is not None:
             eng.on_transition(on_transition)
@@ -799,8 +793,7 @@ def _mount_events(app) -> None:
             subs.append(cb)
         try:
             await websocket.accept()
-            with _a_page_open(app.state):
-                await _pushed(websocket, q)
+            await _pushed(websocket, q)
         except WebSocketDisconnect:
             pass
         finally:
@@ -1034,8 +1027,9 @@ def _mount_runtime(app, _e, _live_leases, _scope_name) -> None:
                 # …and each piece of that work with the project and node it is on, which is what
                 # lets a reader count ITS OWN project's work rather than the server's.
                 "in_flight": work,
-                # …and the nodes a live party works itself, at the MCP door: no process here runs that work
-                "working": working(),
+                # …kept empty for the page that still reads it: what is in work is read from the log alone, never from
+                # who is connected (the author, 2026-11-18: «никаких консольных и прочих коннектов»)
+                "working": [],
                 "with_mcp": _config.with_mcp(),
                 "autoexit": _config.autoexit(),
                 # THE EFFECTIVE VALUES, read from the code that obeys them — not from the
@@ -1108,7 +1102,6 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
     """
     _mount_local_agents(app)
     app.state.leases = {}
-    app.state.lease_holders = {}          # lease id → the principal its bridge declared
     app.state.exit_fn = end_this_process
 
 
@@ -1125,7 +1118,6 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
         for k, ts in list(app.state.leases.items()):
             if now - ts > LEASE_GRACE:
                 app.state.leases.pop(k, None)
-        _holders_kept(app.state)
         return list(app.state.leases)
     app.state.live_leases = _live_leases
 
@@ -1134,12 +1126,8 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
         """Heartbeat one session's claim on this process (`id` in the body), good for about twelve
         seconds. Everything that could interrupt somebody — `/api/shutdown`, the reaper, a
         reconcile — counts these leases, so a client that stops calling is what makes the server
-        free to restart. The lease is held by the name its call's credential signs as (`signin.principal_of`), never a
-        name in its body: its work is seen while one of its leases lives."""
-        with _HOLDERS:
-            app.state.leases[k := str(body.get("id", "?"))] = time.monotonic()
-            if _config.CALLER.get().signs_as:         # …a caller signed by no one holds no presence
-                app.state.lease_holders[k] = _config.caller_id()
+        free to restart."""
+        app.state.leases[str(body.get("id", "?"))] = time.monotonic()
         return {"ok": True, "sessions": len(_live_leases())}
 
     @app.delete("/api/lease/{lease_id}")
@@ -1347,7 +1335,6 @@ class _DoorGuard:
 #: how long a party's door may go quiet and stay alive: a bridge between two heartbeats, a page between its sockets
 #: (a reload, a project switch, a reconnect)
 LEASE_GRACE = 12.0
-_HOLDERS = threading.Lock()
 
 
 def _page_person() -> str | None:
@@ -1372,43 +1359,6 @@ async def _pushed(websocket, q) -> None:
         reader.cancel()
 
 
-@contextlib.contextmanager
-def _a_page_open(state):
-    """While a signed-in person's page is open. Their last one closing ends what they worked from a page once no page
-    of theirs has opened for a bridge's grace: a reload, a project switch or a reconnect closes one socket before the
-    next opens, and ended it for the rest of the work while the console's bridge rode out the same gap (critic)."""
-    if (person := _page_person()) is None:
-        yield
-        return
-    state.pages[person] += 1
-    state.closed.pop(person, None)
-    try:
-        yield
-    finally:
-        state.pages[person] -= 1
-        if not state.pages[person]:
-            state.closed[person] = time.monotonic()   # …ended by the leases' own expiry (`_holders_kept`)
-
-
-def _page_moved(state, engine, task_id: str) -> None:
-    """A move from a person's open page leaves the node seen worked as an MCP move does (`presence.moved`), while one
-    of their pages stays open: the same act, read the same whichever door it came through (JOINT in-work, 2026-11-15)."""
-    t = engine.graph.get_task(TaskId(task_id)) if (person := _page_person()) and state.pages[person] else None
-    if t is not None and str(t.assignee) in _config.CALLER.get().signs_as:
-        _moved(engine, task_id, str(t.assignee), via="page", person=person)
-
-
-def _holders_kept(state) -> None:
-    """Forget the holders of leases no longer held; a principal left with none has no live party at the door, so what it
-    worked is no longer seen worked. Read against `leases` whoever pruned them — the reaper prunes too. A person whose
-    last page closed a grace ago is the same: one expiry for both doors."""
-    with _HOLDERS:
-        hs = state.lease_holders
-        lost = {hs.pop(k) for k in [k for k in hs if k not in state.leases]}
-        gone(lost - set(hs.values()))
-        for person in [p for p, at in state.closed.items() if time.monotonic() - at > LEASE_GRACE]:
-            del state.closed[person]
-            page_gone(person)
 
 
 async def _expiring(app, every: float = 3.0) -> None:
@@ -1462,9 +1412,8 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
     app = FastAPI(title="GFSO", version=__version__, lifespan=_lifespan(mcp), dependencies=[Depends(_a_move)])
     app.state.engine = engine
     app.state.registry = registry
-    # one asyncio.Queue per live WS — for GLOBAL broadcasts (project list); person → their open pages, while one of
-    # which a page move's presence lives
-    app.state.ws_clients, app.state.pages, app.state.closed = set(), collections.Counter(), {}
+    # one asyncio.Queue per live WS — for GLOBAL broadcasts (project list)
+    app.state.ws_clients = set()
     app.state.loop = None
     if registry is not None:
         # A new project is a REGISTRY event, not a per-project transition — so it rides no single WS. Push it

@@ -28,12 +28,11 @@ from gfso import updates
 from gfso.config import (CALLER, CLIENT, CLIENT_HEADER, CLIENT_KINDS, DEFAULT_PROJECT, agent_id, caller_id, client_kind,
                          how_it_is_waited, ROOT_ID, project_by_env)
 from gfso.engine import Engine
-from gfso.engine.moves import READS, SIGNERS
+from gfso.engine.moves import SIGNERS
 from gfso import signin
 from gfso.runtime import ProjectRegistry
-from gfso import presence
 from gfso.mcp import protocol as _PROTOCOL
-from gfso.tools import _agent_id, is_refusal
+from gfso.tools import _agent_id
 from gfso import tools_llm as T                   # the COMPLETE action surface (structural + LLM verbs)
 
 
@@ -353,8 +352,6 @@ def _bind(engine_or_registry, fn):
         # every call in flight lost, the bridge reporting a restart that never was (a tester's run, 2026-11-13). The
         # checkpoint delivers the cancellation, which the SDK treats as the duplicate it suppresses.
         await anyio.lowlevel.checkpoint()
-        if kwargs.get("task_id") and not is_refusal(out) and fn.__name__ not in READS:   # a read works on nothing
-            presence.moved(engine, kwargs["task_id"], _agent_id())
         out = _with_ui_link(fn.__name__, out, project or engine.project_name, engine)
         # …and the news read off the loop too: it reads the frontier under the storage's lock, as a verb does
         return await anyio.to_thread.run_sync(contextvars.copy_context().run, _with_news, ctx, fn.__name__, out, engine)
