@@ -10,6 +10,7 @@ defect (Cor. to Thm 11). Each test is a case of the table the measure was built 
 """
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import time
@@ -277,7 +278,12 @@ def test_a_node_taken_in_the_repository_holds_what_is_made_there_while_it_is_tak
     assert (sorted(got["in_work"]), got["count"]) == (sorted([w, fork]), 0), got
     time.sleep(1.1)                                            # …the reflog's clock is whole seconds
     _cancelled(e)
-    after = _commit(repo, "g.txt")
+    # …made in the last second of the project's window: the root settled by the cancel closes the window at its log's
+    # last second, and a commit made after it is past the project, not past the system. Made "after the cancel" by the
+    # wall clock, it fell inside the window or past it by how long the cancel's second had left — red 1 run in 5 under
+    # `-n 16` (batch3, batch4)
+    end = math.ceil(e.audit_log()[-1].timestamp.timestamp())
+    after = _commit(repo, "g.txt", when=f"@{end} +0000")
     got = _past(e)
     assert (got["in_work"], got["commits"]) == ([], [after]), got
 
