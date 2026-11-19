@@ -486,7 +486,9 @@ body.deck-drag .deck { position: absolute; left: 0; right: 0; bottom: 0; z-index
 .cy-path button:hover { text-decoration: underline; }
 .cy-path b { color: var(--ink); font-weight: 600; }
 /* the way up, as visible as a part's tag is on the way down (graph.js drawPath) */
-.cy-path .cy-up { flex: none; padding: 2px 10px; margin-right: 6px; border: 1px solid var(--ink); border-radius: var(--radius); font-weight: 600; }
+.cy-path .cy-up { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; margin-right: 6px; border: 1px solid var(--ink); border-radius: var(--radius); font-weight: 600; }
+/* the arrow sat lower than the word in this font: its own box, centred on the word's (the author, 11-19) */
+.cy-path .cy-up i { font-style: normal; line-height: 1; font-size: .9em; transform: translateY(-0.14em); }
 .cy-path .cy-up:hover { background: var(--ink); color: var(--bg); text-decoration: none; }
 @media (pointer: coarse) { .cy-path .cy-up { display: none; } }   /* a phone goes up by its Back gesture (the author, 11-18: «на телефоне не нужна кнопка … там же свайп назад») */
 .deck { position: relative; height: 30vh; min-height: 34px; display: flex; flex-direction: column; border-top: 1px solid var(--hair); background: var(--ui-page); }
@@ -594,7 +596,9 @@ body.deck-drag .deck { position: absolute; left: 0; right: 0; bottom: 0; z-index
 @media (pointer: coarse) { .cy-fold { pointer-events: none; } }
 .cy-fold .tally { margin-right: 7px; } .cy-fold > .tally:last-child, .cy-fold > :last-child .tally { margin-right: 0; }
 /* …on the tag's corner, taking none of its line: inline, it pushed a narrow tag's ↓ out (a critic) */
-.cy-fold .cy-live { position: absolute; top: 2px; right: 2px; width: 7px; height: 7px; box-sizing: border-box; margin: 0; }
+/* …the node's own mark's size: at 7 px and fading it read as nothing from the top (the author, 11-19); words under the
+   count were refused as out of place the same day: the mark alone tells it */
+.cy-fold .cy-live { position: absolute; top: 2px; right: 2px; width: 9px; height: 9px; box-sizing: border-box; margin: 0; }
 .cy-fold .tally i { opacity: 1; }
 .cy-fold .acc, .cy-fold .acc .tally b { color: var(--acc); }
 .cy-fold.kf { position: static; display: inline-block; border-top: 1px solid var(--ink-soft); border-radius: 6px; }
@@ -602,13 +606,10 @@ body.deck-drag .deck { position: absolute; left: 0; right: 0; bottom: 0; z-index
 .cy-live.on { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); animation: cy-beat var(--pulse) ease-in-out infinite; }
 /* the in-work mark beats but never fades out: at .45 it read as nothing from the top (the author, 2026-11-19) */
 @keyframes cy-beat { 50% { opacity: .75; } }
-/* a part's tag says the work taken inside it in words, on a line of its own under its count, in the accent */
-.cy-fold-work { display: block; margin-top: 3px; color: var(--acc); font-weight: 600; }
 /* the person's own words (as given, at the go) wrap whole: a reply like «да, но без X» cut at its condition said the opposite */
 .pn-v .pn-given { white-space: normal; }
 /* work past the system gives way first when the header is full: the goal and its state keep their room */
 #hd-needs .hd-past { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cy-fold-work::after { content: none; }
 .tl .tl-wait { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-caption); font-style: italic; }
 
 /* ============ Overlays (js/overlays.js) — the page's own notice, question and banners ============ */

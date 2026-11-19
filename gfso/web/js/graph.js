@@ -344,9 +344,7 @@ function placeBadges() {
         // …each a count as every count on the page (`tally`: the figure at its line's size — critic 5); a click on it unfolds
         const tag = f.n ? `<div class="cy-fold${f.decide.length + f.shut.length + f.contested.length + f.failing.length ? ' asks' : ''}" data-node="${esc(id)}" style="${hang}"${TIP.fold([f.held.length && `${f.held.length} in work`, f.decide.length && `${f.decide.length} waiting on a decision`, f.shut.length && `${f.shut.length} closed by FAIL`,
                 f.contested.length && `${f.contested.length} contested`, f.failing.length && `${f.failing.length} sent back`])}>${count(w, f.direct, f.direct > 1 ? 'parts' : 'part')}`
-            // …and the work taken inside said in words under the count: a dot on the corner alone read as nothing from the top
-            // (the author, 2026-11-19: «не вижу ни одной взятой задачи на графе»)
-            + (f.held.length ? `<span class="cy-fold-work">${count(w, f.held.length, 'in work')}</span>` : '')
+
             + (f.held.length ? `<i class="cy-live on"${beat()}></i>` : '') + '</div>' : '';
         // A PART CLOSED BY FAIL keeps the closed fill and wears the FAIL cross every view gives a FAIL, on its corner
         // (audit E8): the accent ring already says «PASS contested», an accent fill would read as a call on a person
@@ -407,7 +405,7 @@ function drawPath() {
     const up = ancestorsIn(S.tasks)(t.id).reverse().slice(1);   // the goal is the whole graph: named once, first
     // …and ONE plain way up first, a step as one click on a tag is a step down: on a desk the way up was the path's small
     // links or a double-click on the part's top (the author, 2026-11-18: «на пк удобнее вниз ходить чем вверх»)
-    pathEl.innerHTML = `<button class="cy-up" data-focus="${esc(up.at(-1) || '')}">↑ Up</button>`
+    pathEl.innerHTML = `<button class="cy-up" data-focus="${esc(up.at(-1) || '')}"><i>↑</i>Up</button>`
         + `<button data-focus=""${TIP.pathWhole}>The whole graph</button>`
         + up.map(id => `<span>›</span><button data-focus="${esc(id)}">${esc(nameOf(taskOf(id)) || id)}</button>`).join('')
         + `<span>›</span><b>${esc(nameOf(t) || t.id)}</b>`;
