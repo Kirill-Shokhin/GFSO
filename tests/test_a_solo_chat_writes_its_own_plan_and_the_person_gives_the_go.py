@@ -66,7 +66,13 @@ def test_the_go_on_the_filled_file_is_the_persons_and_calls_no_model(no_model):
 
 def test_auto_keeps_the_systems_planner(monkeypatch):
     asked = []
-    monkeypatch.setattr(TL._planning, "author", lambda request, *a, **k: asked.append(request) or "")
+
+    def author(request, *a, **k):
+        # …no plan, so none is kept: an empty one landed in the suite's state directory after this test ended, and the
+        # form check of every kept plan failed on it (the writing thread outlives any per-test home)
+        asked.append(request)
+        raise DEC.NoPlan("no plan in this test", [])
+    monkeypatch.setattr(TL._planning, "author", author)
     TL.plan(_engine(Mode.AUTO), ASKED)
     TL.plan(_engine(Mode.SOLO), ASKED, model="claude-haiku-5-5")      # …and a solo chat that names a model
     for _ in range(200):
