@@ -1881,12 +1881,20 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
         engine.emit_info("go", f"the go on the plan file, by the person: «{said[:300]}»")
         out["user_said"] = said
     if holds_its_work(engine):
+        # …THE PERSON'S READING IS THIS PLAN'S REVIEW: its decomposer is their own agent, they read it and gave the go in
+        # their words; the Level-2 gate stands for the system's own plans, and held the parts on an unannounced review
+        # by the system's model (critic over 354554c)
+        engine.reviewed_in_its_file(root_id)
+        engine.emit_info("go", f"{root_id}: the plan's review is the person's own, given with the go")
         place = _delegation().validator_workdir(engine, _delegation().default_agents(), TaskId(str(root_id)))
         theirs = on_their_branch(engine, place) if place else ""
+        parts = [str(c.id) for c in engine.graph.get_active_children(TaskId(str(root_id)))]
         out["say"] = (theirs + ". " if theirs else "") + (
             f"The checks the person agreed are the contract now, fixed in the graph before the work. Do the work "
-            f"yourself on the branch `{work_branch(engine)}`, commit, and DELIVER `{root_id}`; a validator other than "
-            f"you signs it against those checks.")
+            f"yourself on the branch `{work_branch(engine)}` and commit; "
+            + (f"take each part ({', '.join(parts)}) in turn — ACCEPT it, do it, DELIVER it — and DELIVER `{root_id}` "
+               f"once every part has passed" if parts else f"DELIVER `{root_id}`")
+            + "; a validator other than you signs each against its checks.")
     return out
 
 
@@ -1928,6 +1936,20 @@ def on_their_branch(engine: Engine, place) -> str:
             f"commit there lands on it. Work on the system's branch — `git switch -c {work_branch(engine)}` (`git switch "
             f"{work_branch(engine)}` once it exists) before your first commit, which changes their checkout — tell the "
             f"person so in one line, and switch it back to `{on or 'where it stood'}` once the work is delivered")
+
+
+def not_the_work(engine: Engine, place, commit: str) -> str:
+    """What a chat's DELIVER hears where the commit it recorded — what `place`, the registered top, stands on — is not
+    on the work's branch: an agent working in a linked worktree on `work_branch` delivered the person's start commit,
+    and its judge FAILed true work (critic over 354554c). A notice, never a refusal: the report may be true. Or ""."""
+    on = W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
+    if on == (wb := work_branch(engine)):
+        return ""
+    there = W.git(place, "rev-parse", "--verify", "-q", f"refs/heads/{wb}^{{commit}}").stdout.strip()
+    return (f"delivered: commit {commit[:12]}, what {place} stands on ({f'`{on}`' if on else 'a detached HEAD'}), not "
+            f"`{wb}`" + (f", which stands at {there[:12]}: if your work is there (a linked worktree), check it out at "
+                         f"{place} and deliver again" if there and there != commit else "")
+            + ". The judge reads this commit.")
 
 
 def recorded_at_the_go(engine: Engine, goal: str, user_said: str = "", root_id=ROOT_ID) -> dict:
@@ -2368,7 +2390,12 @@ def written_plan(project) -> dict:
                        "criteria": [c["name"] for c in s.get("criteria") or ()],
                        "split_after": list((s.get("split_after") or {}).get("after") or ())}
                       for s in spec.get("subtasks") or ()],
-            "root_criteria": [c["name"] for c in spec.get("root_criteria") or ()],
+            # …each with its words and its checks, so the page shows what the person agrees to before the go (ui)
+            "root_criteria": [{"name": c["name"], "description": c.get("description", ""),
+                               "check": [{k: x.get(k, "" if k != "exact" else False)
+                                          for k in ("behaviour", "command", "expect", "exact")}
+                                         for x in c.get("check") or ()]}
+                              for c in spec.get("root_criteria") or ()],
             "deps": [[d["from"], d["to"]] for d in spec.get("deps") or ()],
             "open": open_at_the_go(text), "taken_back": r.get("taken_back") or [],
             "refused_by_the_go": _decompose.go_refusals(spec, p["goal"]),
@@ -3149,6 +3176,8 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
             except OSError as ex:
                 return {"accepted": False, "state": st.name,
                         "error": f"NOT delivered — the commit at {place} could not be recorded: {ex}"}
+            if notice := not_the_work(engine, place, commit):
+                said["notice"] = notice
             if left:
                 said["not_delivered"] = (f"delivered: commit {commit[:12]}; not committed, so no part of it: "
                                          f"{', '.join(left[:10])}{', …' if len(left) > 10 else ''}")
@@ -3183,7 +3212,7 @@ def metrics(engine: Engine) -> dict:
 def _with_the_persons_words(fn):
     """`fn` taking `user_said` — the person's own words on this act — carried to the engine's one door every act that
     installs a packet passes — a re-ASSIGN, an ACCEPT_CHALLENGE (`engine.PERSONS_WORDS`, read by
-    `Engine._the_persons_criteria`): under `solo` and `semi` a root's criteria change only on them, recorded on the
+    `Engine._the_persons_packet`): under `solo` and `semi` a root's criteria change only on them, recorded on the
     feed for the person to see."""
     sig = inspect.signature(fn)
     own = "user_said" in sig.parameters
@@ -3207,7 +3236,8 @@ _RAW_TOOLS = {
     "metrics": metrics,                                                               # work past the system counted
     "create_task": create_task,
     "auto_decompose": _with_the_persons_words(_tracked("auto_decompose", auto_decompose)),
-    **{n: _with_the_persons_words(_tools.TOOLS[n]) for n in ("revise", "edit_criteria", "edit_scope")},
+    **{n: _with_the_persons_words(_tools.TOOLS[n]) for n in ("revise", "edit_criteria", "edit_scope",
+                                                              "edit_accepted_risks")},
     "plan": plan, "refine_plan": refine_plan,         # a plan with no project, written in its own thread (`_once`)
     "review_decomposition": _tracked("review_decomposition", review_decomposition),   # L2, §9.1
     "validate_result": _tracked("validate_result", validate_result),                  # §10.1

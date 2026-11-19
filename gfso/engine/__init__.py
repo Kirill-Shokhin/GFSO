@@ -90,7 +90,7 @@ LIFT_MARGIN_S = 30
 #: THE PERSON'S OWN WORDS on the act a door is making now (`set_mode`'s `user_said`, carried to every verb that can revise
 #: a root's packet): under `solo` and `semi` the root's criteria are the person's agreement, and they change only on their
 #: words, recorded on the feed for the person to see — a solo agent rewrote an agreed check after the go into one that
-#: held on an empty repository, and nothing said so (critic over f5b1f88). Set by the doors, read before the queue (`_the_persons_criteria`).
+#: held on an empty repository, and nothing said so (critic over f5b1f88). Set by the doors, read before the queue (`_the_persons_packet`).
 PERSONS_WORDS: ContextVar[str] = ContextVar("persons_words", default="")
 #: what of a stop's record the system lifts it by: a time, an execution place, a credential store's stamp
 LIFTS = ("until", "place", "account")
@@ -277,8 +277,8 @@ class Engine:
             raise ValueError(why)
         # …and a root's criteria changed only on the person's words, by every act that installs a packet: a re-ASSIGN
         # and an ACCEPT_CHALLENGE alike (§11.3: it "installs a packet exactly as an ASSIGN does"; §12.16)
-        if t is not None and (new := sd.new_spec if sd.signal == Signal.ACCEPT_CHALLENGE else sd.spec) is not None:
-            self._the_persons_criteria(t, new)
+        if t is not None:
+            self._the_persons_packet(t, sd.new_spec if sd.signal == Signal.ACCEPT_CHALLENGE else sd.spec, sd.deadline)
 
     def assign_task(
         self,
@@ -2270,17 +2270,23 @@ class Engine:
         return None
 
 
-    def _the_persons_criteria(self, old: Task, new_spec: Spec) -> None:
-        """A root's criteria changed under `solo` or `semi` only on the person's own words (`PERSONS_WORDS`), which go
-        on the feed; refused without them. Asked before the queue of every act that installs a packet."""
-        if (self._graph.get_parent(old.id) is not None or self.mode_kind() not in (Mode.SOLO, Mode.SEMI)
-                or tuple(new_spec.criteria) == tuple(old.spec.criteria)):
+    def _the_persons_packet(self, old: Task, new_spec: Optional[Spec], deadline) -> None:
+        """A root's packet changed under `solo` or `semi` — its goal's words, criteria, scope, register or deadline: every
+        field is the contract (Inv-1) — only on the person's own words (`PERSONS_WORDS`), which go on the feed; refused
+        without them. Asked before the queue of every act that installs a packet."""
+        if self._graph.get_parent(old.id) is not None or self.mode_kind() not in (Mode.SOLO, Mode.SEMI):
+            return
+        field = lambda s: (s.description, tuple(s.criteria), tuple(s.scope), tuple(s.accepted_risks))
+        moved = [n for n, a, b in zip(("description", "criteria", "scope", "accepted_risks"), field(old.spec),
+                                      field(new_spec or old.spec)) if a != b]
+        moved += ["deadline"] if deadline is not None and deadline != old.deadline else []
+        if not moved:
             return
         if not (said := PERSONS_WORDS.get().strip()):
-            raise ValueError(f"{old.id}'s criteria are what the person agreed: under {self.mode_kind().value} they change "
-                             f"only on the person's own words — show them the change, and pass their words agreeing as "
-                             f"`user_said`, recorded on the project's feed")
-        self.emit_info("revise", f"{old.id}'s criteria changed on the person's words: «{said[:300]}»")
+            raise ValueError(f"{old.id}'s {', '.join(moved)} are what the person agreed: under {self.mode_kind().value} "
+                             f"they change only on the person's own words — show them the change, and pass their words "
+                             f"agreeing as `user_said`, recorded on the project's feed")
+        self.emit_info("revise", f"{old.id}'s {', '.join(moved)} changed on the person's words: «{said[:300]}»")
 
     def _revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId,
                 new_assignee: Optional[AgentId] = None, covers: tuple = (),

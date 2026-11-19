@@ -481,8 +481,9 @@ def _admitted_as_it_stands(spec: dict, request: str, root_id: str, assignee: str
     customer's plan rewritten by removal (critic over the closed go)."""
     if wrong := go_refusals(spec, request, root_id, assignee, max_iterations, child_assignee):
         raise ValueError("the plan handed in is refused as it stands — " + " | ".join(wrong)
-                         + ". Repair it in the file (`refine_plan` with a note naming these), or hand it in "
-                           "open (`open_plan=true`) for the system to repair")
+                         + ". Repair it in the file: one you wrote, edit it and hand it in again (`plan(plan=)`); "
+                           "one the system wrote, `refine_plan` with a note naming these; or hand it in open "
+                           "(`open_plan=true`) for the system to repair")
 
 
 def built_line(built: int, problems: list, proposed: int) -> str:

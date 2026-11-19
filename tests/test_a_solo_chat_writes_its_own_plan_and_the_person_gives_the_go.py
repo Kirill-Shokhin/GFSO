@@ -174,7 +174,7 @@ def test_the_filled_file_is_on_the_page_before_the_go(no_model):
     out = TL.plan(e, plan=text)
     assert out["refused_by_the_go"] == [] and "plan_written" in told and not e.all_tasks(), out
     shown = TL.written_plan(e.project_name)
-    assert shown["goal"] == ASKED and shown["root_criteria"] == ["counts"] and shown["refused_by_the_go"] == [], shown
+    assert shown["goal"] == ASKED and [c["name"] for c in shown["root_criteria"]] == ["counts"] and shown["refused_by_the_go"] == [], shown
     built = TL.auto_decompose(e, plan=out["path"], user_said="да")
     assert built["root_id"] == "root" and json.loads(e.graph.setting("at_the_go"))["user_said"] == "да"
 

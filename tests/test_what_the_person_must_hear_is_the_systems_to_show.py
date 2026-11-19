@@ -47,7 +47,7 @@ def test_a_written_plan_is_told_on_the_feed_and_read_by_the_page(home, monkeypat
     assert set(got) == KEYS and got["path"] == out["path"] and got["goal"] == GOAL and got["documents"] == []
     assert [p["id"] for p in got["parts"]] == [s["id"] for s in _plan()["subtasks"]]
     assert all(set(p) == {"id", "name", "description", "criteria", "split_after"} for p in got["parts"])
-    assert got["root_criteria"] == [c["name"] for c in _plan()["root_criteria"]] and got["refused_by_the_go"] == []
+    assert [c["name"] for c in got["root_criteria"]] == [c["name"] for c in _plan()["root_criteria"]] and got["refused_by_the_go"] == []
     assert got["deps"] == [[d["from"], d["to"]] for d in _plan()["deps"]]
     with open(out["path"], "w", encoding="utf-8") as f:
         f.write("not a plan file [")

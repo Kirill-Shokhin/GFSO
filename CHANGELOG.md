@@ -98,6 +98,12 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   never by a `[review]` line in the file; any other file is gated as any split.
 
 ### Fixed
+- In a solo chat the page shows the agreed checks before the go: `GET /api/plan`'s `root_criteria` are each
+  `{name, description, check: [{behaviour, command, expect, exact}]}`. A plan with parts that the person read and gave
+  the go on is reviewed by that reading: no review by the system's model, unannounced, holds its parts, and the go
+  says to take each part and deliver the root once they pass. Every field of a root's packet under `solo` and `semi`
+  (its goal's words, criteria, scope, register, deadline) changes only with the person's words, said on the feed. A
+  chat's DELIVER of a commit off `gfso/<project>/work` says so, naming where the work branch stands.
 - A verb that makes a project and is refused there (`create_task` on a name never opened) answers its refusal to a chat client, not "Cannot operate on a closed database": the reply read the news off the engine the refusal had just unmade.
 - A missing or refused credential stops the project once and says so once (one booked authoring wrote five STOPPED
   lines), the plan's authoring ends at the first refused call instead of folding and repairing over empty answers, and
