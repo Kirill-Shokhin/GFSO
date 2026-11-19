@@ -20,7 +20,7 @@ from tests.test_a_plan_the_go_refuses_says_so import _by_build
 from tests.test_the_go_only_adds_to_the_plan import GOAL, _plan, go  # noqa: F401 — `go` is a fixture
 from tests.test_the_mode_decides_who_holds_what import _engine
 
-KEYS = {"path", "written_at", "goal", "executor", "parts", "root_criteria", "deps", "open", "taken_back",
+KEYS = {"path", "written_at", "given_at", "goal", "executor", "parts", "root_criteria", "deps", "open", "taken_back",
         "refused_by_the_go", "undecided", "notes", "documents"}
 
 

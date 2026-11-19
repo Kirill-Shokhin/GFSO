@@ -78,8 +78,16 @@ def wrote(project: str, path: str) -> None:
     _write(_dir("written") / f"{project or DEFAULT_PROJECT}.json", {"path": str(path), "at": time.time()})
 
 
+def given(project: str, text: str) -> None:
+    """The go was given on `text`: marked on the record of the file last written, if `text` is that file's — a new file
+    written (`wrote`, a refine included) starts unmarked, so the page tells a plan awaiting its go from one consumed."""
+    if (rec := written(project)) and rec["text"] == text:
+        _write(_dir("written") / f"{project or DEFAULT_PROJECT}.json",
+               {"path": rec["path"], "at": rec["at"], "given_at": time.time()})
+
+
 def written(project: str) -> dict | None:
-    """{path, at, text} of the plan file last written for `project`, or None: none written, or its file gone."""
+    """{path, at, given_at?, text} of the plan file last written for `project`, or None: none written, or its file gone."""
     rec = _read(_dir("written") / f"{project or DEFAULT_PROJECT}.json")
     with contextlib.suppress(OSError):
         return rec and {**rec, "text": Path(rec["path"]).read_text(encoding="utf-8")}

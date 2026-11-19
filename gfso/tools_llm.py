@@ -1877,6 +1877,7 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
     gate (`PinsOnTheBase`), or that none ran; and, to a chat performing the work itself, where it goes on."""
     if plan is None:
         return {}
+    _kept.given(engine.project_name, _planning.text_of(plan))     # …this file's go given: the page reads `given_at`
     out, said = ({"open_at_the_go": left} if (left := open_at_the_go(plan)) else {}), str(user_said).strip()
     if reviewed(plan):
         engine.reviewed_in_its_file(root_id)
@@ -2540,7 +2541,8 @@ def written_plan(project, engine: Optional[Engine] = None) -> dict:
         return {}
     spec, r = (with_the_intent(engine, p["spec"]) if engine else p["spec"]), p["review"]
     added = {c["name"] for c in (added_at_the_go(engine, p["spec"]) if engine else ())}
-    return {"path": at["path"], "written_at": at["at"], "goal": p["goal"], "executor": p["executor"],
+    return {"path": at["path"], "written_at": at["at"], "given_at": at.get("given_at"), "goal": p["goal"],
+            "executor": p["executor"],
             "parts": [{"id": s["id"], "name": s.get("name", ""), "description": s.get("description", ""),
                        "criteria": [c["name"] for c in s.get("criteria") or ()],
                        "split_after": list((s.get("split_after") or {}).get("after") or ())}
