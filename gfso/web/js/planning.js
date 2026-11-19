@@ -46,6 +46,13 @@ function written(p, go) {
         + sec(PLAN.open, (p.open || []).map((x, i) => { const [what, ...why] = x.split(' — ');
             return why.length ? more(`open|${i}`, esc(what), why.join(' — ')) : line(x); }), ' cp-warn')
         + (p.undecided ? `<div class="cp-row cp-warn"><span>${esc(PLAN.undecided(p.undecided))}</span></div>` : '')
+        // …what the goal is accepted by, each criterion with its checks as agreed — what the go is given on (a critic, 11-19:
+        // before the go the page showed only the goal); a name alone where the server sends no checks
+        + sec(PLAN.criteria, (p.root_criteria || []).map(c => typeof c === 'string' ? line(c) : more(`crit|${c.name}`,
+            `<span>${esc(c.name)}</span>` + tally((c.check || []).length, (c.check || []).length === 1 ? 'check' : 'checks'),
+            // …each check in words first (`behaviour`), then what runs and what it expects
+            [c.description, ...(c.check || []).map(k => [`– ${k.behaviour || k.command || ''}`, k.behaviour && k.command && `  ${PLAN.runs(k.command)}`,
+                k.expect && `  ${PLAN.expect(k.expect, k.exact)}`].filter(Boolean).join('\n'))].filter(Boolean).join('\n'))))
         + sec(PLAN.parts(parts.length), parts.map(x => more(`part|${x.id}`,
             `<span>${esc(x.name || x.id)}</span>${x.split_after?.length ? `<em>${esc(PLAN.after(x.split_after))}</em>` : ''}`
             + tally((x.criteria || []).length, (x.criteria || []).length === 1 ? 'check' : 'checks'),

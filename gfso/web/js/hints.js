@@ -149,6 +149,9 @@ export const PLAN = {
     when: t => `written ${t}`,
     doc: path => `the document it names: ${path}`,
     docs: 'the documents it names, as they stood when the goal was set',
+    criteria: 'What the goal is accepted by — agreed before the go',
+    runs: c => `runs: ${c}`,
+    expect: (e, exact) => `expects${exact ? ' exactly' : ''}: ${e}`,
     parts: n => `It splits into ${n} part${n === 1 ? '' : 's'}`,
     after: ids => `split once ${ids.join(', ')} ${ids.length > 1 ? 'are' : 'is'} accepted`,
     // …the review's own words: the go may run as it stands, the root's checks still decide, a failure there names no part
