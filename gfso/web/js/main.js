@@ -19,7 +19,7 @@ import {connectWS} from './live.js';
 import {askProjectName, clearNotice} from './overlays.js';
 import {mountHints, LEAVING} from './hints.js';
 import {untip, TOUCH} from './tip.js';
-import {drawPlanning} from './planning.js';
+import {drawPlanning, togglePlan, leavePlan} from './planning.js';
 import {onReading, rereadResources} from './resources.js';
 import {said} from './run.js';
 
@@ -166,7 +166,8 @@ const ACT = {
         await setIntent(d.on === '1'); await refreshHeader(); drawPlanning(); goal.recheckHolds();
         if (pop) document.querySelector('.hd-mode')?.focus();      // the header is redrawn: its old button is gone
         if (where) setTimeout(() => document.querySelector(`${where === 'goal' ? '#goal-panel' : '.cp-row'} input[data-action="intent"]`)?.focus(), 300); },
-    close: () => point('select', null), select: d => point('select', d.id), view: d => goTo(d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip'), d.to),
+    'plan-toggle': () => togglePlan(),
+    close: () => point('select', null), select: d => (leavePlan(), point('select', d.id)), view: d => goTo(d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip'), d.to),
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
     edit: author.openEdit, decompose: author.openDecompose,

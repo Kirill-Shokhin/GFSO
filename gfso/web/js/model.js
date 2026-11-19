@@ -30,9 +30,10 @@ async function readGraph() {
     S.tasks = tasks;
     S.graph = g;
     S.missing = '';
-    // THE PLAN WRITTEN FOR THIS PROJECT, read while it has no goal yet (`GET /api/plan`, {} when none): before the go the
-    // person read it only in the client's words, and a dropped criterion went unsaid (INSTRUCTION_AUDIT row 1)
-    S.plan = tasks.length ? {} : await getJSON('/api/plan').catch(() => ({}));
+    // THE PLAN WRITTEN FOR THIS PROJECT (`GET /api/plan`, {} when none): before the go the person read it only in the
+    // client's words, and a dropped criterion went unsaid (INSTRUCTION_AUDIT row 1); read with a goal standing too — a plan
+    // for the next go stood invisible there (critic)
+    S.plan = await getJSON('/api/plan').catch(() => ({}));
     // HOW THE DONES REST: an instrument's proof and a signature are not one kind of green (§15.7)
     S.closures = g.nodes.filter(n => n.closure && (n.closure.by_hand || contested(n.closure))).map(n => ({id: n.id, ...n.closure}));
     return true;

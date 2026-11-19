@@ -2,7 +2,7 @@
 // (each a chip that selects its first node), then the quality metrics folded into one chip whose
 // popover carries the meanings the server sends beside them.
 import {$, esc, coded, data, tally, daily, phone} from './dom.js';
-import {H, QUALITY, GRADES, doing, hover} from './hints.js';
+import {H, QUALITY, GRADES, doing, hover, PLAN} from './hints.js';
 import {post, GOAL, PROJECT, FOCUS} from './api.js';
 import {S, taskOf, asGiven, heard, signsAs, lift, reader, mineNames, mineShown, viaWord, procs, begun, stateWord, issuerIsPerson, partyKind, viewTasks, inView, intentOn} from './state.js';
 import {label, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
@@ -10,6 +10,7 @@ import {GAP, at, busyNow, PROC_KIND} from './run.js';
 import {dur, trim, cap, pct, stamp, clockAt, spoken} from './fmt.js';
 import {rootOf, isRoot, depths} from './tree.js';
 import {askInPage, act, notice} from './overlays.js';
+import {pendingPlan} from './planning.js';
 
 const named = id => taskOf(id).name ? `${taskOf(id).name} (${id})` : id;
 
@@ -273,6 +274,8 @@ export async function drawHeader() {
     // on a verdict (critic) — it is told how to sign in instead
     const root = rootOf(S.tasks), failed = root && terminal(root.state) && !delivered(root);
     // …the sign-in line stands beside any chip: it says how to act at all, not that all is calm (critic 3)
+    // …a plan no go has taken, beside the standing goal: one press reads it (planning.js)
+    if (pendingPlan()) chips += `<button class="need" data-action="plan-toggle"${hover(PLAN.pendingTip)}>${esc(PLAN.pending)}</button>`;
     $('hd-needs').innerHTML = (small ? runState : '') + status + chips + (lift() ? (reader() ? `<span class="hd-quiet hd-signin"${hover('Read only', lift().replace(/`/g, ''))}>read only</span>` : `<span class="hd-quiet hd-signin">${coded(lift())}</span>`)
         : !chips && heard && !failed && !others && S.runState?.state === 'running' ? '<span class="hd-quiet">nothing needs you</span>' : '') + pastTheSystem();
 }

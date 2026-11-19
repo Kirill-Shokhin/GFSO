@@ -37,7 +37,9 @@ function goal(text, documents) {
 
 function written(p, go) {
     const parts = p.parts || [], notes = p.notes || [];
-    return `<header class="cp-title"><b>${PLAN.written}</b><span>${esc(PLAN.when(hm(p.written_at * 1e3)))}</span></header>`
+    return `<header class="cp-title"><b>${PLAN.written}</b><span>${esc(PLAN.when(hm(p.written_at * 1e3)))}`
+        // …over a standing graph it is a page opened from the header, and closed back to the graph
+        + (rootOf(S.tasks) ? ` <button class="hq-mode" data-action="plan-toggle">${esc(PLAN.back)}</button>` : '') + '</span></header>'
         + goal(p.goal, p.documents)
         // …where the parts will run, said before the go is given: that is where the person decides it (row 5)
         + (heard().runs_on_host ? `<div class="cp-row cp-warn"><span>${esc(PLAN.host)}</span></div>` : '')
@@ -85,8 +87,16 @@ const underHeader = box => { const h = document.querySelector('.header'); if (!h
     if (!watched) (watched = new ResizeObserver(put)).observe(h);
     put(); };
 
+// A PLAN NO GO HAS TAKEN, beside a goal already standing (a second goal, a go again): the engine says whether a go took this
+// file (`given_at`, null until one did); an older server says nothing, and nothing is offered (critic: it stood invisible)
+export const pendingPlan = () => !!(S.plan?.goal && rootOf(S.tasks) && S.plan.given_at === null);
+let shown = false;                  // opened from the header's chip; the graph stays the page until then
+export const togglePlan = () => { shown = !shown && pendingPlan(); drawPlanning(); };
+// …a node chosen from the header goes to the graph: the plan page covered the panel it opened (critic)
+export const leavePlan = () => { if (shown) togglePlan(); };
 export function drawPlanning() {
-    const none = !rootOf(S.tasks), w = none && procs().find(x => PROC_KIND[x.verb] === 'plan'), p = none && S.plan?.goal ? S.plan : null;
+    const none = !rootOf(S.tasks), w = none && procs().find(x => PROC_KIND[x.verb] === 'plan'),
+        p = S.plan?.goal && (none || (shown &&= pendingPlan())) ? S.plan : null;
     let box = $('cy-plan');
     // a written plan is a page of its own under the header; an authoring alone stays the canvas's note
     if (box && box.classList.contains('cp-written') !== !!p) { box.remove(); box = null; }

@@ -561,11 +561,12 @@ body.deck-drag .deck { position: absolute; left: 0; right: 0; bottom: 0; z-index
 .cp-sec > h3 { margin: 0; font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); padding-bottom: 4px; }
 .cp-warn > h3, .cp-row.cp-warn, .cp-red > h3, .cp-red .cp-row, .cp-bad { color: var(--acc); }
 .cp-more { border-top: 1px solid var(--hair-soft); font-size: 12px; }
-.cp-more > summary { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; cursor: pointer; color: var(--ink); list-style: none; }
+.cp-more > summary { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; cursor: pointer; color: var(--ink); list-style: none; flex-wrap: wrap; }
 .cp-more > summary::-webkit-details-marker { display: none; }
 .cp-more > summary::before { content: '\25B8'; font-size: 10px; color: var(--ink-soft); }
 .cp-more[open] > summary::before { content: '\25BE'; }
-.cp-more > summary > span:not(.tally) { flex: 1; overflow-wrap: anywhere; }
+/* a long name keeps a readable width; its mark wraps under it on a phone, not the name into letters */
+.cp-more > summary > span:not(.tally) { flex: 1 1 16ch; min-width: 16ch; overflow-wrap: anywhere; }
 .cp-more > summary > em, .cp-row > em { font-style: normal; font-size: 11px; color: var(--ink-soft); }
 .cp-more > summary > em.cp-bad { color: var(--acc); }
 .cp-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); padding: 0 0 10px 16px; line-height: 1.45; }
