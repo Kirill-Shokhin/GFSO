@@ -46,7 +46,8 @@ from gfso.config import (
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
                     resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
-                       OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations, answer_outside)
+                       OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations, answer_outside,
+                       outside_of_this_delivery)
 from .findings import (disputed_findings, ever_pinned, keep_files, keep_unrun, lay_files, not_reproduced, record_not_reproduced,
                        released, return_finding as _return_finding, ruled, unrun,
                        regression as standing_regression, round_stands, standing_rulings)
@@ -821,6 +822,11 @@ class Engine:
         """Is this project's plan the user's (`validation.users_plan`)?"""
         return _users_plan(self._graph)
 
+    def outside_of_this_delivery(self, task_id) -> list:
+        """[{what, evidence}] the verdict on the node's current delivery saw outside the criteria, unanswered
+        (`verdicts.outside_of_this_delivery`); [] with no verdict on it yet."""
+        return outside_of_this_delivery(self._storage, TaskId(str(task_id)), self.current_exec_verdict(TaskId(str(task_id))))
+
     def persons_verdict(self, task_id) -> str:
         """Where signing `task_id` is the person's — a root under `solo` or `semi`, its issuer being them (§10.1) — what
         their agent is told wherever it reads the sign-off owed: show them the validator's verdict on each criterion with
@@ -835,7 +841,7 @@ class Engine:
                 for e in rec.get("per_criterion") or () if isinstance(e, dict)]
         # …and what it saw beyond them: no criterion failed on it, so it is theirs to weigh — a client shown the criteria
         # alone signed over "x.tar.gz is counted as .gz" without telling them (fresh client s23g1)
-        beyond = [o["what"][:160] for o in outside_observations(self._storage, t.id)][:4]
+        beyond = [o["what"][:160] for o in outside_of_this_delivery(self._storage, t.id, rec)][:4]
         return (f"The verdict on '{t.id}' is the person's: show them the validator's verdict on each criterion"
                 + (f" — {'; '.join(seen[:12])}" if seen else " (the step that asks for it names each)")
                 + (f" — and what it saw outside the criteria, none of it a failed criterion: {'; '.join(beyond)}"

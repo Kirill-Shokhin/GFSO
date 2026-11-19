@@ -36,7 +36,7 @@ of a repository's top with a commit: only what is committed enters; say so if th
 3. **The scheme.** Say "`auto`, every role on `claude-haiku-5-5`: most tested, cheap" and go on; `solo`, `semi`
 or another model if the person asks. Network: `open` (default) if the task installs or fetches; `off`
 only the model.
-4. **The calls.** <!-- code -->**`solo`, `perform="in_chat"`** (you do the work), in place of the block: `set_mode("solo", perform="in_chat", workdir=W, project="<project>")`, then `plan(request)`, each answer's `say` the next act: the file filled with the person, their words the go, DELIVER, the verdict told them, their words the PASS.<!-- both -->
+4. **The calls.** <!-- code -->**`solo`, `perform="in_chat"`** (you do the work), in place of the block and `use_project`: `set_mode("solo", perform="in_chat", workdir=W, project="<project>")`, then `plan(request)`, each `say` the next act: the file filled with them, their words the go, DELIVER, the verdict told them, their words the PASS.<!-- both -->
 ```
 use_project("<project>")
 for n in (1, 2): register_agent(f"<project>-exec-{n}", "llm-executor", model="claude-haiku-5-5", workdir=W)
@@ -243,5 +243,5 @@ Humans are never registered: a node on a person's name waits for THEIR signals (
 ## A second goal is a second graph
 
 `auto_decompose` defaults to `root_id="root"`, and on a project that already has one it REFINES that
-node's own contract, not the request you passed. For a new goal, `use_project("<name>")` first (under `auto` a request
+node's own contract, not the request you passed. For a new goal, `use_project("<name>")` first (solo in_chat: `set_mode(..., project=)` instead) (under `auto` a request
 making a new root is refused: the go is a plan read).

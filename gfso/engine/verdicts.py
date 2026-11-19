@@ -154,6 +154,17 @@ def outside_observations(storage, task_id: TaskId) -> list:
     return list(seen.values())
 
 
+def outside_of_this_delivery(storage, task_id: TaskId, rec) -> list:
+    """[{what, evidence}] the verdict on the CURRENT delivery (`rec`) saw outside the criteria, its issuer not having
+    answered them — what the person weighs before signing that delivery. The node's whole unanswered ledger
+    (`outside_observations`) told them, on a second delivery, what the first one's validator saw before the second had
+    run (fresh client s23g3)."""
+    answered = {str(a.get("what")) for a in ledger_read(storage, task_id, OUTSIDE_ANSWERED, []) if isinstance(a, dict)}
+    return [{"what": k, "evidence": str(o.get("evidence") or "")}
+            for o in ((rec or {}).get("outside") or ()) if isinstance(o, dict)
+            if (k := " ".join(str(o.get("what") or "").split())) and k not in answered]
+
+
 def answer_outside(storage, task_id: TaskId, whats, by: str, move: str, why: str) -> None:
     """Keep that the node's issuer answered these observations — by `move`, or by declining it with `why` — appended,
     never rewritten: the record of what was seen stays whole, and only the read retires it."""

@@ -705,10 +705,9 @@ def _bound_the_read(out: dict, task_id: str, trimmed: list, keep: int) -> None:
 
 
 def _outside_seen(engine: Engine, task_id: str) -> list:
-    """[{what, evidence}] its validators saw outside the criteria, unanswered, newest first — what the sign-off step tells
-    the person (`Engine.persons_verdict`); the page had no other read of it."""
-    return [{"what": o["what"], "evidence": o["evidence"]}
-            for o in engine.outside_the_criteria(TaskId(task_id)) if o["node"] == str(task_id)]
+    """[{what, evidence}] the verdict on the current delivery saw outside the criteria, unanswered — what the sign-off step
+    tells the person (`Engine.persons_verdict`); the page had no other read of it."""
+    return engine.outside_of_this_delivery(TaskId(task_id))
 
 
 def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool = True) -> dict:

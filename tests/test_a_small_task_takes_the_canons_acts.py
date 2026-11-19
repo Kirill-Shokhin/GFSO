@@ -200,3 +200,24 @@ def test_the_verdict_read_serves_what_the_validator_saw_outside_the_criteria(cha
     call("signal", "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
     call("wait", seconds=60)
     assert TL.TOOLS["get_verdict"](e, "root").get("outside") == [{"what": seen, "evidence": "ran it on x.tar.gz"}]
+
+
+def test_a_second_delivery_is_shown_only_what_its_own_validator_saw(chat, monkeypatch):
+    """What the first delivery's validator saw beyond the criteria was told on the second before its validator had run
+    (fresh client s23g3): the person weighs the delivery they sign."""
+    e, repo, call, _ = chat
+    first, second = "x.tar.gz is counted as .gz", "Z.TXT is counted apart from z.txt"
+    said = [[{"what": first, "evidence": "ran it"}], [{"what": second, "evidence": "ran it"}]]
+    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, said.pop(0) if said else []))
+    _set_up(call, repo)
+    call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
+    _worked(repo)
+    call("signal", "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
+    call("wait", seconds=60)
+    assert [o["what"] for o in TL.TOOLS["get_verdict"](e, "root")["outside"]] == [first]
+    call("signal", "root", "FAIL", "user", failed_criteria=["says_v1"], user_said="нет, переделай")
+    call("signal", "root", "DELIVER", "user", result="f.txt written again", self_validation="PASS")
+    assert first not in e.persons_verdict("root"), "the first delivery's observation told over the second"
+    call("wait", seconds=60)
+    assert [o["what"] for o in TL.TOOLS["get_verdict"](e, "root")["outside"]] == [second]
+    assert second in e.persons_verdict("root") and first not in e.persons_verdict("root")
