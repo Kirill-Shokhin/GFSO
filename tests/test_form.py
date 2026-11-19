@@ -17,6 +17,7 @@ someone else's work landed, re-baseline first — this repository drifts by tens
 from __future__ import annotations
 
 import ast
+import functools
 import builtins
 import io
 import re
@@ -599,12 +600,20 @@ def _import_graph_knots(root: Path) -> list[list[str]]:
     return sorted(found)
 
 
-COUNTS, WHERE = _measure(PKG)
-for _knot in _import_graph_knots(PKG):
-    COUNTS["F_modules_in_an_import_cycle"] = (
-        COUNTS.get("F_modules_in_an_import_cycle", 0) + len(_knot))
-    WHERE.setdefault("F_modules_in_an_import_cycle", []).append(" ⇄ ".join(_knot))
-COUNTS_T, WHERE_T = _measure(TESTS)
+@functools.cache
+def _measured_pkg() -> tuple[dict[str, int], dict[str, list[str]]]:
+    """Measured when a ratchet first asks, once per process — at import every xdist worker walked both trees while
+    collecting (~23 s each), though one worker runs these tests."""
+    counts, where = _measure(PKG)
+    for knot in _import_graph_knots(PKG):
+        counts["F_modules_in_an_import_cycle"] = counts.get("F_modules_in_an_import_cycle", 0) + len(knot)
+        where.setdefault("F_modules_in_an_import_cycle", []).append(" ⇄ ".join(knot))
+    return counts, where
+
+
+@functools.cache
+def _measured_tests() -> tuple[dict[str, int], dict[str, list[str]]]:
+    return _measure(TESTS)
 
 
 def _ratchet(rule: str, now: int, base: int, sample: str, where: str) -> None:
@@ -618,11 +627,12 @@ def _ratchet(rule: str, now: int, base: int, sample: str, where: str) -> None:
 
 @pytest.mark.parametrize("rule", sorted(BASE))
 def test_form_ratchet(rule: str) -> None:
-    _ratchet(rule, COUNTS.get(rule, 0), BASE[rule], " | ".join(WHERE.get(rule, [])[:8]), "gfso/")
+    counts, where = _measured_pkg()
+    _ratchet(rule, counts.get(rule, 0), BASE[rule], " | ".join(where.get(rule, [])[:8]), "gfso/")
 
 
 @pytest.mark.parametrize("rule", sorted(BASE_TESTS))
 def test_form_ratchet_tests(rule: str) -> None:
     """The second root (run sheet 4.3): the suite is the code an outside engineer reads first."""
-    _ratchet(rule, COUNTS_T.get(rule, 0), BASE_TESTS[rule],
-             " | ".join(WHERE_T.get(rule, [])[:8]), "tests/")
+    counts, where = _measured_tests()
+    _ratchet(rule, counts.get(rule, 0), BASE_TESTS[rule], " | ".join(where.get(rule, [])[:8]), "tests/")
