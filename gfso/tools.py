@@ -1305,8 +1305,21 @@ AT_THE_GO = "at_the_go"
 
 
 def at_the_go(engine: Engine) -> dict:
-    """{not_imported, goal_as_given} as the go recorded them; {} before it."""
-    return json.loads(engine.graph.setting(AT_THE_GO) or "{}")
+    """What each goal's go recorded, `by_root`: {root id: {not_imported, goal_as_given, user_said?}} — two parentless
+    nodes are two goals (§15.2), and one record per project showed the first goal the second's words (ui). Beside it,
+    flat, the latest go's, as the page read it before (kept one release). A record made before roots were told apart is
+    its one root's. {} before any go."""
+    rec = json.loads(engine.graph.setting(AT_THE_GO) or "{}")
+    if rec and "by_root" not in rec:
+        roots = [str(t.id) for t in engine.all_tasks() if t.parent_id is None]
+        rec = {**rec, "by_root": {roots[0]: rec} if len(roots) == 1 else {}}
+    return rec
+
+
+def record_at_the_go(engine: Engine, root_id, said: dict) -> None:
+    """`said` as `root_id`'s go recorded it, beside the other goals' (`at_the_go`)."""
+    was = at_the_go(engine).get("by_root") or {}
+    engine.graph.store_setting(AT_THE_GO, json.dumps({**said, "by_root": {**was, str(root_id): said}}))
 
 
 def _parties(engine: Engine, tasks) -> list[dict]:

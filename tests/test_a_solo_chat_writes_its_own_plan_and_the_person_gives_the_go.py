@@ -187,3 +187,20 @@ def test_a_go_on_a_text_not_shown_is_shown_as_it_is_built(no_model):
     assert other != text
     TL.auto_decompose(e, plan=other, user_said="да")
     assert TL._kept.written(e.project_name)["text"] == other
+
+
+def test_each_goal_keeps_its_own_words_at_the_go():
+    """Two parentless nodes are two goals (§15.2): one `at_the_go` per project showed the first goal the second's words."""
+    e = _engine(Mode.SOLO)
+    TL.recorded_at_the_go(e, "count lines", "да, первое", "root")
+    TL.recorded_at_the_go(e, "count words", "да, второе", "other")
+    heard = TL._tools.heard(e)
+    assert heard["by_root"]["root"]["user_said"] == "да, первое" and heard["by_root"]["root"]["goal_as_given"] == "count lines"
+    assert heard["by_root"]["other"]["user_said"] == "да, второе" and heard["user_said"] == "да, второе", heard
+
+
+def test_a_record_made_before_roots_were_told_apart_is_its_one_roots(no_model):
+    e = _engine(Mode.SOLO)
+    _gone(e, _filled(TL.plan(e, ASKED)["text"]))
+    e.graph.store_setting("at_the_go", json.dumps({"goal_as_given": ASKED, "user_said": "старое", "not_imported": []}))
+    assert TL._tools.at_the_go(e)["by_root"] == {"root": {"goal_as_given": ASKED, "user_said": "старое", "not_imported": []}}

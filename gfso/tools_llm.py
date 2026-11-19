@@ -1859,7 +1859,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     # without credentials hits, on the one verb it is told to start with.
     out.update(_no_provider_answer(out["subtasks"], res.stats, spec))
     out.update(_built_from_a_file(engine, plan, spec, res.root_id, user_said))
-    return {**out, **(recorded_at_the_go(engine, given, user_said) if fresh else {})}
+    return {**out, **(recorded_at_the_go(engine, given, user_said, res.root_id) if fresh else {})}
 
 
 def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id, user_said: str) -> dict:
@@ -1930,13 +1930,13 @@ def on_their_branch(engine: Engine, place) -> str:
             f"person so in one line, and switch it back to `{on or 'where it stood'}` once the work is delivered")
 
 
-def recorded_at_the_go(engine: Engine, goal: str, user_said: str = "") -> dict:
+def recorded_at_the_go(engine: Engine, goal: str, user_said: str = "", root_id=ROOT_ID) -> dict:
     """What the person must hear at the go, as the graph read says it too: what of their repository the agents' copy lacks
     and the goal as given, verbatim, derived once and recorded with the project (`tools.at_the_go`); whether its work runs
     on this machine, by the one reading of the roster as published (`Workforce.runs_on_host`)."""
     said = {"not_imported": [], **_not_imported(engine), "goal_as_given": goal,
             **({"user_said": str(user_said).strip()} if str(user_said).strip() else {})}
-    engine.graph.store_setting(_tools.AT_THE_GO, json.dumps(said))
+    _tools.record_at_the_go(engine, root_id, said)
     return {"runs_on_host": engine.workforce.runs_on_host(), **said}
 
 
