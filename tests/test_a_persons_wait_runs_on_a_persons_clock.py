@@ -308,3 +308,15 @@ def test_after_in_chat_turns_to_dispatch_a_hung_session_is_still_cut_on_the_serv
         assert _session_cap(e, [kid]) <= default_deadline_s(), "a hung session runs to the person's deadline"
     finally:
         e.stop()
+
+
+def test_a_projects_own_deadline_lifts_its_sessions_cut(tmp_path):
+    """A project that sets its own `deadline_s` sets its sessions' bound too: an AUTO chain meant to run three days is not
+    cut at the server's one (whole critic over the bounds). CONTROL: `_session_cap` reading the server's bound alone — red."""
+    e, _ = _solo_in_chat(tmp_path)
+    try:
+        kid = e.graph.get_task(TaskId("root.b"))
+        e.set_settings({"deadline_s": 200 * DAY}, AgentId("user"))
+        assert _session_cap(e, [kid]) > default_deadline_s() * 2, "the project's own deadline did not reach its sessions"
+    finally:
+        e.stop()
