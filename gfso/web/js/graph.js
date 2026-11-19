@@ -25,6 +25,7 @@ const NODE_STYLE = {
     attend:    S_(SOFT, BG, 0, SOFT),
     pathology: S_(SOFT, BG, 1.5, INK, 'dashed'),
     busy:      S_(BG, INK, 2, INK),     // consented work: an ink border — the accent is the pulse of a session running now
+    delivered: S_(BG, INK, 4, INK, 'double'),   // handed in, its verdict owed: the border doubled, between taken and done
 };
 const styleOf = s => NODE_STYLE[bucketOf(s)];
 // The drawing carries what the record carries (§15.7): contradicted → the accent, ringed (owed an

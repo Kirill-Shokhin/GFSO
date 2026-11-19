@@ -94,6 +94,7 @@ const KEY = [
     node('done', 'Closed, passed', ''),
     {glyph: '<i class="kn kn-done kn-x"></i>', head: 'Closed by FAIL', means: 'closed on its FAIL; the cross is the FAIL mark of every view'},
     node('busy', 'Taken, not closed', 'busy'),
+    node('delivered', 'Handed in, its verdict owed', 'delivered'),
     node('attend', 'Handed over, not taken yet', 'attend'),
     node('pathology', 'Waits on a decision', 'pathology'),
     node('quiet', 'Not handed over yet', 'quiet'),

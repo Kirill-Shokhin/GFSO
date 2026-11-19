@@ -29,7 +29,7 @@ const ROWS = {
     BLOCKED:    ['pathology', 'Blocked',     'ED'],
     REWORKING:  ['busy',      'Rework',      'ED'],
     CHALLENGED: ['pathology', 'Challenged',  'ED'],
-    VALIDATING: ['busy',      'Delivered',   'EV'],
+    VALIDATING: ['delivered', 'Delivered',   'EV'],   // …a look of its own: the work handed in, its verdict owed (the author, 11-19: «ключевая смена статуса не имеет визуальной разницы»)
     IDLE:       ['quiet',     'Waiting',     ''],
     CANCELLING: ['pathology', 'Cancelling',  ''],
     ABANDONED:  ['quiet',     'Cancelled',   ''],
