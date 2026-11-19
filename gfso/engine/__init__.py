@@ -1,6 +1,8 @@
 """GFSO Engine — Level 2 framework. Public API for building systems."""
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 import dataclasses
 import json
 import logging
@@ -85,6 +87,11 @@ SETTINGS = ("system_model", "planner_model", "l2_gate", "network", "deadline_s",
 
 #: How long after the account's limit says it lifts the system starts the project it stopped: a clock or two apart.
 LIFT_MARGIN_S = 30
+#: THE PERSON'S OWN WORDS on the act a door is making now (`set_mode`'s `user_said`, carried to every verb that can revise
+#: a root's packet): under `solo` and `semi` the root's criteria are the person's agreement, and they change only on their
+#: words, recorded on the feed for the person to see — a solo agent rewrote an agreed check after the go into one that
+#: held on an empty repository, and nothing said so (critic over f5b1f88). Set by the doors, read in `_admissible_revision`.
+PERSONS_WORDS: ContextVar[str] = ContextVar("persons_words", default="")
 #: what of a stop's record the system lifts it by: a time, an execution place, a credential store's stamp
 LIFTS = ("until", "place", "account")
 #: How long what the place probe said stands for R′'s gate (`place_down`): each asking is a container of its own.
@@ -2259,6 +2266,21 @@ class Engine:
         return None
 
 
+    def _admissible_revision(self, old: Task, new_spec: Spec) -> None:
+        """Refuse a revision whose contract pins nothing — admitting the first packet on a pinned procedure and letting
+        the next version strip it would make the gate a formality —, and a root's criteria changed under `solo` or `semi`
+        without the person's own words (`PERSONS_WORDS`), which go on the feed. The one door every revision of a packet
+        passes (Inv-1: a re-ASSIGN)."""
+        refuse_a_contract_that_pins_nothing(self._graph, old.id, new_spec)
+        if (self._graph.get_parent(old.id) is not None or self.mode_kind() not in (Mode.SOLO, Mode.SEMI)
+                or tuple(new_spec.criteria) == tuple(old.spec.criteria)):
+            return
+        if not (said := PERSONS_WORDS.get().strip()):
+            raise ValueError(f"{old.id}'s criteria are what the person agreed: under {self.mode_kind().value} they change "
+                             f"only on the person's own words — show them the change, and pass their words agreeing as "
+                             f"`user_said`, recorded on the project's feed")
+        self.emit_info("revise", f"{old.id}'s criteria changed on the person's words: «{said[:300]}»")
+
     def _revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId,
                 new_assignee: Optional[AgentId] = None, covers: tuple = (),
                 reason=None, deadline=None,
@@ -2299,7 +2321,7 @@ class Engine:
         # …AND A REVISION IS AN ASSIGN. Admitting the first packet on a pinned procedure and letting
         # the next version strip it would make the gate a formality: the same contract, one act
         # later, deciding nothing.
-        refuse_a_contract_that_pins_nothing(self._graph, task_id, new_spec)
+        self._admissible_revision(old, new_spec)
         # Snapshot the CONTENT before the signal: ASSIGN applies the new spec onto the same live
         # object, so reading `old.spec` afterwards compares the new contract with itself.
         _before = (old.spec.description, old.spec.criteria, old.spec.accepted_risks,

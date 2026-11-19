@@ -82,7 +82,7 @@ def test_the_go_judges_the_same_hands(monkeypatch):
     try:
         e.set_mode(Mode.SOLO, None, AgentId("user"), hands="exec-1")
         with pytest.raises(RuntimeError, match="stop after"):
-            TL.auto_decompose(e, request="sort a file")
+            TL.auto_decompose(e, request="sort a file", user_said="go")
         assert got["executor"] == "claude-haiku-5-5, up to 150 turns (exec-1)"
     finally:
         e.stop()

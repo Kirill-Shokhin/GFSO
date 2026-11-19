@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from gfso import tools_llm as TL
+from gfso import decompose as DEC, tools_llm as TL
 from gfso.core.types import Mode, TaskId
 from gfso.decompose import artifact as A
 from tests.test_the_mode_decides_who_holds_what import _engine
@@ -78,6 +78,59 @@ def test_a_chat_on_their_branch_hears_the_systems_branch(tmp_path):
     git("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "start")
     e = _engine(Mode.SOLO)
     said = TL.on_their_branch(e, str(tmp_path))
-    assert "their branch `main`" in said and "git switch -c gfso/p/work" in said, said
+    assert "`main`" in said and "git switch -c gfso/p/work" in said and "switch it back" in said, said
     git("switch", "-q", "-c", "gfso/p/work")
     assert TL.on_their_branch(e, str(tmp_path)) == ""
+
+
+def _gone(e, text):
+    out = TL.auto_decompose(e, plan=text, user_said="да, делай так")
+    return e.graph.get_task(TaskId(out["root_id"])), out
+
+
+def test_the_agreed_checks_change_only_on_the_persons_words(no_model):
+    """After the go the agent rewrote the root's exact check into one an empty repository passes, the root went back to
+    OFFERED, and nothing asked the person (critic over f5b1f88). One door: the revision of the packet."""
+    e = _engine(Mode.SOLO)
+    root, _ = _gone(e, _filled(TL.plan(e, ASKED)["text"]))
+    weaker = [{"name": "counts", "description": "prints the line count",
+               "check": [{"behaviour": "two", "command": "seq 2 | wc -l", "expect": "2", "exact": True}]}]
+    out = TL.TOOLS["edit_criteria"](e, "root", weaker)
+    assert "user_said" in str(out) and e.graph.get_task(root.id).spec.criteria[0].check[0].command == "seq 2 | ./wc2", out
+    said = []
+    real = e.emit_info
+    e.emit_info = lambda kind, msg, *a, **k: (said.append(msg), real(kind, msg, *a, **k))[1]
+    TL.TOOLS["edit_criteria"](e, "root", weaker, user_said="да, так проще")
+    assert e.graph.get_task(root.id).spec.criteria[0].check[0].command == "seq 2 | wc -l"
+    assert any("да, так проще" in m for m in said), said
+
+
+def test_every_route_of_a_new_roots_go_passes_one_gate(no_model):
+    e = _engine(Mode.SOLO)
+    out = TL.auto_decompose(e, ASKED)
+    assert out.get("yours") and not e.all_tasks(), "the request route in a solo chat asks no model either"
+    spec = A.parse(_filled(out["text"]))["spec"]
+    with pytest.raises(ValueError, match="user_said"):
+        TL.auto_decompose(e, ASKED, spec=spec)
+    assert not e.all_tasks()
+
+
+def test_the_go_says_the_checks_did_not_run_over_the_base_on_this_host(no_model):
+    e = _engine(Mode.SOLO)
+    _, out = _gone(e, _filled(TL.plan(e, ASKED)["text"]))
+    assert "this host" in str(out[TL._planning.PINS]["not_run"]), out
+
+
+def test_a_check_that_already_holds_on_the_base_is_named(monkeypatch):
+    monkeypatch.setattr(DEC, "on_the_base", lambda ex, todo: {
+        (p.command, p.inputs): {"rc": 0, "stdout": "2\n", "stderr": "", "out": "2\n"} for _, p in todo})
+    spec = A.parse(_filled(TL.YOURS.format(goal='"x"')).replace("./wc2", "wc -l"))["spec"]
+    review = DEC.PinsOnTheBase(type("Place", (), {"files": "volume"})()).review(spec)
+    assert review["holds_on_the_base"] and "decides nothing" in review["holds_on_the_base"][0], review
+
+
+def test_the_accepted_branch_is_not_the_works(tmp_path):
+    git = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True, check=True)
+    git("init", "-q", "-b", "gfso/p/accepted")
+    git("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "start")
+    assert "switch it back" in TL.on_their_branch(_engine(Mode.SOLO), str(tmp_path))

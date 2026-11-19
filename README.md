@@ -83,8 +83,10 @@ Agents here run unattended, with no one to approve a command, so the work runs i
 - **No agent holds your credential.** One small container holds the key and passes only the model's messages.
 - **Each validation runs in its own container**, on a copy of the delivered commit. No one validates their own delivery.
 - **Network `off` or `open`, per project.** `off` reaches only the model.
-- **The result is its own branch**, `gfso/<project>/accepted`. Your branches and working tree stay as they were; when your
-  own agent does the work in its chat (`solo`, `in_chat`), its commits go on `gfso/<project>/work`, the branch the system names for it.
+- **The result is its own branch**, `gfso/<project>/accepted`. Your branches and working tree stay as they were, except
+  when your own agent does the work in its chat (`solo`, `in_chat`): it works in your working tree itself, and the system
+  asks it to switch that checkout to `gfso/<project>/work` for its commits, tell you, and switch it back once delivered —
+  its own commits, which nothing of the system's keeps off your branches.
 
 There is no per-task VM, your repository's full history goes in, and the model's provider reads what the agents send it. What is and is not guaranteed: [`SECURITY.md`][security].
 

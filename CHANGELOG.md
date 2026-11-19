@@ -69,17 +69,23 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 - Under `solo` with `perform="in_chat"` the plan is the person's own agent's, written with the person (§4.5, §11.5):
   `plan(request)` calls no model and hands back the plan file to fill — the goal in the person's words, a criterion
   with its check per thing they asked; the go on it calls none either. The system still fixes those checks in the graph
-  before any work, runs them once over the base where a container holds the project (said, never a gate), and a
+  before any work, runs them once over the base where a container holds the project — naming each that cannot run, or
+  already holds there and so decides nothing about the work; on this host it says none ran — never a gate, and a
   validator other than the agent signs the root against them. `plan(request, model=...)` still has the system write it;
   `auto` keeps the system's planner. Measured on a fresh client: the system's plan took 10 of 18 minutes where the bare
   agent took half of one, and grew 3 asked requirements into 9 criteria.
-- Under `solo` and `semi` the go on a plan file is the person's: `auto_decompose(plan=, user_said=)` carries their own
-  words agreeing to the plan they were shown, recorded with the go; without them it is refused, nothing built.
-- Work done in the person's own chat goes on the branch the system names, `gfso/<project>/work`: the go and an ACCEPT
-  say so where the repository stands on a branch of theirs. README, SECURITY.md and USING_GFSO.md say what holds there:
-  the agent's commits are its own, and nothing of the system's keeps them off the person's branches.
+- Under `solo` and `semi` a new root's go, by any route (a plan file, a spec, a request), carries the person's own words
+  agreeing to the plan they were shown (`user_said`), and a root's criteria change after it only with such words
+  (`edit_criteria`, `revise`, `edit_scope`, any re-ASSIGN of its packet); without them it is refused, nothing changed.
+  The words go on the project's feed for the person to see; nothing checks they are the person's. A request in a solo
+  chat is answered, as `plan` is, with the file to fill and no model called.
+- Work done in the person's own chat goes on the branch the system names, `gfso/<project>/work`, in their own working
+  tree: the go and an ACCEPT say so wherever it stands on another branch, asking the agent to switch that checkout, tell
+  the person, and switch it back once delivered. README, SECURITY.md and USING_GFSO.md say what holds there: the agent's
+  commits are its own, and nothing of the system's keeps them off the person's branches.
 - The go on a plan file whose review the system ran turns the Level-2 gate off under that plan alone, never for the
-  project's other goals; a file with no review is gated as any split.
+  project's other goals. A plan counts as reviewed only by the system's own record of its review of that very text,
+  never by a `[review]` line in the file; any other file is gated as any split.
 
 ### Fixed
 - A verb that makes a project and is refused there (`create_task` on a name never opened) answers its refusal to a chat client, not "Cannot operate on a closed database": the reply read the news off the engine the refusal had just unmade.

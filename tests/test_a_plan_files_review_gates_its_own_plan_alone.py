@@ -19,16 +19,19 @@ def _gate_on(monkeypatch):
     monkeypatch.setenv("GFSO_L2_GATE", "1")
 
 
-def _go_under_the_kid(review: dict):
+def _go_under_the_kid(review: dict, by_the_system: bool):
     e = _engine()
     _goal(e)
-    TL.auto_decompose(e, plan=A.render(GOAL, _plan(), review), root_id="kid")
+    text = A.render(GOAL, _plan(), review)
+    if by_the_system:
+        TL._planning.mark_reviewed(text)                # …as `plan` records the review it ran over this very text
+    TL.auto_decompose(e, plan=text, root_id="kid")
     g = e.graph
     return e, g, g.get_task(TaskId("root")), g.get_task(TaskId("kid"))
 
 
 def test_a_reviewed_file_turns_the_gate_off_under_its_own_plan_alone():
-    e, g, root, kid = _go_under_the_kid({"by": "m", "gate_passed": True})
+    e, g, root, kid = _go_under_the_kid({"by": "m", "gate_passed": True}, True)
     assert g.get_active_children(kid.id), "the file's plan stands under the kid"
     assert not l2_gate_on(g, kid) and not l2_gate_on(g, g.get_active_children(kid.id)[0])
     assert l2_gate_on(g, root), "the other plan of the graph keeps its gate"
@@ -36,5 +39,11 @@ def test_a_reviewed_file_turns_the_gate_off_under_its_own_plan_alone():
 
 
 def test_a_file_with_no_review_is_gated_as_any_split():
-    e, g, root, kid = _go_under_the_kid({})
+    e, g, root, kid = _go_under_the_kid({}, False)
+    assert l2_gate_on(g, kid)
+
+
+def test_a_review_line_in_the_file_is_no_review():
+    """`[review] by = …` in the agent's own file turned the gate off: only the system's own record of its review counts."""
+    e, g, root, kid = _go_under_the_kid({"by": "me", "gate_passed": True}, False)
     assert l2_gate_on(g, kid)

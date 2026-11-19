@@ -189,7 +189,7 @@ class _Revised(_LLM):
 
     def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
         if not self.calls:
-            T.edit_criteria(self._e, "root", [criterion("g2", "G2 holds")], agent="user", reason="other")
+            TL.TOOLS["edit_criteria"](self._e, "root", [criterion("g2", "G2 holds")], agent="user", reason="other", user_said="change it")
             self._e.wait_idle()
         return super().run_agent(system, user, allowed_tools, cwd, timeout)
 
@@ -241,7 +241,7 @@ def test_a_revision_between_the_dispatch_and_the_session_is_not_consented_for_th
     def revised_in_the_window(tid):           # read by the round right before it calls the session
         if not done:
             done.append(1)
-            T.edit_criteria(e, "root", [criterion("g2", "G2 holds")], agent="user", reason="other")
+            TL.TOOLS["edit_criteria"](e, "root", [criterion("g2", "G2 holds")], agent="user", reason="other", user_said="change it")
             e.wait_idle()
         return orig(tid)
     monkeypatch.setattr(e, "accepted_moves", revised_in_the_window)
@@ -305,7 +305,7 @@ def test_a_superseded_session_neither_runs_beside_the_next_nor_writes_into_its_d
     d.dispatch_once()
     # the revision lands INSIDE v1's session: a sleep did not hold once the place is observed before the session (ab2e147)
     assert entered.wait(30), "v1's session never started"
-    T.edit_criteria(e, "root", [criterion("g2", "G2 holds")], agent="user", reason="other")
+    TL.TOOLS["edit_criteria"](e, "root", [criterion("g2", "G2 holds")], agent="user", reason="other", user_said="change it")
     e.wait_idle()
     assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
     e.wait_idle()

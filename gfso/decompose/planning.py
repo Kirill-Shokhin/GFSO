@@ -207,6 +207,22 @@ def kept(text: str) -> Path:
     return path
 
 
+def mark_reviewed(text: str) -> None:
+    """Record that the system's own review was run over exactly `text` — keyed to its content, beside the kept file."""
+    (at := _reviewed_at(text)).parent.mkdir(parents=True, exist_ok=True)
+    at.write_text("", encoding="utf-8")
+
+
+def was_reviewed(text: str) -> bool:
+    """Did the system's own review run over exactly this text (`mark_reviewed`)? A `[review]` line in a file is no
+    such record: the agent's own file could carry one (critic over f5b1f88)."""
+    return _reviewed_at(text).is_file()
+
+
+def _reviewed_at(text: str) -> Path:
+    return data_dir() / "plans" / f"{hashlib.sha256(text.encode()).hexdigest()}.reviewed"
+
+
 def _scratch() -> Engine:
     e = Engine(MemoryStorage(), HumanAgent(), llm=None, validate_signals=True, state_timeout=0)
     e.start()

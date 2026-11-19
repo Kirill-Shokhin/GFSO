@@ -34,7 +34,7 @@ from gfso.core.graph.model import root_of
 from gfso.core.protocol.procedure import admission_defects, criterionless
 from gfso.adapters.llm.stats import calls_of, fan, refused_by_limit
 from gfso.llm import llm_factory
-from gfso.observe import cannot_run, missing_program, on_the_base, ran
+from gfso.observe import cannot_run, missing_program, on_the_base, printed, ran
 
 from .seams import deferral_problems, refused_deferrals, seam_problems, with_deferrals
 from gfso.inflight import staged
@@ -204,10 +204,15 @@ class PinsOnTheBase:
             return {"not_run": [f"pins not run before the go: {self.not_run}"]}
         flags = self._flagged(rows := self._rows(spec))
         missing = [{"pin": f"{node} / {c.name}", "program": m} for node, c, _, row in rows if (m := missing_program(row))]
+        # …an exact check that already prints what it expects over no work decides nothing about the work: said, for the
+        # person reading their own plan with no reviewer between (critic over f5b1f88: `seq 2 | wc -l` passed the go)
+        held = [f"{node} / {c.name}: `{p.command[:200]}` already prints what it expects before any work — it decides "
+                f"nothing about the work" for node, c, p, row in rows
+                if p.exact and row.get("rc") == 0 and "stdout" in row and printed(row, p.expect, True)]
         keys = {(p.command, p.inputs) for _, _, p, _ in rows}
         left = [f"`{k[0][:200]}`: {self.skipped[k]['note']}" for k in keys if k not in self.seen and k in self.skipped]
         return {"run": sum(k in self.seen for k in keys), "seconds": round(self.spent, 1), "cannot_run": flags,
-                **({"programs_missing": missing} if missing else {}),
+                **({"programs_missing": missing} if missing else {}), **({"holds_on_the_base": held} if held else {}),
                 **({"not_run": [f"pins not run before the go: {x}" for x in left]} if left else {})}
 
 
