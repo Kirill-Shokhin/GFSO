@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from gfso import issuer as I, tools as T
 from gfso.core.types import DoneReason, Mode, State, TaskId
-from tests.support import criterion
+from tests.support import criterion, declare
 from tests.test_the_mode_decides_who_holds_what import _admit, _engine, _kid
 
 
@@ -25,7 +25,7 @@ def _escalated(mode=Mode.AUTO):
         criterion("g", "G holds"), criterion("h", "H holds")]})
     _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")),
            _kid("root.other", ["h"], criterion("o", "O holds")))
-    T.TOOLS["add_dependency"](e, "root.part", "root.other")
+    declare(e, "root.part", "root.other")
     e.wait_idle()
     t = e.graph.get_task(TaskId("root.part"))
     t.state, t.done_reason = State.ESCALATED, DoneReason.FAIL

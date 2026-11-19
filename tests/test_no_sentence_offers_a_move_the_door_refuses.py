@@ -23,7 +23,7 @@ import pytest
 import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso.core.types import AgentId, DoneReason, Mode, Signal, State, TaskId
-from tests.support import criterion
+from tests.support import criterion, declare
 from tests.test_a_ruling_is_part_of_the_acceptance import _challenged_with_a_finding
 from tests.test_the_mode_decides_who_holds_what import _RISK, _admit, _engine, _kid
 
@@ -140,7 +140,7 @@ SCENES = {
     "escalated part": lambda e: _states(e, root=X, a=(ESC, DoneReason.FAIL), b=X),
     "root closed on a FAIL": lambda e: _states(e, root=FAIL),
     "root abandoned": lambda e: _states(e, root=AB),
-    "producer being joined": lambda e: (T.TOOLS["add_dependency"](e, "b", "a"), _states(e, root=X, b=PASS, a=State.OFFERED),
+    "producer being joined": lambda e: (declare(e, "b", "a"), _states(e, root=X, b=PASS, a=State.OFFERED),
                                         e.joins.mark_joining("b", True)),
     "parked execution": lambda e: (_states(e, root=X, a=X, a_x=X, a_z=X, b=X), e.parking.park_execution(TaskId("b"))),
     "the user's own dispute": lambda e: (_states(e, root=State.OFFERED), _challenged_with_a_finding(e, "root", "g")),

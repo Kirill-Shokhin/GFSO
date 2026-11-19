@@ -31,7 +31,7 @@ from gfso.decompose.extract import extract_spec
 from gfso.decompose.planning import changes
 from gfso.decompose.seams import DEFERRED, deferral_problems, with_deferrals
 from gfso.roster import AgentRegistry
-from tests.support import REGISTER, criterion, instrument_passes, make_engine
+from tests.support import REGISTER, criterion, instrument_passes, make_engine, declare, undeclare
 
 WHY = "how the checker is split depends on the AST the parser delivers"
 
@@ -48,7 +48,7 @@ def _plan():
         "description": k, "criteria": [criterion(f"{k}_ok", k)]}} for k, c in (("parser", "g"), ("checker", "h"),
                                                                                   ("docs", "d"))],
                 accepted_risks=REGISTER)
-    T.add_dependency(e, "root.parser", "root.checker", glue="the checker walks the parser's AST")
+    declare(e, "root.parser", "root.checker", glue="the checker walks the parser's AST")
     e.wait_idle()
     return e
 
@@ -152,7 +152,7 @@ def test_a_repair_adding_a_second_producer_keeps_the_deferral_and_the_first_is_c
     e = _plan()
     _defer(e, "root.parser")
     _pass(e, "root.parser")
-    T.add_dependency(e, "root.docs", "root.checker", glue="the checker's messages follow the docs")
+    declare(e, "root.docs", "root.checker", glue="the checker's messages follow the docs")
     e.wait_idle()
     _defer(e, "root.parser", "root.docs")
     assert e.split_waits_on(TaskId("root.checker")) == ["root.docs"] and _asked(e, "root.checker") != "split"
@@ -267,7 +267,7 @@ def test_a_producer_no_longer_seamed_into_the_part_is_no_ground_to_wait_on():
     reshape replacing the parser left the checker OFFERED to its bound)."""
     e = _plan()
     _defer(e, "root.parser")
-    T.remove_dependency(e, "root.parser", "root.checker")
+    undeclare(e, "root.parser", "root.checker")
     e.wait_idle()
     assert e.split_waits_on(TaskId("root.checker")) == [] and _asked(e, "root.checker") == "split"
 

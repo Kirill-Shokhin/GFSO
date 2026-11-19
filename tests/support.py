@@ -49,6 +49,17 @@ REGISTER_SPLIT = Register(REGISTER_ITEMS)
 DENIAL_ENTRY = DENIAL.to_dict()
 
 
+def declare(e, producer: str, consumer: str, **kw) -> dict:
+    """`add_dependency` as the consumer's issuer makes it (§11.5) — a fixture staging an edge in a split another party
+    holds (an AUTO executor, a delegate) stages that holder's act, not the person's."""
+    return T.add_dependency(e, producer, consumer, agent=str(e.graph.issuer_of(TaskId(consumer))), **kw)
+
+
+def undeclare(e, producer: str, consumer: str) -> dict:
+    """`remove_dependency` as the consumer's issuer makes it."""
+    return T.remove_dependency(e, producer, consumer, agent=str(e.graph.issuer_of(TaskId(consumer))))
+
+
 def a_repository(base: Path) -> Path:
     """`base` made the top of a git repository with a commit: the only base a container carries in (`_carried_in`)."""
     base.mkdir(parents=True, exist_ok=True)

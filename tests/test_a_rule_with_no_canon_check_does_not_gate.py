@@ -19,7 +19,7 @@ import gfso.tools as T
 from gfso.core.types import State, TaskId
 from gfso.engine.loop import refresh_checks
 from gfso.engine.validation import _EXEC_GATING_CHECKS
-from tests.support import criterion, make_engine, REGISTER
+from tests.support import criterion, make_engine, REGISTER, declare
 
 _RISK = REGISTER
 
@@ -151,7 +151,7 @@ def test_one_writer_orders_the_defaults_whatever_door_installs_the_dep(hours):
     e.stop()
     e = _due_soon(hours)
     T.decompose(e, "root", [_kid("root.x", "a", None), _kid("root.y", "b", None)], accepted_risks=REGISTER)
-    T.add_dependency(e, "root.x", "root.y", glue="y reads x")
+    declare(e, "root.x", "root.y", glue="y reads x")
     e.wait_idle()
     _ordered(e, "root.x", "root.y")
     assert e.graph.get_task(TaskId("root.y")).deadline_supplied
@@ -237,7 +237,7 @@ def test_where_no_order_exists_the_consumers_ceiling_holds_and_the_producers_flo
     T.decompose(e, "root", [_kid("root.p", "a", (due - timedelta(minutes=3)).isoformat())], accepted_risks=REGISTER)
     before = e.graph.get_task(TaskId("root.c")).deadline
     _age(e, "root.d", due - timedelta(minutes=4))     # room opened above c: what still fits is kept, not re-chosen
-    T.add_dependency(e, "root.p", "root.c", glue="c reads p")
+    declare(e, "root.p", "root.c", glue="c reads p")
     e.wait_idle()
     c, d = (e.graph.get_task(TaskId(k)) for k in ("root.c", "root.d"))
     assert c.deadline == before < d.deadline
@@ -337,7 +337,7 @@ def test_a_crossing_met_after_the_admission_is_a_flag_and_refuses_nothing():
     """A Dep declared after the split is a re-author of its consumer: its crossing is CHECK-3's flag, not a gate."""
     e = _root()
     T.decompose(e, "root", [_kid("root.x", "a", _in(20)), _kid("root.y", "b", _in(10))], accepted_risks=REGISTER)
-    T.add_dependency(e, "root.x", "root.y", glue="y reads x")
+    declare(e, "root.x", "root.y", glue="y reads x")
     e.wait_idle()
     assert _verdicts(e)["CHECK-3:deadlines"] == "unmet", "the crossing went unsaid"
     step = next(s for s in T.next_steps(e, actor="me")["steps"] if s["task_id"] == "root")
@@ -357,7 +357,7 @@ def test_an_edge_with_a_settled_end_is_not_read():
     """§11.5: CHECK-3 reads no edge one of whose ends is settled — a settled node's deadline orders nothing to come."""
     e = _root()
     T.decompose(e, "root", [_kid("root.x", "a", _in(20)), _kid("root.y", "b", _in(10))], accepted_risks=REGISTER)
-    T.add_dependency(e, "root.x", "root.y", glue="y reads x")
+    declare(e, "root.x", "root.y", glue="y reads x")
     e.wait_idle()
     assert _verdicts(e)["CHECK-3:deadlines"] == "unmet"
     x = e.graph.get_task(TaskId("root.x"))

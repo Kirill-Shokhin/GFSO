@@ -1721,7 +1721,7 @@ def _drop_dependency(engine, task, actor, answer, why, verbs):
     if not (gone := _cancelled_producers(engine, child)):
         return False, f"{child.id} consumes no cancelled producer"
     for producer in gone:
-        _tools.remove_dependency(engine, producer, str(child.id))
+        engine.remove_dependency(TaskId(producer), child.id)          # …the machine issuer's own act, as its promotion's edge
     return True, ""
 
 
@@ -1777,7 +1777,7 @@ def _split_off(engine, task, actor, answer, why, verbs):
         return False, "; ".join(bad) + " — so nothing of this move was made"
     engine.revise(child.id, spec, AgentId(actor), reason=RevisionReason.SPEC_DEFECT)
     for p, c in sorted(gone):
-        _tools.remove_dependency(engine, p, c)
+        engine.remove_dependency(TaskId(p), TaskId(c))
     engine.emit_info("issuer", f"{child.id}: {', '.join(names)} moved to {kid['task_id']}, which runs after "
                                f"{', '.join(reads)}; its waits on {', '.join(sorted({p for p, _ in gone}))} closed — {why}")
     return True, ""

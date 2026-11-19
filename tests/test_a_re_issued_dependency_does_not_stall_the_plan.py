@@ -19,7 +19,7 @@ from gfso import issuer as I
 from gfso.core.graph import q_Del, q_T
 from gfso.core.types import AgentId, Criteria, DoneReason, Signal, SignalData, State, TaskId
 from gfso.engine.validation import _l0_holes
-from tests.support import REGISTER, criterion, make_engine
+from tests.support import REGISTER, criterion, make_engine, declare
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +38,7 @@ def _plan():
          "covers": ["a"]},
         {"task_id": "root.y", "spec": {"description": "y", "criteria": [criterion("y1", "Y")]}, "assignee": "w",
          "covers": ["b"]}], accepted_risks=REGISTER)
-    T.add_dependency(e, "root.x", "root.y", glue="y reads x")
+    declare(e, "root.x", "root.y", glue="y reads x")
     e.wait_idle()
     return e
 
@@ -204,7 +204,7 @@ def test_a_re_issued_consumer_is_given_a_deadline_after_its_producer(monkeypatch
          "covers": ["a"]},
         {"task_id": "root.y", "spec": {"description": "y", "criteria": [criterion("y1", "Y")]}, "assignee": "w",
          "covers": ["b"]}], accepted_risks=REGISTER)
-    T.add_dependency(e, "root.x", "root.y", glue="y reads x")
+    declare(e, "root.x", "root.y", glue="y reads x")
     e.wait_idle()
     monkeypatch.setattr(I, "seam_keeping_executor", lambda engine, task, other: task.assignee)
     for k, h in (("root.x", 48), ("root.y", 2)):

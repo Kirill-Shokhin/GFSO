@@ -30,7 +30,7 @@ from gfso.core.graph.model import dep_order_refutations
 from gfso.engine.validation import AdmissionRefused
 from gfso.delegate import Dispatcher
 from gfso.workspaces import parts_of
-from tests.support import REGISTER, criterion
+from tests.support import REGISTER, criterion, declare
 from tests.test_delegate import _agents, _drive_done, _eng, _goal
 
 
@@ -56,7 +56,7 @@ def _plan(tmp_path, check=False):
                             "assignee": "exec-1", "covers": ["g"]},
                            {"task_id": "cons", "spec": {"description": "cons", "criteria": [criterion("c"), criterion("d")]},
                             "assignee": "exec-1", "covers": ["g"]}], accepted_risks=REGISTER)
-    T.add_dependency(e, "prod", "cons", glue="cons's checks run what prod builds",
+    declare(e, "prod", "cons", glue="cons's checks run what prod builds",
                      **({"check": criterion("dep__prod")["check"]} if check else {}))
     _split(e, "cons", {"cons.a": ["c", "dep__prod"] if check else ["c"], "cons.b": ["d"]})
     return e, agents
@@ -143,12 +143,12 @@ def _ring(tmp_path, split_x=False):
     """par → {P, A, Q}: Dep P → A, Q → P, and A's part A.x is what Q reads. A.x waiting on P (A's criteria read P) would
     wait on its own consumer's consumer; with A.x split, A.x.1 would, through A.x's wait on its parts."""
     e, agents = _three(tmp_path, "P", "A", "Q")
-    T.add_dependency(e, "P", "A", glue="A's integration runs P")
-    T.add_dependency(e, "Q", "P", glue="P reads Q")
+    declare(e, "P", "A", glue="A's integration runs P")
+    declare(e, "Q", "P", glue="P reads Q")
     _split(e, "A", {"A.x": ["a"], "A.y": ["a"]})
     if split_x:
         _split(e, "A.x", {"A.x.1": ["A_x"], "A.x.2": ["A_x"]})
-    T.add_dependency(e, "A.x", "Q", glue="Q reads A.x's types")
+    declare(e, "A.x", "Q", glue="Q reads A.x's types")
     return e, agents
 
 
@@ -195,9 +195,9 @@ def test_a_declared_dep_closing_a_ring_through_a_parents_wait_is_refused_at_decl
     """par → {a, b}, b → {b.c, b.d}; a reads b, so b.c reading a waits on a part of what a waits on (b on b.c)."""
     e, _ = _three(tmp_path, "a", "b")
     _split(e, "b", {"b.c": ["b"], "b.d": ["b"]})
-    T.add_dependency(e, "b", "a", glue="a reads b")
+    declare(e, "b", "a", glue="a reads b")
     with pytest.raises(ValueError, match="b.c → b → a"):
-        T.add_dependency(e, "a", "b.c", glue="b.c reads a")
+        declare(e, "a", "b.c", glue="b.c reads a")
     assert ("a", "b.c") not in {(str(x.from_id), str(x.to_id)) for x in e.adopted_dependencies()}
     e.stop()
 
@@ -205,7 +205,7 @@ def test_a_declared_dep_closing_a_ring_through_a_parents_wait_is_refused_at_decl
 def test_a_dep_on_ones_own_ancestor_is_refused_at_declaration(tmp_path):
     e, _ = _three(tmp_path, "a", "b")
     with pytest.raises(ValueError, match="a → par"):
-        T.add_dependency(e, "par", "a", glue="a reads par")
+        declare(e, "par", "a", glue="a reads par")
     e.stop()
 
 
@@ -229,7 +229,7 @@ def _refused_whole(e, parent, kids: dict, ring: str):
 def test_a_split_whose_child_reads_what_waits_on_its_parent_is_refused_whole(tmp_path):
     """a reads b, and b waits on its new part b.c: b.c reading a closes the ring through b's wait on it."""
     e, _ = _three(tmp_path, "a", "b")
-    T.add_dependency(e, "b", "a", glue="a reads b")
+    declare(e, "b", "a", glue="a reads b")
     _refused_whole(e, "b", {"b.c": ["a"], "b.d": []}, "b.c → b → a → b.c")
     e.stop()
 
@@ -245,7 +245,7 @@ def test_a_split_closing_a_ring_through_a_standing_parts_wait_is_refused_whole(t
     the graph already holds."""
     e, _ = _three(tmp_path, "a", "b")
     _decomposing(e, "b", {"b.c": [], "b.d": []})
-    T.add_dependency(e, "b", "a", glue="a reads b")
+    declare(e, "b", "a", glue="a reads b")
     _refused_whole(e, "b.c", {"b.c.1": ["a"], "b.c.2": []}, "b.c.1 → b.c → b → a → b.c.1")
     e.stop()
 
@@ -253,7 +253,7 @@ def test_a_split_closing_a_ring_through_a_standing_parts_wait_is_refused_whole(t
 def test_a_discovery_closing_a_ring_through_a_parents_wait_is_not_adopted_and_refutes_the_order(tmp_path):
     e, _ = _three(tmp_path, "a", "b")
     _split(e, "b", {"b.c": ["b"], "b.d": ["b"]})
-    T.add_dependency(e, "b", "a", glue="a reads b")
+    declare(e, "b", "a", glue="a reads b")
     e._graph._storage.add_dep_edge(DepEdge(from_id=TaskId("a"), to_id=TaskId("b.c"), discovered=True))
     assert ("a", "b.c") not in {(str(x.from_id), str(x.to_id)) for x in e.adopted_dependencies()}
     assert ("a", "b.c") in {(str(x.from_id), str(x.to_id)) for x in dep_order_refutations(e.graph)}
@@ -266,8 +266,8 @@ def _session_over_a_member_the_producer_reads(tmp_path, own: bool):
     e, agents = _three(tmp_path, "P", "A")
     _split(e, "A", {"A.t": ["a"], "A.u": ["a"]})
     _split(e, "A.t", {"A.t.m2": ["A_t"], "A.t.m3": ["A_t"]})
-    T.add_dependency(e, "P", "A.t" if own else "A", glue="A.t's checks run P")
-    T.add_dependency(e, "A.t.m2", "P", glue="P reads m2")
+    declare(e, "P", "A.t" if own else "A", glue="A.t's checks run P")
+    declare(e, "A.t.m2", "P", glue="P reads m2")
     for t in ("A.t", "A.t.m2", "A.t.m3"):
         e.record_session_fit(TaskId(t), "~10 lines", True)
     return e, agents

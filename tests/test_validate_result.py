@@ -20,7 +20,7 @@ from gfso import tools_llm as TL
 from gfso.adapters.llm.headless import _tool_use_name, ClaudeCodeProvider
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.invariants import verdict_report_defects
-from tests.support import criterion, hold_a_credential, make_engine, pinned, REGISTER
+from tests.support import criterion, hold_a_credential, make_engine, pinned, REGISTER, declare
 
 
 def _eng():
@@ -63,7 +63,7 @@ def _delivered_node(e, tid="n1", extra_dep=False):
             {"task_id": tid, "spec": nail, "assignee": "alice", "covers": ["hung"]},
             {"task_id": "prod", "spec": {"description": "buy nails", "criteria": [criterion("nails", "nails exist")]},
              "assignee": "alice", "covers": ["hung"]}], accepted_risks=REGISTER)
-        T.add_dependency(e, "prod", tid, glue="uses the bought nails")
+        declare(e, "prod", tid, glue="uses the bought nails")
     assert T.signal(e, tid, "ACCEPT", "alice")["state"] == "EXECUTING"
     r = T.signal(e, tid, "DELIVER", "alice",
                  result="nail at wall.md:3; flush verified by touch; holds verified with 2kg frame")

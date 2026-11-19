@@ -26,7 +26,7 @@ from gfso.inflight import _inflight
 from gfso.packets import CHALLENGE_WHEN
 from gfso.roster import AgentRegistry
 from gfso.sessions import run_executor
-from tests.support import REGISTER, criterion, make_engine
+from tests.support import REGISTER, criterion, make_engine, declare
 from tests.test_a_child_attached_while_its_whole_is_validated_is_worked import _Validator
 from tests.test_a_node_works_in_its_own_place import _fenced, _repo
 from tests.test_a_session_hands_over_at_its_context_budget import Worker
@@ -66,7 +66,7 @@ def _ring(tmp_path, cycle=False):
         "description": f"the {n}", "criteria": [criterion(f"{n}_ok", f"{n} holds")]}} for n, c in (("pp", "g"), ("fe", "h"), ("cg", "i"))],
         accepted_risks=REGISTER)
     for producer, consumer in (("root.pp", "root.fe"), ("root.fe", "root.cg")):
-        T.TOOLS["add_dependency"](e, producer, consumer)
+        declare(e, producer, consumer)
     if cycle:
         e.add_dependency(TaskId("root.cg"), TaskId("root.pp"), discovered=True, glue="its check runs through the binary")
     e.wait_idle()

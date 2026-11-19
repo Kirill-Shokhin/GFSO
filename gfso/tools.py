@@ -2433,7 +2433,7 @@ def add_dependency(engine: Engine, from_id: str, to_id: str, glue: str = "",
                          f"(`decompose` with `replaces`)")
     was = _version(engine, to_id)
     engine.add_dependency(TaskId(from_id), TaskId(to_id), glue=glue,
-                          check=_checks_of({"check": check}) if check else ())
+                          check=_checks_of({"check": check}) if check else (), agent=AgentId(agent or _agent_id()))
     return {"ok": True, "from": from_id, "to": to_id, **({"read_as": f"{asked} is replaced: the edge stands on {from_id}, which stands in for it"}
                                                        if asked != from_id else {}),
             "declared": f"'{to_id}' now WAITS for '{from_id}' to pass — '{from_id}' produces, "
@@ -2448,7 +2448,7 @@ def remove_dependency(engine: Engine, from_id: str, to_id: str, agent: str = "")
     being admitted to execution until the check runs again (§9.1) — said in the answer: `{"ok": true}` alone left a
     person watching a graph that did not move (measured on the human door 2026-08-22)."""
     was = _version(engine, to_id)
-    engine.remove_dependency(TaskId(from_id), TaskId(to_id))
+    engine.remove_dependency(TaskId(from_id), TaskId(to_id), agent=AgentId(agent or _agent_id()))
     return {"ok": True, "removed": f"{from_id} -> {to_id}", **_the_dep_act(engine, to_id, was)}
 
 

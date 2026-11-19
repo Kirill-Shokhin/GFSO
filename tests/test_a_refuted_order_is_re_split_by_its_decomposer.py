@@ -28,7 +28,7 @@ from gfso.core.protocol.procedure import probe_id
 from gfso.workspaces import _enter_workspace, _ensure_place, _workspace
 from gfso.core.types import Mode, State, TaskId
 from gfso.delegate import AgentRegistry
-from tests.support import criterion
+from tests.support import criterion, declare
 from tests.test_the_mode_decides_who_holds_what import _admit, _engine, _kid
 from tests.test_a_node_works_in_its_own_place import _repo
 
@@ -58,7 +58,7 @@ def _ring(mode=Mode.AUTO):
                   _DUE[1], 5, "locales other than C"),
            _terms(_kid("root.cc", ["i"], criterion("kc", "it compiles")), _DUE[2], 3, "no optimiser"))
     for producer, consumer in (("root.pp", "root.libc"), ("root.libc", "root.cc"), ("root.pp", "root.cc")):
-        T.TOOLS["add_dependency"](e, producer, consumer)
+        declare(e, producer, consumer)
     e.add_dependency(TaskId("root.libc"), TaskId("root.pp"), discovered=True, glue="p_wide.c includes <wchar.h>")
     e.wait_idle()
     return e
@@ -150,7 +150,7 @@ def _two():
     e = _engine(Mode.AUTO)
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
     _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")), _kid("root.other", ["g"], criterion("o", "O")))
-    T.TOOLS["add_dependency"](e, "root.part", "root.other")
+    declare(e, "root.part", "root.other")
     e.wait_idle()
     return e, e.graph.get_task(TaskId("root"))
 

@@ -5,7 +5,7 @@ import pytest
 import gfso.tools as T
 from gfso.core.graph import metrics as M
 from gfso.core.types import AgentId, Signal, SignalData, State, TaskId
-from tests.support import criterion, instrument_passes, make_engine, REGISTER
+from tests.support import criterion, instrument_passes, make_engine, REGISTER, declare, undeclare
 from tests.test_a_part_is_checked_again_inside_its_whole import _whole_delivered_over_a_passed_part
 
 
@@ -63,9 +63,9 @@ def test_qdep_keeps_the_edges_a_dropped_dependency_had():
         S(e, Signal.CANCEL, "a", "boss", reason="producer no longer needed")
         S(e, Signal.CONFIRM_CANCEL, "a", "wa", in_flight="nothing")
         assert M.q_Dep(e.graph) == 0.5
-        T.remove_dependency(e, "a", "b"); e.wait_idle()
+        undeclare(e, "a", "b"); e.wait_idle()
         assert M.q_Dep(e.graph) == 0.5, "the declared edge left the population with its criterion"
-        T.remove_dependency(e, "a", "c"); e.wait_idle()
+        undeclare(e, "a", "c"); e.wait_idle()
         assert M.q_Dep(e.graph) == 0.5, "the discovery left the population unrefuted"
         assert not [x for x in e.graph.dep_edges(adopted=True) if str(x.to_id) in ("b", "c")], \
             "a dropped dependency is no edge of E_Dep: nothing waits on it"
@@ -90,7 +90,7 @@ def test_a_block_on_a_dropped_declared_edge_waits_and_is_no_discovery():
     e = make_engine(); e.start()
     try:
         _two_with_a_dep(e)
-        T.remove_dependency(e, "a", "b"); e.wait_idle()
+        undeclare(e, "a", "b"); e.wait_idle()
         S(e, Signal.ACCEPT, "b", "wb")
         S(e, Signal.BLOCK, "b", "wb", reason="needs a's output after all", blocker_task_ids=(TaskId("a"),))
         assert [(str(x.from_id), str(x.to_id)) for x in e.graph.dep_edges()] == [("a", "b")]
@@ -120,10 +120,10 @@ def test_a_pair_a_block_named_first_is_never_declared():
         assert M.q_Dep(e.graph) == 0.0
         S(e, Signal.RESOLVE_BLOCK, "b", "boss", action="not a's to give", external=True)
         assert M.q_Dep(e.graph) is None, "a refuted discovery is in neither half"
-        T.add_dependency(e, "a", "b"); e.wait_idle()
+        declare(e, "a", "b"); e.wait_idle()
         assert [str(x.from_id) for x in e.graph.declared_edges(TaskId("b"))] == ["a"]
         assert M.q_Dep(e.graph) is None, "declared AFTER a BLOCK named it: not declared before any BLOCK"
-        T.remove_dependency(e, "a", "b"); e.wait_idle()
+        undeclare(e, "a", "b"); e.wait_idle()
         if e.graph.get_state(TaskId("b")) == State.OFFERED:
             S(e, Signal.ACCEPT, "b", "wb")
         S(e, Signal.BLOCK, "b", "wb", reason="needs a after all", blocker_task_ids=(TaskId("a"),))
@@ -147,7 +147,7 @@ def test_a_repeated_block_on_a_pair_declared_since_reopens_its_discovery():
         S(e, Signal.ACCEPT, "b", "wb")
         S(e, Signal.BLOCK, "b", "wb", reason="needs a", blocker_task_ids=(TaskId("a"),))
         S(e, Signal.RESOLVE_BLOCK, "b", "boss", action="not a's to give", external=True)
-        T.add_dependency(e, "a", "b"); e.wait_idle()
+        declare(e, "a", "b"); e.wait_idle()
         if e.graph.get_state(TaskId("b")) == State.OFFERED:
             S(e, Signal.ACCEPT, "b", "wb")
         S(e, Signal.BLOCK, "b", "wb", reason="needs a after all", blocker_task_ids=(TaskId("a"),))

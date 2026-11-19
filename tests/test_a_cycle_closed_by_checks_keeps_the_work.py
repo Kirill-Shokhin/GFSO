@@ -17,7 +17,7 @@ import pytest
 
 from gfso import issuer as I, tools as T
 from gfso.core.types import Mode, RevisionReason, State, TaskId
-from tests.support import criterion
+from tests.support import criterion, declare
 from tests.test_the_mode_decides_who_holds_what import _admit, _engine, _kid
 
 _BLOCKED = ("The end-to-end pinned checks for macros-and-conditionals and include-resolution need the parser and "
@@ -33,7 +33,7 @@ def _cycle(on_its_parent: bool = False, glue: str = _BLOCKED, own: bool = True):
                            criterion("macros-and-conditionals", "the whole expands them"),
                            criterion("include-resolution", "the whole includes")),
            _kid("root.b", ["h"], criterion("kb", "it parses")))
-    T.TOOLS["add_dependency"](e, "root.a", "root.b")
+    declare(e, "root.a", "root.b")
     _admit(e, "root.a", _kid("root.a.x", ["macros-and-conditionals", *(["macros"] if own else [])],
                                 criterion("kx", "macros expand")),
            _kid("root.a.y", ["include-resolution"], criterion("ky", "includes resolve")))
@@ -164,7 +164,7 @@ def test_a_child_blocked_on_its_consumers_again_after_an_answer_is_re_issued_in_
     T.TOOLS["create_task"](e, "root", {"description": "c", "criteria": [criterion("g", "G"), criterion("h", "H")]})
     _admit(e, "root", _kid("root.a", ["g"], criterion("ka", "a"), criterion("c-whole", "w")),
            _kid("root.b", ["h"], criterion("kb", "b")))
-    T.TOOLS["add_dependency"](e, "root.a", "root.b")
+    declare(e, "root.a", "root.b")
     a, issuer = e.graph.get_task(TaskId("root.a")), str(e.graph.issuer_of(TaskId("root.a")))
     T.signal(e, "root.a", "ACCEPT", str(a.assignee))
     T.signal(e, "root.a", "BLOCK", str(a.assignee), reason="c-whole runs b's parser", blocker_task_id="root.b")
@@ -200,7 +200,7 @@ def test_the_criteria_are_read_from_the_blocks_of_the_contract_in_force_round_af
     T.TOOLS["create_task"](e, "root", {"description": "c", "criteria": [criterion("g", "G"), criterion("h", "H")]})
     _admit(e, "root", _kid("root.a", ["g"], criterion("ka", "a"), criterion("c-whole", "w")),
            _kid("root.b", ["h"], criterion("kb", "b")))
-    T.TOOLS["add_dependency"](e, "root.a", "root.b")
+    declare(e, "root.a", "root.b")
     _block_twice(e, "the pinned checks need root.b's parser", "c-whole cannot pass before root.b's parser")
     root = e.graph.get_task(TaskId("root"))
     assert "split_off" in I.moves_for(e, root, "repair")
@@ -229,7 +229,7 @@ def test_a_second_split_off_adds_a_new_sibling_and_overwrites_none(second):
     T.TOOLS["create_task"](e, "root", {"description": "c", "criteria": [criterion("g", "G"), criterion("h", "H")]})
     _admit(e, "root", _kid("root.a", ["g"], criterion("ka", "a"), criterion("c-whole", "w")),
            _kid("root.b", ["h"], criterion("kb", "b")), _kid("root.c", ["h"], criterion("kc", "c")))
-    T.TOOLS["add_dependency"](e, "root.a", "root.b")
+    declare(e, "root.a", "root.b")
     _block_twice(e, "c-whole needs root.b", "c-whole needs root.b, still")
     root = e.graph.get_task(TaskId("root"))
     first = {"name": second} if second == "w1" else {}

@@ -8,7 +8,7 @@ from gfso import issuer as I, tools as T, tools_llm as TL
 from gfso.core.protocol.procedure import admission_defects
 from gfso.core.types import Criteria, Mode, Probe, State, TaskId
 from gfso.delegate import AgentRegistry
-from tests.support import criterion
+from tests.support import criterion, declare
 from tests.test_the_mode_decides_who_holds_what import _admit, _engine, _goal, _kid
 
 
@@ -88,7 +88,7 @@ def _two_parts():
     e = _engine(Mode.AUTO)
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
     _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")), _kid("root.other", ["g"], criterion("o", "O")))
-    T.TOOLS["add_dependency"](e, "root.other", "root.part")
+    declare(e, "root.other", "root.part")
     e.wait_idle()
     return e, e.graph.get_task(TaskId("root"))
 

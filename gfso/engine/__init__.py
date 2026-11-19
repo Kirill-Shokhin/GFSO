@@ -57,6 +57,7 @@ from .moves import Move, door_holder
 from .parking import Parking
 from .workforce import Workforce
 from .admission import (admit as _admit, admit_register as _admit_register, refuse_a_contract_that_pins_nothing,
+                        refuse_what_the_act_cannot_take,
                         refuse_a_d_cycle)
 from .validation import (AdmissionRefused, pause_record, users_plan as _users_plan, _l0_holes, _l2_undischarged, l2_gate_on, no_live_deadline, dep_cycle_closed,
                          issuing_condition, rule_refusal, signer_refusal, whole_waits_for_its_parts,
@@ -2242,8 +2243,19 @@ class Engine:
 
     # === Dependency API ===
 
+    def refuse_a_declaration_not_the_issuers(self, to_id: TaskId, agent: Optional[AgentId]) -> None:
+        """A Dep edge is a form item of the consumer's parent split (§4.5 item 4), changed only by that split's
+        re-admission (§11.5) — the act of Del(parent), the consumer's issuer (§10.1); at a root, the goal's issuer joins
+        it to a producer (§15.2). Anyone else is refused before anything is written, naming whose act it is (§12.16
+        (ii)). `None` is the engine's own act inside one the issuer made (the machine issuer's promotion)."""
+        issuer = self._graph.issuer_of(to_id)
+        if agent is not None and str(agent) != str(issuer):
+            raise ValueError(f"'{agent}' is not the issuer of {to_id}: a dependency of {to_id} is a part of its "
+                             f"parent's split, declared or removed only by the split's holder — '{issuer}' (§11.5, "
+                             f"§10.1); a node that waits on something it was not given reports it by BLOCK (§11.3)")
+
     def add_dependency(self, from_id: TaskId, to_id: TaskId, discovered: bool = False, glue: str = "",
-                       check: tuple = ()) -> None:
+                       check: tuple = (), agent: Optional[AgentId] = None) -> None:
         """Record a dependency: to_id depends on from_id's output.
 
         DECLARED (discovered=False): an edge record of its own, the glue on it (Dep is a primitive beside T, §2.7,
@@ -2264,6 +2276,7 @@ class Engine:
         to = self._graph.get_task(to_id)
         if to is None:
             raise ValueError(f"consumer {to_id} not found")
+        self.refuse_a_declaration_not_the_issuers(to_id, agent)
         if why := dep_cycle_closed(self._graph, to_id, (from_id,)):
             raise ValueError(why)
         if check and not any(c.depends_on == from_id for c in to.spec.criteria):
@@ -2274,13 +2287,15 @@ class Engine:
             self._redeclare(to, tuple(self._graph.declared_edges(to_id)) + (DepEdge(from_id, to_id, glue=glue),))
         self._recompute_seam_parents(from_id, to_id)
 
-    def remove_dependency(self, from_id: TaskId, to_id: TaskId) -> None:
+    def remove_dependency(self, from_id: TaskId, to_id: TaskId, agent: Optional[AgentId] = None) -> None:
         """Drop a dependency. Its declared records are marked removed by the act that re-declares the consumer's edges
         without it (`_redeclare`) — no edge, still counted by q_Dep (§15.5) — and a criterion of the consumer whose
         check reads the producer's result goes with it (a revision: it would imply the edge again, §2.7); a discovered
         record for the pair is CLOSED: it stops asking and leaves E_Dep, and the discovery that was made stays in
         q_Dep's population — only an adjudication refuting it takes it out (§15.5)."""
         to = self._graph.get_task(to_id)
+        if to is not None:
+            self.refuse_a_declaration_not_the_issuers(to_id, agent)
         if to is not None and any(c.depends_on == from_id for c in to.spec.criteria):
             new_crits = tuple(c for c in to.spec.criteria if c.depends_on != from_id)
             self._revise(to_id, dataclasses.replace(to.spec, criteria=new_crits), self._graph.issuer_of(to_id))
@@ -2407,6 +2422,19 @@ class Engine:
         self.hear(old.id, "revise", said, **({"intent": now} if (now := mine(new_spec or old.spec)) != mine(old.spec)
                                              and now else {}))
 
+    def _declared_alone(self, old: Task, new_spec: Spec, seams: tuple, agent: AgentId, packet_moves: bool):
+        """A revision's bare `depends_on` entries, asked by the consumer's issuer alone (else refused, nothing written);
+        where they are all it changes, declared here and the node returned — no packet field moves, so no version.
+        None: the revision goes on, its edges written once its ASSIGN took (`_revise`)."""
+        self.refuse_a_declaration_not_the_issuers(old.id, agent)
+        if (parent := self._graph.get_parent(old.id)) is not None:   # …and the split's re-admission that declares them
+            refuse_what_the_act_cannot_take(self._graph, parent, [(old.id, old.spec, old.assignee)],
+                                            self.reopen_refusal)    # (`_redeclare`) can take it, read before any write
+        if new_spec != old.spec or packet_moves:
+            return None
+        self._redeclare(old, tuple(self._graph.declared_edges(old.id)) + seams)
+        return self._graph.get_task(old.id)
+
     def _revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId,
                 new_assignee: Optional[AgentId] = None, covers: tuple = (),
                 reason=None, deadline=None,
@@ -2438,12 +2466,12 @@ class Engine:
         new_spec, seams = self._wire_seams(new_spec and self._read_live(new_spec, old.spec), task_id)
         if why := dep_cycle_closed(self._graph, task_id, [e.from_id for e in seams]):
             raise ValueError(why)
-        if seams:
-            self._redeclare(old, tuple(self._graph.declared_edges(task_id)) + seams)
-            old = self._graph.get_task(task_id)
-            if new_spec == old.spec and not (new_assignee or covers or deadline is not None or max_iterations is not None
-                                             or block_sources or block_refuted or reason is not None):
-                return old
+        # …declared by its consumer's issuer alone, and written only once every refusal is behind: an edge written ahead
+        # of the ASSIGN stood after the revision refused, in the issuer's name, from anyone (critic over 3071449)
+        if seams and (alone := self._declared_alone(old, new_spec, seams, agent, bool(
+                new_assignee or covers or deadline is not None or max_iterations is not None
+                or block_sources or block_refuted or reason is not None))):
+            return alone
         # …AND A REVISION IS AN ASSIGN. Admitting the first packet on a pinned procedure and letting
         # the next version strip it would make the gate a formality: the same contract, one act
         # later, deciding nothing.
@@ -2507,6 +2535,8 @@ class Engine:
         # new Del; the parent's Level-2 claim is about the children's criteria, not their owners.
         # A revision is the answer to a dispute — the node goes back to OFFERED under a contract its
         # executor gets to take or refuse afresh, so the recorded dispute is settled by construction.
+        if seams:
+            self._redeclare(self._graph.get_task(task_id), tuple(self._graph.declared_edges(task_id)) + seams)
         self._settled_revision(task_id)
         content_changed = (new_spec.description, new_spec.criteria, new_spec.accepted_risks,
                            new_spec.scope, new_spec.name) != _before or bool(covers)

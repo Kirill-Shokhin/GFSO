@@ -7,7 +7,7 @@ from gfso import tools as T
 from gfso import config, signin, tools_llm as TL, serverctl
 from gfso.mcp.server import _bind, _with_ui_link
 from gfso.runtime import ProjectRegistry
-from tests.support import REGISTER, criterion, make_engine
+from tests.support import REGISTER, criterion, make_engine, declare
 from fastapi.testclient import TestClient
 from gfso.api.server import create_app
 
@@ -44,7 +44,7 @@ def test_agent_loop_through_tools(monkeypatch):
     assert {k["id"] for k in kids} == {"c1", "c2"}
 
     # declared dep (criteria-content) + read back derived
-    T.add_dependency(e, "c1", "c2", glue="c2 uses c1 output")
+    declare(e, "c1", "c2", glue="c2 uses c1 output")
     deps = T.get_dependencies(e)
     assert any(d["from"] == "c1" and d["to"] == "c2" for d in deps)
 

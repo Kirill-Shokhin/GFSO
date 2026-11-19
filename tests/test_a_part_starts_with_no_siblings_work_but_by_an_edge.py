@@ -20,7 +20,7 @@ from gfso.delegate import Dispatcher, _auto_validate
 from gfso.sessions import run_executor
 from tests.test_a_node_works_in_its_own_place import _Executor, _Validator, _plan, _until
 from tests.test_a_session_holds_only_its_own_place import IMAGE, project  # noqa: F401 — a fixture
-from tests.support import criterion, REGISTER
+from tests.support import criterion, REGISTER, declare
 
 
 def _done(e, *tids):
@@ -62,7 +62,7 @@ def test_a_part_started_after_its_sibling_joined_does_not_hold_its_work(tmp_path
 def test_an_edge_brings_its_producer_to_its_consumer_and_opens_nothing_to_another(tmp_path):
     e, agents, _ = _plan(tmp_path, whole="exec-1")
     T.decompose(e, "par", [_part("c")], accepted_risks=REGISTER)
-    T.add_dependency(e, "a", "b")
+    declare(e, "a", "b")
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}), "c": _Executor("c", {"c.c": "C\n"})}
     _dispatched(e, agents, sessions, lambda: sessions["b"].saw and sessions["c"].saw, held=("c",))
     assert "a.c" in sessions["b"].saw

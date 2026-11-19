@@ -20,7 +20,7 @@ from gfso.roster import AgentRegistry
 from tests.support import (make_engine, instrument_passes, criterion, pinned,
                            workdir as workdir_)
 from gfso.decompose.build import build_graph_live
-from tests.support import DENIAL_ENTRY, REGISTER, REGISTER_SPLIT, round_over
+from tests.support import DENIAL_ENTRY, REGISTER, REGISTER_SPLIT, round_over, declare
 
 
 def _eng():
@@ -305,7 +305,7 @@ def test_accept_spawn_gated_on_dependency_producers(tmp_path):
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     _goal(e, "par", "user")
     _children(e, "prod", "cons")
-    T.add_dependency(e, "prod", "cons")                       # cons consumes prod's delivery: an edge, no criterion
+    declare(e, "prod", "cons")                       # cons consumes prod's delivery: an edge, no criterion
     d = Dispatcher(e, agents, runner=lambda *a: None)
     started = d.dispatch_once()
     assert "prod" in started and "cons" not in started       # producer free; consumer gated on it
@@ -350,7 +350,7 @@ def test_a_block_that_named_nothing_is_not_resolved_by_a_producer_already_done(t
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     _goal(e, "par", "user")
     _children(e, "prod", "cons")
-    T.add_dependency(e, "prod", "cons", glue="cons reads prod's output")
+    declare(e, "prod", "cons", glue="cons reads prod's output")
     _drive_done(e, "prod")
     T.signal(e, "cons", "ACCEPT", "exec-1")
     T.signal(e, "cons", "BLOCK", "exec-1", reason="the vendor API is down")
@@ -1333,7 +1333,7 @@ def test_a_consumer_is_not_spawned_while_its_producer_is_unfinished(tmp_path):
     agents = _agents(tmp_path, ("exec-1", "llm-executor"))
     _goal(e)
     _children(e, "prod", "cons", parent="goal")
-    T.add_dependency(e, "prod", "cons", glue="cons reads what prod writes")
+    declare(e, "prod", "cons", glue="cons reads what prod writes")
 
     spawned = []
     d = Dispatcher(e, agents, runner=lambda *a, **k: spawned.append(str(a[1])))
