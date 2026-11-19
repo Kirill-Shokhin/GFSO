@@ -1859,7 +1859,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     # without credentials hits, on the one verb it is told to start with.
     out.update(_no_provider_answer(out["subtasks"], res.stats, spec))
     out.update(_built_from_a_file(engine, plan, spec, res.root_id, user_said))
-    return {**out, **(recorded_at_the_go(engine, given) if fresh else {})}
+    return {**out, **(recorded_at_the_go(engine, given, user_said) if fresh else {})}
 
 
 def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id, user_said: str) -> dict:
@@ -1930,11 +1930,12 @@ def on_their_branch(engine: Engine, place) -> str:
             f"person so in one line, and switch it back to `{on or 'where it stood'}` once the work is delivered")
 
 
-def recorded_at_the_go(engine: Engine, goal: str) -> dict:
+def recorded_at_the_go(engine: Engine, goal: str, user_said: str = "") -> dict:
     """What the person must hear at the go, as the graph read says it too: what of their repository the agents' copy lacks
     and the goal as given, verbatim, derived once and recorded with the project (`tools.at_the_go`); whether its work runs
     on this machine, by the one reading of the roster as published (`Workforce.runs_on_host`)."""
-    said = {"not_imported": [], **_not_imported(engine), "goal_as_given": goal}
+    said = {"not_imported": [], **_not_imported(engine), "goal_as_given": goal,
+            **({"user_said": str(user_said).strip()} if str(user_said).strip() else {})}
     engine.graph.store_setting(_tools.AT_THE_GO, json.dumps(said))
     return {"runs_on_host": engine.workforce.runs_on_host(), **said}
 
@@ -2062,16 +2063,21 @@ def plans_of(project) -> dict:
 
 
 def plan(engine: Engine, request: str = "", model: Optional[str] = None, executor: Optional[str] = None,
-         depth: int = 1, review_model: Optional[str] = None, writing: Optional[str] = None) -> dict:
+         depth: int = 1, review_model: Optional[str] = None, writing: Optional[str] = None,
+         plan: Optional[str] = None) -> dict:
     """Author a plan for `request` WITHOUT a project: the plan file (`.gfso`) — the goal, the split with its criteria,
     pinned checks, mappings, dependencies and register, the Level-2 review over it — for the customer to read whole.
     Nothing executes and no project is made. Answers at once: `{writing}` while it is written (about 3–8 minutes on a small
     task), and `plan(writing=<handle>)` (or the same call again), once written, holds the file's whole `text` beside its
     `path`, unless it is longer than PLAN_TEXT_MAX characters. Send a note with `refine_plan`; give the go with
     `auto_decompose(plan=<path>)`, which builds the project from the file as it stands. `executor` names the registered
-    executor whose session the fit of each part is judged against."""
+    executor whose session the fit of each part is judged against. `plan` hands in a file written elsewhere — the one a
+    chat holding its own work filled with the person — to be shown before the go, as a file the system writes is:
+    no model is called."""
     if writing:
         return _by_handle(writing, engine.project_name)
+    if plan is not None:
+        return handed_in(engine, plan)
     if not str(request or "").strip():
         return {"refused": True, "error": "plan needs the request, or `writing=<handle>` to read one being written"}
     if model is None and holds_its_work(engine):
@@ -2111,6 +2117,25 @@ def plan(engine: Engine, request: str = "", model: Optional[str] = None, executo
         return _shown(engine, _plan_written(text))
     return _once(("plan", engine.project_name, request, model, executor, depth, review_model or engine.system_model()),
                  write, engine)
+
+
+def handed_in(engine: Engine, plan: str) -> dict:
+    """A plan file handed in before the go (`plan(plan=)`): kept as the project's written plan, so its page shows it as it
+    shows one the system wrote (`written_plan`: its parts, what the go would refuse), and told on its feed — the file a
+    solo chat filled reached the system only at its go, and the person's page showed nothing before (ui). No model."""
+    text = _planning.text_of(plan)
+    try:
+        p = _artifact.parse(text)
+    except ValueError as e:
+        return {"refused": True, "error": f"the plan file does not read: {e}"}
+    refused = _decompose.go_refusals(p["spec"], p["goal"])
+    out = {"path": str(_planning.kept(text)), "chars": len(text), "parts": [s["id"] for s in p["spec"].get("subtasks") or ()],
+           "refused_by_the_go": refused,
+           "say": ("The go refuses this file as it stands: repair the points of refused_by_the_go in it and hand it in "
+                   "again." if refused else
+                   "It is on the person's page now. Show them its criteria and checks too; their own words agreeing "
+                   "give the go: `auto_decompose(plan=path, user_said=<their words>)`.")}
+    return _shown(engine, out)
 
 
 def holds_its_work(engine: Engine) -> bool:
@@ -2153,8 +2178,9 @@ def yours_to_write(engine: Engine, request: str) -> dict:
     return {"yours": True, "text": YOURS.format(goal=goal),
             "say": "No model writes this plan: you hold the work, so its criteria are yours, written with the person. "
                    "Fill `text`: each thing they asked for as a criterion with its check, nothing they did not ask; a "
-                   "piece one session carries has no parts. Show the person the criteria and checks, and give the go "
-                   "with their own words agreeing: `auto_decompose(plan=<the filled text>, user_said=<their words>)`. "
+                   "piece one session carries has no parts. Hand it in, `plan(plan=<the filled text>)`: it goes on "
+                   "the person's page and says what the go would refuse. Show them the criteria and checks; their own "
+                   "words agreeing give the go: `auto_decompose(plan=<its path>, user_said=<their words>)`. "
                    "The system then fixes those checks in the graph before any work, and a validator other than you "
                    "signs the root against them. `plan(request, model=...)` has the system write it instead."}
 
@@ -2238,7 +2264,9 @@ def _the_go(engine: Engine, plan: str, request: str, spec) -> tuple[str, dict]:
     """The goal and the plan a plan file holds, for the go — refused beside a second plan or another goal."""
     if spec is not None:
         raise ValueError("auto_decompose: pass the plan file (`plan`) or a spec (`spec`), not both")
-    p = _artifact.parse(_planning.text_of(plan))
+    p = _artifact.parse(text := _planning.text_of(plan))
+    if ((at := _kept.written(engine.project_name)) or {}).get("text") != text:
+        _shown(engine, {"path": str(_planning.kept(text))})     # …a go on a text not shown is shown, as it is built
     if (request or "").strip() and request.strip() != p["goal"].strip():
         raise ValueError("auto_decompose: `request` differs from the goal the plan file answers — the go builds "
                          "the plan for its own goal; leave `request` out, or plan the new goal anew")

@@ -9,6 +9,7 @@ criteria grew from 3 asked."""
 from __future__ import annotations
 
 import dataclasses
+import json
 import subprocess
 import time
 
@@ -160,3 +161,29 @@ def test_an_accepted_challenge_on_the_root_is_the_persons_too(no_model):
         PERSONS_WORDS.reset(token)
     e.wait_idle()
     assert e.graph.get_task(root.id).spec.criteria[0].check[0].command == "seq 2 | wc -l"
+
+
+def test_the_filled_file_is_on_the_page_before_the_go(no_model):
+    """«юзер видит задумку сходу»: the file a solo chat filled reached the system only at its go, and the person's page
+    (`written_plan`, GET /api/plan) showed nothing before. Handed in through the plan door, it shows as a written plan."""
+    e = _engine(Mode.SOLO)
+    told = []
+    real = e.emit_info
+    e.emit_info = lambda kind, msg, *a, **k: (told.append(kind), real(kind, msg, *a, **k))[1]
+    text = _filled(TL.plan(e, ASKED)["text"])
+    out = TL.plan(e, plan=text)
+    assert out["refused_by_the_go"] == [] and "plan_written" in told and not e.all_tasks(), out
+    shown = TL.written_plan(e.project_name)
+    assert shown["goal"] == ASKED and shown["root_criteria"] == ["counts"] and shown["refused_by_the_go"] == [], shown
+    built = TL.auto_decompose(e, plan=out["path"], user_said="да")
+    assert built["root_id"] == "root" and json.loads(e.graph.setting("at_the_go"))["user_said"] == "да"
+
+
+def test_a_go_on_a_text_not_shown_is_shown_as_it_is_built(no_model):
+    e = _engine(Mode.SOLO)
+    text = _filled(TL.plan(e, ASKED)["text"])
+    TL.plan(e, plan=text)
+    other = text.replace('description = "prints the line count"', 'description = "prints how many lines it read"')
+    assert other != text
+    TL.auto_decompose(e, plan=other, user_said="да")
+    assert TL._kept.written(e.project_name)["text"] == other
