@@ -45,7 +45,9 @@ def test_get_verdict_says_it_too(no_model):
     e, _ = _validating()
     out = TL.TOOLS["get_verdict"](e, "root")
     _asks_the_person(out.get("say", ""))
-    assert NOTE in out["say"]
+    # …the lines in the read's own fields, its `say` the ask pointing at them: repeated whole in `say`, a reading counted
+    # twice and outside the read's bound (critic over 4708aa9)
+    assert "`per_criterion`" in out["say"] and all(NOTE in p["evidence"] for p in out["per_criterion"])
 
 
 def test_an_auto_root_is_not_the_persons_to_sign_here():

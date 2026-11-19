@@ -41,7 +41,7 @@ from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_n
 
 from gfso.config import (
                          PIPELINE_PAGE, USAGE_PAGE, LIMIT_RETRY_S,
-                         MODEL_DEFAULT, agent_id as _config_agent_id, caller_via,
+                         MODEL_DEFAULT, VERDICT_FIELD_CHARS, agent_id as _config_agent_id, caller_via,
                          state_timeout as _config_state_timeout)
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
                     resolved_on_current_version, on_current_version)
@@ -827,7 +827,7 @@ class Engine:
         (`verdicts.outside_of_this_delivery`); [] with no verdict on it yet."""
         return outside_of_this_delivery(self._storage, TaskId(str(task_id)), self.current_exec_verdict(TaskId(str(task_id))))
 
-    def persons_verdict(self, task_id) -> str:
+    def persons_verdict(self, task_id, lines: bool = True) -> str:
         """Where signing `task_id` is the person's — a root under `solo` or `semi`, its issuer being them (§10.1) — what
         their agent is told wherever it reads the sign-off owed: show them the validator's verdict on each criterion with
         its notes, ask, and sign with their words. "" elsewhere. One owner: a client read "you sign" on every text but
@@ -841,15 +841,27 @@ class Engine:
         # criterion the go adds last was the first a cap dropped (two critics over a8c6035 / 0bbc8b3, fresh client K_2)
         rows = sorted((e for e in rec.get("per_criterion") or () if isinstance(e, dict)),
                       key=lambda e: e.get("criterion") != INTENT)
-        seen = [f"{e.get('criterion')}: {e.get('verdict')}" + (f" ({e.get('evidence')})" if e.get("evidence") else "")
-                for e in rows]
+        # …each line on one line and bounded far above any measured (833 chars of 140), its cut said with the read that
+        # gives it whole: unbounded, a client's own `| tail` kept the signal line and dropped the reading (critic, 4708aa9)
+        def one(text, whole):
+            """`text` on one line, past the bound cut and `whole` named as the read that gives it all."""
+            text = " | ".join(str(text).splitlines())
+            return text if len(text) <= VERDICT_FIELD_CHARS else f"{text[:VERDICT_FIELD_CHARS]}… (cut: {whole} reads it whole)"
+        seen = []
+        for e in rows:
+            name, said = e.get("criterion"), e.get("evidence")
+            seen.append(f"{name}: {e.get('verdict')}"
+                        + (f" ({one(said, f'`get_verdict {t.id} criterion={name}`')})" if said else ""))
         # …and what it saw beyond them, with what it saw it on: no criterion failed on it, so it is theirs to weigh — a
         # client shown the criteria alone signed over "x.tar.gz is counted as .gz" without telling them (s23g1)
-        beyond = [o["what"] + (f" ({o['evidence']})" if o.get("evidence") else "")
+        beyond = [one(o["what"] + (f" ({o['evidence']})" if o.get("evidence") else ""), f"`get_verdict {t.id}`")
                   for o in outside_of_this_delivery(self._storage, t.id, rec)]
         more = lambda n, cap: f"; and {n - cap} more — `get_verdict {t.id}` reads them all" if n > cap else ""
+        if not lines:      # …where the read carries the lines itself (`get_verdict`): the ask alone, not them twice
+            seen, beyond = [], []
         return (f"The verdict on '{t.id}' is the person's: show them the validator's verdict on each criterion"
-                + (f" — {'; '.join(seen[:12])}{more(len(seen), 12)}" if seen else " (the step that asks for it names each)")
+                + (f" — {'; '.join(seen[:12])}{more(len(seen), 12)}" if seen else
+                   " (`per_criterion` and `outside` here)" if not lines else " (the step that asks for it names each)")
                 + (f" — and what it saw outside the criteria, none of it a failed criterion: {'; '.join(beyond[:4])}"
                    f"{more(len(beyond), 4)}" if beyond else "")
                 + f" — ask them, and sign with their own words: `signal {t.id} PASS|FAIL user_said=<their words>`, or "

@@ -898,7 +898,7 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
     _what_there_is_to_decide_with(engine, task_id, out, _trimmed, _keep)
     _bound_the_read(out, task_id, _trimmed, _keep)
     return {**out, **({"say": theirs} if out.get("verdict") and out["state"] == "VALIDATING"
-                      and (theirs := engine.persons_verdict(TaskId(task_id))) else {})}
+                      and (theirs := engine.persons_verdict(TaskId(task_id), lines=False)) else {})}
 
 
 def return_finding(engine: Engine, task_id: str, finding: str, why: str, agent: str = "") -> dict:

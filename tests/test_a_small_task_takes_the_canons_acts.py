@@ -253,7 +253,7 @@ def test_the_person_hears_the_whole_reading_and_what_it_rests_on(chat, monkeypat
     e, repo, call, _ = chat
     caveat = "the pinned check's expect is a paraphrase, so this verdict rests on my own probes, not on that expect"
     reading = "f.txt says v1 as the person asked; " * 12 + caveat
-    seen = {"what": "v1 has no trailing newline in the spec", "evidence": "printed with od -c: 'v' '1' '\n'"}
+    seen = {"what": "v1 has no trailing newline in the spec", "evidence": "ran od -c f.txt\nit printed v 1 and a newline"}
     monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, [seen], {INTENT: reading}))
     _set_up(call, repo)
     call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
@@ -262,4 +262,20 @@ def test_the_person_hears_the_whole_reading_and_what_it_rests_on(chat, monkeypat
     ended = call("wait", seconds=60)
     told = " ".join(s["directive"] for s in ended["steps"] if s.get("mine"))
     assert reading in told, "the reading against the person's words reaches them cut"
-    assert seen["what"] in told and seen["evidence"] in told, "an observation reaches them without what it was seen on"
+    assert seen["what"] in told and "ran od -c f.txt | it printed v 1 and a newline" in told, \
+        "an observation reaches them without what it was seen on, or split over lines a client's own cut parts"
+    assert "\n" not in told, "a line cut of the step could part a reading from its signal line"
+
+
+def test_a_reading_past_its_bound_says_where_it_is_whole(chat, monkeypatch):
+    """Unbounded, a 50 KB reading made a 193 KB step a client's own `| tail` cut to the signal line (critic, 4708aa9)."""
+    e, repo, call, _ = chat
+    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, [], {INTENT: "x" * 50000}))
+    _set_up(call, repo)
+    call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
+    _worked(repo)
+    call("signal", "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
+    call("wait", seconds=60)
+    told = e.persons_verdict("root")
+    assert len(told) < 6000 and f"(cut: `get_verdict root criterion={INTENT}` reads it whole)" in told, told[-300:]
+    assert "x" * 100 not in TL.TOOLS["get_verdict"](e, "root").get("say", ""), "the verdict read repeats its own lines"
