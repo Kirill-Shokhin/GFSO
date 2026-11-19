@@ -1877,7 +1877,6 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
     gate (`PinsOnTheBase`), or that none ran; and, to a chat performing the work itself, where it goes on."""
     if plan is None:
         return {}
-    _kept.given(engine.project_name, _planning.text_of(plan))     # …this file's go given: the page reads `given_at`
     out, said = ({"open_at_the_go": left} if (left := open_at_the_go(plan)) else {}), str(user_said).strip()
     if reviewed(plan):
         engine.reviewed_in_its_file(root_id)
@@ -2529,6 +2528,19 @@ def _shown(engine: Engine, out: dict, spec: Optional[dict] = None) -> dict:
     return out
 
 
+def _given_at(engine: Optional[Engine], at: dict) -> Optional[float]:
+    """When a go was given on the plan file last written — read off what the go itself records, no flag of its own (ui
+    critic: a flag read "not given" on every record written before it, and a re-handed text reset it): the root heard
+    this text at a go (`hear(root, "plan", …)`), or the file is older than the root, its go having made it. None: the
+    file awaits its go."""
+    root = engine and engine.graph.get_task(TaskId(ROOT_ID))
+    if root is None:
+        return None
+    text = "\n".join(x for x in at["text"].splitlines() if not x.lstrip().startswith("#"))
+    heard = any(h.get("act") == "plan" and str(h.get("said", "")).strip() == text.strip() for h in engine.heard_on(root.id))
+    return at["at"] if heard or at["at"] <= root.created_at.timestamp() else None
+
+
 def written_plan(project, engine: Optional[Engine] = None) -> dict:
     """The plan file last written for `project`, as its page shows it before the go (`GET /api/plan`); {} for none.
     With its `engine`, the criteria the go adds (`with_the_intent`) among its own, marked `added_at_the_go`."""
@@ -2541,7 +2553,7 @@ def written_plan(project, engine: Optional[Engine] = None) -> dict:
         return {}
     spec, r = (with_the_intent(engine, p["spec"]) if engine else p["spec"]), p["review"]
     added = {c["name"] for c in (added_at_the_go(engine, p["spec"]) if engine else ())}
-    return {"path": at["path"], "written_at": at["at"], "given_at": at.get("given_at"), "goal": p["goal"],
+    return {"path": at["path"], "written_at": at["at"], "given_at": _given_at(engine, at), "goal": p["goal"],
             "executor": p["executor"],
             "parts": [{"id": s["id"], "name": s.get("name", ""), "description": s.get("description", ""),
                        "criteria": [c["name"] for c in s.get("criteria") or ()],

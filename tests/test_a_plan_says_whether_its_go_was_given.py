@@ -18,3 +18,20 @@ def test_the_go_marks_its_file_and_a_new_file_starts_unmarked(no_model):
     assert TL.written_plan(e.project_name, e)["given_at"] is not None
     TL.plan(e, plan=text.replace("prints the line count", "prints the count of lines"))
     assert TL.written_plan(e.project_name, e)["given_at"] is None
+
+
+def test_the_same_text_handed_in_again_after_its_go_reads_given(no_model):
+    e = _engine(Mode.SOLO)
+    text = _filled(TL.plan(e, ASKED)["text"])
+    TL.auto_decompose(e, plan=text, user_said="да, делай")
+    TL.plan(e, plan=text)                                      # …re-handed: the go took this text
+    assert TL.written_plan(e.project_name, e)["given_at"] is not None
+
+
+def test_a_file_older_than_the_root_reads_given_with_no_record_of_its_text(no_model):
+    """A record written before the go recorded the plan's text (an older engine): the root, made by the go, is younger."""
+    e = _engine(Mode.SOLO)
+    text = _filled(TL.plan(e, ASKED)["text"])
+    TL.auto_decompose(e, plan=text, user_said="да, делай")
+    e._storage.store_setting(f"heard_on:{TL.ROOT_ID}", "[]")
+    assert TL.written_plan(e.project_name, e)["given_at"] is not None
