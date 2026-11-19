@@ -9,7 +9,7 @@ import {label, closureNote, contested, MODES, terminal, delivered, modelName, ca
 import {GAP, at, busyNow, PROC_KIND} from './run.js';
 import {dur, trim, cap, pct, stamp, clockAt, spoken} from './fmt.js';
 import {rootOf, isRoot, depths} from './tree.js';
-import {askInPage, act} from './overlays.js';
+import {askInPage, act, notice} from './overlays.js';
 
 const named = id => taskOf(id).name ? `${taskOf(id).name} (${id})` : id;
 
@@ -152,12 +152,15 @@ const OTHER = [['solo'], ['solo', 'in_chat'], ['semi'], ['semi', 'in_chat'], ['a
 const changes = m => !signsAs().length ? [] : OTHER.filter(([x, p = 'dispatch']) => x !== m?.mode || p !== (m?.perform || 'dispatch'))
     .map(([x, p]) => `<button class="hq-mode"${data({action: 'set-mode', mode: x, ...(p ? {perform: p} : {})})}>${x}${p ? ', in chat' : ''}</button>`);
 export async function setMode(d) {
+    let said = '';
     const to = `${d.mode}${d.perform ? ', in chat' : ''}`;
     return await askInPage(`Change who holds this project's work to <b>${esc(to)}</b>? It governs nodes issued after it; `
         + `a node already issued keeps its holder. Signed as <b>${esc(S.me?.name || '')}</b>.`, {yes: 'Change'})
         // …a SEMI boundary set by hand goes with a change that stays SEMI: sent without it, the plan's middle replaced it (critic)
         && act(post('/api/run/set_mode', {mode: d.mode, ...(d.perform ? {perform: d.perform} : {}),
-            ...(d.mode === 'semi' && S.graph.mode?.mode === 'semi' && S.graph.mode.boundary != null ? {boundary: S.graph.mode.boundary} : {})}), {what: `To ${to}`, ok: null});
+            ...(d.mode === 'semi' && S.graph.mode?.mode === 'semi' && S.graph.mode.boundary != null ? {boundary: S.graph.mode.boundary} : {})})
+            // …a yes may say something to the person (`say`: live nodes kept a short deadline the new mode would not give) — told
+            .then(r => r.clone().json().then(b => (said = b?.say || '', r), () => r)), {what: `To ${to}`, ok: () => said && notice(said)});
 }
 // '' when the switch moved — the page then re-reads its header (main.js); signed by the page's session, `via` telling it from a console
 const switchRun = (verb, body) => act(post(`/api/run/${verb}`, body), {ok: null});
