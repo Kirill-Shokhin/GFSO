@@ -52,6 +52,15 @@ def test_off_where_the_system_holds_the_root_unless_set(no_model):
     assert TL.intent_check(e)
 
 
+def test_the_mode_read_says_the_switch_in_force_set_or_not(no_model):
+    """The page reads the mode: a key left unset must still say what the go will do (ui, 11-19)."""
+    solo, auto = _engine(Mode.SOLO), _engine(Mode.AUTO)
+    assert solo.mode()["intent_check"] is TL.intent_check(solo) is True, solo.mode()
+    assert auto.mode()["intent_check"] is False and "intent_check" not in (auto.mode().get("settings") or {})
+    TL.set_mode(solo, intent_check=False, user_said="не проверяй замысел")
+    assert solo.mode()["intent_check"] is False
+
+
 def test_the_switch_turns_only_on_the_persons_words(no_model):
     e = _engine(Mode.SOLO)
     out = TL.set_mode(e, intent_check=False)

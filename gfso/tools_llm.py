@@ -2274,12 +2274,8 @@ INTENT_CRITERION = {
 
 
 def intent_check(engine: Engine) -> bool:
-    """Does the go of a plan add `answers_the_persons_words` (`set_mode(intent_check=)`)? Unset: where the person holds
-    the root's work — solo or semi, performed in their chat — where nothing but the person's reading stands between
-    their words and the written criteria (the author, 2026-11-19: «галочкой в ui и по умолчанию»)."""
-    if v := engine.graph.setting("intent_check"):
-        return v == "1"
-    return engine.mode_kind() in (Mode.SOLO, Mode.SEMI) and (engine.mode() or {}).get("perform") == "in_chat"
+    """Does the go of a plan add `answers_the_persons_words`? The engine's one reading (`Engine.intent_check`)."""
+    return engine.intent_check()
 
 
 def with_the_intent(engine: Engine, spec: dict, root_id: str = ROOT_ID) -> dict:

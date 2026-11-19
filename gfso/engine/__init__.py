@@ -553,7 +553,18 @@ class Engine:
         settings table, as they stand: a copy kept in the record went stale (no mode → a switch → a mode)."""
         rec = _project_mode(self._graph)
         return rec and {**{k: v for k, v in rec.items() if k != "settings"},
-                        **({"settings": s} if (s := self.settings()) else {})}
+                        **({"settings": s} if (s := self.settings()) else {}),
+                        "intent_check": self.intent_check(rec)}
+
+    def intent_check(self, rec: Optional[dict] = None) -> bool:
+        """Does a go on a goal's root add `answers_the_persons_words` (`set_mode(intent_check=)`)? Unset: where the person
+        holds the root's work — solo or semi, performed in their chat — where nothing but the person's reading stands
+        between their words and the written criteria (the author, 2026-11-19: «галочкой в ui и по умолчанию»). The value
+        in force, set or not: the page shows it as it acts."""
+        if v := self._storage.get_setting("intent_check"):
+            return v == "1"
+        rec = rec if rec is not None else _project_mode(self._graph)
+        return self.mode_kind() in (Mode.SOLO, Mode.SEMI) and (rec or {}).get("perform") == "in_chat"
 
     def settings(self) -> dict:
         """What the project sets for itself (`set_mode`'s settings) as it stands; unset ones are the server's."""
