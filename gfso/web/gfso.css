@@ -599,7 +599,12 @@ body.deck-drag .deck { position: absolute; left: 0; right: 0; bottom: 0; z-index
 .cy-fold .acc, .cy-fold .acc .tally b { color: var(--acc); }
 .cy-fold.kf { position: static; display: inline-block; border-top: 1px solid var(--ink-soft); border-radius: 6px; }
 .cy-live { width: 9px; height: 9px; border-radius: 50%; background: var(--bg); border: 2px solid var(--ink-soft); }
-.cy-live.on { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); animation: tl-pulse var(--pulse) ease-in-out infinite; }
+.cy-live.on { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); animation: cy-beat var(--pulse) ease-in-out infinite; }
+/* the in-work mark beats but never fades out: at .45 it read as nothing from the top (the author, 2026-11-19) */
+@keyframes cy-beat { 50% { opacity: .75; } }
+/* a part's tag says the work taken inside it in words, on a line of its own under its count, in the accent */
+.cy-fold-work { display: block; margin-top: 3px; color: var(--acc); font-weight: 600; }
+.cy-fold-work::after { content: none; }
 .tl .tl-wait { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-caption); font-style: italic; }
 
 /* ============ Overlays (js/overlays.js) — the page's own notice, question and banners ============ */
