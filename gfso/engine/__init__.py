@@ -64,7 +64,7 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          issuing_condition, rule_refusal, signer_refusal, whole_waits_for_its_parts,
                          parts_outside_the_delivery as _parts_outside_the_delivery, mode_kind, party_kind, is_auto_root,
                          displaces_a_refutation, observation_blocker,
-                         fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here,
+                         fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here, held_in_chat as _held_in_chat, CHECK_REQUIRED,
                          session_fit as _session_fit, scope_top as _scope_top,
                          scope_members as _scope_members, split_owed as _split_owed,
                          deferral_refused as _deferral_refused, split_waits_on as _split_waits_on,
@@ -3192,6 +3192,28 @@ class Engine:
     def fits_one_session(self, task_id: TaskId) -> bool:
         """Does one executor session carry this node's whole subtree (`validation.fits_one_session`)?"""
         return _fits_one_session(self._graph, task_id)
+
+    def held_in_chat(self, task_id: TaskId) -> bool:
+        """Is this node the person's agent's own, worked in its chat (`validation.held_in_chat`)?"""
+        t = self._graph.get_task(task_id)
+        return t is not None and _held_in_chat(self._graph, t)
+
+    def require_check(self, task_id: TaskId, required: bool, author: AgentId, said: str) -> list:
+        """Make the instrument observe every delivery of `task_id` — its PASS then standing on that record — or lift
+        it: the issuer's setting (§10.2), on the person's words, heard over the goal. The ids it now holds."""
+        if (t := self._graph.get_task(task_id)) is None:
+            raise ValueError(f"task {task_id} not found")
+        if str(author) != str(self._graph.issuer_of(task_id)):
+            raise ValueError(f"'{author}' is not the issuer of {task_id}: whether its check binds is its issuer's "
+                             f"setting — '{self._graph.issuer_of(task_id)}' (§10.2)")
+        held = [i for i in json.loads(self._storage.get_setting(CHECK_REQUIRED) or "[]") if i != str(task_id)]
+        held += [str(task_id)] if required else []
+        self._storage.store_setting(CHECK_REQUIRED, json.dumps(held))
+        root = t
+        while (p := self._graph.get_parent(root.id)) is not None:
+            root = p
+        self.hear(root.id, "check", said, node=str(task_id), required=bool(required))
+        return held
 
     def observed_here(self, task_id: TaskId) -> bool:
         """Does the instrument observe this node's deliveries (`validation.observed_here`)?"""

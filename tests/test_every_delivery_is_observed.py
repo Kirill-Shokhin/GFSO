@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import gfso.tools as T
+import gfso.tools_llm as TL
 from gfso.api.server import create_app
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.engine.verdicts import observations
@@ -39,7 +40,9 @@ def _observed(monkeypatch):
     monkeypatch.delenv("GFSO_VALIDATE_INTERNAL", raising=False)
 
 
-def _solo_delivered_kid(mode=Mode.SOLO):
+def _solo_delivered_kid(mode=Mode.SOLO, required=True):
+    """…its check made binding by the person where `required`: under solo the person's agent holds every node, so below
+    the root's seam a part self-verifies unless they make its check a must (the author, 2026-11-20)."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     e.project_name = "p"
@@ -47,6 +50,8 @@ def _solo_delivered_kid(mode=Mode.SOLO):
         e.set_mode(mode, None, AgentId("user"))
     _split(e)
     e.wait_idle()
+    if required:
+        e.require_check(TaskId("kid"), True, AgentId("user"), "проверяй эту часть каждый раз")
     for s in ("ACCEPT",):
         T.signal(e, "root", s, "user")
         T.signal(e, "kid", s, "user")
@@ -328,4 +333,22 @@ def test_the_page_reads_many_verdicts_at_once_with_each_nodes_own_answers():
             assert many[i] == {**c.get(f"/api/tasks/{i}/verdict").json(), "history": c.get(f"/api/tasks/{i}/verdicts").json()}
         assert many["kid"]["verdict"] and many["kid"]["history"], many
         assert "nosuch" not in many and c.post("/api/verdicts", json=[]).json() == {}
+    e.stop()
+
+
+def test_under_solo_a_part_whose_check_the_person_did_not_bind_closes_on_its_holders_self_check():
+    """Below the root's seam a part of the person's agent self-verifies (§10.3): no seam, no appointed observer owed."""
+    e = _solo_delivered_kid(required=False)
+    assert not e.observed_here(TaskId("kid")) and e.observed_here(TaskId("root"))
+    assert T.signal(e, "kid", "PASS", "user")["state"] == "DONE"
+    e.stop()
+
+
+def test_binding_a_check_is_the_persons_words_and_the_issuers_act():
+    e = _solo_delivered_kid(required=False)
+    assert TL.require_check(e, "kid", agent="user").get("refused"), "a check made binding with no word of the person's"
+    assert TL.require_check(e, "kid", user_said="проверяй", agent="someone").get("refused"), "by one not its issuer"
+    assert TL.require_check(e, "kid", user_said="проверяй", agent="user")["required"] and e.observed_here(TaskId("kid"))
+    assert not T.signal(e, "kid", "PASS", "user").get("accepted"), "a bound check's PASS stood on the self-check"
+    assert TL.require_check(e, "kid", False, user_said="хватит", agent="user") and not e.observed_here(TaskId("kid"))
     e.stop()

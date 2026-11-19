@@ -487,7 +487,33 @@ def observed_here(graph: Graph, task) -> bool:
     is no longer a direct contact-check (§3.7). Inside a scope, no: the scope's validation at its top runs
     every criterion inside it, and a validation per piece bought only a wait for each (a 2.6-minute task
     took 39 to 70). `GFSO_VALIDATE_INTERNAL=1` observes every delivery, for measurement."""
-    return graph.is_public(task) or not within_a_scope(graph, task) or _validate_internal()
+    return (graph.is_public(task) or not (within_a_scope(graph, task) or held_in_chat(graph, task))
+            or check_required(graph, task) or _validate_internal())
+
+
+#: the nodes whose every delivery the person made the instrument observe (`Engine.require_check`)
+CHECK_REQUIRED = "check_required"
+
+
+def check_required(graph: Graph, task) -> bool:
+    """Did the person make this node's check binding — the instrument observes each delivery and its PASS stands on that
+    record — where no seam would have it observed? An implementation's own check at any node (§10.2), set by its issuer:
+    as the kit's critic is called on a piece of work, and made a must where the person says so (the author, 2026-11-20)."""
+    return str(task.id) in json.loads(graph._storage.get_setting(CHECK_REQUIRED) or "[]")
+
+
+def held_in_chat(graph: Graph, task) -> bool:
+    """Is this node the person's agent's own, worked in its chat — `solo`/`semi` performed `in_chat`, its Del the root's?
+    That agent is one scope whatever the size: no session of the system carries it, so no κ of one cuts it, and below
+    the root's seam its nodes self-verify (§10.3), the root's validation running their pinned checks over the result
+    (`parts_procedure`). Read as a scope of sessions, every part of a solo chat's plan was observed apart — a seam at
+    every node where the canon has one at the root (the author, 2026-11-20: «У соло все задачи кроме корня без шва»)."""
+    if ((project_mode(graph) or {}).get("perform")) != "in_chat":
+        return False
+    root = task
+    while (p := graph.get_parent(root.id)) is not None:
+        root = p
+    return str(task.assignee or "") == str(root.assignee or "")
 
 
 def observation_binds(graph: Graph, task) -> bool:

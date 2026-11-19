@@ -279,3 +279,52 @@ def test_a_reading_past_its_bound_says_where_it_is_whole(chat, monkeypatch):
     told = e.persons_verdict("root")
     assert len(told) < 6000 and f"(cut: `get_verdict root criterion={INTENT}` reads it whole)" in told, told[-300:]
     assert "x" * 100 not in TL.TOOLS["get_verdict"](e, "root").get("say", ""), "the verdict read repeats its own lines"
+
+
+def test_a_solo_chats_parts_self_verify_and_the_root_alone_is_observed(chat):
+    """Under solo the person's agent holds every node; below the root's seam its parts self-verify (§10.3) and the
+    root's validation runs their pinned checks. Read as a scope of the system's sessions, every part was observed apart
+    (the author, 2026-11-20: «У соло все задачи кроме корня без шва»)."""
+    e, repo, call, _ = chat
+    _set_up(call, repo)
+    call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
+    crit = e.graph.get_task(TaskId("root")).spec.criteria
+    check = [{"behaviour": "f.txt read", "command": "cat f.txt", "expect": "v1"}]
+    TL.TOOLS["decompose"](e, "root", [
+        {"task_id": "root.a", "assignee": "user", "covers": [c.name for c in crit],
+         "spec": {"description": "write f.txt", "criteria": [{"name": "a1", "description": "f.txt says v1", "check": check}]}}],
+        accepted_risks=[{"item": "the split's claim", "justification": "one part", "p": 0.1, "impact": "re-split",
+                         "invalidation_condition": "the root fails over it", "denial": True}])
+    e.wait_idle()
+    assert not e.observed_here(TaskId("root.a")) and e.observed_here(TaskId("root")), "a part of the chat's is observed apart"
+    _worked(repo)
+    call("signal", "root.a", "ACCEPT", "user")
+    call("signal", "root.a", "DELIVER", "user", result="f.txt written; `cat f.txt` printed v1", self_validation="PASS")
+    e.wait_idle()
+    assert e.current_exec_verdict(TaskId("root.a")) is None or e.current_exec_verdict(TaskId("root.a"))["validator"] != "p-val"
+    passed = call("signal", "root.a", "PASS", "user")
+    assert passed["accepted"], passed
+    call("signal", "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
+    ended = call("wait", seconds=60)
+    assert ended.get("needs_you") and e.current_exec_verdict(TaskId("root"))["validator"] == "p-val", ended
+    assert call("signal", "root", "PASS", "user", user_said=ACCEPTED)["accepted"]
+
+
+def test_the_chat_calls_the_check_of_its_own_part_whenever_it_wants(chat):
+    """As the kit's critic is called on a piece of work: the chat's own check of a part with no seam (§10.2)."""
+    e, repo, call, _ = chat
+    _set_up(call, repo)
+    call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
+    crit = e.graph.get_task(TaskId("root")).spec.criteria
+    TL.TOOLS["decompose"](e, "root", [
+        {"task_id": "root.a", "assignee": "user", "covers": [c.name for c in crit],
+         "spec": {"description": "write f.txt", "criteria": [{"name": "a1", "description": "f.txt says v1",
+                                                              "check": [{"behaviour": "f.txt read", "command": "cat f.txt", "expect": "v1"}]}]}}],
+        accepted_risks=[{"item": "the split's claim", "justification": "one part", "p": 0.1, "impact": "re-split",
+                         "invalidation_condition": "the root fails over it", "denial": True}])
+    _worked(repo)
+    call("signal", "root.a", "ACCEPT", "user")
+    call("signal", "root.a", "DELIVER", "user", result="f.txt written", self_validation="PASS")
+    e.wait_idle()
+    out = TL.TOOLS["validate_result"](e, "root.a")
+    assert not out.get("internal") and (e.current_exec_verdict(TaskId("root.a")) or {}).get("validator"), out

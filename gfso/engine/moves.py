@@ -27,6 +27,7 @@ DOOR_KEYS = {
     "decompose": ("parent_id", "split"), "auto_decompose": ("root_id", "split"),
     "signal": ("task_id", "signal"),
     "validate_result": ("task_id", "issuer"), "edit_scope": ("task_id", "issuer"),
+    "require_check": ("task_id", "issuer"),
     "review_decomposition": ("task_id", "split"),
     "add_dependency": ("to_id", "issuer"), "remove_dependency": ("to_id", "issuer"),
     # the roster names no node: under AUTO re-staffing the validator is a move on the work, below it is free
@@ -69,7 +70,7 @@ SIGNERS = {"signal": ("source",), "record_verdict": ("reviewer",), "stop_project
            **{v: (SIGNER,) for v in ("revise", "edit_accepted_risks", "edit_criteria", "set_mode", "reopen",
                                      "rule_unrun_finding", "return_finding", "decompose", "reassign", "map_criterion",
                                      "add_dependency", "remove_dependency", "dispute_finding", "create_task",
-                                     "edit_scope")}}
+                                     "edit_scope", "require_check")}}
 
 #: the verbs that change nothing a party answers for — the rest are moves, refused to a call no credential signs
 #: verbs that write nothing and make no project — what a call no credential names may still call. `probe_inputs` is
