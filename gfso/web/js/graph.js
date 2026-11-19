@@ -92,6 +92,7 @@ export async function initGraph() {
                 'shape': 'round-rectangle', 'text-wrap': 'wrap', 'text-max-width': '140px'}},
             // the choice is an OUTLINE: a border moved the arrows' ends, and in ink it vanished on a dark node (author, 2026-10-25)
             {selector: 'node:selected', style: {'outline-width': 2, 'outline-color': ACC, 'outline-offset': 3}},
+            {selector: 'node.chosen-in', style: {'outline-width': 2, 'outline-color': ACC, 'outline-offset': 3}},   // a chosen part gathered into it
             {selector: 'edge', style: {
                 'width': 1, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
                 'line-color': inkAlpha(0.30), 'target-arrow-color': inkAlpha(0.30), 'arrow-scale': 0.7}},
@@ -125,7 +126,10 @@ export async function initGraph() {
     // cytoscape selects the node — the border showed, the panel stayed, and the next redraw took the border back
     // (author, 2026-10-25: «то срабатывают сразу то только через повторное нажатие»; reproduced with a 4 px move).
     // …and its hover tip goes: it repeats what the panel the click opens says, over it (audit E3)
-    cy.on('select', 'node', evt => { untip(); point('select', evt.target.id()); });
+    cy.on('select', 'node', evt => {
+        // «N closed» is no node of the graph: a press names its parts (the tap's tip, kept: an untip here wiped it — critic)
+        if (isClosedGroup(evt.target.id())) { evt.target.unselect(); return; }
+        untip(); point('select', evt.target.id()); });
     // …and a tap on the node already selected picks it again: its row in the deck, scrolled away, is brought back
     cy.on('tap', 'node', evt => evt.target.id() === focus().select && rebring());
     // …and a finger's tap anywhere on the canvas is a tap elsewhere: a tip a deck view showed does not stay over the panel
@@ -143,9 +147,11 @@ export async function initGraph() {
     cy.on('mouseout', 'edge', () => untip());
     // …a finger's tap on a fold's tag passes to the canvas (an arrow under it said its meaning over the move): not an arrow's
     cy.on('tap', 'edge', evt => TOUCH.matches && !pressed?.id && edgeTip(evt));
+    // …a press on «N closed» names its parts where it was pressed (a select carries no pointer)
+    cy.on('tap', 'node.closed-group', evt => { const g = groupsDrawn[evt.target.id()], o = evt.originalEvent?.changedTouches?.[0] ?? evt.originalEvent; if (g && o) tip(groupTip(g), o); });
     cy.on('mouseover mousemove', 'node', evt => {
-        const t = taskOf(evt.target.id());
-        if (t.id) tip(nodeTip(t), evt.originalEvent);
+        const t = taskOf(evt.target.id()), g = groupsDrawn[evt.target.id()];
+        if (t.id) tip(nodeTip(t), evt.originalEvent); else if (g) tip(groupTip(g), evt.originalEvent);
     });
     // what another view points at is pointed at here too — and a node chosen there is brought into sight here
     watch((st, key) => {
@@ -157,8 +163,12 @@ export async function initGraph() {
         // graph's own tap did not — two logics (the author, 2026-11-17). Its part is gone to on a second press (`bring`) or
         // the panel's «Show it on the graph»
         if (key === 'bring' && st.select && isHidden(st.select)) { goTo(taskOf(st.select).parent_id); return; }
-        if (st.select) cy.getElementById(st.select).select();
-        if ((key === 'select' || key === 'bring') && st.select) { fresh = false; inSight(cy.getElementById(st.select)); }
+        // …a part gathered into «N closed» lights its group, kept in sight (critic: a chosen gathered part was nowhere)
+        const at = st.select && (groupOf(st.select) || st.select);
+        if (at) cy.getElementById(at).addClass('chosen-in');
+        cy.nodes('.chosen-in').filter(n => n.id() !== at).removeClass('chosen-in');
+        if (st.select && !groupOf(st.select)) cy.getElementById(st.select).select();
+        if ((key === 'select' || key === 'bring') && at) { fresh = false; inSight(cy.getElementById(at)); }
     });
     // the marks ride the canvas: moved in the very frame it draws, redrawn only when what they say changes (the author, 11-04: a tag redrawn a frame
     // behind on every render «пересовывается рывками»). A render with the view unchanged is news about the nodes.
@@ -369,18 +379,56 @@ export const annotate = () => { if (cy?.nodes().length && fresh) home(); placeBa
 // The canvas height the drawn graph needs for its labels to read (zoom ≈ 0.8), framing included.
 export const graphNeeds = () => cy && cy.nodes().length ? cy.elements().boundingBox().h * 0.8 + 70 : 0;
 
+// CLOSED PARTS IN ONE: the parts of a node that are settled (done, or cancelled) and ask nothing stand as one node «N closed»
+// once there are CLOSED_AT of them — a row of them stood beside the work and would only grow (the author, 2026-11-19: «уже
+// закрытые задачи сейчас в ряд стоят и более того впоследствии будут мешать»). The record keeps each where it closed (no act
+// moves a settled node, §11.5); the view gathers them. What asks stays drawn: a PASS its record contradicts, a node closed by
+// FAIL, one with live parts inside (critic). The group never unfolds in place — that re-laid the whole graph, refused by the
+// author 11-15 — its parts are named in its tip and on a press, and a chosen part lights its group.
+const CLOSED_AT = 3;
+const settled = s => s === 'DONE' || s === 'ABANDONED';
+const closedId = p => `closed:${p}`;
+export const isClosedGroup = id => String(id).startsWith('closed:');
+let gathered = {};                                   // a gathered part's id → its group's id, as last drawn
+export const groupOf = id => gathered[id];
+function gatherClosed(nodes, rep) {
+    // what asks, the node's own or a part's folded inside it, keeps the node drawn: a live part, a contested PASS, a node
+    // closed by FAIL, a PASS by hand on what the system holds (`handAsks`, its dotted border the only signal) — critic 2
+    const up = ancestorsIn(nodes), asks = new Set();
+    const asking = n => !settled(n.state) || contested(n.closure || {}) || closedByFail(n) || (n.closure?.by_hand && handAsks(n));
+    for (const n of nodes) if (asking(n)) [n.id, ...up(n.id)].forEach(a => asks.add(a));
+    const quiet = n => !asks.has(n.id);
+    const kids = {}, groups = [];
+    gathered = {};
+    for (const n of nodes) if (n.parent_id && rep[n.id] === n.id && quiet(n)) (kids[n.parent_id] ??= []).push(n);
+    // …top down, a gathered part taking its whole subtree: closed parts under a group hung off it, one by one or as a second
+    // group (critic 3); nothing that asks is under a quiet part, since what asks marks every ancestor
+    for (const [p, xs] of Object.entries(kids).sort(([a], [b]) => up(a).length - up(b).length)) {
+        if (xs.length < CLOSED_AT || p in gathered) continue;
+        const into = new Set(xs.map(n => n.id)), id = closedId(p);
+        for (const k of Object.keys(rep)) if (into.has(rep[k]) || up(k).some(a => into.has(a))) { rep[k] = id; gathered[k] = id; }
+        groups.push({id, parts: xs});
+    }
+    return groups;
+}
+const groupTip = g => card(`${g.parts.length} closed`, g.parts.map(n => `${nameOf(n)} — ${stateWord(n).toLowerCase()}`));
+let groupsDrawn = {};
+
 // The nodes standing under the fold as it is, and their edges; what could not be drawn is returned.
 function place(g) {
-    const rep = foldInto(g.nodes);
+    const rep = foldInto(g.nodes), groups = gatherClosed(g.nodes, rep);
     cy.elements().remove();
     const tomb = new Set(g.nodes.filter(cancelled).map(n => n.id));
     for (const n of g.nodes.filter(n => rep[n.id] === n.id))
         cy.add({data: {id: n.id, label: readableLabel(nameOf(n)), state: n.state, ...closureStyle(styleOf(n.state), n.closure, n)},
                 classes: [tomb.has(n.id) && 'cancelled', n.outside && 'outside'].filter(Boolean).join(' ') || undefined});
+    groupsDrawn = Object.fromEntries(groups.map(k => [k.id, k]));
+    for (const k of groups)
+        cy.add({data: {id: k.id, label: `${k.parts.length} closed`, state: 'DONE', ...styleOf('DONE')}, classes: 'closed-group'});
     // ONE BAD EDGE MUST NOT COST THE WHOLE PICTURE: a dangling edge threw before the layout ran and
     // left fifteen nodes stacked at the origin (2026-09-06). Draw what can be drawn, SAY what cannot.
     // an edge into a folded part is drawn to the node it is folded into — once, and never inside one fold
-    const ids = new Set(g.nodes.map(n => n.id)), undrawable = [], seen = new Set();
+    const ids = new Set(g.nodes.map(n => n.id)), undrawable = [], seen = new Set();   // …a gathered part's edges go to its «N closed»
     for (const e of g.edges) {
         if (!ids.has(e.source) || !ids.has(e.target)) { undrawable.push(e); continue; }
         const source = rep[e.source], target = rep[e.target], k = `${source}>${target}>${e.type}`;
