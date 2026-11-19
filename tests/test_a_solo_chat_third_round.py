@@ -124,3 +124,34 @@ def test_a_stale_queued_run_names_what_moved():
     t = e.graph.get_task(root.id)
     D.Dispatcher._fresh(types.SimpleNamespace(_engine=e), root.id, generation_of_task(t), ("DONE",))
     assert told and f"its state is {t.state.name}, not DONE" in told[-1] and "generation" not in told[-1], told
+
+
+def test_the_work_held_by_a_linked_worktree_is_named_with_the_move_that_works(no_model, tmp_path):
+    """`git switch gfso/p/work` at the top fails while a linked worktree holds the branch (rc 128): the notice names
+    the move that works — a detached checkout, or the worktree removed first — and that move does work."""
+    e = _engine(Mode.SOLO)
+    git, start = _repo(tmp_path)
+    git("worktree", "add", "-q", "-b", "gfso/p/work", str(tmp_path / "wt"))
+    git(*IDENT, "commit", "-q", "--allow-empty", "-m", "work", at=tmp_path / "wt")
+    said = TL.not_the_work(e, str(tmp_path), start)
+    assert "git switch --detach gfso/p/work" in said and "remove that worktree" in said, said
+    git("switch", "-q", "--detach", "gfso/p/work")
+    assert git("rev-parse", "HEAD") == git("rev-parse", "gfso/p/work")
+
+
+def test_a_root_passed_from_the_page_says_the_way_back_on_the_feed(no_model, tmp_path, monkeypatch):
+    git, _ = _repo(tmp_path)
+    git("switch", "-q", "-c", "gfso/p/work")
+    e = _engine(Mode.SOLO)
+    _gone(e, _filled(TL.plan(e, ASKED)["text"]))
+    _started(e, "")
+    monkeypatch.setattr(D, "validator_workdir", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(TL._tools, "signal", lambda *a, **k: {"accepted": True})
+    told = []
+    e.emit_info = lambda kind, msg, *a, **k: told.append(msg)
+    token = CALLER.set(Principal("user", ("user",), "session", "a page", "local"))
+    try:
+        TL.signal(e, "root", "PASS", "user")
+    finally:
+        CALLER.reset(token)
+    assert any("git switch main" in m for m in told), told

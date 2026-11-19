@@ -2015,8 +2015,9 @@ def not_the_work(engine: Engine, place, commit: str) -> str:
         return ""
     there = W.git(place, "rev-parse", "--verify", "-q", f"refs/heads/{wb}^{{commit}}").stdout.strip()
     return (f"delivered: commit {commit[:12]}, what {place} stands on ({f'`{on}`' if on else 'a detached HEAD'}), not "
-            f"`{wb}`" + (f", which stands at {there[:12]}: if your work is there (a linked worktree), check it out at "
-                         f"{place} and deliver again" if there and there != commit else "")
+            f"`{wb}`" + (f", which stands at {there[:12]}: if your work is there, `git switch --detach {wb}` at {place} "
+                         f"(a branch a linked worktree holds cannot be checked out twice — or remove that worktree "
+                         f"first, then `git switch {wb}`), and deliver again" if there and there != commit else "")
             + ". The judge reads this commit.")
 
 
@@ -3273,6 +3274,8 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
     out = _tools.signal(engine, task_id, signal, source, **kw)
     if out.get("accepted") and sig == "PASS" and (back := back_to_their_branch(engine, tid)):
         said["say"] = back
+        # …and on the feed: signed from the person's page, the PASS's answer goes to the page, and the chat hears it there
+        engine.emit_info("verdict", f"{tid}: {back}")
     if out.get("accepted"):
         keep()
     return {**out, **said} if said and out.get("accepted") else out
