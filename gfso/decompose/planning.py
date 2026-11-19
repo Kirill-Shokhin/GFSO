@@ -50,7 +50,7 @@ def author(request: str, model: str, executor: str = "", depth: int = 1, review_
                                         llm=llm, progress=back, executor=executor, pins=pins)
     spec = _asked_kept(extract_spec(e, str(res.root_id)), res.spec)
     return artifact.render(request, spec, back.into(_review(e, res.root_id, review_model or model, execution, ledger,
-                                                            beyond=beyond_said(spec, request),
+                                                            beyond=beyond_said(spec, request, True),
                                                             pins=pins.review(spec)), spec), executor=executor)
 
 
@@ -161,11 +161,12 @@ def _asked_kept(spec: dict, *authored: dict) -> dict:
     return spec
 
 
-def beyond_said(spec: dict, request: str) -> list[str]:
+def beyond_said(spec: dict, request: str, unasked: bool = False) -> list[str]:
     """Each criterion of `spec` the request (with the customer's notes) does not ask, as the plan file says it: the
-    system's own requirement, not the person's (`decompose.beyond_the_request`). Never a gate."""
+    system's own requirement, not the person's (`decompose.beyond_the_request`), one with no `asked` too where the
+    system wrote it now (`unasked`). Never a gate."""
     return [f"{n} / {c.get('name')}: {c.get('description', '')[:200]}"
-            for n, c in _decompose.beyond_the_request(spec, request)]
+            for n, c in _decompose.beyond_the_request(spec, request, unasked)]
 
 
 def _exact_kept(before: dict, after: dict) -> dict:

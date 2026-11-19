@@ -9,8 +9,10 @@ stranger's run 57 min.
 
 CONTROLS: make `beyond_the_request` return [] and the rule tests go red; read `asked` without `_words` and the quote
 with other quotes and spacing is flagged; drop `_beyond` from `_repaired_before_build`'s list and the repair is never
-told; drop `agree.on` from it and a customer's plan is repaired against the request alone; drop `_asked_kept` in
-`planning.author` and the file says nothing; drop `unasked` from the answer and the person is not told."""
+told; drop `agree.on` from it and a customer's plan is repaired against the request alone; read the caller's request
+there for `_reference` and a deferred split's honest parts are flagged; skip a criterion with no `asked` written now and
+the invented one passes unsaid; drop the ё fold and Russian quotes are flagged; drop `_asked_kept` in `planning.author`
+and the file says nothing; drop `unasked` from the answer and the person is not told."""
 from types import SimpleNamespace
 
 import pytest
@@ -85,19 +87,51 @@ def test_a_plan_the_system_did_not_write_from_the_request_alone_is_not_repaired_
     assert told == [] and [c["name"] for c in spec["root_criteria"]] == ["top", "utf8"]
 
 
+def _told(monkeypatch, spec, task, request="", root_goal=None):
+    """What `_repaired_before_build`'s first round tells the repairer of `spec`, written now from `task` (`agree.on`)."""
+    told = []
+    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {})
+    monkeypatch.setattr(D, "root_of", lambda tasks: root_goal and SimpleNamespace(spec=SimpleNamespace(
+        description=root_goal)))
+    agree = D._Agreement(None, make_engine(), "root.count", task, True, False)
+    monkeypatch.setattr(agree, "judge", lambda s: None)
+    D._repaired_before_build(spec, request, None, "", None, False, agree)
+    return [x for x in (told[0] if told else ()) if "states nothing the request asks" in x]
+
+
+def test_a_deferred_split_reads_its_criteria_against_its_contract_and_the_roots_goal(monkeypatch):
+    """`auto_decompose(root_id=<node>)` comes with no request: its parts quote the node's contract or the person's goal."""
+    contract = "count: counts each word of the text once."
+    spec = _plan_of(_crit("each", "counts each word"), _crit("top", "most frequent words"), _crit("utf8", "in UTF-8"))
+    assert [x.split(":")[0] for x in _told(monkeypatch, spec, contract, root_goal=GOAL)] == ["root / criterion utf8"]
+
+
+def test_a_criterion_the_system_writes_now_with_no_words_named_is_its_own(monkeypatch):
+    """The measured 3→9: an invented criterion names no words at all. Written now it is beyond the request; in a file of
+    before it is not read."""
+    assert [x.split(":")[0] for x in _told(monkeypatch, _plan_of(ASKED, _crit("locale")), GOAL)] == [
+        "root / criterion locale"]
+    assert D.beyond_the_request(_plan_of(_crit("locale")), GOAL) == []
+
+
+def test_yo_reads_as_ye():
+    assert not D.beyond_the_request(_plan_of(_crit("ru", "Еще — счетчики")), "Ещё — счётчики слов, по одному.")
+
+
 def test_what_the_rounds_leave_is_in_the_plan_file_and_the_answer_says_it_as_the_systems(monkeypatch, no_model):
     """Through the authoring verb: the repair left the invented criterion, the file keeps each `asked`, its review names
     the criterion as the system's own, and the plan's answer tells the client to name it to the person."""
     monkeypatch.setattr(D, "_audit_fix", lambda *a, **k: {})
-    monkeypatch.setattr(D, "decompose_spec", lambda *a, **k: _plan_of(ASKED, UTF8))
+    monkeypatch.setattr(D, "decompose_spec", lambda *a, **k: _plan_of(ASKED, UTF8, _crit("bare")))
     text = planning.author(GOAL, "m")
     p = artifact.parse(text)
-    assert {c["name"]: c.get("asked") for c in p["spec"]["root_criteria"]} == {"top": ASKED["asked"], "utf8": ""}
-    (line,) = p["review"][planning.BEYOND]
-    assert line.startswith("root / utf8"), line
+    assert {c["name"]: c.get("asked") for c in p["spec"]["root_criteria"]} == {"top": ASKED["asked"], "utf8": "",
+                                                                                 "bare": None}
+    lines = p["review"][planning.BEYOND]
+    assert [x.split(":")[0] for x in lines] == ["root / utf8", "root / bare"], lines
     out = TL._plan_written(text)
-    assert out[planning.BEYOND] == [line]
-    assert "1 criterion(s) state nothing their request asks" in out["say"] and "system's own" in out["say"], out["say"]
+    assert out[planning.BEYOND] == lines
+    assert "2 criterion(s) state nothing their request asks" in out["say"] and "system's own" in out["say"], out["say"]
 
 
 def test_a_customers_note_asks_too(monkeypatch, no_model):

@@ -142,31 +142,40 @@ def _criterion(c: dict) -> Criteria:
 
 
 def _words(text: str) -> str:
-    """`text` as words alone — case, punctuation, quote and dash forms and spacing dropped — framed by spaces."""
-    return " " + " ".join(_NON_WORD.split(unicodedata.normalize("NFKC", text).casefold())).strip() + " "
+    """`text` as words alone — case, ё/е, punctuation, quote and dash forms and spacing dropped — framed by spaces."""
+    folded = unicodedata.normalize("NFKC", text).casefold().replace("ё", "е")
+    return " " + " ".join(_NON_WORD.split(folded)).strip() + " "
 
 
 _NON_WORD = re.compile(r"[\W_]+")
 
 
-def beyond_the_request(spec: dict, request: str) -> list[tuple[str, dict]]:
+def beyond_the_request(spec: dict, request: str, unasked: bool = False) -> list[tuple[str, dict]]:
     """[(node, criterion)] of `spec` whose `asked` — the request's words it says it states — is not in `request`, each
     part between `…` found there as written: no model reads it. A goal's criteria are the person's, and a capability
     outside the goal's scope is absent from it (§2.2); one demanding beyond what the goal needs lies in the goal's
     setting (§6.7), and the system that wrote it is its author (the author, 11-04: «есть исходные критерии а есть
-    придуманные походу»). A criterion with no `asked` (a plan file of before, a hand-written one) is not read."""
+    придуманные походу»). A criterion with no `asked` is beyond it where the system wrote it now (`unasked`) — an
+    invented one names no words; in a plan file of before, or a hand-written one, it is not read."""
     said = _words(request)
-    return [(node, c) for node, crits in _nodes(spec) for c in crits if "asked" in c and not (
+    return [(node, c) for node, crits in _nodes(spec) for c in crits if ("asked" in c or unasked) and not (
         (parts := [w for x in re.split(r"…|\.\.\.", str(c.get("asked") or "")) if (w := _words(x)).strip()])
         and all(w in said for w in parts))]
 
 
+def _reference(agree: "_Agreement") -> str:
+    """What a split's criteria may quote: the text it is written from (`agree.task`) and the project's goal as the
+    person gave it — a deferred split is written from its node's contract, its parts finer forms of the root's words."""
+    root = root_of(agree.engine.all_tasks())
+    return agree.task + (f"\n\n{root.spec.description}" if root is not None else "")
+
+
 def _beyond(spec: dict, request: str) -> list[str]:
-    """The repairer's line for each criterion of `spec` the request does not ask (`beyond_the_request`)."""
+    """The repairer's line for each criterion of `spec`, written now, the request does not ask (`beyond_the_request`)."""
     return [f"{node} / criterion {c.get('name')}: states nothing the request asks — its `asked` "
             f"({str(c.get('asked') or '')[:200]!r}) is not words of the request. The goal's criteria are the person's: "
             f"quote the request's words it states; or make it the form of the criterion whose words it serves; or "
-            f"remove it, with every check that demands it" for node, c in beyond_the_request(spec, request)]
+            f"remove it, with every check that demands it" for node, c in beyond_the_request(spec, request, True)]
 
 
 #: why a host project's pins are read and not run before the go (`PinsOnTheBase.review`)
@@ -470,7 +479,7 @@ def _repaired_before_build(spec: dict, request: str, llm, executor: str, progres
         if not (refused := admission_refusals(spec, contract_fixed) + agree.repair()
                 + (pins.flags(spec, contract_fixed) if pins and not closed else [])
                 # …only where the request alone is what the system writes from (`agree.on`): a customer's note asks too
-                + (_beyond(spec, request) if agree.on else [])):
+                + (_beyond(spec, _reference(agree)) if agree.on else [])):
             break
         if closed:
             # …THE USER'S PLAN IS NOT REPAIRED BEHIND HIS BACK: the go called a model and patched a handed-in plan the
