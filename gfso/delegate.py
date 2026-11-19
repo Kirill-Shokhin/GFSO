@@ -995,9 +995,10 @@ class Dispatcher:
                 f"{s['task_id']}: delivered and checked by its holder, not the validator — below the "
                 f"seam a node self-verifies (§10.3), its guarantee carried by the validation of the "
                 f"result above it. Its issuer ({self._engine.graph.issuer_of(TaskId(s['task_id']))}) "
-                f"signs PASS/FAIL; `validate_result` checks it first when asked, and "
-                f"`set_checker('{s['task_id']}', 'validator')` on the person's words has the validator "
-                f"check every delivery.")
+                f"signs PASS/FAIL"
+                + ("; `validate_result` checks it first when asked" if self._engine.held_in_chat(task.id) else "")
+                + (f"; `set_checker('{s['task_id']}', 'validator')` on the person's words has the validator "
+                   f"check every delivery" if self._engine.checker_choosable(task.id) else "") + ".")
 
     def _say_it_waits_for_its_children(self, s: dict, task) -> None:
         """Say, once per open set, which children a delivered parent is still aggregating."""

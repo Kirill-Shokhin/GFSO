@@ -52,7 +52,8 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 - `set_checker(task_id, checker, user_said)`: who checks a part below the root's seam is its issuer's choice — `self`,
   its holder, or `validator`, observing its every delivery, its PASS standing on that record — on the person's words;
   the signature is the issuer's either way (§10.2). Where the instrument is owed — a seam, or the top of a scope no
-  one session carries — a staffed validator always checks; each node serves `checker`, who checks it now.
+  one session carries — a staffed validator always checks; the choice is made under a mode. Each node serves `checker`,
+  who checks it now: `validator`, `self`, or `independent` at a seam no validator observes (a verdict not its executor's).
 - `set_mode(..., workdir=)` registers the project's validator where it has none, and on the agent door `project=`
   enters that project: a small solo in_chat task takes the canon's acts — set_mode, the plan asked and handed in, the
   go, DELIVER, `gfso wait`, the person's PASS — and no call beside them.
@@ -62,7 +63,7 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 - A dependency is declared or removed only by its consumer's issuer — the holder of its parent's split (§11.5) — at
   every door, every refusal read before anything is written; a revision's edges are written once its ASSIGN took.
 - Under solo and semi in_chat a part the person's agent holds self-verifies below the root's seam (§10.3): the
-  validator observes the root, running the parts' pinned checks, and a part only where its check was made binding;
+  validator observes the root, running the parts' pinned checks, and a part only where its issuer chose the validator;
   `validate_result` checks one whenever the agent asks.
 - DELIVER starts the validation of an observed node by itself and says how its end is waited; the step that asks the
   person to sign carries each criterion's reading — the one against their words first — and what the validator saw

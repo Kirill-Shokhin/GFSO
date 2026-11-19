@@ -171,7 +171,8 @@ class NodeSteps:
                        f". Read it with `get_verdict {t.id}`, then signal "
                        + (f"{Verdict.FAIL} with those criteria." if _f else f"{Verdict.PASS}."))
                     + (" `validate_result` checks it first if you want it checked."
-                       if str(_rec.get("validator") or "") == str(t.assignee or "") else
+                       if str(_rec.get("validator") or "") == str(t.assignee or "") and self.engine.held_in_chat(t.id)
+                       else "" if str(_rec.get("validator") or "") == str(t.assignee or "") else
                        " Validating it again would validate the same artifact twice."))
             return cand
         # …and the ISSUER's own share of the same fact: a criterion that has failed round

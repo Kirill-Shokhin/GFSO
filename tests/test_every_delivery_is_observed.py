@@ -370,14 +370,18 @@ def test_who_checks_is_read_on_the_node():
 
 
 def test_at_a_seam_who_checks_is_no_choice():
-    """A part another executor holds is a seam: the validator checks every delivery there whatever its issuer says, so
-    the choice is neither offered nor taken — a box that toggled nothing read «otherwise by you», false (ui's critic)."""
+    """A part another executor holds is a seam: with no validator observing it, its PASS needs a verdict not its
+    executor's (§10.3), so it reads "independent", never "self" (second critic); under a mode the validator checks every
+    delivery there whatever its issuer says, so the choice is neither offered nor taken (ui's critic)."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     e.project_name = "p"
     _split(e, executor="exec-1")
     e.wait_idle()
-    assert T.get_task(e, "kid")["checker"] == "self", "no mode staffs a validator: its holder's self-check closes it"
+    assert T.get_task(e, "kid")["checker"] == "independent", "a seam none observes: a verdict not its executor's"
+    assert not T.signal(e, "kid", "ACCEPT", "exec-1").get("refused")
+    T.signal(e, "kid", "DELIVER", "exec-1", result="ran `check k`: OK", self_validation="PASS")
+    assert not T.signal(e, "kid", "PASS", "user").get("accepted"), "the seam's PASS stood on the executor's self-check"
     assert "set_checker" not in T.available_actions(e, "kid", agent="user")["moves"]
     e.set_mode(Mode.SOLO, None, AgentId("user"))
     assert T.get_task(e, "kid")["checker"] == "validator"
@@ -388,13 +392,14 @@ def test_at_a_seam_who_checks_is_no_choice():
 
 
 def test_with_no_mode_the_validator_checks_where_one_is_registered(tmp_path):
-    """No mode: with no validator staffed the holder's self-check closes a node, and the choice cannot be made — said
-    as that, not as a seam; once a validator is registered it observes every delivery by itself and its FAIL holds
-    the PASS, so the node says the validator checks it (critic over the chooser: it said "self" there)."""
+    """No mode: with no validator staffed the holder's self-check closes a node; once a validator is registered it
+    observes every delivery by itself and its FAIL holds the PASS, so the node says the validator checks it (critic over
+    the chooser: it said "self" there). The choice is made under a mode only: with none no PASS waits for a chosen
+    validator's record, and the reply said it would (second critic)."""
     e = _solo_delivered_kid(mode=None, required=False)
     assert T.get_task(e, "kid")["checker"] == "self"
     r = TL.set_checker(e, "kid", user_said="проверяй", agent="user")
-    assert r.get("refused") and "no validator is staffed" in r["error"], r
+    assert r.get("refused") and "under a mode" in r["error"], r
     agents = _agents(tmp_path, ("p-val", "llm-validator"))
     agents._agents["p-val"]["project"] = "p"
     _dispatch_validate(e, agents, {"verdict": "FAIL", "failed_criteria": ["k"], "per_criterion": [
@@ -403,7 +408,7 @@ def test_with_no_mode_the_validator_checks_where_one_is_registered(tmp_path):
     assert T.get_task(e, "kid")["checker"] == "validator"
     assert not T.signal(e, "kid", "PASS", "user").get("accepted")
     r = TL.set_checker(e, "kid", "self", user_said="сам", agent="user")
-    assert r.get("refused") and "a scope no one executor session carries" in r["error"], "named a seam it is not"
+    assert r.get("refused") and "under a mode" in r["error"], "a choice no PASS would wait on"
     e.stop()
 
 
@@ -411,3 +416,17 @@ def test_the_choice_is_offered_where_it_exists():
     e = _solo_delivered_kid(required=False)
     assert T.available_actions(e, "kid", agent="user")["moves"].get("set_checker") == "user"
     e.stop()
+
+
+def test_the_sign_off_offers_a_check_only_where_the_check_is_taken():
+    """`validate_result` checks a part the person's chat holds; inside a scope one session carries it is refused, and
+    the sign-off offered it there on every self-verified delivery (second critic over 3d28080)."""
+    def _step(e):
+        return next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid")["directive"]
+    chat = _solo_delivered_kid(required=False)
+    assert "validate_result" in _step(chat)
+    chat.stop()
+    bare = _solo_delivered_kid(mode=None, required=False)
+    assert "SIGN THE VERDICT" in _step(bare), "control: the sign-off step it is about"
+    assert "validate_result" not in _step(bare)
+    bare.stop()

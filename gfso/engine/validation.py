@@ -494,11 +494,11 @@ def observed_here(graph: Graph, task) -> bool:
 def owed_observer(graph: Graph, task) -> Optional[str]:
     """Why the instrument observes this node whatever its issuer chooses — None where who checks is his choice."""
     if graph.is_public(task):
-        return "a seam: its result crosses into another scope (§10.3)"
+        return "it is a seam: its result crosses into another scope (§10.3)"
     if _validate_internal():
         return "this installation observes every delivery (GFSO_VALIDATE_INTERNAL=1)"
     if not (within_a_scope(graph, task) or held_in_chat(graph, task)):
-        return "the top of a scope no one executor session carries, where the system's validation stands (§3.7)"
+        return "it is the top of a scope no one executor session carries, where the system's validation stands (§3.7)"
     return None
 
 
@@ -609,7 +609,7 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
                         + ("it is a root its own executor issued: nothing above carries its verdict, so the "
                            "product's own check stands behind it (§10.2, §10.3)"
                            if task.parent_id is None and graph.issuer_of(task.id) == task.assignee else
-                           "it is " + why if (why := owed_observer(graph, task)) is not None else
+                           why if (why := owed_observer(graph, task)) is not None else
                            "its issuer chose the validator to check it (§10.2, `set_checker`)")
                         + "; the executor's own self-check is evidence, not the observation, and a hand "
                           "record binds only from the node's issuer where he is not its executor"),

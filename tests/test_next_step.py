@@ -349,3 +349,12 @@ def test_a_signal_reply_names_the_signers_own_step_before_anothers():
     out = T.signal(e, "b", "ACCEPT", "ub")
     assert "'b'" in out["next"] and "EXECUTE" in out["next"] and "next_is_mine" not in out, out
     e.stop()
+
+
+def test_a_signal_reply_keeps_a_next_that_names_no_node(monkeypatch):
+    """A frontier answer naming no node — the graph working, stuck, joining — raised in the reply after "yours first"
+    and the door swallowed it: the signal came back with no `next` at all (second critic over 3d28080)."""
+    e = make_engine(check_interval=10_000)
+    monkeypatch.setattr(e, "next_step", lambda *a, **k: {"complete": False, "directive": "Nothing to take right now"})
+    monkeypatch.setattr(e, "next_steps", lambda *a, **k: {"complete": False, "steps": []})
+    assert T.next_for(e, "ub", about="b") == {"next": "Nothing to take right now"}

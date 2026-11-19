@@ -1365,7 +1365,7 @@ def graph_read(engine: Engine) -> dict:
               "closure": engine.closure_of(t.id),
               # …and who checks its deliveries where the validator does (a seam, or its issuer's choice), as the page
               # draws its box; absent, its holder self-verifies
-              **({"checker": "validator"} if engine.checker(t.id) == "validator" else {}),
+              **({"checker": c} if (c := engine.checker(t.id)) != "self" else {}),
               "parent_id": str(t.parent_id) if t.parent_id else None} for t in tasks]
     edges = [{"source": str(t.parent_id), "target": str(t.id), "type": "parent-child"}
              for t in tasks if t.parent_id]
@@ -2793,7 +2793,7 @@ def next_for(engine: Engine, me: Optional[str], about: Optional[str] = None, ent
     # the caller's own taken work stood unnamed (the dev graph, 2026-11-20); theirs is named only when none is yours
     mine = next((s for s in _mark_mine(engine, engine.next_steps(), me=me).get("steps", []) if s.get("mine")), None)
     nxt = mine or _mark_mine(engine, dict(nxt), me=me)
-    other = about is not None and str(nxt["task_id"]) != str(about)
+    other = about is not None and nxt.get("task_id") and str(nxt["task_id"]) != str(about)
     out = {"next": (f"next on the frontier is '{nxt['task_id']}', not {about}: " if other else "")
                    + nxt["directive"]}
     if not nxt.get("mine", True):

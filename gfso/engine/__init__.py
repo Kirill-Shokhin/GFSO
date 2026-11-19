@@ -3214,9 +3214,9 @@ class Engine:
         if str(author) != str(self._graph.issuer_of(task_id)):
             raise ValueError(f"'{author}' is not the issuer of {task_id}: who checks it is its issuer's choice — "
                              f"'{self._graph.issuer_of(task_id)}' (§10.2)")
-        if not self.validator_staffed():
-            raise ValueError(f"no validator is staffed in this project to check {task_id}: a mode sets one, or "
-                             f"`register_agent(<name>, 'llm-validator')` (§10.2)")
+        if self.mode() is None:
+            raise ValueError(f"who checks {task_id} is chosen under a mode: with none set, no PASS waits for a "
+                             f"validator's record (`set_mode`)")
         if (why := _owed_observer(self._graph, t)) is not None:
             raise ValueError(f"the validator checks every delivery of {task_id}, not its issuer's to choose: {why}")
         held = [i for i in self.validators_chosen() if i != str(task_id)] + ([str(task_id)] if checker == "validator"
@@ -3237,14 +3237,20 @@ class Engine:
         return self.mode() is not None or self.workforce.has_an_instrument()
 
     def checker_choosable(self, task_id: TaskId) -> bool:
-        """Is who checks this node its issuer's to choose — a validator staffed, nothing owing it there (`set_checker`)?"""
+        """Is who checks this node its issuer's to choose — a mode set, so a chosen validator's record gates the PASS
+        (`validation.observation_blocker`), and nothing owing the instrument there (`set_checker`)?"""
         t = self._graph.get_task(task_id)
-        return t is not None and self.validator_staffed() and _owed_observer(self._graph, t) is None
+        return t is not None and self.mode() is not None and _owed_observer(self._graph, t) is None
 
     def checker(self, task_id: TaskId) -> str:
-        """Who checks this node's deliveries now: "validator" where a staffed one observes them, else "self", its
-        holder, whose self-check closes it (§10.3)."""
-        return "validator" if self.validator_staffed() and self.observed_here(task_id) else "self"
+        """Who checks this node's deliveries, read off the gates its PASS meets: "validator" where a staffed one observes
+        each by itself; "independent" at a seam none observes — the PASS needs a verdict not the executor's
+        (`validate_result`, or the issuer's own record, §10.3); else "self", its holder's self-check closing it."""
+        t = self._graph.get_task(task_id)
+        if t is None:
+            return "self"
+        return ("validator" if self.validator_staffed() and self.observed_here(task_id)
+                else "independent" if self._graph.is_public(t) else "self")
 
     def observed_here(self, task_id: TaskId) -> bool:
         """Does the instrument observe this node's deliveries (`validation.observed_here`)?"""
