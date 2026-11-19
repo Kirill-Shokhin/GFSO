@@ -1920,6 +1920,9 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
                f"has passed" if parts else f"DELIVER `{root_id}`")
             + f" (`signal`, your self-check in `result`); a validator other than you observes `{root_id}` against its "
               f"checks and the parts' own, by itself.")
+        # …and the move itself, as every move's reply carries it: the go's alone had none, and a fresh client asked
+        # `next_step` before its DELIVER to learn it (s23g4)
+        out.update(_tools.next_for(engine, _agent_id()))
     return out
 
 

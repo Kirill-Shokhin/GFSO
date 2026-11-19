@@ -2559,9 +2559,9 @@ def signal(engine: Engine, task_id: str, signal: str, source: str,
            external: bool = False, failed_criteria: Optional[list] = None,
            retire_findings: Optional[list] = None, build: Optional[str] = None,
            _recorded: Optional[tuple] = None) -> dict:
-    """Send a raw protocol signal (the lifecycle transaction): ACCEPT / DELIVER / PASS / FAIL / BLOCK /
-    RESOLVE_BLOCK / CHALLENGE / ACCEPT_CHALLENGE / REJECT_CHALLENGE / CANCEL / CONFIRM_CANCEL. The lower-layer
-    primitive. A signal is signed by the call's credential. The
+    """The protocol's signals at their one door (the lifecycle transaction): ACCEPT / DELIVER / PASS / FAIL / BLOCK /
+    RESOLVE_BLOCK / CHALLENGE / ACCEPT_CHALLENGE / REJECT_CHALLENGE / CANCEL / CONFIRM_CANCEL — the move a step names
+    is made here. A signal is signed by the call's credential. The
     FSM validates the ROLE: executor signals require the node's
     Del == you, issuer signals require the parent's Del == you — a node delegated to someone else only
     moves on THEIR signals. DELIVER carries `result` (paths + how each criterion is met — the

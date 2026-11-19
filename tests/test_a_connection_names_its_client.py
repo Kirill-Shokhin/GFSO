@@ -11,6 +11,7 @@ import mcp.server.lowlevel.server as lowlevel
 from mcp.shared.memory import create_client_server_memory_streams, create_connected_server_and_client_session
 
 from gfso import config, doctor, tools_llm as TL
+from gfso.adapters.llm import credentials
 from gfso.mcp import protocol as P
 from gfso.mcp import connect as C
 from gfso.mcp.server import create_server
@@ -201,3 +202,14 @@ def test_a_chat_client_is_refused_the_work_by_its_own_tools_and_told_who_runs_a_
         config.CLIENT.reset(token)
         e.stop()
     assert config.for_the_hands("gfso log") == "run `gfso log`"
+
+
+def test_the_machine_s_step_is_served_done_where_nothing_of_it_is_missing(monkeypatch):
+    """After a client's restart for a credential step 1 still read «once: `gfso doctor`», and it ran doctor a second time
+    over a state that had changed (s23g4): the server reads the credential and the execution at the connection."""
+    monkeypatch.setattr(credentials, "held", lambda: ["claude"])
+    monkeypatch.setattr(P, "executions", lambda: {"default": {}})
+    ready = anyio.run(_initialized, "claude-code").instructions
+    assert "is set up" in ready and "`gfso doctor`. No Docker" not in ready and "2. **The repository.**" in ready
+    monkeypatch.setattr(credentials, "held", lambda: [])
+    assert anyio.run(_initialized, "claude-code").instructions == P.BY_KIND["code"], "a missing credential: as written"

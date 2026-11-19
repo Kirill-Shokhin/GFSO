@@ -686,7 +686,7 @@ def _serve_instructions_by_kind() -> None:
                         kind = _kind(meta.request_context if meta is not None else None, params)
                     except ValueError:      # …its every call refuses the header; the text it reads meanwhile is chat's
                         kind = "chat"
-                    self._init_options.instructions = _PROTOCOL.BY_KIND[kind]
+                    self._init_options.instructions = _PROTOCOL.served(kind)
             return await super()._received_request(responder)
     _lowlevel.ServerSession = KindSession
 

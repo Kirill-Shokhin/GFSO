@@ -104,6 +104,8 @@ def test_a_small_solo_chat_task_reaches_the_persons_pass_in_the_canons_acts(chat
     path = call("plan", plan=filled)["path"]
     go = call("auto_decompose", plan=path, user_said=WORDS)
     assert go["root_id"] == "root" and "DELIVER" in go["say"], go
+    # …and its move named as every move's reply names it: with none, a fresh client asked `next_step` before DELIVER (s23g4)
+    assert "'root'" in go.get("next", "") and "DELIVER" in go["next"], go.get("next")
     _worked(repo)
     delivered = call("signal", "root", "DELIVER", "user", result="f.txt written; `cat f.txt` printed v1",
                      self_validation="PASS")

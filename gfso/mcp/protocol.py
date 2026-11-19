@@ -7,7 +7,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from gfso.config import CLIENT_KINDS
+from gfso.adapters.llm import credentials
+from gfso.config import CLIENT_KINDS, executions
 
 #: Read UNGUARDED: a swallowed OSError handed an agent an empty protocol on a wheel that lacked the file
 #: (tests/test_packaging.py keeps it in the distribution).
@@ -29,6 +30,22 @@ def instructions(kind: str) -> str:
 
 #: every kind's text, by kind — what the session at `initialize` recognises as this server's own
 BY_KIND = {k: instructions(k) for k in CLIENT_KINDS}
+
+#: the machine's step as served where nothing of it is missing: after a client's restart for a credential, step 1 read
+#: «once: `gfso doctor`» over a state that had changed, and the client ran doctor again (s23g4) — the server knows it
+_MACHINE = re.compile(r"(?ms)^1\. \*\*The machine\*\*, once: .*?(?=^2\. )")
+READY = ("1. **The machine** is set up: a model credential is held and an execution declared, read when you "
+         "connected — no `gfso doctor` unless a call says something is missing.\n")
+
+
+def served(kind: str) -> str:
+    """`kind`'s instructions as this connection is served them: the machine's step said done where it is."""
+    text = BY_KIND[kind]
+    try:
+        ready = bool(credentials.held()) and bool(executions())
+    except Exception:       # …an unreadable store or declaration: the step as written, doctor names what is wrong
+        ready = False
+    return _MACHINE.sub(lambda _: READY, text, count=1) if ready else text
 
 
 def reference(section: str = "") -> dict:

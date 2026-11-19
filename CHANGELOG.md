@@ -124,6 +124,9 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 - `next_step` and `next_steps` asked under a node walk only its subtree: on a graph carrying several streams the walk
   covered every node, and the holder of one was handed another's verdict to sign.
 - The reply to a signal names the signer's own next step first; another party's is named only when none is theirs.
+- A client's instructions say the machine is set up where the server holds a model credential and a declared
+  execution, and the go of a plan the person's chat performs names its next move as every move's reply does: a fresh
+  client ran `gfso doctor` again after its restart and asked `next_step` before its DELIVER.
 - A graph people hold with no mode, a live node on the standing agent's name and no executor or validator of its own
   runs on at a server's start: it read «Stopped» after every restart though nothing of the system's runs there. With a
   validator of its own registered, or a live node it issues to another — whose dispute the system answers for it — it
