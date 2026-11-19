@@ -586,23 +586,61 @@ def test_a_node_whose_rows_name_a_worktree_since_removed_still_holds_its_work(re
     assert (got["count"], main in got["commits"], "undecided" in got) == (0, False, False), got
 
 
-def test_what_a_fetch_brought_is_no_work_past_the_system_where_no_reflog_records_it(repo, tmp_path):
-    """`git fetch <url> main` writes no ref's reflog, and `merge --ff-only FETCH_HEAD` logs a merge: the commits came
-    from elsewhere, as FETCH_HEAD says. A pull whose entries expired before any reading is read the same way. CONTROL:
-    FETCH_HEAD not read — the fetched commits are undecided."""
+def test_what_no_transfer_records_is_undecided_never_counted_nor_lost(repo, tmp_path):
+    """Only a transfer brings: a pull, a fetch or a clone a reflog records. `git fetch <url> main` writes no ref's
+    reflog, and `merge --ff-only FETCH_HEAD` logs a merge: no record says the commits were brought nor made here —
+    undecided, never counted and never dropped. A pull whose entries expired before any reading is the same.
+    CONTROL: FETCH_HEAD read as brought — the commits vanish from both counts."""
     _git(tmp_path, "clone", "-q", str(repo), str(up := tmp_path / "up"))
     e = _in_chat(repo)
     _deliver(e)
-    [_commit(up, f"u{i}.txt") for i in range(2)]
+    far = [_commit(up, f"u{i}.txt") for i in range(2)]
     _git(repo, "fetch", "-q", str(up), "main")
     _git(repo, "merge", "-q", "--ff-only", "FETCH_HEAD")
     got = _past(e)
-    assert (got["count"], "undecided" in got) == (0, False), got
-    _commit(up, "u3.txt")
+    assert (got["count"], sorted(got["undecided"]["commits"])) == (0, sorted(far)), got
+    far.append(_commit(up, "u3.txt"))
     _git(repo, "pull", "-q", "--ff-only", str(up), "main")
     _git(repo, "reflog", "expire", "--expire=now", "--all")
     got = _past(e)
-    assert (got["count"], "undecided" in got) == (0, False), got
+    assert (got["count"], sorted(got["undecided"]["commits"])) == (0, sorted(far)), got
+
+
+def _pushed(repo, tmp_path, how):
+    """The person's own push of main — to `origin`, or by its URL and fetched back by it."""
+    if not (bare := tmp_path / "origin.git").exists():
+        _git(tmp_path, "init", "-q", "--bare", str(bare))
+        _git(repo, "remote", "add", "origin", str(bare))
+    if how == "origin":
+        _git(repo, "push", "-q", "origin", "main")
+    else:
+        _git(repo, "push", "-q", str(bare), "main")
+        _git(repo, "fetch", "-q", str(bare), "main")
+
+
+@pytest.mark.parametrize("how", ["origin", "url"])
+def test_the_persons_own_push_brings_nothing(repo, tmp_path, how):
+    """Where a commit sits says nothing of how it came: after the person's own push their work stands on `origin/*`
+    (and in FETCH_HEAD after a fetch by URL), and stays theirs — a commit read as made by hand stays counted, one made
+    in a worktree since removed stays undecided, one whose making entry expired before any reading is undecided.
+    CONTROL: the remotes' refs or FETCH_HEAD read as brought — each vanishes from both counts."""
+    e = _in_chat(repo)
+    _deliver(e)
+    seen = _commit(repo, "seen.txt")
+    _past(e)                                                   # …read while its entry stands
+    _git(repo, "worktree", "add", "-q", "-b", "tmp", str(wt := tmp_path / "wt"))
+    gone = _commit(wt, "gone.txt")
+    _git(repo, "merge", "-q", "--ff-only", "tmp")
+    _git(repo, "worktree", "remove", str(wt))
+    _git(repo, "branch", "-q", "-d", "tmp")
+    _pushed(repo, tmp_path, how)
+    got = _past(e)
+    assert (got["commits"], got["undecided"]["commits"]) == ([seen], [gone]), got
+    late = _commit(repo, "late.txt")
+    _pushed(repo, tmp_path, how)
+    _git(repo, "reflog", "expire", "--expire=now", "--all")    # …before any reading saw it made
+    got = _past(e)
+    assert (got["commits"], sorted(got["undecided"]["commits"])) == ([seen], sorted([gone, late])), got
 
 
 def test_a_pull_in_a_worktree_since_removed_is_undecided_never_past(repo, tmp_path):

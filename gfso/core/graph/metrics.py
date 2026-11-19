@@ -58,6 +58,9 @@ DIAGNOSTIC_MEANS = {
                        "`in_work`: made while a node attached there was taken, that node still taken — the system "
                        "cannot tell there a person's commit from the node's agent's; what the node delivers is in "
                        "the system. `read_from`: the record of hand-made commits begins after the project did. "
+                       "`undecided` ({count, commits}): commits on the person's lines in the window that no record "
+                       "says were made here nor brought by a pull, a fetch or a clone (their worktree removed, their "
+                       "reflog expired before a reading saw them) — said apart, never counted: no value, not a fail. "
                        "Never refused: work outside consent cannot be gated (§16.9); it is counted, as an unrecorded "
                        "decision is a defect (Thm 11).",
     "witnessed": "work past the system as it happened, NOT a quality score: the writes a console's witness "

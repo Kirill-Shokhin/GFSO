@@ -24,8 +24,8 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   expires. Everything the reading needs is kept as it is seen — how each commit was made or brought, the content of
   every commit that carries work, each chat delivery's range at its DELIVER, the repository a reading was taken in —,
   so a worktree removed, a branch deleted, an expired reflog or `gc` changes no reading already taken. A commit no
-  record says was made here nor brought (a pull, a fetch, a remote's ref, a FETCH_HEAD) is said apart as `undecided`,
-  never counted. A chat's ACCEPT and DELIVER record the repository by its main worktree; a file set back to what an
+  record says was made here nor brought (a pull, a fetch or a clone a reflog records — never where it sits: a push
+  puts the person's own work on `origin/*`) is said apart as `undecided`, never counted. A chat's ACCEPT and DELIVER record the repository by its main worktree; a file set back to what an
   older commit left is a change, not a copy of it; a commit in the second its node was delivered is that node's.
 - `gfso witness <project> --install`: a Claude Code hook the person installs in one repository — written into its
   `.claude/settings.local.json`, kept out of git, and recorded in `data/witness.json` as that project working there;

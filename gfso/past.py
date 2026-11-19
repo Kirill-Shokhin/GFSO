@@ -22,9 +22,10 @@ of the system performs reaches the person's repository only through the system's
   recorded it, what its places' deliveries and its landings recorded with what those reach — never a ref by its name
   alone, which any process can write under the system's), by what was made by hand while a node was taken there, or
   by a commit that existed before the project began. Compared by content, never by descent: this repository folds
-  every branch before a push. A commit on those lines no record says was made here nor brought (a pull, a fetch, a
-  clone, a remote's ref, a FETCH_HEAD) — its worktree removed, its branch deleted, its entries expired before a reading
-  saw them — is `undecided`: said apart, never counted;
+  every branch before a push. A commit on those lines no record says was made here nor brought — only a transfer
+  brings: a pull, a fetch or a clone a reflog records, never where a commit sits, as the person's own push puts their
+  work on a remote's ref — (its worktree removed, its branch deleted, its entries expired before a reading saw them)
+  is `undecided`: said apart, never counted and never dropped;
 - by the moment (`witness`): a console's write to the repository while its own principal holds no node attached there,
   filed once as the project's record (`Engine.witnessed`) and said to the agent — the console's hook (`gfso.witness`)
   carries it, installed only by the person.
@@ -356,8 +357,7 @@ def _uncarried(repo, shas, by: dict) -> list:
 def _seen(engine, k, repo, since) -> tuple[dict, dict, set, int]:
     """(the record; {commit: when} made by hand in the repository — git's reflogs of the person's lines —; {commit}
     brought in the window by a pull, a fetch or a clone onto any ref — what the ref did not reach before, all it
-    reaches where the transfer first wrote it —, or standing on a remote's ref or a worktree's FETCH_HEAD; the time
-    the record begins), each the record's as much as git's: what a reading saw stays seen once git forgets it."""
+    reaches where the transfer first wrote it, a push excluded; the time the record begins), each the record's as much as git's: what a reading saw stays seen once git forgets it."""
     rec = {"from": None, "made": {}, "brought": [], "held": [], **json.loads(engine.graph.setting(KEPT + k) or "{}")}
     made, oldest, moves, mine = {}, None, {}, set(_theirs(k))
     for line in _git(repo, "log", "-g", "--date=unix", "--format=%gD %H %gs", *_theirs(k), "--all").splitlines():
@@ -369,18 +369,13 @@ def _seen(engine, k, repo, since) -> tuple[dict, dict, set, int]:
                 if MADE.search(what):
                     made.setdefault(sha, at)
             moves.setdefault(name, {}).setdefault((at, sha), bool(BROUGHT.search(what)))
-    brought = set(_git(repo, "rev-list", "--no-merges", f"--max-age={since}", "--remotes").split())
+    brought = set()
     for line in moves.values():
         line = list(line.items())                                     # …newest first: an entry's old value is the next's
         for ((at, sha), transfer), ((_, was), _) in zip(line, [*line[1:], ((0, None), False)]):
             if transfer and at >= since:
                 brought |= set(_git(repo, "rev-list", "--no-merges", f"--max-age={since}", sha,
                                     *([f"^{was}"] if was else [])).split())
-    fetched = [ln.split()[0] for f in (Path(k) / "FETCH_HEAD", *Path(k).glob("worktrees/*/FETCH_HEAD")) if f.is_file()
-               for ln in f.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
-    if fetched := _there(repo, fetched):
-        brought |= set(_git(repo, "rev-list", "--no-merges", f"--max-age={since}", "--stdin",
-                            input=_lines(fetched)).split())
     start = min((x for x in (rec["from"], oldest) if x is not None), default=since)
     keep = {c: t for c, t in made.items() if t >= since}
     if not (keep.keys() <= rec["made"].keys() and brought <= set(rec["brought"])) or rec["from"] != start:
