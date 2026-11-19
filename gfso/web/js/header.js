@@ -299,6 +299,8 @@ function pastTheSystem() {
     const n = repos.reduce((s, r) => s + r.count, 0);
     const said = [n && `${n} commit${n > 1 ? 's' : ''} outside any node`, seen && `${seen} write${seen > 1 ? 's' : ''} seen outside any node`].filter(Boolean);
     const rows = [...repos.map(r => `${r.count} in ${r.repository}${r.read_from ? ` (its record since ${clockAt(r.read_from * 1e3)})` : ''}${r.commits?.length ? `: ${r.commits.map(c => c.slice(0, 8)).join(', ')}` : ''}`),
+        // …commits no record decides either way: never «past», said apart and never in the count
+        ...(m?.past_the_system || []).filter(r => r.undecided?.count).map(r => `${r.undecided.count} in ${r.repository} not decided by any record: ${(r.undecided.commits || []).map(c => c.slice(0, 8)).join(', ')}`),
         ...(m.witnessed?.last || []).map(w => `${clockAt(at(w.at))} ${w.actor}: ${w.text}`)];
     return `<span class="hd-quiet hd-past"${H.past(rows)}>${said.join(' · ')}</span>`;
 }
