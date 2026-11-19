@@ -246,6 +246,19 @@ export async function initGraph() {
         if (e.type === 'pointerup' && !p.held && Math.hypot(e.clientX - p.x, e.clientY - p.y) < 8) goDown(p.id);
         setTimeout(release, 400); };
     addEventListener('pointerup', ended, true); addEventListener('pointercancel', ended, true);
+    // A FINGER LEFT ON THE GLASS AFTER A PINCH pans by its own move: the library resumed its pan from a stale point and the
+    // graph jumped aside (the author, 11-20: «приближаю туда обратно центр сбивается через раз сдвигается куда то»; a
+    // pinch begun on the background, probe pinch1120.py). Its moves are the page's until every finger is off.
+    let pinched = false, rest = null;
+    const twoOn = e => { if (e.touches.length > 1) { pinched = true; rest = null; from = null; } };
+    addEventListener('touchstart', twoOn, true);
+    addEventListener('touchmove', e => { twoOn(e); if (!pinched || e.touches.length !== 1) return;
+        e.stopPropagation(); const t = e.touches[0];
+        if (rest) cy.panBy({x: t.clientX - rest.x, y: t.clientY - rest.y});
+        rest = {x: t.clientX, y: t.clientY}; }, true);
+    // …from where it stands as the other lifts, so its first move counts too
+    addEventListener('touchend', e => { if (!e.touches.length) { pinched = false; rest = null; }
+        else if (pinched && e.touches.length === 1) rest = {x: e.touches[0].clientX, y: e.touches[0].clientY}; }, true);
     cy.on('dbltap', 'node', evt => opening(evt.target.id()));
     // a press and release in place on the tag: a pan begun on it moves the graph and unfolds nothing (critic 7). Found by where
     // it stands, not by the event's target: under a finger the tag lets every gesture through to the canvas (gfso.css), or a
