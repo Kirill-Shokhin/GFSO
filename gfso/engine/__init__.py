@@ -834,7 +834,7 @@ class Engine:
                                                                else "")
                 for e in rec.get("per_criterion") or () if isinstance(e, dict)]
         return (f"The verdict on '{t.id}' is the person's: show them the validator's verdict on each criterion"
-                + (f" — {'; '.join(seen[:12])}" if seen else f" (`get_verdict {t.id}`)")
+                + (f" — {'; '.join(seen[:12])}" if seen else " (the step that asks for it names each)")
                 + f" — ask them, and sign with their own words: `signal {t.id} PASS|FAIL user_said=<their words>`, or "
                   f"they sign on their page")
 

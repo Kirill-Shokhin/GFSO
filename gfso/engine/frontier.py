@@ -33,6 +33,11 @@ def _ancestors_of_work(tasks) -> set:
     return out
 
 
+#: the step an owed observation of a delivery opens (`observation_blocker` "unobserved") — read by the door that says
+#: whose it is (`tools._mark_mine`)
+OBSERVE = "OBSERVE THIS DELIVERY"
+
+
 def step_role(engine, task: Optional[Task], action) -> str:
     """WHOSE ROLE a step's move is (§12.13, the state's owner) — `issuer` or `executor` — read once for every reader
     (the step's `role` and `signed_by`, `tools._mark_mine`'s owner): validation and a block's ruling are the issuer's,
@@ -129,7 +134,7 @@ class NodeSteps:
                 or _ob["kind"] == "unobserved"):
             return (1, t, Action.VALIDATE,
                     (f"SIGN THE VERDICT on '{t.id}' ({nm}) — FAIL: " if _ob["kind"] == "observed_fail"
-                     else f"OBSERVE THIS DELIVERY of '{t.id}' ({nm}) before any PASS: ")
+                     else f"{OBSERVE} of '{t.id}' ({nm}) before any PASS: ")
                     + f"{_ob['why']}. {_ob['opens_with'][:1].upper()}{_ob['opens_with'][1:]}.")
         # On a SEAM, say what a PASS costs before it is refused. The directive read "signal
         # PASS if every criterion holds" to everyone, including the very executor whose PASS

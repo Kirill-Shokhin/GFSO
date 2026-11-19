@@ -99,6 +99,24 @@ def _session_key(ctx):
         return None
 
 
+def _entered(reg, name: str, ctx) -> None:
+    """The calling session stands in project `name` from now on, every verb defaulting to it — `use_project`'s act, and a
+    `set_mode` naming its project: the setup of a small task in one call (e2e5 G_3). No session: the server's active."""
+    if (key := _session_key(ctx)) is not None:
+        _SESSION_PROJECTS[key] = name
+    else:
+        reg.use(name)
+
+
+def _the_setup_entered(reg, name: str, ctx, out):
+    """A `set_mode` naming its project, recorded: the session enters it (`_entered`), the answer naming it `active` as
+    `use_project`'s does, so it says the page's link too (`_link_and_say`)."""
+    if not isinstance(out, dict) or _T.is_refusal(out):
+        return out
+    _entered(reg, name, ctx)
+    return {**out, "active": name}
+
+
 def _resolver(engine_or_registry):
     """One call surface over both shapes: a bare Engine (tests, single-project) or a ProjectRegistry
     (the server). resolver(project=None, ctx=None) → the engine; precedence: explicit `project`
@@ -212,6 +230,12 @@ def _link_and_say(name: str, out: dict, project, engine) -> None:
             more = f" and {len(said_of) - 5} more" if len(said_of) > 5 else ""
             out["say"] += (f" And what its PASS did not re-run: `get_verdict` of {', '.join(said_of[:5])}{more}, its "
                            "`checks_no_longer_run` and `findings_not_reproduced`.")
+    if name == "set_mode" and out.get("active") and "ui" not in out:
+        # …the setup in one call enters the project, so it says the link `use_project` would have said
+        out["ui"] = link
+        out["say"] = (f"{_link_for_them(link)}it shows the plan, its checks and each verdict; only what is committed "
+                      f"enters." + (f" {out['say']}" if out.get("say") else ""))
+        return
     if name not in _UI_LINK_VERBS or "ui" in out:
         return
     out["ui"] = link
@@ -354,6 +378,8 @@ def _bind(engine_or_registry, fn):
         # every call in flight lost, the bridge reporting a restart that never was (a tester's run, 2026-11-13). The
         # checkpoint delivers the cancellation, which the SDK treats as the duplicate it suppresses.
         await anyio.lowlevel.checkpoint()
+        if multi and project and fn.__name__ == "set_mode":
+            out = _the_setup_entered(engine_or_registry, engine.project_name, ctx, out)
         out = _with_ui_link(fn.__name__, out, project or engine.project_name, engine)
         if multi and not engine_or_registry.exists(engine.project_name):
             return out             # …a refused call unmade the project it made (`kept_if_done`): its engine is closed, no news to read
@@ -554,10 +580,7 @@ def _mount_project_verbs(server, reg) -> None:
         if (key := _session_key(ctx)) is None or not reg.exists(name):   # the server's active one, or a new one
             _a_move_here("making a project or switching the server's active one")
         reg.engine(name)                              # validates the name + creates lazily
-        if key is not None:
-            _SESSION_PROJECTS[key] = name
-        else:                                         # no session (bare transport) → global active
-            reg.use(name)
+        _entered(reg, name, ctx)
         # Switching projects answers "which one am I in now", so it returns that and a short
         # recent list — not the whole registry. Measured on this server: 270 projects plus a
         # full last-active map, several thousand tokens of noise into the caller's context on

@@ -40,14 +40,13 @@ only the model.
 ```
 use_project("<project>")
 for n in (1, 2): register_agent(f"<project>-exec-{n}", "llm-executor", model="claude-haiku-5-5", workdir=W)
-register_agent("<project>-val", "llm-validator", model="claude-haiku-5-5", workdir=W)
-set_mode("auto", system_model="claude-haiku-5-5") # `off`: network={"mode": "off"}
+set_mode("auto", system_model="claude-haiku-5-5", workdir=W) # its validator; `off`: network={"mode": "off"}
 plan(request) # their words, not yours; name the files defining the work
 auto_decompose(plan=path) # the go
 ```
 5. **The plan.** You are its customer, answerable for the result. READ `text` WHOLE, <!-- code -->`path` if none.<!-- chat -->with none, the person opens `path`.<!-- both --> Tell the
 person what its `say` asks. A `refine_plan(plan=path, note)` (`model=` for a stronger author) only for the person's result; the rest goes to them in one line. A refused go names why: that is the note.
-<!-- code -->**`solo` with `perform="in_chat"`** (you do the work): `plan(request)` hands you the file to fill with the person, their asks as criteria with checks, no model writing it; show it, and their words agreeing are the go: `auto_decompose(plan=<text>, user_said=<their words>)`.
+<!-- code -->**`solo`, `perform="in_chat"`** (you do the work): the whole setup is `set_mode("solo", perform="in_chat", workdir=W, project="<project>")`; then `plan(request)`, each answer's `say` the next act: the file filled with the person, their words the go, DELIVER, the validator's verdict told them, their words the PASS.
 <!-- both -->6. **The go.** Say what its `say` asks. An executor on this machine is the person's choice, made on their page:
 never make it yourself.
 7. **The end.** <!-- code -->`gfso wait project=<project>` in the background exits when the run needs you. <!-- chat -->After the
@@ -76,7 +75,7 @@ stall makes another mode look better, tell the person.
 | `semi` | you hold the top of the tree (by default the upper half of its depth, the root alone on a one-level plan; `boundary=k` holds depths 0…k−1), registered executors hold everything below | you author the plan and make the issuer's moves over what you hold; the system executes, validates and makes the issuer's moves below; a goal with no split has nothing below it, so split the root before any work (a root with no split cannot be delivered in semi) |
 | `auto` | the system holds every node, the root included | you are the customer: order the plan, give the go (`plan`, then `auto_decompose(plan=path)` on the empty project) and read its status (`next_steps`, `get_graph`, `get_verdict`); you do not intervene |
 
-Every mode needs a validator in this project (`register_agent("<project>-val", "llm-validator", workdir=W)`), and
+Every mode needs a validator in this project (`set_mode(..., workdir=W)` registers `<project>-val` where it has none), and
 `semi` and `auto` need registered executors too: the system validates at every seam and at the top of every part of
 the plan one session carries, whoever holds the node. `set_mode` says what is missing. Under a mode, a node's Del comes
 from it, and the verbs refuse a move the mode gave to the system. With no mode set, you hold what you create and
@@ -197,8 +196,9 @@ stops with that cause.
    untracked — and the system runs `build` there before any check (left out: `make` where the tree has a
    Makefile at its root, else nothing); a build that fails FAILs the delivery.
    Under a mode the PASS stands on the OBSERVER's record, not on your own word — and the verdict is
-   YOURS: the project's validator observes by itself (or `validate_result(node)` observes this
-   delivery now), and then you, the issuer, read `get_verdict(node)` and signal PASS or FAIL. A divergence the observer recorded is that criterion's value, FAIL
+   YOURS: the project's validator observes by itself from your DELIVER, no call of yours, and the
+   step its verdict opens names each criterion's line (`gfso wait` ends on it); then you, the issuer,
+   signal PASS or FAIL — a root under `solo` or `semi` with the person's own words (`user_said`). A divergence the observer recorded is that criterion's value, FAIL
    (Inv-2) — no later record of yours turns it into a pass. If you hold the observation wrong, FAIL
    the node saying why (your dissent rides in the FAIL), and where the observer's own pinned probe is
    what is wrong, REVISE the criterion to correct it (`edit_criteria`, re-consented) — re-delivering

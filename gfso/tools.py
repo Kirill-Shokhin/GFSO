@@ -32,7 +32,7 @@ from gfso.config import (CALLER, DEFAULT_PROJECT, data_dir as _data_dir, for_the
                          VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE,
                          caller_id as _config_caller_id)
 from gfso.engine import Engine
-from gfso.engine.frontier import step_role
+from gfso.engine.frontier import OBSERVE, step_role
 from gfso.engine.moves import CHECKS, DOOR_KEYS, READS, Move, door_holder, role_holder, signal_role, signer_due
 from gfso.engine.verdicts import OUTSIDE_NOTE
 from gfso.engine.validation import party_kind as _party_kind
@@ -2670,9 +2670,13 @@ def _what_an_ACCEPTED_signal_owes_its_sender(engine: Engine, task_id: str, sig, 
         out["awaiting_verdict"] = (
             # …AND WHERE THE USER'S AGENT HOLDS THE NODE, the observation is the instrument's and the
             # verdict is the agent's: the issuer decides, the validator observes (SOLO/SEMI).
-            ("the project's validator observes this delivery now" if engine.claims.validation_in_flight(TaskId(task_id))
-             else f"the project's validator observes this delivery by itself — or `validate_result {task_id}` "
-                  f"observes it now" if engine.validated_by_instrument(TaskId(task_id)) or engine.workforce.has_an_instrument()
+            # …started by this DELIVER, no call of the chat's: told "or `validate_result` observes it now", a client paid
+            # the same observation twice (e2e5 G_3)
+            (f"the project's validator observes this delivery by itself, from this DELIVER — no call of yours starts "
+             f"it; {how_it_is_waited(engine.project_name, 'its verdict is on the record').rstrip('.')}"
+             if engine.claims.validation_in_flight(TaskId(task_id)) or observed_by_itself(
+                engine, engine.graph.get_task(TaskId(task_id)))
+             else f"`validate_result {task_id}` observes it" if engine.workforce.has_an_instrument()
              else f"no validator is registered in this project, so `validate_result {task_id}` observes it (pass "
                   f"`workdir=` if it asks where the work is)")
             + (f"; then {theirs}" if (theirs := engine.persons_verdict(TaskId(task_id))) else
@@ -2728,6 +2732,17 @@ def _what_an_ACCEPTED_signal_owes_its_sender(engine: Engine, task_id: str, sig, 
         out.update(next_for(engine, source, about=task_id))
     except Exception:   # gives up only the hint; the signal stands
         pass
+
+
+def observed_by_itself(engine: Engine, t) -> bool:
+    """Does the project's instrument observe this holder's delivery with nobody asking? Its appointed observation is
+    owed (`pass_blocked_by`: a root, a seam, a scope's top — §10.2, §10.3) and none is on the record, the project
+    has an instrument, and it has not given up on the node (`parking`): the dispatcher takes such a delivery from its
+    transition and records its verdict for the holder to sign (`Dispatcher._dispatch_validation`)."""
+    return (t is not None and t.state == State.VALIDATING and engine.holder_signs(t.id)
+            and engine.workforce.has_an_instrument() and engine.current_exec_verdict(t.id) is None
+            and str(t.id) not in engine.parking.parked_validations()
+            and (engine.pass_blocked_by(t.id) or {}).get("kind") == "unobserved")
 
 
 def next_for(engine: Engine, me: Optional[str], about: Optional[str] = None, entering: bool = False) -> dict:
@@ -2849,6 +2864,14 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
         # …AND A RULING THE USER MAY MAKE IS NOT A MOVE THE GRAPH WAITS ON: the system answers that dispute itself
         if s["mine"] and s.get("action") == Action.RESOLVE and _t is not None and engine.users_dispute(_t.id)                 and not engine.paused():
             s["optional"] = True
+        # …AND AN OBSERVATION THE PROJECT'S INSTRUMENT MAKES BY ITSELF IS NOT THE HOLDER'S MOVE until it gave up: the
+        # dispatcher takes it off the engine's frontier, and said "`validate_result` observes it now" here, a client paid
+        # it twice and its `gfso wait` woke with nothing to sign (e2e5 G_3)
+        if s["mine"] and str(s.get("directive", "")).startswith(OBSERVE) and observed_by_itself(engine, _t):
+            s["optional"], s["parallel_ok"] = True, False
+            s["directive"] = (f"OBSERVED BY ITSELF — '{_t.id}' is the project's validator's to observe, no call of "
+                              f"yours; {how_it_is_waited(engine.project_name, 'its verdict is on the record')}")
+            continue
         if held and not s["mine"] and (owner == me or not owner):
             s["parallel_ok"] = False
             s["directive"] = (f"NOT YOURS — the project's mode gives this move to {held}, and the door refuses it "

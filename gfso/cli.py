@@ -627,10 +627,12 @@ def _wait(args) -> int:
                   f"server: `gfso up`, then wait again", flush=True)
             return 2
         if why := out.get("needs_you"):
-            print(f"{why} — read it with `next_steps` and `get_verdict` over MCP; the page: "
+            print(f"{why} — the move follows; `next_steps` and `get_verdict` over MCP read more; the page: "
                   f"{serverctl.ui_link(args.project)}", flush=True)
+            # …whole: a verdict to sign carries each criterion's line the person is shown before their PASS, and cut at
+            # 400 characters it sent the client to `get_verdict` for them (e2e5 G_3)
             for s in [s for s in out.get("steps") or () if s.get("mine") and not s.get("optional")][:3]:
-                print(f"- {s.get('task_id')}: {s.get('directive', '')[:400]}", flush=True)
+                print(f"- {s.get('task_id')}: {s.get('directive', '')[:3000]}", flush=True)
             return 0
     print(f"still running after {args.hours:g} h — wait again", flush=True)
     return 3

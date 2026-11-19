@@ -576,8 +576,10 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
                            "validation stands (§3.7, §10.3)")
                         + "; the executor's own self-check is evidence, not the observation, and a hand "
                           "record binds only from the node's issuer where he is not its executor"),
-                "opens_with": (f"`validate_result('{task.id}')` observes it now (where the project has a "
-                               f"validator it also runs by itself); `get_verdict('{task.id}')` reads the result")}
+                # …the validator first: told "observes it now", a client whose validator was already running paid twice
+                "opens_with": (f"where the project has a validator it observes this delivery by itself — wait for "
+                               f"its verdict (`gfso wait`), no call starts it; with none, `validate_result('{task.id}')` "
+                               f"observes it now")}
     return None
 
 

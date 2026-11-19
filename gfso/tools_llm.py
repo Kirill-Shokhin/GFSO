@@ -1914,7 +1914,8 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
             f"yourself on the branch `{work_branch(engine)}` and commit; "
             + (f"take each part ({', '.join(parts)}) in turn — ACCEPT it, do it, DELIVER it — and DELIVER `{root_id}` "
                f"once every part has passed" if parts else f"DELIVER `{root_id}`")
-            + "; a validator other than you signs each against its checks.")
+            + " (`signal`, your self-check in `result`); a validator other than you observes each against its checks, "
+              "by itself.")
     return out
 
 
@@ -2936,9 +2937,7 @@ def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
     agents = _roster(engine)
     _delegation().publish_the_workforce(engine, agents.list())
     pool = [str(a) for a in engine.workforce.executor_pool()]
-    validators = [a for a, c in agents.list().items()
-                  if c.get("kind") in ("llm-validator", "unittest-checker")
-                  and c.get("project") in (engine.project_name, None)]
+    validators = _validators_of(engine, agents)
     dispatch = perform == "dispatch" and m != Mode.AUTO          # under AUTO the user-agent holds nothing
     need = max(_MODE_STAFF[m], int(dispatch))
     # …and work dispatched runs unattended: where the project runs refuses it, no count of roles makes the mode ready
@@ -2952,6 +2951,12 @@ def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
         "workdir=<the work's directory>)` in this project, then set the mode.")
     return {"mode": m.value, "perform": perform, "dispatch": dispatch, "needs_executors": need,
             "executors": pool, "validators": validators, "ready": ready, "missing": missing}
+
+
+def _validators_of(engine: Engine, agents) -> list:
+    """The instruments that validate this project's work: its own, or unscoped ones (shared by design)."""
+    return [a for a, c in agents.list().items()
+            if c.get("kind") in ("llm-validator", "unittest-checker") and c.get("project") in (engine.project_name, None)]
 
 
 def run_state(engine: Engine) -> dict:
@@ -3072,7 +3077,8 @@ def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int]
              system_model: Optional[str] = None, planner_model: Optional[str] = None, l2_gate: Optional[bool] = None,
              deadline_s: Optional[float] = None, observe: Optional[bool] = None,
              network: Optional[Union[str, dict]] = None, bounds: Optional[dict] = None,
-             max_iterations: Optional[int] = None, intent_check: Optional[bool] = None) -> dict:
+             max_iterations: Optional[int] = None, intent_check: Optional[bool] = None,
+             workdir: Optional[str] = None) -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
 
     - `solo` — you (the user-agent) hold and execute every node; the one seam is the root.
@@ -3120,6 +3126,10 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
     `allowlist` and `off` a session still reaches its model through the project's model door — list no provider host
     for it (SECURITY.md); the answer names the switch in force, `network_in_force`.
 
+    `workdir` — the top of the repository the work is in: where this project has no validator yet, `<project>-val` is
+    registered there (`register_agent`, on `system_model`), so the setup of a small task is this one call; refused,
+    the mode leaves none registered.
+
     Without `mode`, only the settings named change — who holds what stays as recorded (a switch turned mid-run)."""
     try:
         m = None if mode is None else Mode(str(mode).strip().lower())
@@ -3133,8 +3143,8 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
         return {"refused": True, "error": f"`intent_check` — whether the system reads the result against the person's "
                                           f"own words ({INTENT}) — is the person's to turn: ask them, and pass their "
                                           f"words asking for it as `user_said`"}
-    if m is None and (boundary is not None or perform is not None):
-        return {"refused": True, "error": "boundary and perform belong to a mode: name the mode with them"}
+    if m is None and (boundary is not None or perform is not None or workdir is not None):
+        return {"refused": True, "error": "boundary, perform and workdir belong to a mode: name the mode with them"}
     perform = perform or "dispatch"
     if perform not in ("dispatch", "in_chat"):
         return {"refused": True, "error": f"perform must be dispatch | in_chat, got {perform!r}"}
@@ -3177,9 +3187,27 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
                 "holds": {"solo": "you hold every node",
                           "semi": f"you hold depths below {engine.holder_boundary()}; the system the rest",
                           "auto": "the system holds every node; you are the customer"}[m.value]}
-    out = _in_the_default(engine, {"mode": m.value, **({} if m == Mode.AUTO else {"perform": perform})}, held)
+    out = _with_its_validator(engine, workdir, system_model, lambda: _in_the_default(
+        engine, {"mode": m.value, **({} if m == Mode.AUTO else {"perform": perform})}, held))
     return {**out, **(_turn_the_way_out(engine) if network is not None and not out.get("refused") else {}),
             **({} if out.get("refused") else _short_supplied(engine))}
+
+
+def _with_its_validator(engine: Engine, workdir: Optional[str], model: Optional[str], held) -> dict:
+    """`held()` — the mode recorded, or its refusal — with the project's validator registered at `workdir` before it
+    where the project has none (`register_agent`, the roster's one door; `validator` in the answer), and taken off again
+    where the mode is refused: every mode needs one (`mode_staffing`), and the setup of a small task was three calls
+    for one choice (e2e5 G_3)."""
+    if workdir is None or _validators_of(engine, _roster(engine)):
+        return held()
+    val = register_agent(engine, f"{engine.project_name or DEFAULT_PROJECT}-val", "llm-validator",
+                         model=str(model).strip() if model and str(model).strip() else MODEL_DEFAULT, workdir=workdir)
+    if val.get("refused") or val.get("error"):
+        return {"refused": True, **val}
+    if (out := held()).get("refused"):
+        unregister_agent(engine, val["registered"], val["workdir"])
+        return out
+    return {**out, "validator": {k: val.get(k) for k in ("registered", "model", "workdir")}}
 
 
 def _short_supplied(engine: Engine) -> dict:
