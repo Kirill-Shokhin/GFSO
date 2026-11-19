@@ -157,11 +157,12 @@ def test_the_planner_is_told_to_name_the_words_it_states():
 NOTE = "an empty file prints 0"
 
 
-def _refined(monkeypatch, plan, added):
-    """`refine_plan` over `plan` with the note NOTE, its fold adding `added`: (what the repairs were told, the new file)."""
+def _refined(monkeypatch, plan, added=None, patch=None):
+    """`refine_plan` over `plan` with the note NOTE, its fold adding `added` (or folding `patch`): (what the repairs
+    were told, the new file)."""
     told = []
     monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {})
-    monkeypatch.setattr(D, "_audit_fold", lambda *a, **k: {"add_root_criteria": [added]})
+    monkeypatch.setattr(D, "_audit_fold", lambda *a, **k: patch or {"add_root_criteria": [added]})
     monkeypatch.setattr(D._Agreement, "judge", lambda self, spec: None)
     text = planning.refine(artifact.render(GOAL, plan, {"by": "m"}), NOTE, "m")
     return [x for xs in told for x in xs if "states nothing the request asks" in x], artifact.parse(text)
@@ -199,3 +200,17 @@ def test_the_graph_keeps_whose_words_each_criterion_states(no_model):
     finally:
         e.stop()
     assert got == {"top": ASKED["asked"], "bare": None}, got
+
+
+def test_a_part_the_fold_writes_anew_keeps_the_words_its_criteria_quote(monkeypatch, no_model):
+    """The fold replaces a part whole from the projection, which shows no `asked`: a person's criterion re-emitted with
+    a sharper check keeps its words, never repaired nor said as the system's (critic)."""
+    part = {"id": "count", "name": "count", "description": "d", "criteria": [_crit("tie", "most frequent words")]}
+    sharper = dict(part, criteria=[{k: v for k, v in _crit("tie").items()} | {
+        "check": [{"behaviour": "b", "command": "./wordtop tie.txt | head -1", "expect": "x"}]}])
+    plan = {**_plan_of(ASKED, parts=[part]), "mappings": [{"criterion": "top", "child_id": "count"}],
+            "denial": {"p": 0.1, "justification": "fixture"}}
+    told, p = _refined(monkeypatch, plan, patch={"update_subtasks": [sharper]})
+    assert told == [] and planning.BEYOND not in p["review"], (told, p["review"])
+    (got,) = p["spec"]["subtasks"]
+    assert got["criteria"][0]["asked"] == "most frequent words" and "head -1" in str(got["criteria"][0]["check"]), got

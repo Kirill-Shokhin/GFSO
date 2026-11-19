@@ -441,7 +441,11 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
     _apply_removals(s, patch, ops)
 
     files = _pinned_files(s)
-    upd = {str(c.get("id")): _filling_named_inputs(_keeping_the_pinned_inputs(c, s["subtasks"]), files)
+    was = {str(c.get("id")): c.get("criteria") or [] for c in s["subtasks"]}
+    upd = {str(c.get("id")): _filling_named_inputs(_keeping_the_pinned_inputs(
+               dict(c, criteria=_asked_carried(c["criteria"], was.get(str(c.get("id"))) or []))
+               if isinstance(c.get("criteria"), list) else c,
+               s["subtasks"]), files)
            for c in patch.get("update_subtasks", [])}
     changed = [str(c.get("id")) for c in s["subtasks"] if str(c.get("id")) in upd and upd[str(c.get("id"))] != c]
     if changed:
@@ -462,7 +466,9 @@ def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
             ops.append(f"+{tgt} {len(new)}")
     _add("subtasks", [_filling_named_inputs(x, files) for x in patch.get("add_subtasks", [])] + unknown_upd,
          lambda x: str(x.get("id")))
-    _add("root_criteria", _filling_named_inputs({"criteria": patch.get("add_root_criteria", [])}, files)["criteria"],
+    _add("root_criteria", _filling_named_inputs({"criteria": _asked_carried(patch.get("add_root_criteria", []),
+                                                                            spec.get("root_criteria") or [])},
+                                                files)["criteria"],
          lambda x: str(x.get("name")))
     _add("mappings", patch.get("add_mappings", []),
          lambda x: (str(x.get("criterion")), str(x.get("child_id"))))
@@ -482,6 +488,15 @@ def _filling_named_inputs(item: dict, files: dict) -> dict:
     """`item`'s criteria, each probe that names files without their content given the content this plan pins under its
     criterion (`procedure.with_named_files`) — the fold's door; the machine issuer's is `issuer._new_child`."""
     return dict(item, criteria=[with_named_files(c, files) for c in (item.get("criteria") or [])])
+
+
+def _asked_carried(criteria: list, current: list) -> list:
+    """`criteria`, each that names no `asked` given the one its namesake in `current` named: the fold writes a part
+    anew from the projection, which shows no `asked`, and a person's criterion re-emitted with a sharper check was
+    then the system's own, repaired and said so (critic). Absent only: an `asked` the patch writes is its own."""
+    said = {str(c.get("name")): c["asked"] for c in current if c.get("asked") is not None}
+    return [dict(c, asked=said[str(c.get("name"))]) if "asked" not in c and str(c.get("name")) in said else c
+            for c in criteria]
 
 
 def _keeping_the_pinned_inputs(replacement: dict, current: list) -> dict:
