@@ -119,15 +119,24 @@ def _plan(tmp_path, git=True, whole="kirill"):
     return e, agents, base
 
 
-def _run(e, agents, sessions: dict, until, validated: dict | None = None, rounds=300):
+def _drive(e, d, until, bound: float = 90.0) -> None:
+    """The dispatcher's rounds until `until` holds, bounded by wall time, not by a count of rounds: a round's length is
+    the machine's (a git child per session on a loaded runner), so a count measured something else than the wait."""
+    end = time.monotonic() + bound
+    while not until():
+        assert time.monotonic() < end, f"not reached in {bound}s: {({t.id: t.state.name for t in e.all_tasks()})}"
+        d.dispatch_once()
+        time.sleep(0.05)
+        e.wait_idle()
+
+
+def _run(e, agents, sessions: dict, until, validated: dict | None = None):
     d = Dispatcher(e, agents, poll=30,
                    runner=lambda en, t, ex, ag: run_executor(en, t, ex, ag, _llm=sessions[str(t)]),
                    validator_runner=lambda en, t, ag, **k: _auto_validate(
                        en, t, ag, _llm=_Validator(en, t, validated if validated is not None else {}), **k))
-    S._drive(e, d, until, rounds, pause=0.05)
-    if until():
-        return d
-    raise AssertionError(f"not reached: {({t.id: t.state.name for t in e.all_tasks()})}")
+    _drive(e, d, until)
+    return d
 
 
 def _until(pred, timeout=20.0) -> None:
@@ -354,7 +363,7 @@ def test_a_scopes_session_and_its_validation_share_the_scopes_one_tree(tmp_path)
             return super().run_agent(system, user, allowed_tools, cwd, timeout)
 
     executor, validator = _Session(S._delivered("root.a", "root.b", "root")), _Check(e)
-    S._drive(e, S._dispatcher(e, agents, executor, validator, []), lambda: e.graph.get_state(TaskId("root")) == State.DONE)
+    _drive(e, S._dispatcher(e, agents, executor, validator, []), lambda: e.graph.get_state(TaskId("root")) == State.DONE)
     place = nodes_root(tmp_path) / "p" / "root"
     assert where["session"] == str(place)
     assert where["validation"].endswith("delivery") and ".gfso-scratch-root" in where["validation"], where
@@ -630,7 +639,7 @@ def test_a_whole_a_person_holds_under_a_system_root_joins_the_roots_result_with_
     for _, why in left_to_merge(e, agents, e.graph.get_task(TaskId("mid"))):   # …the person's own moves, in their tree
         _git(base, "merge", "-q", "--no-edit", re.search(r"`git merge (\w+)`", why).group(1))
     _by_hand(e, base, "mid", "kirill", {"mid.c": "MID\n"})
-    S._drive(e, d, lambda: e.next_steps()["complete"] is True, 300, pause=0.05)
+    _drive(e, d, lambda: e.next_steps()["complete"] is True)
     assert e.next_steps()["complete"] is True, {t.id: t.state.name for t in e.all_tasks()}
     assert _git(base, "ls-tree", "--name-only", "gfso/p/accepted").split() == [
         "README", "a.c", "b.c", "c.c", "mid.c", "root.c"]
@@ -683,8 +692,8 @@ def test_a_root_the_person_holds_on_this_host_lands_as_its_accepted_branch(tmp_p
         _git(base, "merge", "-q", "--no-edit", re.search(r"`git merge (\w+)`", why).group(1))
     sha = _by_hand(e, base, "par", "kirill", {"par.c": "the whole\n"})
     _passed(e, "par")
-    S._drive(e, d, lambda: subprocess.run(["git", "rev-parse", "-q", "--verify", "gfso/p/accepted"], cwd=base,
-                                          capture_output=True).returncode == 0, 100, pause=0.05)
+    _drive(e, d, lambda: subprocess.run(["git", "rev-parse", "-q", "--verify", "gfso/p/accepted"], cwd=base,
+                                        capture_output=True).returncode == 0)
     assert _git(base, "rev-parse", "gfso/p/accepted") == sha == _git(base, "rev-parse", "HEAD")
     assert json.loads(e.graph.setting("landed"))["branch"] == "gfso/p/accepted"
     e.stop()
@@ -814,7 +823,7 @@ def test_a_part_whose_work_is_in_another_repository_never_holds_its_whole_back(t
     other = _repo(tmp_path / "other")
     agents.register("exec-2", "llm-executor", workdir=str(other), project="p")
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}), "par": _Executor("par", {})}
-    _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)), rounds=150)
+    _run(e, agents, sessions, _in(e, "par", states=(State.DONE,)))
     e.stop()
 
 
