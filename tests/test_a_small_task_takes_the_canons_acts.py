@@ -187,3 +187,16 @@ def test_the_person_is_told_what_the_validator_saw_outside_the_criteria(chat, mo
     ended = call("wait", seconds=60)
     told = " ".join(s["directive"] for s in ended["steps"] if s.get("mine"))
     assert seen in told, f"the sign-off step does not carry what the validator saw: {told}"
+
+
+def test_the_verdict_read_serves_what_the_validator_saw_outside_the_criteria(chat, monkeypatch):
+    """The page reads the verdict through `get_verdict`; the sign-off step told the person what it never served."""
+    e, repo, call, _ = chat
+    seen = "x.tar.gz is counted as .gz, not .tar.gz"
+    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, [{"what": seen, "evidence": "ran it on x.tar.gz"}]))
+    _set_up(call, repo)
+    call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
+    _worked(repo)
+    call("signal", "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
+    call("wait", seconds=60)
+    assert TL.TOOLS["get_verdict"](e, "root").get("outside") == [{"what": seen, "evidence": "ran it on x.tar.gz"}]

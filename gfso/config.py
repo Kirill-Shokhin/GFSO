@@ -324,7 +324,10 @@ def how_it_is_waited(project, what: str = "the run needs you") -> str:
     move left, so the move is said — it hands the turn back and reads again when the person asks."""
     if client_kind() == "chat":
         return "Hand the turn back to the person now: read the run again when they ask."
-    return f"`gfso wait project={project or '<project>'}` in the background exits when {what}."
+    # …its OUTPUT the answer: a client woken by the exit alone ("completed (exit code 0)") read the same step again over
+    # MCP, two calls the wait had already printed (fresh client s23g2)
+    return (f"`gfso wait project={project or '<project>'}` in the background exits when {what}; its output is the step "
+            f"that follows — read it when it exits, the exit notice alone does not carry it.")
 
 
 def for_the_hands(cmd: str) -> str:

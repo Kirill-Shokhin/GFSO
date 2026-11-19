@@ -704,6 +704,13 @@ def _bound_the_read(out: dict, task_id: str, trimmed: list, keep: int) -> None:
             f"(`get_verdict {task_id} criterion=<name>`).")
 
 
+def _outside_seen(engine: Engine, task_id: str) -> list:
+    """[{what, evidence}] its validators saw outside the criteria, unanswered, newest first — what the sign-off step tells
+    the person (`Engine.persons_verdict`); the page had no other read of it."""
+    return [{"what": o["what"], "evidence": o["evidence"]}
+            for o in engine.outside_the_criteria(TaskId(task_id)) if o["node"] == str(task_id)]
+
+
 def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool = True) -> dict:
     """The stored EXECUTION verdict on a node — the validator's LAST report, read back in full:
     PASS/FAIL, `failed_criteria`, and per criterion the probe that was run, what it printed and the
@@ -773,6 +780,7 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
            # …and WHERE it was validated, so a probe that no longer reproduces is diagnosable rather
            # than mysterious (a rename after the verdict made every stored command unreplayable).
            "workdir": (rec or {}).get("workdir") or "",
+           "outside": _outside_seen(engine, task_id),
            "ts": (rec or {}).get("ts")}
     # …AND WHAT IT NO LONGER RE-RAN BY ITS ISSUER'S RULING: a PASS read without it reads as wide as one that re-ran all
     if _ret := engine.retired_findings(TaskId(task_id)):

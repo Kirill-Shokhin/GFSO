@@ -108,7 +108,8 @@ def test_what_works_without_the_caller_says_how_it_learns_a_move_is_its(kind):
         said = config.how_it_is_waited("p", "one is yours")
     finally:
         config.CLIENT.reset(token)
-    assert said == ("Hand the turn back to the person now: read the run again when they ask." if kind == "chat" else "`gfso wait project=p` in the background exits when one is yours.")
+    assert said == ("Hand the turn back to the person now: read the run again when they ask." if kind == "chat" else ("`gfso wait project=p` in the background exits when one is yours; its output is the step that follows — read it "
+                     "when it exits, the exit notice alone does not carry it."))
 
 
 def test_the_end_says_what_the_pass_did_not_re_run_only_where_it_did_not():

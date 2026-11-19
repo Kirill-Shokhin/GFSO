@@ -627,7 +627,7 @@ def _wait(args) -> int:
                   f"server: `gfso up`, then wait again", flush=True)
             return 2
         if why := out.get("needs_you"):
-            print(f"{why} — the move follows; `next_steps` and `get_verdict` over MCP read more; the page: "
+            print(f"{why} — the move follows here whole, nothing to read again over MCP; the page: "
                   f"{serverctl.ui_link(args.project)}", flush=True)
             # …whole: a verdict to sign carries each criterion's line the person is shown before their PASS, and cut at
             # 400 characters it sent the client to `get_verdict` for them (e2e5 G_3)
