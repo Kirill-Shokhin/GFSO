@@ -121,8 +121,11 @@ class NodeSteps:
             return (1, t, Action.VALIDATE,
                     f"SIGN THE VERDICT on '{t.id}' ({nm}) — FAIL on {', '.join(through)}: its part(s) "
                     f"{', '.join(_parts)} failed their own criteria, and a whole is not attained while a part fails "
-                    f"(Thm 1). `signal('{t.id}', 'FAIL', failed_criteria={list(through)})`; it is re-delivered "
-                    f"once those parts have passed.")
+                    f"(Thm 1). `signal('{t.id}', 'FAIL', failed_criteria={list(through)})`"
+                    # …with the person's words where the verdict is theirs: told without, a client's FAIL was refused
+                    + (" — the verdict is the person's: tell them, and their words go with it (`user_said=`)"
+                       if self.engine.persons_verdict(t.id) else "")
+                    + "; it is re-delivered once those parts have passed.")
         if (_repair := self._plan_repair_before_signing(t, nm)) is not None:
             return _repair
         # …AND WHAT THE OBSERVATION OF THIS DELIVERY ALLOWS, from the same predicate the PASS gate reads:

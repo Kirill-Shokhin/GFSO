@@ -34,8 +34,8 @@ class _Validator:
     """The project's validator, stubbed: a read-only session that runs each pinned probe where it is started and reports
     every criterion of the root PASS on what it printed — a check in words cited by the line it saw."""
 
-    def __init__(self, e, outside=()):
-        self.e, self.calls, self.outside = e, [], list(outside)
+    def __init__(self, e, outside=(), evidence=None):
+        self.e, self.calls, self.outside, self.evidence = e, [], list(outside), dict(evidence or {})
 
     def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
         self.calls.append({"duration_ms": 1, "output_tokens": 1})
@@ -43,7 +43,7 @@ class _Validator:
                                          text=True).stdout
         crits = self.e.graph.get_task(TaskId("root")).spec.criteria
         return "```json\n" + json.dumps({"verdict": "PASS", "failed_criteria": [], "per_criterion": [
-            {"criterion": c.name, "verdict": "pass", "evidence": f"ran it: {c.name} holds", "behaviours": [p.behaviour for p in c.check],
+            {"criterion": c.name, "verdict": "pass", "evidence": self.evidence.get(c.name, f"ran it: {c.name} holds"), "behaviours": [p.behaviour for p in c.check],
              "probe": [{"command": p.command, "behaviour": p.behaviour, "output": (out := ran(p.command)),
                         "expect": p.expect if p.exact else out.strip().splitlines()[0]} for p in c.check]}
             for c in crits], **({"outside": self.outside} if self.outside else {})}) + "\n```"
@@ -245,3 +245,21 @@ def test_the_sign_off_never_drops_the_reading_against_the_persons_words_and_says
     assert len(e.graph.get_task(TaskId("root")).spec.criteria) == 15
     assert f"{INTENT}: pass" in told, told
     assert "and 3 more — `get_verdict root` reads them all" in told, told
+
+
+def test_the_person_hears_the_whole_reading_and_what_it_rests_on(chat, monkeypatch):
+    """Cut at 200 characters, the reading against the person's words lost the validator's own caveat on what its PASS
+    rested on, and an observation outside the criteria lost what it was seen on (critic over 0bbc8b3, fresh client K_2)."""
+    e, repo, call, _ = chat
+    caveat = "the pinned check's expect is a paraphrase, so this verdict rests on my own probes, not on that expect"
+    reading = "f.txt says v1 as the person asked; " * 12 + caveat
+    seen = {"what": "v1 has no trailing newline in the spec", "evidence": "printed with od -c: 'v' '1' '\n'"}
+    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, [seen], {INTENT: reading}))
+    _set_up(call, repo)
+    call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
+    _worked(repo)
+    call("signal", "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
+    ended = call("wait", seconds=60)
+    told = " ".join(s["directive"] for s in ended["steps"] if s.get("mine"))
+    assert reading in told, "the reading against the person's words reaches them cut"
+    assert seen["what"] in told and seen["evidence"] in told, "an observation reaches them without what it was seen on"

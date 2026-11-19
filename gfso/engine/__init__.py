@@ -836,15 +836,17 @@ class Engine:
         if t is None or self._graph.get_parent(t.id) is not None or self.mode_kind() not in (Mode.SOLO, Mode.SEMI):
             return ""
         rec = self.current_exec_verdict(t.id) or {}
-        # …the reading against their own words FIRST: added last at the go, it was the first a cap cut (critic over
-        # a8c6035, 15 criteria); and a cut says so, never a silent "each"
+        # …WHOLE, the reading against their own words first, and only the count bounded, said where it bites: cut at 200
+        # characters a line, the person heard "PASS" over the validator's own caveat on what that PASS rests on, and the
+        # criterion the go adds last was the first a cap dropped (two critics over a8c6035 / 0bbc8b3, fresh client K_2)
         rows = sorted((e for e in rec.get("per_criterion") or () if isinstance(e, dict)),
                       key=lambda e: e.get("criterion") != INTENT)
-        seen = [f"{e.get('criterion')}: {e.get('verdict')}" + (f" ({str(e.get('evidence'))[:200]})" if e.get("evidence")
-                                                               else "") for e in rows]
-        # …and what it saw beyond them: no criterion failed on it, so it is theirs to weigh — a client shown the criteria
-        # alone signed over "x.tar.gz is counted as .gz" without telling them (fresh client s23g1)
-        beyond = [o["what"][:160] for o in outside_of_this_delivery(self._storage, t.id, rec)]
+        seen = [f"{e.get('criterion')}: {e.get('verdict')}" + (f" ({e.get('evidence')})" if e.get("evidence") else "")
+                for e in rows]
+        # …and what it saw beyond them, with what it saw it on: no criterion failed on it, so it is theirs to weigh — a
+        # client shown the criteria alone signed over "x.tar.gz is counted as .gz" without telling them (s23g1)
+        beyond = [o["what"] + (f" ({o['evidence']})" if o.get("evidence") else "")
+                  for o in outside_of_this_delivery(self._storage, t.id, rec)]
         more = lambda n, cap: f"; and {n - cap} more — `get_verdict {t.id}` reads them all" if n > cap else ""
         return (f"The verdict on '{t.id}' is the person's: show them the validator's verdict on each criterion"
                 + (f" — {'; '.join(seen[:12])}{more(len(seen), 12)}" if seen else " (the step that asks for it names each)")
