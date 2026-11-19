@@ -8,14 +8,16 @@ Measured (s20g1, 2026-11-19): bare agent 0.5 min; solo in_chat 17.8 min, 10.25 o
 criteria grew from 3 asked."""
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 import time
 
 import pytest
 
 from gfso import decompose as DEC, tools_llm as TL
-from gfso.core.types import Mode, TaskId
+from gfso.core.types import AgentId, Mode, Signal, SignalData, TaskId
 from gfso.decompose import artifact as A
+from gfso.engine import PERSONS_WORDS
 from tests.test_the_mode_decides_who_holds_what import _engine
 
 ASKED = "Build ./wc2: it prints the number of lines it reads."
@@ -134,3 +136,27 @@ def test_the_accepted_branch_is_not_the_works(tmp_path):
     git("init", "-q", "-b", "gfso/p/accepted")
     git("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "start")
     assert "switch it back" in TL.on_their_branch(_engine(Mode.SOLO), str(tmp_path))
+
+
+def test_an_accepted_challenge_on_the_root_is_the_persons_too(no_model):
+    """§11.3: ACCEPT_CHALLENGE installs a packet exactly as an ASSIGN does — so it passes the same door: the agent that
+    both executes and issues a solo root could otherwise replace the agreed check by answering its own dispute."""
+    e = _engine(Mode.SOLO)
+    root, _ = _gone(e, _filled(TL.plan(e, ASKED)["text"]))
+    e.send_signal_sync(SignalData(signal=Signal.CHALLENGE, task_id=root.id, source=AgentId("user"),
+                                  justification="the check is too strict"))
+    e.wait_idle()
+    c = root.spec.criteria[0]
+    weaker = dataclasses.replace(root.spec, criteria=(dataclasses.replace(c, check=(dataclasses.replace(
+        c.check[0], command="seq 2 | wc -l"),)),))
+    answer = SignalData(signal=Signal.ACCEPT_CHALLENGE, task_id=root.id, source=AgentId("user"), new_spec=weaker)
+    with pytest.raises(ValueError, match="user_said"):
+        e.send_signal_sync(answer)
+    assert e.graph.get_task(root.id).spec.criteria[0].check[0].command == "seq 2 | ./wc2"
+    token = PERSONS_WORDS.set("согласен, ослабь")
+    try:
+        e.send_signal_sync(answer)
+    finally:
+        PERSONS_WORDS.reset(token)
+    e.wait_idle()
+    assert e.graph.get_task(root.id).spec.criteria[0].check[0].command == "seq 2 | wc -l"

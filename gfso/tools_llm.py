@@ -3153,9 +3153,10 @@ def metrics(engine: Engine) -> dict:
 
 
 def _with_the_persons_words(fn):
-    """`fn` taking `user_said` — the person's own words on this act — carried to the engine's one door that revises a
-    packet (`engine.PERSONS_WORDS`, read by `Engine._admissible_revision`): under `solo` and `semi` a root's criteria
-    change only on them, recorded on the feed for the person to see."""
+    """`fn` taking `user_said` — the person's own words on this act — carried to the engine's one door every act that
+    installs a packet passes — a re-ASSIGN, an ACCEPT_CHALLENGE (`engine.PERSONS_WORDS`, read by
+    `Engine._the_persons_criteria`): under `solo` and `semi` a root's criteria change only on them, recorded on the
+    feed for the person to see."""
     sig = inspect.signature(fn)
     own = "user_said" in sig.parameters
 
@@ -3174,7 +3175,7 @@ def _with_the_persons_words(fn):
 
 _RAW_TOOLS = {
     **_tools.TOOLS,
-    "signal": signal,                                                                 # a chat's delivery recorded
+    "signal": _with_the_persons_words(signal),                                                                 # a chat's delivery recorded
     "metrics": metrics,                                                               # work past the system counted
     "create_task": create_task,
     "auto_decompose": _with_the_persons_words(_tracked("auto_decompose", auto_decompose)),

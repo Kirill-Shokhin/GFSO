@@ -90,7 +90,7 @@ LIFT_MARGIN_S = 30
 #: THE PERSON'S OWN WORDS on the act a door is making now (`set_mode`'s `user_said`, carried to every verb that can revise
 #: a root's packet): under `solo` and `semi` the root's criteria are the person's agreement, and they change only on their
 #: words, recorded on the feed for the person to see — a solo agent rewrote an agreed check after the go into one that
-#: held on an empty repository, and nothing said so (critic over f5b1f88). Set by the doors, read in `_admissible_revision`.
+#: held on an empty repository, and nothing said so (critic over f5b1f88). Set by the doors, read before the queue (`_the_persons_criteria`).
 PERSONS_WORDS: ContextVar[str] = ContextVar("persons_words", default="")
 #: what of a stop's record the system lifts it by: a time, an execution place, a credential store's stamp
 LIFTS = ("until", "place", "account")
@@ -272,9 +272,13 @@ class Engine:
     def _refuse_before_the_queue(self, sd: SignalData) -> None:
         """What a signal is refused before the queue, in its sender's thread: an ASSIGN on a settled node — R′'s edge,
         whatever door sent it — while the place cannot work it (`reopen_place_refusal`, a probe the loop never runs)."""
-        t = self._graph.get_task(sd.task_id) if sd.signal == Signal.ASSIGN else None
-        if t is not None and (why := self.reopen_place_refusal(t)):
+        t = self._graph.get_task(sd.task_id) if sd.signal in (Signal.ASSIGN, Signal.ACCEPT_CHALLENGE) else None
+        if t is not None and sd.signal == Signal.ASSIGN and (why := self.reopen_place_refusal(t)):
             raise ValueError(why)
+        # …and a root's criteria changed only on the person's words, by every act that installs a packet: a re-ASSIGN
+        # and an ACCEPT_CHALLENGE alike (§11.3: it "installs a packet exactly as an ASSIGN does"; §12.16)
+        if t is not None and (new := sd.new_spec if sd.signal == Signal.ACCEPT_CHALLENGE else sd.spec) is not None:
+            self._the_persons_criteria(t, new)
 
     def assign_task(
         self,
@@ -2266,12 +2270,9 @@ class Engine:
         return None
 
 
-    def _admissible_revision(self, old: Task, new_spec: Spec) -> None:
-        """Refuse a revision whose contract pins nothing — admitting the first packet on a pinned procedure and letting
-        the next version strip it would make the gate a formality —, and a root's criteria changed under `solo` or `semi`
-        without the person's own words (`PERSONS_WORDS`), which go on the feed. The one door every revision of a packet
-        passes (Inv-1: a re-ASSIGN)."""
-        refuse_a_contract_that_pins_nothing(self._graph, old.id, new_spec)
+    def _the_persons_criteria(self, old: Task, new_spec: Spec) -> None:
+        """A root's criteria changed under `solo` or `semi` only on the person's own words (`PERSONS_WORDS`), which go
+        on the feed; refused without them. Asked before the queue of every act that installs a packet."""
         if (self._graph.get_parent(old.id) is not None or self.mode_kind() not in (Mode.SOLO, Mode.SEMI)
                 or tuple(new_spec.criteria) == tuple(old.spec.criteria)):
             return
@@ -2321,7 +2322,7 @@ class Engine:
         # …AND A REVISION IS AN ASSIGN. Admitting the first packet on a pinned procedure and letting
         # the next version strip it would make the gate a formality: the same contract, one act
         # later, deciding nothing.
-        self._admissible_revision(old, new_spec)
+        refuse_a_contract_that_pins_nothing(self._graph, task_id, new_spec)
         # Snapshot the CONTENT before the signal: ASSIGN applies the new spec onto the same live
         # object, so reading `old.spec` afterwards compares the new contract with itself.
         _before = (old.spec.description, old.spec.criteria, old.spec.accepted_risks,
