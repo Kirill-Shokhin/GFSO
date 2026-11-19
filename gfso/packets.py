@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from gfso.core.protocol.invariants import INTENT, QUOTE_WORDS
 from gfso.core.protocol.procedure import EXACT_READ, INPUTS_TOKEN, laid, materialize_inputs, probe_id, same_probe, unrerunnable
 from gfso.core.types import Signal, TaskId, files_at, set_aside_of
 from gfso.engine import Engine
@@ -663,6 +664,24 @@ def _evidence_short(defects: str) -> bool:
     return any(k in defects for k in ("probe", "behaviour", "observ", "pinned", "divergence"))
 
 
+#: what each recorded act over a goal is called where the validator reads it (`Engine.hear`)
+_HEARD = {"request": "The person's request, as they asked it", "go": "The person's words at a go",
+          "plan": "The plan agreed at the go — the agent's text, context to read the words by, not quotable",
+          "revise": "The person's words on a revision of the goal's packet", "verdict": "The person's words on a verdict"}
+
+
+def _persons_words(engine: Engine, task, crits) -> str:
+    """What `answers_the_persons_words` is read against, where `crits` carry it: every word recorded over the goal, in
+    the order said (`Engine.heard_on`); the goal as given is the node's description. "" elsewhere."""
+    if INTENT not in {c.name for c in crits}:
+        return ""
+    return (f"## The person's recorded words — what `{INTENT}` is read against\n"
+            "The goal as given is the node's description above; then, as recorded. Any verdict short of pass carries "
+            "`quote`: ONE unbroken span (no `…`) of at least "
+            f"{QUOTE_WORDS} words of ONE of the person's own utterances (the goal, their words), or the whole of a shorter one:\n\n"
+            + "".join(f"### {_HEARD.get(h['act'], h['act'])}\n{h['said']}\n\n" for h in engine.heard_on(task.id)))
+
+
 def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[str],
                       scratch: Optional[str] = None, criteria=None, carry: Optional[dict] = None,
                       seen: Optional[dict] = None) -> str:
@@ -709,7 +728,7 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
                f"{len(task.spec.criteria)}; the others are validated by their own runs, and the node's "
                f"verdict is their conjunction, §2). Use these EXACT names and report on EVERY "
                f"one, each in its own `per_criterion` entry:\n")
-            + f"{crits}\n\n"
+            + f"{crits}\n\n" + _persons_words(engine, task, _crits) +
             f"## Upstream dependencies (edges, not criteria — a stub where one should be goes in the `seams` advisory)\n"
             f"{chr(10).join(ups) or '- none'}\n\n"
             f"## ACCEPTED_RISKS — risk factors the PLAN set aside. Do not fail the node for a gap "
@@ -738,6 +757,7 @@ def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str],
                       + (f"\nYOUR PREVIOUS REPORT ON THIS DELIVERY WAS REFUSED: {gap}\n" if gap else "")
                       + f"\n### Criteria of `{tid}` this run validates — report each with task_id `{tid}`\n"
                       f"{_criteria_text(engine, task, crits, place, workdir, *carry, seen=seen)}\n\n"
+                      + _persons_words(engine, task, crits) +
                       f"### Upstream dependencies from outside the scope (edges, not criteria — a stub where "
                       f"one should be goes in the `seams` advisory)\n{ups}\n\n"
                       f"### ACCEPTED_RISKS of `{tid}` — the plan set these aside; none retires a criterion, "

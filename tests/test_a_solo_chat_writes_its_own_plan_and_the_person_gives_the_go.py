@@ -59,7 +59,8 @@ def test_the_go_on_the_filled_file_is_the_persons_and_calls_no_model(no_model):
     assert not e.all_tasks(), "nothing is built on a go the person did not give"
     out = TL.auto_decompose(e, plan=text, user_said="да, делай так")
     root = e.graph.get_task(TaskId(out["root_id"]))
-    assert [c.name for c in root.spec.criteria] == ["counts"] and not e.graph.get_active_children(root.id)
+    assert [c.name for c in root.spec.criteria] == ["counts", "answers_the_persons_words"], "and the system's own"
+    assert not e.graph.get_active_children(root.id)
     assert root.spec.criteria[0].check[0].command == "seq 2 | ./wc2", "the check the person agreed is fixed as written"
     assert out["user_said"] == "да, делай так" and "gfso/p/work" in out["say"], out
 

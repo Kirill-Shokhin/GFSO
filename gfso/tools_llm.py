@@ -38,7 +38,7 @@ from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecuti
 from gfso.issuer import CONTACT_ROUND as _CONTACT
 from gfso.core.types import (BATCH, HOST, LAID, TERMINAL_STATES, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
                              Verdict, passed)
-from gfso.core.protocol.invariants import RED_SET, criterion_meant, probes_of, red_set, spoken_verdict, verdict_word
+from gfso.core.protocol.invariants import INTENT, RED_SET, criterion_meant, probes_of, red_set, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (SYSTEMS_ACT, canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
                                           with_part_observations)
 from gfso.observe import FRESH_S, OBSERVE_S, run_checks
@@ -319,6 +319,12 @@ _VALIDATOR_SCHEMA = {
                                           "description": "each distinct behaviour this criterion "
                                                          "requires — one entry per conjunct, in the "
                                                          "criterion's own words"},
+                           # …and the person's words a fail of `answers_the_persons_words` stands on, checked against
+                           # their record (`invariants.verdict_report_defects`)
+                           "quote": {"type": "string", "description":
+                                     f"only on `{INTENT}` failed: the span of the person's own words the result misses — "
+                                     "3 words or more of one thing they said, or all of a shorter one, never the plan — "
+                                     "one unbroken span copied as written, no `…`; any verdict short of pass on it needs one"},
                            # The claim must be RE-RUNNABLE, on the PASS side as much as the FAIL
                            # side: the measurement's load-bearing direction is the false PASS.
                            # ONE PROBE PER BEHAVIOUR, in the same order.
@@ -1038,7 +1044,7 @@ def _fold(es: list) -> dict:
     words = [spoken_verdict(e.get("verdict")) for e in es]
     worst = es[words.index("fail")] if "fail" in words else next(
         (e for w, e in zip(words, es) if w != "pass"), es[0])
-    return {**es[0], "verdict": worst.get("verdict"),
+    return {**es[0], "verdict": worst.get("verdict"), **({"quote": worst["quote"]} if worst.get("quote") else {}),
             "evidence": " | ".join(str(e["evidence"]) for e in [worst] + [x for x in es if x is not worst]
                                    if e.get("evidence")),
             # …a probe of a run that PASSED its share refuted nothing: unioned unmarked into the failed
@@ -1807,7 +1813,9 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                              # …the session that DOES the parts: the user-agent's hands where it dispatches (critic:
                              # under solo/semi-dispatch both doors judged against nobody)
                              executor=engine.workforce.executor_session(engine.hands_of(executor or assignee)
-                                                                        or executor or assignee))
+                                                                        or executor or assignee),
+                             # …a root's, on every route of its go — a plan file, a spec, a request — and every go again
+                             system_root=lambda s: with_the_intent(engine, s, root_id))
     except NoPlan as no:            # no root built: what was spent is still on the record
         return {"root_id": None, "subtasks": [], "holes": [], "stats": no.stats, "error": _no_plan(no)}
     finally:
@@ -1859,7 +1867,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     # without credentials hits, on the one verb it is told to start with.
     out.update(_no_provider_answer(out["subtasks"], res.stats, spec))
     out.update(_built_from_a_file(engine, plan, spec, res.root_id, user_said))
-    return {**out, **(recorded_at_the_go(engine, given, user_said, res.root_id) if fresh else {})}
+    return {**out, **_heard_at_the_go(engine, given, user_said, res.root_id, fresh)}
 
 
 def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id, user_said: str) -> dict:
@@ -1884,6 +1892,10 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
     if said:
         engine.emit_info("go", f"the go on the plan file, by the person: «{said[:300]}»")
         out["user_said"] = said
+    # …the plan agreed, kept with the goal for its reading against the person's words — its template's comments are
+    # the system's instructions to the agent, not the agreement
+    engine.hear(root_id, "plan", "\n".join(x for x in _planning.text_of(plan).splitlines()
+                                           if not x.lstrip().startswith("#")))
     if holds_its_work(engine):
         # …THE PERSON'S READING IS THIS PLAN'S REVIEW: its decomposer is their own agent, they read it and gave the go in
         # their words; the Level-2 gate stands for the system's own plans, and held the parts on an unannounced review
@@ -1916,6 +1928,7 @@ def _a_new_roots_go(engine: Engine, root_id: str, request: str, plan, spec, mode
     if engine.graph.get_task(TaskId(root_id)) is not None:
         return None
     if plan is None and spec is None and model is None and holds_its_work(engine) and str(request or "").strip():
+        engine.hear(root_id, "request", request)
         return yours_to_write(engine, request)
     if engine.mode_kind() in (Mode.SOLO, Mode.SEMI) and not str(user_said).strip():
         raise ValueError("auto_decompose: under solo and semi the go is the person's — show them the plan's criteria "
@@ -1990,6 +2003,7 @@ def _the_persons_verdict(engine: Engine, tid, sig: str) -> Optional[dict]:
                 "error": f"{tid}'s {sig} is the person's: show them the validator's verdict on each criterion "
                          f"(`get_verdict('{tid}')`), ask them, and sign with their own words as `user_said`"}
     engine.emit_info("verdict", f"{tid}: {sig} on the person's words: «{said[:300]}»")
+    engine.hear(tid, "verdict", said)
     return None
 
 
@@ -2019,6 +2033,13 @@ def not_the_work(engine: Engine, place, commit: str) -> str:
                          f"(a branch a linked worktree holds cannot be checked out twice — or remove that worktree "
                          f"first, then `git switch {wb}`), and deliver again" if there and there != commit else "")
             + ". The judge reads this commit.")
+
+
+def _heard_at_the_go(engine: Engine, goal: str, user_said: str, root_id, fresh: bool) -> dict:
+    """Every go's words kept over its root (`Engine.hear`) — a second go's too (critic over 677b376) — and, at a new
+    root's go, what the person must hear (`recorded_at_the_go`)."""
+    engine.hear(root_id, "go", user_said)
+    return recorded_at_the_go(engine, goal, user_said, root_id) if fresh else {}
 
 
 def recorded_at_the_go(engine: Engine, goal: str, user_said: str = "", root_id=ROOT_ID) -> dict:
@@ -2171,6 +2192,8 @@ def plan(engine: Engine, request: str = "", model: Optional[str] = None, executo
         return handed_in(engine, plan)
     if not str(request or "").strip():
         return {"refused": True, "error": "plan needs the request, or `writing=<handle>` to read one being written"}
+    # …the person's request as they asked it, quotable whatever the plan's `goal` comes to say: the file is the agent's
+    engine.hear(ROOT_ID, "request", request)
     if model is None and holds_its_work(engine):
         return yours_to_write(engine, request)
     model = model or engine.planner_model()
@@ -2205,7 +2228,7 @@ def plan(engine: Engine, request: str = "", model: Optional[str] = None, executo
                                     execution=execution_of(engine), ledger=engine.record_llm_usage)
         except NoPlan as no:
             return {"error": _no_plan(no, "plan")}
-        return _shown(engine, _plan_written(text))
+        return _shown(engine, _plan_written(text), _artifact.parse(text)["spec"])
     return _once(("plan", engine.project_name, request, model, executor, depth, review_model or engine.system_model()),
                  write, engine)
 
@@ -2219,14 +2242,14 @@ def handed_in(engine: Engine, plan: str) -> dict:
         p = _artifact.parse(text)
     except ValueError as e:
         return {"refused": True, "error": f"the plan file does not read: {e}"}
-    refused = _decompose.go_refusals(p["spec"], p["goal"])
+    refused = _decompose.go_refusals(with_the_intent(engine, p["spec"]), p["goal"])
     out = {"path": str(_planning.kept(text)), "chars": len(text), "parts": [s["id"] for s in p["spec"].get("subtasks") or ()],
            "refused_by_the_go": refused,
            "say": ("The go refuses this file as it stands: repair the points of refused_by_the_go in it and hand it in "
                    "again." if refused else
                    "It is on the person's page now. Show them its criteria and checks too; their own words agreeing "
                    "give the go: `auto_decompose(plan=path, user_said=<their words>)`.")}
-    return _shown(engine, out)
+    return _shown(engine, out, p["spec"])
 
 
 def holds_its_work(engine: Engine) -> bool:
@@ -2235,6 +2258,56 @@ def holds_its_work(engine: Engine) -> bool:
     it in performing it), and the system's planner is not asked: on a fresh solo run it wrote for 10 of 18 minutes,
     turning 3 asked requirements into 9 criteria and a suite nobody asked for (s20g1)."""
     return engine.mode_kind() == Mode.SOLO and (engine.mode() or {}).get("perform") == "in_chat"
+
+
+#: The root criterion the system adds at the go (`with_the_intent`) — its text the system's, never the plan template's,
+#: where the agent writing the plan could rewrite it; the person's own clarifications go into it by `edit_criteria`.
+INTENT_CRITERION = {
+    "name": INTENT,
+    "description": "The result answers what the person asked, as their recorded words state it — the goal as given, "
+                   "their words at the go and on later acts, the agreed plan — including what the written criteria do "
+                   "not carry. A miss of their words is this criterion's fail, quoting them.",
+    "check": [{"behaviour": "the delivered work, read against the person's recorded words",
+               "command": "git log --stat -n 20 --format='%h %s'",
+               "expect": "work that answers each thing the person's recorded words ask, nothing of theirs left out",
+               "exact": False}]}
+
+
+def intent_check(engine: Engine) -> bool:
+    """Does the go of a plan add `answers_the_persons_words` (`set_mode(intent_check=)`)? Unset: where the person holds
+    the root's work — solo or semi, performed in their chat — where nothing but the person's reading stands between
+    their words and the written criteria (the author, 2026-11-19: «галочкой в ui и по умолчанию»)."""
+    if v := engine.graph.setting("intent_check"):
+        return v == "1"
+    return engine.mode_kind() in (Mode.SOLO, Mode.SEMI) and (engine.mode() or {}).get("perform") == "in_chat"
+
+
+def with_the_intent(engine: Engine, spec: dict, root_id: str = ROOT_ID) -> dict:
+    """`spec` as a go on `root_id` writes it: where `intent_check` holds and `root_id` is a goal's root, with the root
+    criterion `answers_the_persons_words` mapped to every part — the aggregate's joint responsibility, read at the root's
+    own contact (§3.5); the parts get no copy. A criterion of the plan under that name is replaced: written by the agent
+    the criterion reads, it was admitted as "always holds" over `git log -1` (critic over de23af3). Its text is the
+    system's, or — on a root that stands — the root's own where a revision on the person's words installed it (`hear`'s
+    `intent`): a second go dropped it, or would reset what they said they meant (critic over deb1158); a text the plan's
+    agent wrote while the switch was off does not stand (critic over 677b376). The one reading every root door builds
+    by and the plan's answer says (`added_at_the_go`)."""
+    root = engine.graph.get_task(TaskId(str(root_id)))
+    if not intent_check(engine) or engine.graph.get_parent(TaskId(str(root_id))) is not None:
+        return spec
+    theirs = {_decompose.criterion_key(h["intent"]) for h in engine.heard_on(root_id) if h.get("intent")}
+    mine = next(({"name": c.name, "description": c.description, "check": [p.to_dict() for p in c.check]}
+                 for c in (root.spec.criteria if root else ())
+                 if c.name == INTENT and _decompose.criterion_key(c) in theirs), INTENT_CRITERION)
+    kids = [str(k["id"]) for k in spec.get("subtasks") or ()]
+    return {**spec, "root_criteria": [*(c for c in spec.get("root_criteria") or () if c.get("name") != INTENT),
+                                      json.loads(json.dumps(mine))],
+            **({"mappings": [*(m for m in spec.get("mappings") or () if m.get("criterion") != INTENT),
+                             *({"criterion": INTENT, "child_id": k} for k in kids)]} if kids else {})}
+
+
+def added_at_the_go(engine: Engine, spec: dict) -> list[dict]:
+    """The root criteria the go writes that the plan `spec` does not carry as they are (`with_the_intent`)."""
+    return [c for c in with_the_intent(engine, spec).get("root_criteria") or () if c not in (spec.get("root_criteria") or ())]
 
 
 #: the plan file a solo in_chat agent fills with the person: every field left empty is refused by the go's reading (`form`)
@@ -2304,7 +2377,7 @@ def refine_plan(engine: Engine, plan: str = "", note: str = "", model: Optional[
             return {"error": _no_plan(no, "refine_plan")}
         except (ValueError, OSError) as e:
             return {"error": str(e)}
-        return _shown(engine, _plan_written(text))
+        return _shown(engine, _plan_written(text), _artifact.parse(text)["spec"])
     return _once(("refine_plan", engine.project_name, plan, note, model, review_model or engine.system_model()), write,
                  engine)
 
@@ -2436,22 +2509,32 @@ ON_HOST = ("First: this project's work runs on this machine, outside Docker, as 
            "branches. ")
 
 
-def _shown(engine: Engine, out: dict) -> dict:
+def _shown(engine: Engine, out: dict, spec: Optional[dict] = None) -> dict:
     """A plan file written is its project's to show: kept as the one its page shows (`written_plan`), told on its feed,
     and under AUTO its page opened, as the go opens it — the person read a plan only in the client's words, and the go
-    under AUTO is the client's too (s17b: the core criterion left the plan unsaid)."""
+    under AUTO is the client's too (s17b: the core criterion left the plan unsaid). `spec`: the plan's, the criteria
+    the go writes beyond it said with it (`added_at_the_go`)."""
     if path := out.get("path"):
         if engine.workforce.runs_on_host():
             out["say"] = ON_HOST + out.get("say", "")
         _kept.wrote(engine.project_name, path)
         engine.emit_info("plan_written", f"the plan is written: {path}")
+        # …said with the plan, before the go: the person agrees to every criterion the go fixes, these too
+        if spec is not None and (added := added_at_the_go(engine, spec)):
+            out["added_at_the_go"] = added
+            out["say"] = out.get("say", "") + (
+                f" The go writes the root criterion `{INTENT}` with the system's text (added_at_the_go), in place of "
+                "any of the plan's under that name: a validator other than you reads the result against the person's "
+                "own words, and fails it only quoting them — name it to the person with the criteria; their words "
+                "switch it off, `set_mode(intent_check=False, user_said=<their words>)`.")
         if engine.mode_kind() == Mode.AUTO:
             open_the_page(engine.project_name)
     return out
 
 
-def written_plan(project) -> dict:
-    """The plan file last written for `project`, as its page shows it before the go (`GET /api/plan`); {} for none."""
+def written_plan(project, engine: Optional[Engine] = None) -> dict:
+    """The plan file last written for `project`, as its page shows it before the go (`GET /api/plan`); {} for none.
+    With its `engine`, the criteria the go adds (`with_the_intent`) among its own, marked `added_at_the_go`."""
     if not (at := _kept.written(project)):
         return {}
     text = at["text"]
@@ -2459,7 +2542,8 @@ def written_plan(project) -> dict:
         p = _artifact.parse(text)
     except ValueError:                  # …a kept file that no longer reads is gone as far as its reader can tell
         return {}
-    spec, r = p["spec"], p["review"]
+    spec, r = (with_the_intent(engine, p["spec"]) if engine else p["spec"]), p["review"]
+    added = {c["name"] for c in (added_at_the_go(engine, p["spec"]) if engine else ())}
     return {"path": at["path"], "written_at": at["at"], "goal": p["goal"], "executor": p["executor"],
             "parts": [{"id": s["id"], "name": s.get("name", ""), "description": s.get("description", ""),
                        "criteria": [c["name"] for c in s.get("criteria") or ()],
@@ -2469,7 +2553,8 @@ def written_plan(project) -> dict:
             "root_criteria": [{"name": c["name"], "description": c.get("description", ""),
                                "check": [{k: x.get(k, "" if k != "exact" else False)
                                           for k in ("behaviour", "command", "expect", "exact")}
-                                         for x in c.get("check") or ()]}
+                                         for x in c.get("check") or ()],
+                               **({"added_at_the_go": True} if c["name"] in added else {})}
                               for c in spec.get("root_criteria") or ()],
             "deps": [[d["from"], d["to"]] for d in spec.get("deps") or ()],
             "open": open_at_the_go(text), "taken_back": r.get("taken_back") or [],
@@ -2514,8 +2599,12 @@ def _after_the_plan(undecided: int, notes: list, cannot: int = 0) -> str:
 def create_task(*a, **kw):
     """`gfso.tools.create_task`; the call that makes the root by hand (MANUAL) says what the agents' copy lacks too
     (`_not_imported`), as `auto_decompose` does where it authors the root."""
-    out = _tools.create_task(*a, **kw)
     at = inspect.signature(_tools.create_task).bind(*a, **kw).arguments
+    if not at.get("parent_id") and isinstance(spec := at.get("spec"), dict):
+        # …a root made by hand carries what every root door writes (`with_the_intent`)
+        at["spec"] = {**spec, "criteria": with_the_intent(at["engine"], {"root_criteria": list(spec.get("criteria") or ())},
+                                                          at.get("task_id") or ROOT_ID)["root_criteria"]}
+    out = _tools.create_task(**at)
     made_root = isinstance(out, dict) and "error" not in out and not at.get("parent_id")
     return {**out, **_not_imported(at["engine"])} if made_root else out
 
@@ -2940,7 +3029,7 @@ def wait_for_the_customer(engine: Engine, root_id: Optional[str] = None, actor: 
 
 
 def _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, network, bounds,
-                    max_iterations) -> Union[dict, str]:
+                    max_iterations, intent_check=None) -> Union[dict, str]:
     """What `set_mode` was given for the project to set for itself, as the settings table keeps it — or why not."""
     if bounds is not None and (why := bounds_refusal(bounds)):
         return why
@@ -2963,7 +3052,9 @@ def _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, n
                               ("deadline_s", None if deadline_s is None else float(deadline_s)),
                               ("observe", None if observe is None else "1" if observe else "0"),
                               ("bounds", None if bounds is None else json.dumps(bounds)),
-                              ("max_iterations", max_iterations)) if v is not None}
+                              ("max_iterations", max_iterations),
+                              ("intent_check", None if intent_check is None else "1" if intent_check else "0"))
+            if v is not None}
 
 
 def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int] = None,
@@ -2971,7 +3062,7 @@ def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int]
              system_model: Optional[str] = None, planner_model: Optional[str] = None, l2_gate: Optional[bool] = None,
              deadline_s: Optional[float] = None, observe: Optional[bool] = None,
              network: Optional[Union[str, dict]] = None, bounds: Optional[dict] = None,
-             max_iterations: Optional[int] = None) -> dict:
+             max_iterations: Optional[int] = None, intent_check: Optional[bool] = None) -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
 
     - `solo` — you (the user-agent) hold and execute every node; the one seam is the root.
@@ -3007,7 +3098,10 @@ def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int]
     validator in minutes), replacing the project's previous `bounds` whole, `{}` = the defaults — days to months where
     a person owns the wait (you under solo, or over what you hold under semi), the server's where the system does; OFFERED, CHALLENGED and
     BLOCKED also end at the packet deadline, whichever comes first (§12.2), so a long wait the system owns needs `deadline_s` too; `max_iterations` — the rework rounds a node issued here
-    without its own bound gets; `observe` — whether the system runs a node's pinned checks once on its
+    without its own bound gets; `intent_check` — whether the go of a plan file adds the root criterion
+    `answers_the_persons_words`, read by the validator against the person's recorded words (on where the person holds
+    the root's work — solo or semi, `in_chat` — off elsewhere, unless set; turned only with `user_said`, the person's
+    words, at any time); `observe` — whether the system runs a node's pinned checks once on its
     place before an executor session and hands it what they printed (on unless set off; `observe.observe_place`);
     `network` — how far this project's container reaches out, where its execution is a container: `open` (everything but
     your host), `off` (nothing), or `{"mode": "allowlist", "hosts": [...]}` (only the named hosts, on 443, through one
@@ -3023,6 +3117,12 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
         return {"refused": True, "error": f"mode must be one of solo | semi | auto, got {mode!r}"}
     if no := _not_the_persons(engine, m, user_said):
         return no
+    # …at any time, before the go too: the default stands for the person against the agent whose work it reads, and
+    # only their words turn it (critic over de23af3)
+    if intent_check is not None and not str(user_said).strip() and not ((p := CALLER.get()) is not None and p.a_page):
+        return {"refused": True, "error": f"`intent_check` — whether the system reads the result against the person's "
+                                          f"own words ({INTENT}) — is the person's to turn: ask them, and pass their "
+                                          f"words asking for it as `user_said`"}
     if m is None and (boundary is not None or perform is not None):
         return {"refused": True, "error": "boundary and perform belong to a mode: name the mode with them"}
     perform = perform or "dispatch"
@@ -3031,7 +3131,8 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
     if perform == "in_chat" and client_kind() == "chat":
         return {"refused": True, "error": "`in_chat` is the work done by your own tools, and this client has only the "
                                           "gfso verbs: `dispatch` has the system perform in your name what you hold"}
-    settings = _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, network, bounds, max_iterations)
+    settings = _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, network, bounds, max_iterations,
+                               intent_check)
     if isinstance(settings, str):
         return {"refused": True, "error": settings}
     # …asked of the roster, not of the declaration: an unreadable declaration still names a container, whose switch the

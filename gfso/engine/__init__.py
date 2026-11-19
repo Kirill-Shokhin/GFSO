@@ -33,7 +33,7 @@ from gfso.core.graph.projection import build as build_projection, render as rend
 from gfso.core.protocol.fsm import available_signals, not_admissible_here, transition
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, probes_of, probes_that_expected_nothing,
-                                          verdict_report_defects, probe_labels, unrun_probes)
+                                          verdict_report_defects, probe_labels, unrun_probes, INTENT)
 from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_not_reproduced, plan_pins, runs_pin, same_expectation, BOUND_SPENT,PAST_BOUND, PAST_WHOLE, admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
                                           refuting_probes, merge_regression, probe_id, layable_over, unrerunnable,
                                           unaccounted_for, orphaned_regression,
@@ -83,7 +83,8 @@ log = logging.getLogger(__name__)
 #: what a project sets for itself (`set_mode`): the system's model, the Level-2 gate, the switch on the way out, the
 #: deadline nobody typed, the place's observation, the states' own bounds, the rework bound nobody typed — each in the
 #: settings table alone (`Engine.settings`)
-SETTINGS = ("system_model", "planner_model", "l2_gate", "network", "deadline_s", "observe", "bounds", "max_iterations")
+SETTINGS = ("system_model", "planner_model", "l2_gate", "network", "deadline_s", "observe", "bounds", "max_iterations",
+            "intent_check")
 
 #: How long after the account's limit says it lifts the system starts the project it stopped: a clock or two apart.
 LIFT_MARGIN_S = 30
@@ -92,6 +93,10 @@ LIFT_MARGIN_S = 30
 #: words, recorded on the feed for the person to see — a solo agent rewrote an agreed check after the go into one that
 #: held on an empty repository, and nothing said so (critic over f5b1f88). Set by the doors, read before the queue (`_the_persons_packet`).
 PERSONS_WORDS: ContextVar[str] = ContextVar("persons_words", default="")
+#: the settings key under which a goal's recorded words are kept, + its root id (`Engine.hear`)
+HEARD_ON = "heard_on:"
+#: the acts whose recorded words are the person's own (`Engine.hear`) — the plan agreed at the go is the agent's text
+PERSONS_ACTS = ("request", "go", "revise", "verdict")
 #: what of a stop's record the system lifts it by: a time, an execution place, a credential store's stamp
 LIFTS = ("until", "place", "account")
 #: How long what the place probe said stands for R′'s gate (`place_down`): each asking is a container of its own.
@@ -596,6 +601,27 @@ class Engine:
         self.emit_info("mode", f"mode set to {mode.value}"
                        + (f" (boundary {boundary})" if boundary is not None else "") + f" by {author}")
         return self.mode()
+
+    def hear(self, root_id, act: str, said: str, **with_it) -> None:
+        """The words recorded over the goal `root_id` on an act of it — the person's request, their words at each go, on
+        a revision of its packet, on its verdict; the plan agreed at the go — kept whole with the project, where the feed
+        shows them cut: what `answers_the_persons_words` is read against (`persons_words`). `with_it`: what the act
+        wrote with those words (a revision's `intent`, the criterion's text it installed). Said twice, kept once."""
+        if (said := str(said or "").strip()) and (h := {"act": act, "said": said, **with_it}) not in (
+                was := self.heard_on(root_id)):
+            self._storage.store_setting(f"{HEARD_ON}{root_id}", json.dumps([*was, h]))
+
+    def heard_on(self, root_id) -> list[dict]:
+        """[{act, said}] recorded over the goal `root_id` (`hear`), oldest first."""
+        return json.loads(self._storage.get_setting(f"{HEARD_ON}{root_id}") or "[]")
+
+    def persons_words(self, task) -> Optional[list[str]]:
+        """What a FAIL of `answers_the_persons_words` on `task` may quote, one utterance each: the goal as given — its
+        description — and the person's own words recorded over it (`heard_on`, PERSONS_ACTS). The plan is the agent's
+        text, agreed but not said: a quote of it ("format gfso plan 1") cites nobody. None: `task` has no such criterion."""
+        if all(c.name != INTENT for c in task.spec.criteria):
+            return None
+        return [task.spec.description, *(h["said"] for h in self.heard_on(task.id) if h["act"] in PERSONS_ACTS)]
 
     def set_settings(self, settings: dict, author: AgentId, said: str = "") -> dict:
         """Change only what the project sets for itself (`set_mode`'s settings), leaving who holds what as recorded — a
@@ -1152,6 +1178,13 @@ class Engine:
                 f"could be ABOUT. V is the conjunction over a node's criteria (§2), and over an "
                 f"empty set that is vacuously true — which is not a verdict. Give it criteria "
                 f"(`edit_criteria`) and validate those.")
+        # …AND A FAIL ON THE PERSON'S WORDS WITH NO REPORT TO CARRY ITS QUOTE: whatever the door, that fail stands on
+        # their words (`verdict_report_defects`), and a bare failed list would carry it past the rule
+        if (verdict == Verdict.FAIL and not per_criterion and task is not None and INTENT in failed_criteria
+                and any(c.name == INTENT for c in task.spec.criteria)):
+            raise ValueError(f"not a verdict on {task_id}: '{INTENT}' is failed with no report on it, so no `quote` "
+                             f"of the person's words — its fail stands on what they said: give its entry with the "
+                             f"quote, then the evidence")
         # …AND A PASS THAT SPEAKS OF NOTHING IS THE SAME ABSENCE, one step along. The guard above
         # catches a node with no criteria; this catches a node whose criteria were simply never
         # addressed. The battery below was gated on `per_criterion is not None`, so a report that
@@ -1169,9 +1202,9 @@ class Engine:
                 f"over the contract (§2); a conjunct nobody spoke to is ⊥, and ⊥ does not carry a "
                 f"pass. Say what was observed per criterion, or record what actually happened.")
         if per_criterion is not None and task is not None:
-            defects = verdict_report_defects([c.name for c in task.spec.criteria], verdict,
-                                             per_criterion, list(failed_criteria or ()),
-                                             require_probe=require_probe)
+            defects = verdict_report_defects([c.name for c in task.spec.criteria], verdict, per_criterion,
+                                             list(failed_criteria or ()), require_probe=require_probe,
+                                             persons_words=self.persons_words(task))
             if defects:
                 raise ValueError(f"not a verdict on {task_id} (⊥, not pass — §2): "
                                  + "; ".join(defects))
@@ -1602,6 +1635,8 @@ class Engine:
             e = {"criterion": k, "verdict": "fail" if k in _red else "pass", "evidence": str(note)}
             if div:
                 e["divergences"] = div
+            if isinstance(v, dict) and v.get("quote"):
+                e["quote"] = str(v["quote"])
             return dict(e, probe=named) if named else e
 
         self.record_exec_verdict(
@@ -2311,6 +2346,12 @@ class Engine:
                              f"they change only on the person's own words — show them the change, and pass their words "
                              f"agreeing as `user_said`, recorded on the project's feed")
         self.emit_info("revise", f"{old.id}'s {', '.join(moved)} changed on the person's words: «{said[:300]}»")
+        # …and the text of `answers_the_persons_words` it installs, where it moves: only such a text of it stands on a
+        # later go beside the system's (`tools_llm.with_the_intent`) — one the plan's agent wrote does not
+        mine = lambda s: next(({"description": c.description, "check": [p.to_dict() for p in c.check]}
+                               for c in s.criteria if c.name == INTENT), None)
+        self.hear(old.id, "revise", said, **({"intent": now} if (now := mine(new_spec or old.spec)) != mine(old.spec)
+                                             and now else {}))
 
     def _revise(self, task_id: TaskId, new_spec: Spec, agent: AgentId,
                 new_assignee: Optional[AgentId] = None, covers: tuple = (),

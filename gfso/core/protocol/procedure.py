@@ -32,7 +32,8 @@ from typing import Iterable, Mapping, Optional, Sequence
 
 from gfso.core.types import HOST, Criteria, Probe, files_at, unprojected
 from gfso.core.protocol.shell import commands, substitution_end
-from gfso.core.protocol.invariants import emits_a_constant, probe_held, probes_of, spoken_verdict, underprobed
+from gfso.core.protocol.invariants import (ON_NO_DELIVERY, OVER_A_PASS, PAST_BOUND, emits_a_constant, probe_held,
+                                          probes_of, spoken_verdict, underprobed)
 
 
 def _norm(s: str) -> str:
@@ -1391,8 +1392,6 @@ def without_past_builds(regression: Mapping) -> dict[str, list[dict]]:
 SYSTEMS_ACT = "systems_act"
 #: on a probe the system marked `held: false` by running it itself, not by the report's word
 SYSTEM_SAW = "system_saw"
-#: on an entry the report passed and the system's own run of a pin failed: what the report ran under it refuted nothing
-OVER_A_PASS = "over_a_pass"
 
 
 def refuting_probes(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, object]] = (),
@@ -1813,18 +1812,11 @@ def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterio
     return lent
 
 
-#: an entry's exact pinned checks the system ran that did not finish within their own bound: ⊥ for its criterion,
-#: written here only (`with_engine_observations`), read by the engine as under-observation (`Engine.record_verdict`)
-PAST_BOUND = "past_bound"
 #: the seconds one exact pinned check the system runs may take, its build included — the bound every reader names
 PROBE_S = 60
 #: …and whether every one of them had its WHOLE bound (no budget cutting it): then the same tree times out again, and
 #: asking the validation again only pays for the same ⊥ (`BOUND_SPENT`, the dispatcher's `no-verdict:bound`)
 PAST_WHOLE = "past_bound_whole"
-#: an entry's pass observed on no delivered tree — a pin's run on the delivery shows neither its `expect` nor the one the
-#: report cites, or the judge changed its copy where the system's own run decides nothing: ⊥ for its criterion, its
-#: reasons read as `PAST_BOUND` is (`with_engine_observations`)
-ON_NO_DELIVERY = "on_no_delivery"
 #: a shell's exit when the command could not be run at all — not found, not executable: no observation of the delivery
 NOT_RUN_RC = (126, 127)
 #: said in a refusal whose every unobserved criterion is PAST_WHOLE — read by the dispatcher, which stops re-asking

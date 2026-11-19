@@ -49,11 +49,19 @@ command may write new files beside them, never change one — to edit one, copy 
    one entry each, `{what, evidence}` with the command you ran and what it printed. It is not a divergence
    and fails nothing: the verdict reads only the criteria (Inv-2). It reaches the issuer, who judges it
    against the goal and may write the criterion. Said only in a criterion's `evidence`, it reaches no one who can.
+   **The exception: `answers_the_persons_words`**, where the packet carries it with the person's recorded words. Read
+   its own text first — the person's clarifications written into it (what they did and did not mean) bind. Then the
+   person's quoted words ARE its content: a thing their words ask that the result misses is its `fail`, carrying
+   `quote` — the span of their own words it misses (3 words or more of one thing they said, or all of a shorter one;
+   one unbroken span, no `…`; the plan is the agent's text and is not quoted), copied as written — then the evidence of
+   the miss; any verdict short of `pass` on it carries the quote too. Nothing of
+   theirs to quote, no fail: what they "would also want" goes in `outside`.
 4. **Adjudicate-first discipline (calibration — over-confirming is YOUR failure mode):**
    - Report a criterion `fail` ONLY with concrete failing evidence — never "seems incomplete".
    - Do NOT fail a node for things outside its criteria (out-of-scope), for implementation detail finer
      than the contract, or for something another node covers. The contract is the criteria; scope
-     disputes belong to the issuer, not to your verdict.
+     disputes belong to the issuer, not to your verdict. (`answers_the_persons_words` alone reaches past the
+     other criteria, and only as far as the person's quoted words — item 3.)
    - **ACCEPTED_RISKS never retires a criterion of this node.** It declares risk factors the PLAN set aside;
      the criteria are the obligation itself. A criterion that fails, fails — however the plan (or the
      executor's report) explains it away, and no matter how convincing the explanation that "no

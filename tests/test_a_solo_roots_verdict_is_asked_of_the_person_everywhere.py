@@ -17,10 +17,11 @@ def _validating():
     _gone(e, _filled(TL.plan(e, ASKED)["text"]))
     delivered = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="wc2", self_validation="PASS")
     e.wait_idle()
-    c = e.graph.get_task(TaskId("root")).spec.criteria[0]
+    # …every criterion of the root spoken, the system's `answers_the_persons_words` among them
     e.record_exec_verdict(TaskId("root"), "PASS", [], "val", per_criterion=[
         {"criterion": c.name, "verdict": "pass", "evidence": NOTE,
-         "probe": [{"behaviour": p.behaviour, "command": p.command, "expect": p.expect} for p in c.check]}])
+         "probe": [{"behaviour": p.behaviour, "command": p.command, "expect": p.expect} for p in c.check]}
+        for c in e.graph.get_task(TaskId("root")).spec.criteria])
     return e, delivered
 
 

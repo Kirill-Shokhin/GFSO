@@ -24,7 +24,6 @@ import json
 import re
 import subprocess
 import time
-import unicodedata
 from dataclasses import dataclass, field
 
 from gfso.adapters.agents.human import HumanAgent
@@ -32,6 +31,7 @@ from gfso.adapters.storage.memory import MemoryStorage
 from gfso.core.types import HOST, Criteria, PlaceUnavailable, Probe, Signal, Stage, TaskId
 from gfso.engine import Engine
 from gfso.core.graph.model import root_of
+from gfso.core.protocol.invariants import quoted_in
 from gfso.core.protocol.procedure import admission_defects, criterionless
 from gfso.adapters.llm.stats import calls_of, fan, refused_by_limit
 from gfso.llm import llm_factory
@@ -141,15 +141,6 @@ def _criterion(c: dict) -> Criteria:
     return Criteria(str(c.get("name", "")), check=tuple(Probe.of(p) for p in c.get("check") or ()))
 
 
-def _words(text: str) -> str:
-    """`text` as words alone — case, ё/е, punctuation, quote and dash forms and spacing dropped — framed by spaces."""
-    folded = unicodedata.normalize("NFKC", text).casefold().replace("ё", "е")
-    return " " + " ".join(_NON_WORD.split(folded)).strip() + " "
-
-
-_NON_WORD = re.compile(r"[\W_]+")
-
-
 def beyond_the_request(spec: dict, request: str, unasked: bool = False) -> list[tuple[str, dict]]:
     """[(node, criterion)] of `spec` whose `asked` — the request's words it says it states — is not in `request`, each
     part between `…` found there as written: no model reads it. A goal's criteria are the person's, and a capability
@@ -157,10 +148,8 @@ def beyond_the_request(spec: dict, request: str, unasked: bool = False) -> list[
     setting (§6.7), and the system that wrote it is its author (the author, 11-04: «есть исходные критерии а есть
     придуманные походу»). A criterion with no `asked` is beyond it where the system wrote it now (`unasked`) — an
     invented one names no words; in a plan file of before, or a hand-written one, it is not read."""
-    said = _words(request)
-    return [(node, c) for node, crits in _nodes(spec) for c in crits if ("asked" in c or unasked) and not (
-        (parts := [w for x in re.split(r"…|\.\.\.", str(c.get("asked") or "")) if (w := _words(x)).strip()])
-        and all(w in said for w in parts))]
+    return [(node, c) for node, crits in _nodes(spec) for c in crits
+            if ("asked" in c or unasked) and not quoted_in(c.get("asked"), request)]
 
 
 def _reference(agree: "_Agreement") -> str:
@@ -292,9 +281,13 @@ class _Agreement:
     ever the TASK it is judged by. Findings are kept per criterion: a re-judged criterion replaces its own, a failed
     call (⊥) changes none. One the TASK itself demands both ways is its author's (§9.7): reported, never repaired."""
 
-    def __init__(self, llm, engine: Engine, root_id: str, task: str, on: bool, contract_fixed: bool, asks: str = ""):
+    def __init__(self, llm, engine: Engine, root_id: str, task: str, on: bool, contract_fixed: bool, asks: str = "",
+                 root=None):
         self.llm, self.engine, self.root_id, self.task, self.on, self.held = llm, engine, root_id, task, on, contract_fixed
         self.asks = asks        # …the customer's notes: they ask too (`_reference`)
+        # …what the SYSTEM writes into the root beside the plan's author, at every build of this authoring
+        # (`decompose_into(system_root=)`): never shown to the author's rounds as theirs to judge or repair
+        self.root = root or (lambda spec: spec)
         self.found: dict[tuple, tuple[str, str]] = {}
         self.undecided: set[tuple] = set()
         self.unplaced = 0
@@ -585,7 +578,7 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
     try:
         _progress("builder: wholesale build through the FSM…", progress)
         staged("builder")
-        eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee,
+        eng, rid, dropped = build_graph_live(agree.root(spec), request, engine, root_id=root_id, assignee=assignee,
                                                  max_iterations=max_iterations, closed=closed,
                                                  child_assignee=child_assignee, contract_fixed=contract_fixed)
         # …AND WHAT THE GO WILL REFUSE, after each build: a post-build patch rewrote parts and seams and nothing read its
@@ -610,7 +603,7 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
             _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
             if any(k in fixed for k in _CRITERIA_FIELDS):
                 agree.judge(spec)       # before the rebuild: what the patch rewrote still differs from the graph
-            eng, rid, dropped = build_graph_live(spec, request, engine, root_id=root_id, assignee=assignee,
+            eng, rid, dropped = build_graph_live(agree.root(spec), request, engine, root_id=root_id, assignee=assignee,
                                                  max_iterations=max_iterations,
                                                  child_assignee=child_assignee, contract_fixed=contract_fixed)
             problems = found()
@@ -1079,7 +1072,7 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
                    fast: bool = False, max_iterations: int | None = None,
                    child_assignee: str | None = None, spec: dict | None = None,
                    executor: str = "", author: str | None = None, closed: bool = False,
-                   contact: str = "", pins: "PinsOnTheBase | None" = None) -> DecomposeResult:
+                   contact: str = "", pins: "PinsOnTheBase | None" = None, system_root=None) -> DecomposeResult:
     """Agent-facing: run the init search↔fold on `request`, build the result INTO a LIVE engine THROUGH
     the FSM (signals) under `root_id`, verify + repair until `list_holes` is clean (or return the
     residue honestly) — then apply `depth−1` refine operations over the BUILT graph (each verified;
@@ -1092,7 +1085,9 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
     price left out of both. `author` — the party authoring the split: a node's contract is re-authored only by its
     issuer, so where the author is not the issuer the split maps onto the contract as issued (`held_contract`).
     `closed` — `spec` is the user's plan handed in whole: built as it stands or refused, never repaired by a model.
-    `pins` — the plan's pins run over the base as they are written, those that cannot run repaired (`PinsOnTheBase`)."""
+    `pins` — the plan's pins run over the base as they are written, those that cannot run repaired (`PinsOnTheBase`).
+    `system_root(spec) -> spec` — what the system writes into the root at every build, whatever the route (a criterion
+    of its own, `tools_llm.with_the_intent`); the author's rounds never read it as theirs."""
     t0 = time.time()
     llm = llm or _default_llm(model)
     depth = max(1, depth)
@@ -1105,7 +1100,7 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
     held = existing is not None and author is not None and str(author) != str(engine.graph.issuer_of(existing.id))
     given = spec
     contract = _the_request(existing, request, held)    # the contract before this authoring: what its criteria are judged by
-    agree = _Agreement(llm, engine, root_id, contract, given is None, held)
+    agree = _Agreement(llm, engine, root_id, contract, given is None, held, root=system_root)
     if existing is not None and engine.graph.get_active_children(TaskId(root_id)):
         _progress(f"{root_id} is already decomposed → {depth} refine round(s) over the existing graph",
                   progress)

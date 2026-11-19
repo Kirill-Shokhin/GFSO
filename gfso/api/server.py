@@ -459,7 +459,7 @@ def _mount_plan_reads(app, _e) -> None:
         """The plan file last written for this project (`plan` / `refine_plan`), as the page shows it before the go:
         its goal, parts, what its review leaves open, what its repair took back, what the go would refuse, its notes;
         `{}` when none was written."""
-        return _tools.written_plan(_e().project_name)
+        return _tools.written_plan((e := _e()).project_name, e)
 
     @app.get("/api/holes")
     def get_holes(root_id: Optional[str] = None):

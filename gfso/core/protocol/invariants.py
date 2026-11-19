@@ -9,10 +9,61 @@ that read as protection; removed (visibility ≠ enforcement)."""
 from __future__ import annotations
 
 import re
+import unicodedata
 
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Optional, Sequence
 
 from gfso.core.types import SignalData, Signal, Verdict
+
+#: on an entry the report passed and the system's own run of a pin failed: what the report ran under it refuted nothing
+OVER_A_PASS = "over_a_pass"
+#: an entry's exact pinned checks the system ran that did not finish within their own bound: ⊥ for its criterion,
+#: written only by `procedure.with_engine_observations`, read by the engine as under-observation (`Engine.record_verdict`)
+PAST_BOUND = "past_bound"
+#: an entry's pass observed on no delivered tree — a pin's run on the delivery shows neither its `expect` nor the one the
+#: report cites, or the judge changed its copy where the system's own run decides nothing: ⊥ for its criterion, its
+#: reasons read as `PAST_BOUND` is (`procedure.with_engine_observations`)
+ON_NO_DELIVERY = "on_no_delivery"
+#: the marks of an entry whose non-pass word is the system's own, from its run of the pins — not the report's
+SYSTEMS_WORD = (OVER_A_PASS, PAST_BOUND, ON_NO_DELIVERY)
+
+#: The root criterion the system adds where the person holds the root's work (`tools_llm.with_the_intent`): the result
+#: answers the person's recorded words. A FAIL on it stands on a span of those words (`verdict_report_defects`).
+INTENT = "answers_the_persons_words"
+
+
+def word_normal(text: str) -> str:
+    """`text` as words alone — case, ё/е, punctuation, quote and dash forms and spacing dropped — framed by spaces."""
+    folded = unicodedata.normalize("NFKC", str(text or "")).casefold().replace("ё", "е")
+    return " " + " ".join(_NON_WORD.split(folded)).strip() + " "
+
+
+_NON_WORD = re.compile(r"[\W_]+")
+
+
+def quoted_in(quote, text: str) -> bool:
+    """Is `quote` words of `text` — each part between `…` found there as written, by `word_normal`? No model reads it:
+    an empty quote is words of nothing."""
+    said = word_normal(text)
+    parts = [w for x in re.split(r"…|\.\.\.", str(quote or "")) if (w := word_normal(x)).strip()]
+    return bool(parts) and all(w in said for w in parts)
+
+
+#: the fewest words a quote of the person spans — one word ("да", "the") is found in any record and cites nothing
+QUOTE_WORDS = 3
+
+
+def quotes_the_person(quote, said: Sequence[str]) -> bool:
+    """Is `quote` ONE contiguous span of one of the person's utterances `said`, found as written by `word_normal`, of
+    QUOTE_WORDS words or more — or the whole of an utterance shorter than that ("да, делай")? No `…` parts: scattered
+    words ("the … the … the") are found in any record and cite nobody (critic over 89454da)."""
+    text = str(quote or "")
+    if "…" in text or "..." in text:
+        return False
+    w = word_normal(text)
+    return bool(w.strip()) and any(
+        w in (u := word_normal(x)) and (len(w.split()) >= QUOTE_WORDS or w == u) for x in said)
+
 
 _DEGENERATE = re.compile(r"^\s*(echo|printf|true|/bin/true)\b[^|;&$`\n\r]*$", re.I)   # one line: a second runs work
 
@@ -176,7 +227,8 @@ def _says_something(entry: Mapping) -> bool:
 def verdict_report_defects(criteria: Sequence[str], verdict: str,
                            per_criterion: Sequence[Mapping],
                            failed_criteria: Sequence[str],
-                           require_probe: bool = False) -> list[str]:
+                           require_probe: bool = False,
+                           persons_words: Optional[Sequence[str]] = None) -> list[str]:
     """Is this validation report a VERDICT at all? (§2 V(t) = ⋀ᵢ cᵢ over the node's criteria.)
 
     A verdict is the conjunction over the WHOLE contract. So a report is not a verdict — it is ⊥,
@@ -259,6 +311,18 @@ def verdict_report_defects(criteria: Sequence[str], verdict: str,
             defects.append(f"criterion '{name}' is marked pass while the report says its probe did not hold "
                            f"({'; '.join(unheld)}) — what the probe showed is the criterion's value, and it is "
                            f"fail (Inv-2, §12.8)")
+        # …AND A FAIL ON THE PERSON'S WORDS STANDS ON THEM: its `quote` is a span of what they said (`persons_words`),
+        # or it is "they would also want X" with nothing to quote — the validator's requirement, not theirs (§8.3, §2.2).
+        # ANY non-pass word the report gives it: red_set counts each red ("undecidable", "not met"); only the system's
+        # own word from its run of the pins (SYSTEMS_WORD) is no report's to quote for
+        if (name == INTENT and name in known and persons_words is not None
+                and spoken_verdict(e.get("verdict")) != "pass" and not any(e.get(k) for k in SYSTEMS_WORD)
+                and not quotes_the_person(e.get("quote"), persons_words)):
+            defects.append(f"criterion '{INTENT}' is not passed with no `quote` of the person's own words "
+                           f"({str(e.get('quote') or '')[:200]!r}) — its fail stands on what they said: quote one "
+                           f"unbroken span (no `…`) of {QUOTE_WORDS} words or more of one thing they said (the goal, their words at the go "
+                           f"or on a later act — the plan is not theirs to quote), or the whole of a shorter one, as "
+                           f"written, then the evidence; with nothing of theirs to quote it does not fail")
 
     red = set(red_set(per_criterion, known))
     if verdict == Verdict.PASS and red:
