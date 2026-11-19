@@ -13,9 +13,11 @@ takes the canon's own EXPLORE branch (§9.9) and turns the gate off, exactly as 
 without a checker would. `tests/test_l2_gate.py` turns it back ON and owns that behavior end to end.
 """
 import atexit
+import contextlib
 import faulthandler
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -107,7 +109,15 @@ def _sweep(*homes: Path) -> None:
             if ids := [i for i, _, h in (r.partition(" ") for r in got) if h in marks]:
                 subprocess.run(["docker", kind, "rm", *(["-f"] if kind == "container" else []), *ids], capture_output=True)
     for h in homes:
-        shutil.rmtree(h, ignore_errors=True)
+        shutil.rmtree(h, onerror=_writable_then)
+
+
+def _writable_then(fn, path, _) -> None:
+    """A test repository's packs are read-only, and on Windows `rmtree` cannot unlink those: ignored, its home stayed, and
+    every worker of every later suite walked all of them again (2026-11-19: 2134 homes, ~25 s of each worker's setup)."""
+    with contextlib.suppress(OSError):
+        os.chmod(path, stat.S_IWRITE)
+        fn(path)
 
 
 @pytest.fixture(autouse=True, scope="session")
