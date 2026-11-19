@@ -61,6 +61,9 @@ function head({d, rounds}) {
         + prop('As given', !d.parent_id && asGiven(d) ? `<span class="pn-given">${esc(asGiven(d))}</span>` : '')
         // …and the person's own words agreeing to the plan at the go (solo / semi: the go is theirs), as the go recorded them
         + prop('At the go', !d.parent_id && atTheGo(d).user_said ? `<span class="pn-given">${esc(atTheGo(d).user_said)}</span>` : '')
+        // …a node moved under another by a re-admission (`replaces`), both ways, by name (JOINT-regroup 11-19)
+        + prop('Replaces', (d.replaces || []).map(x => esc(nameOf(taskOf(x)) || x)).join(', '))
+        + prop('Moved to', (d.replaced_by || []).map(x => esc(nameOf(taskOf(x)) || x)).join(', '))
         + prop('Del', `<code>${esc(d.assignee ? agentName(d.assignee) : '—')}</code>`)
         + prop('Round', n ? `<b class="pn-fig">${n}</b>${inWork ? ' in work' : ''}` : '')
         + prop('Result', !d.parent_id && delivered(d) && S.graph.landed ? `<code${H.landed(S.graph.landed)}>${esc(S.graph.landed.branch || S.graph.landed.path)}</code>` : '')
@@ -345,6 +348,8 @@ function verdictFull({vr}) {
             const [cls, icon] = c.verdict === 'pass' ? ['check-pass', '✓'] : c.verdict === 'fail' ? ['check-fail', '✗'] : ['check-skip', '⊥'];
             return `<li class="${cls}"><span class="check-icon">${icon}</span><div class="verdict-body"><strong>${esc(c.criterion)}</strong>`
                 + (c.evidence ? `<div class="verdict-evidence">${esc(c.evidence)}</div>` : '')
+                // …the person's own words the result answers wrongly, quoted (`answers_the_persons_words`)
+                + (c.quote ? `<div class="verdict-evidence pn-given">«${esc(c.quote)}»</div>` : '')
                 + (c.reused_from_refused ? `<div class="check-skip">reused from a refused report (${esc(c.reused_from_refused.validator || '')}${c.reused_from_refused.ts ? ', ' + esc(stamp(c.reused_from_refused.ts)) : ''})</div>` : '')
                 + ((c.divergences || []).length ? `<div class="check-fail">divergences: ${esc(c.divergences.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join('; '))}</div>` : '')
                 + (byCmd.size ? `<div class="verdict-probes">${[...byCmd].map(([cmd, bhs]) =>

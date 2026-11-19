@@ -152,6 +152,8 @@ export const PLAN = {
     docs: 'the documents it names, as they stood when the goal was set',
     criteria: 'What the goal is accepted by — agreed before the go',
     runs: c => `runs: ${c}`,
+    // the criterion the go adds where the person holds the root (`intent_check`): the result read against their own words
+    atTheGo: 'added at the go — checked against your own words',
     expect: (e, exact) => `expects${exact ? ' exactly' : ''}: ${e}`,
     parts: n => `It splits into ${n} part${n === 1 ? '' : 's'}`,
     after: ids => `split once ${ids.join(', ')} ${ids.length > 1 ? 'are' : 'is'} accepted`,

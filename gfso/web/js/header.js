@@ -43,8 +43,8 @@ function standing(root) {
 
 // the mode's settings in words (set_mode's own names: l2_gate, observe, deadline_s, bounds, max_iterations)
 const SETTING = {l2_gate: 'Plan review gate', observe: 'Checks observed before execution', deadline_s: 'Default deadline', network: 'Network',
-    bounds: 'Waits before a timeout', max_iterations: 'Rework rounds'};
-const SWITCH = new Set(['l2_gate', 'observe']);   // switches, whatever their value's type
+    bounds: 'Waits before a timeout', max_iterations: 'Rework rounds', intent_check: 'The goal checked against your words at the go'};
+const SWITCH = new Set(['l2_gate', 'observe', 'intent_check']);   // switches, whatever their value's type
 // the engine keeps a setting as a string and reads a switch on only at "1" (validation.py): by truth, "0" read «on», the
 // opposite of the engine, on a real run; a time «29160», the network a line of JSON (critic)
 function settingWord(k, v) {

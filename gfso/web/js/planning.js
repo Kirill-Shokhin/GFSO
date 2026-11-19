@@ -49,7 +49,7 @@ function written(p, go) {
         // …what the goal is accepted by, each criterion with its checks as agreed — what the go is given on (a critic, 11-19:
         // before the go the page showed only the goal); a name alone where the server sends no checks
         + sec(PLAN.criteria, (p.root_criteria || []).map(c => typeof c === 'string' ? line(c) : more(`crit|${c.name}`,
-            `<span>${esc(c.name)}</span>` + tally((c.check || []).length, (c.check || []).length === 1 ? 'check' : 'checks'),
+            `<span>${esc(c.name)}</span>${c.added_at_the_go ? `<em>${esc(PLAN.atTheGo)}</em>` : ''}` + tally((c.check || []).length, (c.check || []).length === 1 ? 'check' : 'checks'),
             // …each check in words first (`behaviour`), then what runs and what it expects
             [c.description, ...(c.check || []).map(k => [`– ${k.behaviour || k.command || ''}`, k.behaviour && k.command && `  ${PLAN.runs(k.command)}`,
                 k.expect && `  ${PLAN.expect(k.expect, k.exact)}`].filter(Boolean).join('\n'))].filter(Boolean).join('\n'))))
