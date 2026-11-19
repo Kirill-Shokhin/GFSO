@@ -1952,15 +1952,24 @@ def _started_from(engine: Engine, tid) -> str:
     return taken or json.loads(engine.graph.setting(f"{CHAT_START}{tid}") or "{}").get("head", "")
 
 
-def _nothing_committed(engine: Engine, tid, commit: str, left: list) -> Optional[str]:
-    """The refusal of a chat's DELIVER whose work stands uncommitted while the commit it would hand in is the one the
-    work started from: accepted, it sent a paid validation the base to FAIL (s21). Liftable truthfully by committing
-    (§12.16 (ii)); the work stays where it is. None: the delivery goes on."""
-    if not left or not commit or commit != _started_from(engine, tid):
+def _nothing_committed(engine: Engine, tid, place, commit: str, left: list, nothing_to_commit: bool = False) -> Optional[str]:
+    """The refusal of a chat's DELIVER that would hand in the very commit its work started from — accepted, it sent a
+    paid validation the base to FAIL (s21) — each liftable by a truthful move (§12.16 (ii)), no validator before it.
+    Where the work is asked first: the work's branch moved past the start (a linked worktree's commits) is that work,
+    to check out and deliver (`not_the_work`). Else what stands uncommitted may be the work or the person's own files:
+    commit the work on the work's branch, or say none of it is the work (`nothing_to_commit`) — never "commit them",
+    which would put the person's files on their branch (critic over e45800d). None: the delivery goes on."""
+    if not commit or commit != _started_from(engine, tid):
         return None
-    return (f"NOT delivered — nothing is committed since the work started ({commit[:12]}), and the work stands "
-            f"uncommitted: {', '.join(left[:10])}{', …' if len(left) > 10 else ''}. Commit it, then DELIVER again; no "
-            f"validator was started")
+    there = W.git(place, "rev-parse", "--verify", "-q", f"refs/heads/{work_branch(engine)}^{{commit}}").stdout.strip()
+    if there and there != commit:
+        return f"NOT delivered — {not_the_work(engine, place, commit)} No validator was started"
+    if not left or nothing_to_commit:
+        return None
+    return (f"NOT delivered — nothing is committed since the work started ({commit[:12]}), and these stand uncommitted: "
+            f"{', '.join(left[:10])}{', …' if len(left) > 10 else ''}. If they are your work, commit them on "
+            f"`{work_branch(engine)}` and DELIVER again; if none of the work is in them, DELIVER with "
+            f"`nothing_to_commit=true`. No validator was started")
 
 
 def _the_persons_verdict(engine: Engine, tid, sig: str) -> Optional[dict]:
@@ -1970,6 +1979,8 @@ def _the_persons_verdict(engine: Engine, tid, sig: str) -> Optional[dict]:
     if sig not in ("PASS", "FAIL") or engine.mode_kind() not in (Mode.SOLO, Mode.SEMI) \
             or engine.graph.get_parent(tid) is not None or engine.graph.get_task(tid) is None:
         return None
+    if (p := CALLER.get()) is not None and p.a_page:
+        return None                     # …the person's own page signing: the move itself is their word
     if not (said := PERSONS_WORDS.get().strip()):
         return {"accepted": False, "refused": True,
                 "error": f"{tid}'s {sig} is the person's: show them the validator's verdict on each criterion "
@@ -3207,6 +3218,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
     is at work in it, as the system's own record (`past.spans`). Either records the repository by its main worktree
     (`W.main_worktree`): a linked worktree is removed once its work is merged, and the record must outlive it."""
     said, tid, sig, keep = {}, TaskId(task_id), str(signal).strip().upper(), lambda: None
+    nothing_to_commit = bool(kw.pop("nothing_to_commit", False))
 
     def in_chat():
         """Where `source` performs the node in its own chat — its judge's directory —, or a falsy answer."""
@@ -3229,7 +3241,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
             except OSError as ex:
                 return {"accepted": False, "state": st.name,
                         "error": f"NOT delivered — the commit at {place} could not be recorded: {ex}"}
-            if no := _nothing_committed(engine, tid, commit, left):
+            if no := _nothing_committed(engine, tid, place, commit, left, nothing_to_commit):
                 return {"accepted": False, "refused": True, "state": st.name, "error": no}
             if notice := not_the_work(engine, place, commit):
                 said["notice"] = notice
@@ -3254,6 +3266,11 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
     if out.get("accepted"):
         keep()
     return {**out, **said} if said and out.get("accepted") else out
+
+
+#: …and `nothing_to_commit`, a chat's own word that none of the work stands uncommitted (`_nothing_committed`)
+signal.__signature__ = (lambda sig: sig.replace(parameters=[*sig.parameters.values(), inspect.Parameter(
+    "nothing_to_commit", inspect.Parameter.KEYWORD_ONLY, default=False, annotation=bool)]))(inspect.signature(_tools.signal))
 
 
 @functools.wraps(_tools.metrics)

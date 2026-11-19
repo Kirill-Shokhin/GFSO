@@ -98,10 +98,12 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   never by a `[review]` line in the file; any other file is gated as any split.
 
 ### Fixed
-- A chat's DELIVER with nothing committed since its work started, the work standing uncommitted, is refused, saying to
-  commit and deliver again; no validator is started (it handed the base to a paid validation, which FAILed). Under
-  `solo` and `semi` a root's PASS or FAIL is the person's: it carries their words after the validator's verdict was
-  shown, recorded on the feed. The go's own say reaches the client under a plan file's go (the door's head had
+- A chat's DELIVER of the very commit its work started from is refused, no validator started (it handed the base to a
+  paid validation, which FAILed): where the work's branch moved past it, naming where the work is to check out and
+  deliver; else, with files uncommitted, saying to commit them on the work's branch if they are the work, or to
+  deliver with `nothing_to_commit=true` if none of it is in them — never to commit the person's own files. Under
+  `solo` and `semi` a root's PASS or FAIL is the person's: signed from their own page it is their word; from an agent
+  it carries their words after the validator's verdict was shown, recorded on the feed. The go's own say reaches the client under a plan file's go (the door's head had
   replaced it), and the root's PASS says to switch the person's checkout back from `gfso/<project>/work`. The person
   runs the sign-in themselves (`! gfso credential claude --sign-in` in a chat), as doctor and the protocol now say. A
   stale queued run names what moved — its state or its generation.
