@@ -782,6 +782,23 @@ class Engine:
         """Is this project's plan the user's (`validation.users_plan`)?"""
         return _users_plan(self._graph)
 
+    def persons_verdict(self, task_id) -> str:
+        """Where signing `task_id` is the person's — a root under `solo` or `semi`, its issuer being them (§10.1) — what
+        their agent is told wherever it reads the sign-off owed: show them the validator's verdict on each criterion with
+        its notes, ask, and sign with their words. "" elsewhere. One owner: a client read "you sign" on every text but
+        the feed, signed the root itself, and was stopped as self-approval (s22)."""
+        t = self._graph.get_task(TaskId(str(task_id)))
+        if t is None or self._graph.get_parent(t.id) is not None or self.mode_kind() not in (Mode.SOLO, Mode.SEMI):
+            return ""
+        rec = self.current_exec_verdict(t.id) or {}
+        seen = [f"{e.get('criterion')}: {e.get('verdict')}" + (f" ({str(e.get('evidence'))[:200]})" if e.get("evidence")
+                                                               else "")
+                for e in rec.get("per_criterion") or () if isinstance(e, dict)]
+        return (f"The verdict on '{t.id}' is the person's: show them the validator's verdict on each criterion"
+                + (f" — {'; '.join(seen[:12])}" if seen else f" (`get_verdict {t.id}`)")
+                + f" — ask them, and sign with their own words: `signal {t.id} PASS|FAIL user_said=<their words>`, or "
+                  f"they sign on their page")
+
     def reviewed_in_its_file(self, node_id) -> None:
         """Record that the plan just built under `node_id` came from a file its own Level-2 review was run over: the
         gate is off under it alone (`validation.l2_gate_on`), never for the project's other goals."""

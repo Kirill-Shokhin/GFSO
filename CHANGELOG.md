@@ -98,6 +98,10 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   never by a `[review]` line in the file; any other file is gated as any split.
 
 ### Fixed
+- Under `solo` and `semi` every text a client reads where a root's sign-off is owed — the DELIVER's
+  `awaiting_verdict`, `next_steps` and `gfso wait`, `get_verdict`'s `say`, the feed — says the verdict is the person's:
+  show them the validator's verdict on each criterion with what it observed, ask, and sign with their words or let
+  them sign on their page. Only the feed said so, and a client signed the root itself and was stopped as self-approval.
 - A chat's DELIVER of the very commit its work started from is refused, no validator started (it handed the base to a
   paid validation, which FAILed): where the work's branch moved past it, naming where the work is to check out and
   deliver; else, with files uncommitted, saying to commit them on the work's branch if they are the work, or to

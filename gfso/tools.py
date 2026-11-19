@@ -886,7 +886,8 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
                             "work.")
     _what_there_is_to_decide_with(engine, task_id, out, _trimmed, _keep)
     _bound_the_read(out, task_id, _trimmed, _keep)
-    return out
+    return {**out, **({"say": theirs} if out.get("verdict") and out["state"] == "VALIDATING"
+                      and (theirs := engine.persons_verdict(TaskId(task_id))) else {})}
 
 
 def return_finding(engine: Engine, task_id: str, finding: str, why: str, agent: str = "") -> dict:
@@ -2490,9 +2491,10 @@ def _what_an_ACCEPTED_signal_owes_its_sender(engine: Engine, task_id: str, sig, 
                   f"observes it now" if engine.validated_by_instrument(TaskId(task_id)) or engine.workforce.has_an_instrument()
              else f"no validator is registered in this project, so `validate_result {task_id}` observes it (pass "
                   f"`workdir=` if it asks where the work is)")
-            + f"; then YOU sign it as its issuer: read `get_verdict {task_id}` and signal PASS or FAIL. A "
-              f"PASS over a divergence the observer recorded is refused (Inv-2); if you hold it wrong, FAIL "
-              f"saying why, and where its pinned probe is what is wrong, revise the criterion"
+            + (f"; then {theirs}" if (theirs := engine.persons_verdict(TaskId(task_id))) else
+               f"; then YOU sign it as its issuer: read `get_verdict {task_id}` and signal PASS or FAIL")
+            + ". A PASS over a divergence the observer recorded is refused (Inv-2); if it is held wrong, FAIL "
+              "saying why, and where its pinned probe is what is wrong, revise the criterion"
             if engine.holder_signs(TaskId(task_id)) else
             "an INDEPENDENT validation of this delivery is already running — its verdict arrives by "
             "itself; do not start a second one"

@@ -159,8 +159,9 @@ class NodeSteps:
                     + (f" by {_rec['validator']}" if _rec.get("validator") else "")
                     + " — " + (f"{Verdict.FAIL} on {', '.join(map(str, _f))}" if _f
                                 else str(Verdict.PASS))
-                    + f". Read it with `get_verdict {t.id}`, then signal "
-                    + (f"{Verdict.FAIL} with those criteria." if _f else f"{Verdict.PASS}.")
+                    + (f". {theirs}." if (theirs := self.engine.persons_verdict(t.id)) else
+                       f". Read it with `get_verdict {t.id}`, then signal "
+                       + (f"{Verdict.FAIL} with those criteria." if _f else f"{Verdict.PASS}."))
                     + " Validating it again would validate the same artifact twice.")
             return cand
         # …and the ISSUER's own share of the same fact: a criterion that has failed round

@@ -634,13 +634,11 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
         if verdict:
             # …a root under solo or semi is the person's to sign: their agent shows the verdict and asks (s21: a client
             # signing it itself was stopped as self-approval)
-            theirs = engine.graph.get_parent(task_id) is None and engine.mode_kind() in (Mode.SOLO, Mode.SEMI)
             engine.emit_info(
                 "delegate",
                 f"{task_id}: validated for you — the verdict is {verdict}, on the record "
                 f"(`get_verdict {task_id}`). " + (
-                    f"Signing is the person's: show them the verdict on each criterion, ask them, and sign with their "
-                    f"own words, `signal {task_id} {verdict} user_said=<their words>`." if theirs else
+                    f"{theirs}." if (theirs := engine.persons_verdict(task_id)) else
                     f"Signing is yours: `signal {task_id} {verdict} <you>` when you agree with it."))
         return "recorded" if verdict else _classify_no_verdict(engine, task_id, out)
     _why: list = []
