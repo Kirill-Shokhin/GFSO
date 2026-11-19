@@ -2315,8 +2315,9 @@ goal = {goal}
 name = ""
 
 # One criterion per thing the person asked for, in their words; nothing they did not ask. Each carries a check fixed
-# now: a command someone else can run on the result and what it must print (exact = true: the whole output, decided by
-# running it; false: described in words, judged by a reader). Copy the block for the next criterion.
+# now: a command someone else can run on the result and what it must print. exact = true: `expect` IS that output, its
+# very text (spacing loose), compared by running it — never a description of it; false: described in words, judged by
+# a reader. Copy the block for the next criterion.
 [[plan.root_criteria]]
 name = ""
 description = ""
