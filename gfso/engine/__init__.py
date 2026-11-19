@@ -312,6 +312,7 @@ class Engine:
         """
         if max_iterations is None:
             max_iterations = project_max_iterations(self._graph)
+        spec = self._read_live(spec)
         spec, seams = self._wire_seams(spec, task_id)       # the wire's bare `depends_on` entries: declared edges
         # ONE ROOT PER PROJECT. A parentless node is not a free-standing task, it is THE goal: V(root)
         # is the project's verdict, and the canon's one composition rule (V(parent)=AND(children))
@@ -1951,6 +1952,48 @@ class Engine:
         """The dropped children this node stands in for."""
         return json.loads(self._storage.get_critique(replaces_key(task_id)) or "[]")
 
+    def resolved(self, ref) -> str:
+        """What `ref` names now: a node dropped and replaced, by whatever act and door, followed along its replacements
+        (`replaced_by`) to the end of the chain — the one map of a reference onto a copy. A dropped node nothing replaces
+        yet stays itself."""
+        t = self._graph.get_task(TaskId(str(ref)))
+        while t is not None and t.state in (State.CANCELLING, State.ABANDONED) and (by := self.replaced_by(t.id)):
+            t = self._graph.get_task(TaskId(by[0]))
+        return str(t.id) if t is not None else str(ref)
+
+    def _read_live(self, spec: Spec, old: Optional[Spec] = None) -> Spec:
+        """`spec` with each criterion's producer read as it stands now (`resolved`), where a packet enters by
+        `assign_task` (`create_task`) or a revision (`revise`, `edit_criteria`) — `decompose` maps its children through the
+        same `resolved` before its admission — so no door lays a reader onto a dropped node its copy stands in for. A NEW reference to a dropped node nothing replaces is refused:
+        it would wait on what can no longer deliver; one the version already carried stands as it was."""
+        had = {c.depends_on for c in (old.criteria if old else ())}
+        crits = []
+        for c in spec.criteria:
+            if c.depends_on:
+                now = self.resolved(c.depends_on)
+                p = self._graph.get_task(TaskId(now))
+                if p is not None and p.state in (State.CANCELLING, State.ABANDONED) and c.depends_on not in had:
+                    raise ValueError(f"'{c.name}' reads '{c.depends_on}', which is dropped ({p.state.value}) and nothing "
+                                     f"replaces it: a criterion cannot wait on what can no longer deliver — read the node "
+                                     f"that stands in for it, or none")
+                if now != str(c.depends_on):
+                    c = dataclasses.replace(c, depends_on=TaskId(now))
+            crits.append(c)
+        return dataclasses.replace(spec, criteria=tuple(crits)) if crits != list(spec.criteria) else spec
+
+    def _settled_revision(self, task_id: TaskId) -> None:
+        """What a revision that TOOK settles: the recorded dispute (the node goes back to OFFERED under a contract its
+        executor takes afresh), and the node's declared edges read as its criteria now read — a read moved onto a copy
+        with its wait left on the dropped node never starts (critic over e164a12). Only after the ASSIGN: every refusal
+        of the revision comes before any write, and the node as it now stands is re-declared unchanged, so nothing is
+        issued again (critic over dec95cf)."""
+        self.parking.uncontest(task_id)
+        t = self._graph.get_task(task_id)
+        edges = self._graph.declared_edges(task_id) if t is not None else ()
+        now = tuple(dataclasses.replace(e, from_id=TaskId(self.resolved(e.from_id))) for e in edges)
+        if now != tuple(edges):
+            self._redeclare(t, now)
+
     def replaced_by(self, task_id: TaskId) -> list[str]:
         """The nodes standing in for this one — in its own split, or one level down under a sibling (`tools._replaced`)."""
         t = self._graph.get_task(task_id)
@@ -2392,7 +2435,7 @@ class Engine:
         # (2026-09-05); `remove_dependency` cuts one. A bare `depends_on` entry the caller writes declares its edge —
         # by the act that declares edges (`_redeclare`), first, so the version's deadline reads the order it leaves; the
         # revision changes what is a packet field, and where none changes it is no revision at all.
-        new_spec, seams = self._wire_seams(new_spec, task_id)
+        new_spec, seams = self._wire_seams(new_spec and self._read_live(new_spec, old.spec), task_id)
         if why := dep_cycle_closed(self._graph, task_id, [e.from_id for e in seams]):
             raise ValueError(why)
         if seams:
@@ -2464,7 +2507,7 @@ class Engine:
         # new Del; the parent's Level-2 claim is about the children's criteria, not their owners.
         # A revision is the answer to a dispute — the node goes back to OFFERED under a contract its
         # executor gets to take or refuse afresh, so the recorded dispute is settled by construction.
-        self.parking.uncontest(task_id)
+        self._settled_revision(task_id)
         content_changed = (new_spec.description, new_spec.criteria, new_spec.accepted_risks,
                            new_spec.scope, new_spec.name) != _before or bool(covers)
         self._recompute_checks(task_id, stale_review=content_changed)   # kept its subtree → refresh

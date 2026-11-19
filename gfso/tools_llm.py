@@ -1897,7 +1897,7 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
     engine.hear(root_id, "plan", "\n".join(x for x in _planning.text_of(plan).splitlines()
                                            if not x.lstrip().startswith("#")))
     if holds_its_work(engine):
-        # …THE PERSON'S READING IS THIS PLAN'S REVIEW: its decomposer is their own agent, they read it and gave the go in
+        # …THE PERSON'S READING IS THIS PLAN'S OWN READING: its decomposer is their own agent, they read it and gave the go in
         # their words; the Level-2 gate stands for the system's own plans, and held the parts on an unannounced review
         # by the system's model (critic over 354554c)
         engine.reviewed_in_its_file(root_id)

@@ -1718,20 +1718,17 @@ def _replaced(engine: Engine, parent, children: list[dict], drops) -> dict:
 
 
 def resolved(engine: Engine, ref) -> str:
-    """What `ref` names now: a node dropped and replaced, by whatever act and door, followed along its replacements
-    (`replaced_by`) to the end of the chain — the one map of a reference onto a copy. A dropped node nothing replaces
-    yet stays itself, and its reader is named (`readers_of_dropped`)."""
-    t = engine.graph.get_task(TaskId(str(ref)))
-    while t is not None and t.state in (State.CANCELLING, State.ABANDONED) and (by := engine.replaced_by(t.id)):
-        t = engine.graph.get_task(TaskId(by[0]))
-    return str(t.id) if t is not None else str(ref)
+    """What `ref` names now — the engine's one map of a reference onto a copy (`Engine.resolved`)."""
+    return engine.resolved(ref)
 
 
-def _left_out(engine: Engine, c: dict, to) -> dict:
+def _left_out(engine: Engine, c: dict, to, parent_id=None) -> dict:
     """The child `c` with what it leaves out and still reads, for `_read_onto` to map: a standing child keeps its
     stored edges and criteria — filled in only where one reads a node `to` moves, a key left out otherwise standing as
     it is — and a copy given no `deps` keeps the edges of what it `replaces` ("left out, a standing child keeps the
-    edges it has", of the node it stands in for). Its criteria are its own, as given."""
+    edges it has", of the node it stands in for) — save an edge that would read the copy itself or a node above it (a
+    merge of a producer and its reader, or a move under its own producer): what the copy stands in for is no producer of
+    it. Its criteria are its own, as given."""
     if not isinstance(c, dict) or not isinstance(c.get("spec"), dict):
         return c
     was = engine.graph.get_task(TaskId(str(c["task_id"])))
@@ -1739,6 +1736,12 @@ def _left_out(engine: Engine, c: dict, to) -> dict:
     if "deps" not in c:
         edges = [{"from": str(e.from_id), "glue": e.glue} for k in ([was.id] if was else c.get("replaces") or ())
                  for e in engine.graph.declared_edges(TaskId(str(k)))]
+        if was is None:
+            above, n = {str(c["task_id"])}, engine.graph.get_task(TaskId(str(parent_id))) if parent_id else None
+            while n is not None:
+                above.add(str(n.id))
+                n = engine.graph.get_parent(n.id)
+            edges = [x for x in edges if to(x["from"]) not in above]
         if edges and (was is None or moves(x["from"] for x in edges)):
             c = {**c, "deps": edges}
     if was is not None and "criteria" not in c["spec"]:
@@ -1884,7 +1887,7 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     # earlier act replaced, the end of its chain (`resolved`) — dependent children moved in one act or in several read
     # each other's copies, not what they left
     to = lambda r: replaced.get(str(r)) or resolved(engine, r)
-    children = [_read_onto(_left_out(engine, c, to), to) for c in children]
+    children = [_read_onto(_left_out(engine, c, to, parent_id), to) for c in children]
     fresh = {str(c["task_id"]) for c in children if engine.graph.get_task(TaskId(str(c["task_id"]))) is None}
     # …and the consumers standing in this split — the dropped node's own, or copies moved under this level before it
     own = {str(c["task_id"]) for c in children}

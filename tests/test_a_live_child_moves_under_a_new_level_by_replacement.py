@@ -335,3 +335,100 @@ def test_a_copy_s_given_deps_win(tree):
     e = tree
     _two_copies(e, deps=[])
     assert _deps(e, "root.grp.k3") == set()
+
+
+@pytest.mark.parametrize("door", ["edit_criteria", "revise", "create_task"])
+def test_every_door_that_writes_a_criterion_reads_the_copy_of_a_dropped_producer(tree, door):
+    """A criterion's `depends_on` enters through the one place every version of a packet enters (ASSIGN, revision):
+    named onto a dropped node its copy stands in for, it reads the copy, whichever door wrote it (critic, 11-19)."""
+    e = tree
+    _level(e)
+    _copy(e)
+    reads = {**criterion("reads_k2"), "depends_on": "root.k2"}
+    k1 = [{"name": c.name, "description": c.description,
+           "check": [{"behaviour": x.behaviour, "command": x.command, "expect": x.expect} for x in c.check]}
+          for c in e.graph.get_task(TaskId("root.k1")).spec.criteria]
+    if door == "edit_criteria":
+        out, at = T.TOOLS["edit_criteria"](e, "root.k1", k1 + [reads]), "root.k1"
+    elif door == "revise":
+        out, at = T.TOOLS["revise"](e, "root.k1", spec={"criteria": k1 + [reads]}, reason="scope_expansion"), "root.k1"
+    else:
+        out, at = T.TOOLS["create_task"](e, "root.b.z", {"description": "z", "criteria": [reads]},
+                                         parent_id="root.b", covers=["b"]), "root.b.z"
+    e.wait_idle()
+    assert not (isinstance(out, dict) and (out.get("error") or out.get("refused"))), out
+    assert {str(c.depends_on) for c in e.graph.get_task(TaskId(at)).spec.criteria if c.depends_on} == {"root.grp.k2"}
+
+
+def test_a_new_criterion_on_a_dropped_node_nothing_replaces_is_refused(tree):
+    e = tree
+    _level(e)                                                 # …k2 dropped, no copy
+    out = T.TOOLS["create_task"](e, "root.b.z", {"description": "z", "criteria": [{**criterion("r"),
+                                                                                   "depends_on": "root.k2"}]},
+                                 parent_id="root.b", covers=["b"])
+    assert isinstance(out, dict) and "nothing replaces it" in str(out.get("error") or out), out
+
+
+def test_a_copy_merging_a_producer_and_its_reader_inherits_no_edge_onto_itself(tree):
+    e = tree
+    out = T.TOOLS["decompose"](e, "root", [_kid("root.grp", ["h"], criterion("grp", "the group holds"))],
+                               drops=["root.k2", "root.k3"])
+    e.wait_idle()
+    assert not (isinstance(out, dict) and out.get("error")), out
+    out = T.TOOLS["decompose"](e, "root.grp", [{**_kid("root.grp.m", ["grp"], criterion("m", "M")),
+                                                "replaces": ["root.k2", "root.k3"]}], accepted_risks=_RISK)
+    e.wait_idle()
+    assert isinstance(out, list), out
+    assert _deps(e, "root.grp.m") == set()
+
+
+def test_a_reader_in_another_branch_revised_by_its_issuer_waits_on_the_copy_not_the_dropped(tree):
+    """The reply sends another branch's reader to its own issuer's revision; that revision moves its wait with its read
+    (critic over e164a12: the read moved onto the copy, the declared edge stayed on the dropped node, the reader never
+    started)."""
+    e = tree
+    T.TOOLS["add_dependency"](e, "root.k2", "root.b.x", check=criterion("bx_reads_k2")["check"])
+    _level(e)
+    _copy(e)
+    bx = e.graph.get_task(TaskId("root.b.x"))
+    again = [{"name": c.name, "description": c.description, **({"depends_on": str(c.depends_on)} if c.depends_on else {}),
+              "check": [{"behaviour": x.behaviour, "command": x.command, "expect": x.expect} for x in c.check]}
+             for c in bx.spec.criteria]
+    out = T.TOOLS["edit_criteria"](e, "root.b.x", again)
+    e.wait_idle()
+    assert not (isinstance(out, dict) and (out.get("error") or out.get("refused"))), out
+    assert _deps(e, "root.b.x") == {"root.grp.k2"}
+
+
+def _bx_read_moved(e):
+    T.TOOLS["add_dependency"](e, "root.k2", "root.b.x", check=criterion("bx_reads_k2")["check"])
+    T.signal(e, "root.b.x", "ACCEPT", str(e.graph.get_task(TaskId("root.b.x")).assignee))
+    _level(e)
+    _copy(e)
+    e.wait_idle()
+    bx = e.graph.get_task(TaskId("root.b.x"))
+    return bx, [{"name": c.name, "description": c.description,
+                 **({"depends_on": str(c.depends_on)} if c.depends_on else {}),
+                 "check": [{"behaviour": x.behaviour, "command": x.command, "expect": x.expect} for x in c.check]}
+                for c in bx.spec.criteria]
+
+
+def _assigns(e, tid):
+    return [a for a in e.audit_log(TaskId(tid)) if a.signal.name == "ASSIGN" and not a.rejected]
+
+
+@pytest.mark.parametrize("how", ["pins_nothing", "not_the_issuer"])
+def test_a_refused_revision_moves_no_edge_and_issues_no_version(tree, how):
+    """Whole or nothing: the edges follow the reads only once the revision took (critic over dec95cf — a refused one
+    still re-issued the node and re-offered its work, in the issuer's name)."""
+    e = tree
+    bx, again = _bx_read_moved(e)
+    state, n, edges = e.graph.get_state(bx.id), len(_assigns(e, "root.b.x")), _deps(e, "root.b.x")
+    with pytest.raises(ValueError):
+        if how == "pins_nothing":
+            T.TOOLS["edit_criteria"](e, "root.b.x", again + [{"name": "loose", "description": "no check"}])
+        else:
+            T.TOOLS["edit_criteria"](e, "root.b.x", again, agent="intruder")
+    e.wait_idle()
+    assert (e.graph.get_state(bx.id), len(_assigns(e, "root.b.x")), _deps(e, "root.b.x")) == (state, n, edges)
+
