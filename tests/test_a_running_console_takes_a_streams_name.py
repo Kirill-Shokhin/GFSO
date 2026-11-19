@@ -3,15 +3,24 @@ name the person opened and assigned, never a console or a session (DEV_GRAPH_AND
 bridge's lease, so the name outlives a `/clear` and a rebuilt leg; one live connection holds a name (Del unique, §2.6);
 the taking is recorded with who, which name and when, and every move after it carries the connection (Thm 11)."""
 import json
+import os
+import subprocess
+import sys
 import uuid
 
 import anyio
+import psutil
 import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.server.fastmcp import Context, FastMCP
 
 from gfso import config, signin
+from gfso.api.server import create_app
 from gfso.core.types import Signal, TaskId
+from gfso.mcp import connect as C
+from tests import test_a_connection_signs_as_its_principal as P
+from tests.support import make_engine
 from tests.test_a_connection_signs_as_its_principal import HUMAN, door  # noqa: F401 — the fixture
 
 
@@ -118,9 +127,6 @@ def test_under_protected_the_claim_is_refused_and_the_names_token_takes_it(go, m
 
 def test_the_bridge_names_its_lease_on_every_leg(monkeypatch):
     """The relay sends this process's lease, so a rebuilt leg is the same connection."""
-    from gfso.mcp import connect as C
-    from tests import test_a_connection_signs_as_its_principal as P
-    from mcp.server.fastmcp import Context, FastMCP
     seen = []
     srv = FastMCP("echo", host="127.0.0.1", port=0)
 
@@ -159,8 +165,6 @@ def test_a_claim_stranded_by_protected_is_mended_by_the_names_token(go, monkeypa
 
 def test_a_server_just_up_counts_every_holding_live(go, monkeypatch):
     """After a restart the holdings survive and no bridge has beaten yet: none reads lapsed for one lease grace."""
-    from gfso.api.server import create_app
-    from tests.support import make_engine
     e, go = go
     _stream(e, go, "engR")
     one, two = _lease(), _lease()
@@ -174,14 +178,11 @@ def test_a_server_just_up_counts_every_holding_live(go, monkeypatch):
 
 def test_a_gfso_call_from_the_consoles_shell_signs_as_its_connections_name(go, tmp_path):
     """One console is one Del: its shell's `gfso` finds its bridge by the parent chain and signs as the name taken."""
-    import os
-    import subprocess
-    import sys
     e, go = go
     _stream(e, go, "eng7")
     one = _lease()
     assert go(one, "act_as", name="eng7")["name"] == "eng7"
-    signin.record_console(one)              # …as the bridge does at its start, under the console it runs in
+    signin.record_console(one, console=psutil.Process())     # …as a bridge does, here under this very process
     try:
         probe = "from gfso import signin; p = signin.local_principal(); print(p.name, p.via)"
         out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, env=os.environ, timeout=60)
@@ -190,3 +191,37 @@ def test_a_gfso_call_from_the_consoles_shell_signs_as_its_connections_name(go, t
         signin.forget_console(one)
     out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, env=os.environ, timeout=60)
     assert out.stdout.split()[0] == "user", out
+
+
+_PROBE = "from gfso import signin; print(signin.console_lease())"
+
+
+def _from_a_child() -> str:
+    return subprocess.run([sys.executable, "-c", _PROBE], capture_output=True, text=True, env=os.environ,
+                          timeout=60).stdout.strip()
+
+
+def test_a_console_started_inside_another_is_its_own_the_nearest_record_wins():
+    """A `claude` started from a console's shell: its shell's call is the inner console's, never the outer stream's."""
+    outer, inner = _lease(), _lease()
+    signin.record_console(outer, console=psutil.Process().parent())
+    signin.record_console(inner, console=psutil.Process())
+    try:
+        assert _from_a_child() == inner
+    finally:
+        signin.forget_console(outer)
+        signin.forget_console(inner)
+
+
+def test_the_record_of_a_bridge_that_is_gone_is_dropped_not_read():
+    """A bridge killed past its own cleanup leaves its record: its console's shell signs as no stream of it."""
+    dead = _lease()
+    gone = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        signin.record_console(dead, bridge=psutil.Process(gone.pid), console=psutil.Process())
+    finally:
+        gone.kill()
+        gone.wait()
+    assert list(signin._consoles().glob("*.json")), "recorded"
+    assert _from_a_child() == "None"
+    assert not (signin._consoles() / f"{signin._hash(dead)[:16]}.json").exists()

@@ -351,8 +351,8 @@ move names no one, `signs_as` every name it may sign as.
   one. `act_as()` with no name says who the connection signs as. Under `gfso up --protected` the claim is not enough:
   pass `token=`, the one `gfso agent <name>` prints at your shell. Launching with that token (`GFSO_TOKEN=<token>
   claude`) still works, and is the way past loopback, where every call carries its credential. The console is one
-  party: a `gfso` call from its own shell (`gfso run`, `gfso wait`) finds its bridge by the process chain and signs as
-  the same name. `GFSO_AGENT_ID` names nothing now: a console launched with it and no token is
+  party: a `gfso` call made in its process tree (`gfso run`, `gfso wait` from its shell) finds its live bridge by the
+  nearest console up the process chain and signs as the same name; a call detached from that tree signs as `user`. `GFSO_AGENT_ID` names nothing now: a console launched with it and no token is
   refused at connect, told what to do instead.
 * **A signer argument** at the CLI or over HTTP is taken only for a name the credential may sign as, and refused
   otherwise, naming what lifts it. The automatic paths — the dispatcher running an executor, an `llm-validator` role

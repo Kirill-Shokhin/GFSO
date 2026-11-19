@@ -103,6 +103,10 @@ def _unread(doc: dict) -> list[str]:
         for j, c in enumerate(s.get("criteria") or ())]
     for where, c in crits:
         out += _slip(where, "criterion", c)
+        if not _probes(c):
+            out.append(f"{where}.check: a {type(c.get('check')).__name__} — a check is a list of tables, one "
+                       f"`[[….check]]` row per probe, each its behaviour, command, expect")
+            continue
         out += _slips(f"{where}.check", "probe", c.get("check"))
         out += [f"{where}.check[{n}].exact: {q['exact']!r} is no true/false" for n, q in enumerate(c.get("check") or ())
                 if isinstance(q, dict) and "exact" in q and not isinstance(q["exact"], bool)]
@@ -153,7 +157,7 @@ def form(doc: dict) -> list[str]:
     for i, m in enumerate(doc.get("fit", {}).get("parts") or ()):
         known(m.get("id"), ids, f"fit.parts[{i}].id", "part")
     for c in _criteria(plan):
-        for k, p in enumerate(c.get("check") or ()):
+        for k, p in enumerate(c.get("check") or () if _probes(c) else ()):
             for name, h in (p.get("inputs") or {}).items() if isinstance(p.get("inputs"), dict) else ():
                 if h not in inputs:
                     out.append(f"check {c.get('name')!r}[{k}].inputs.{name}: {h!r} has no file under [inputs]")
@@ -180,6 +184,13 @@ def _lower(plan: dict, inputs: dict) -> dict:
             if isinstance(p.get("inputs"), dict):
                 p["inputs"] = {n: inputs[h] for n, h in p["inputs"].items()}
     return spec
+
+
+def _probes(c: dict) -> bool:
+    """Whether a criterion's `check`, where given, is the list of tables a check is — a hand-written string or a single
+    table is no check (it crashed the reading, not refused it)."""
+    chk = c.get("check")
+    return chk is None or isinstance(chk, list) and all(isinstance(q, dict) for q in chk)
 
 
 def _criteria(spec: dict):

@@ -481,16 +481,29 @@ def _console_of(proc: psutil.Process) -> psutil.Process | None:
     return next((a for a in proc.parents() if a.name().lower().removesuffix(".exe") not in _LAUNCHERS), None)
 
 
-def record_console(lease: str, proc: psutil.Process | None = None) -> None:
-    """This bridge's lease written under its console's process (pid and start time, so a reused pid is not it): a
-    `gfso` call from that console's shell finds it (`console_lease`) and signs as the name its connection took — one
-    console is one Del (§2.6), its shell and its MCP connection alike."""
+def _stamp(proc: psutil.Process) -> list:
+    """A process as a record names it: its pid and start time, so a reused pid is not it."""
+    return [proc.pid, round(proc.create_time(), 3)]
+
+
+def _alive(stamp) -> bool:
     try:
-        if (c := _console_of(proc or psutil.Process())) is None:
+        return _stamp(psutil.Process(stamp[0])) == list(stamp)
+    except psutil.Error:
+        return False
+
+
+def record_console(lease: str, bridge: psutil.Process | None = None, console: psutil.Process | None = None) -> None:
+    """This bridge's lease written under its console's process and its own: a `gfso` call from that console's shell
+    finds it (`console_lease`) and signs as the name its connection took — one console is one Del (§2.6), its shell
+    and its MCP connection alike."""
+    try:
+        bridge = bridge or psutil.Process()
+        if (console := console or _console_of(bridge)) is None:
             return
         _consoles().mkdir(parents=True, exist_ok=True)
         (_consoles() / f"{_hash(lease)[:16]}.json").write_text(
-            json.dumps({"pid": c.pid, "created": c.create_time(), "lease": lease}), encoding="utf-8")
+            json.dumps({"console": _stamp(console), "bridge": _stamp(bridge), "lease": lease}), encoding="utf-8")
     except (psutil.Error, OSError):
         pass                      # …no console found: its shell signs as it did, by its own credential
 
@@ -501,22 +514,25 @@ def forget_console(lease: str) -> None:
 
 
 def console_lease() -> str | None:
-    """The lease of the bridge whose console this process runs inside (`record_console`), found by its parent chain;
-    None outside every console."""
+    """The lease of the live bridge whose console is this process's NEAREST such ancestor (`record_console`) — a console
+    started from another's shell is its own — or None: outside every console, or detached from it (a chain that no
+    longer reaches the console). A record whose bridge is gone (killed past its own cleanup) is dropped as it is read."""
     if not _consoles().is_dir():
         return None
-    try:
-        chain = {(a.pid, round(a.create_time(), 3)) for a in psutil.Process().parents()}
-    except psutil.Error:
-        return None
+    by_console = {}
     for f in _consoles().glob("*.json"):
         try:
             r = json.loads(f.read_text(encoding="utf-8"))
-            if (r["pid"], round(r["created"], 3)) in chain:
-                return r["lease"]
-        except (OSError, ValueError, KeyError):
+            if not _alive(r["bridge"]):
+                f.unlink(missing_ok=True)
+                continue
+            by_console[tuple(r["console"])] = r["lease"]
+        except (OSError, ValueError, KeyError, TypeError):
             continue
-    return None
+    try:
+        return next((by_console[s] for a in psutil.Process().parents() if (s := tuple(_stamp(a))) in by_console), None)
+    except psutil.Error:
+        return None
 
 
 def whoami(project: str | None = None) -> dict:

@@ -73,10 +73,13 @@ no forwarding header taken for the client, so the OS is always asked of the real
   or issued, taken by the claim alone — your OS user is you already, and the token file is readable by it, so a token
   there would guard nothing and cost a relaunch; under `--protected` only with that name's token; past loopback not at
   all, the token riding every call instead. The taking is kept with your name, the connection's digest and its time,
-  and holds for the connection's life — its bridge's lease, unguessable, honoured only from your own process at loopback — so the
-  connection never signs as you again, nor does a `gfso` call from that console's shell, which finds the bridge by
-  its process chain (a record under gfso's state, pid and start time); one live connection holds a name at a time, and
-  for one lease grace after a server start every holding counts as live. A name the system's roles hold (an
+  and holds for the connection's life — its bridge's lease, unguessable, honoured only from your own process at
+  loopback — so the connection never signs as you again. A `gfso` call made in that console's process tree (its
+  shell's `gfso run`, `gfso wait`) signs as the same name: it finds the live bridge whose console is its nearest
+  ancestor by a record under gfso's state (console and bridge by pid and start time; a record whose bridge is gone is
+  dropped). A call detached from that tree (its shell gone, started elsewhere) finds none and signs as `user`, you —
+  which the local trust model already admits, every process of your OS user being you. One live connection holds a
+  name at a time, and for one lease grace after a server start every holding counts as live. A name the system's roles hold (an
   executor's, a validator's) is neither issued nor taken;
 - a local client that is no browser, with no credential, from your OS user, asking the server by a loopback name, signs
   as `user`, your name, as your standing agent — what keeps a fresh client working with no step at setup;
@@ -91,8 +94,9 @@ your act whichever process made it. `--protected` adds that a process of yours m
 you from a browser; it can still reach the port as `user`, read gfso's state, or issue itself a token at your shell.
 What the signing protects is attribution: a name an agent saw and typed, or a stale field, signs nothing by itself;
 signing as another name takes its issuance, a step the log records beside the name (`via`: `session`, `local-peer`, the
-token's id, `default`, `as:` a digest of the connection that took the name). Sessions, tokens and leases are kept
-hashed. The check of the OS user holds only while no other way to
+token's id, `default`, `as:` a digest of the connection that took the name). Sessions and tokens are kept hashed,
+and so is a lease in the sign-in state; the console record (`data/consoles/`) holds its bridge's lease raw, readable,
+like the rest of gfso's state, by any process of your OS user — who is you here already. The check of the OS user holds only while no other way to
 the port arrives from a process of yours: the system's containers are kept off the host's loopback (below), and a
 connection a port forwarder holds — Docker Desktop's, which relays any container on the machine's engine, another
 account's in `docker-users` too — is not yours, and is served nothing without a token: what it carries may be a

@@ -130,3 +130,14 @@ def test_a_slip_in_a_row_below_is_named_not_built(want):
     with pytest.raises(ValueError, match="malformed") as e:
         A.parse(_slip(ROW_SLIPS[want]))
     assert want in str(e.value) and str(e.value).count(";") == 0, str(e.value)
+
+
+@pytest.mark.parametrize("check, kind", [('check = "run the tests"', "str"),
+                                         ('[plan.root_criteria.check]\ncommand = "pytest"\nexpect = "passes"', "dict")])
+def test_a_check_written_by_hand_as_no_list_of_tables_is_refused_by_name(check, kind):
+    """A string or a single table where the rows go crashed the reading (AttributeError), which the page's reader of a
+    written plan does not catch: refused like every slip, naming the field."""
+    text = (f'format = "{A.FORMAT}"\ngoal = "g"\n[plan]\nname = "p"\n[[plan.root_criteria]]\nname = "c"\n'
+            f'description = "d"\n{check}\n')
+    with pytest.raises(ValueError, match=rf"plan\.root_criteria\[0\]\.check: a {kind} — a check is a list of tables"):
+        A.parse(text)

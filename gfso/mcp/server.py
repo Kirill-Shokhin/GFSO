@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
 
 from gfso import updates
 from gfso.config import (CALLER, CLIENT, CLIENT_HEADER, CLIENT_KINDS, DEFAULT_PROJECT, LEASE_HEADER, PERSONS_NAMES,
-                         agent_id, caller_id, client_kind, how_it_is_waited, ONE_CALL, ROOT_ID, project_by_env)
+                         STANDING, agent_id, caller_id, client_kind, how_it_is_waited, ONE_CALL, ROOT_ID, project_by_env)
 from gfso.engine import Engine
 from gfso.engine.moves import SIGNERS
 from gfso import signin
@@ -491,9 +491,9 @@ def _issued_by_the_person(engine, name: str) -> bool:
                for t in g.all_tasks())
 
 
-def _act_as(resolve):
-    """The door's `act_as` over `resolve` (`_resolver`): a verb of the connection, not of a graph."""
-    from mcp.server.fastmcp import Context as _Ctx      # LEFT: the MCP SDK is optional AT IMPORT (see `_bind`)
+def _act_as(resolve, _Ctx):
+    """The door's `act_as` over `resolve` (`_resolver`), its context typed `_Ctx`: a verb of the connection, not of a
+    graph."""
 
     def act_as(name: str = "", token: str = "", project: str = "", ctx: _Ctx = None) -> dict:
         """WHO THIS CONNECTION SIGNS AS, and the door to take a stream's name in a console already running. No `name`:
@@ -511,7 +511,7 @@ def _act_as(resolve):
             # …its own holding the name's token mends (a claim, under `--protected` since): that call reaches `take`
             if p is not None and not p.signs_as and not (token and signin.holds(lease) == name):
                 return {"refused": True, "error": f"this connection signs as no one: {p.lift}"}
-            if p is not None and p.signs_as and p.via != "default" and not p.via.startswith("as:"):
+            if p is not None and p.signs_as and p.via != STANDING.via and not p.via.startswith("as:"):
                 return {"refused": True, "error": f"this connection signs as `{p.name}` by its {p.how}: a console "
                         f"launched with a credential keeps it; take `{name}` in a console launched without one"}
             try:
@@ -701,7 +701,7 @@ def create_server(engine_or_registry):
     try:
         # LEFT: the MCP SDK is optional AT IMPORT — this except is what turns its absence into the
         # message below instead of an ImportError on `import gfso.mcp.server`.
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server.fastmcp import Context, FastMCP
     except ImportError as e:  # pragma: no cover
         raise RuntimeError("MCP SDK not installed — reinstall the package: `pip install gfso`") from e
     # The user-agent's protocol travels as the server's INSTRUCTIONS (delivered at initialize), by the client's kind
@@ -734,7 +734,7 @@ def create_server(engine_or_registry):
         server.add_tool(_bind(engine_or_registry, fn), name=name, description=(fn.__doc__ or "").strip(),
                         meta=ANSWER_ROOM.get(name))
     server.add_tool(_protocol, name="protocol", description=(_protocol.__doc__ or "").strip())   # the door's own text
-    act_as = _act_as(_resolver(engine_or_registry))
+    act_as = _act_as(_resolver(engine_or_registry), Context)
     server.add_tool(act_as, name="act_as", description=(act_as.__doc__ or "").strip())
     if hasattr(engine_or_registry, "use"):    # ProjectRegistry → the project verbs
         _mount_project_verbs(server, engine_or_registry)
