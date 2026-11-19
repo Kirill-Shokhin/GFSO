@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from gfso import tools_llm as TL
+from gfso import tools as T, tools_llm as TL
 from gfso.core.protocol.invariants import verdict_report_defects
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.decompose import artifact as A
@@ -16,6 +16,7 @@ from gfso.packets import _validator_packet
 from tests.test_a_solo_chat_writes_its_own_plan_and_the_person_gives_the_go import ASKED, _filled, no_model  # noqa: F401
 from tests.test_the_go_only_adds_to_the_plan import GOAL, _plan
 from tests.test_the_mode_decides_who_holds_what import _engine
+from tests.test_a_refuted_order_is_re_split_by_its_decomposer import _engine as bare
 
 INTENT = "answers_the_persons_words"
 SAID = "да, всё так — и пусть ещё считает пустые строки"
@@ -59,6 +60,15 @@ def test_the_mode_read_says_the_switch_in_force_set_or_not(no_model):
     assert auto.mode()["intent_check"] is False and "intent_check" not in (auto.mode().get("settings") or {})
     TL.set_mode(solo, intent_check=False, user_said="не проверяй замысел")
     assert solo.mode()["intent_check"] is False
+
+
+def test_the_graph_says_the_switch_with_no_mode_too(no_model):
+    """Set on a project with no mode, the switch acts (a root made then carries the criterion); the graph's read says so
+    where it says what holds whatever the mode (`heard`) — the page read `mode.intent_check` and showed nothing (ui)."""
+    e = bare()
+    assert e.mode() is None and T.TOOLS["get_graph"](e)["heard"]["intent_check"] is False
+    assert not TL.set_mode(e, intent_check=True, user_said="проверяй замысел").get("refused")
+    assert e.mode() is None and T.TOOLS["get_graph"](e)["heard"]["intent_check"] is True
 
 
 def test_the_switch_turns_only_on_the_persons_words(no_model):
@@ -258,6 +268,8 @@ def test_a_root_made_by_hand_carries_it(no_model):
         {"name": "counts", "description": "prints the line count",
          "check": [{"behaviour": "two lines", "command": "seq 2 | ./wc2", "expect": "2", "exact": True}]}]})
     assert _names(e.graph.get_task(TaskId("root"))) == ["counts", INTENT]
+    # …and the goal written by hand is the person's request, recorded: the criterion has words to read against (ui)
+    assert ASKED in (e.persons_words(e.graph.get_task(TaskId("root"))) or ())
 
 
 def test_a_second_gos_words_are_quotable(no_model):

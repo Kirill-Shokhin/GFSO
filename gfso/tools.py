@@ -1301,7 +1301,8 @@ def _mode_read(engine: Engine) -> Optional[dict]:
 def heard(engine: Engine) -> dict:
     """What the person must hear of this project whatever its mode: where its work runs (live, from the roster) and what
     the go recorded — a project with work and no mode, run on this machine, said nothing of it (ui critic, 2026-11-17)."""
-    return {"runs_on_host": engine.workforce.runs_on_host(), **at_the_go(engine)}
+    # …and whether a go adds the criterion read against their words: a project setting, in force with no mode too
+    return {"runs_on_host": engine.workforce.runs_on_host(), "intent_check": engine.intent_check(), **at_the_go(engine)}
 
 
 #: the setting the go records what the person must hear at it under (`tools_llm.recorded_at_the_go`); where the work
