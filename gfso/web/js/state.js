@@ -69,7 +69,10 @@ export const taskOf = id => S.tasks.find(t => t.id === id) || {};
 // WHAT THE GO HEARD (`graph.heard`: where the work runs, what its copy lacks, the goal as given), whatever the mode —
 // the mode block carried it alone, and a project with no mode said none of it (critic); the mode's copy where the server is older
 export const heard = () => S.graph.heard || S.graph.mode || {};
-export const asGiven = root => { const g = String(heard().goal_as_given || '').split('\n\n# THE DOCUMENTS THIS REQUEST NAMES')[0].trim();
+// …per goal (`by_root`): one setting a project gave every goal the latest go's words; an older server's flat keys only
+// where the project has one goal
+export const atTheGo = root => heard().by_root?.[root?.id] || (heard().by_root || S.tasks.filter(t => !t.parent_id).length > 1 ? {} : heard());
+export const asGiven = root => { const g = String(atTheGo(root).goal_as_given || '').split('\n\n# THE DOCUMENTS THIS REQUEST NAMES')[0].trim();
     return g && root && !String(root.description || '').startsWith(g) ? g : ''; };
 // WHO HOLDS the role a node waits on, by the same rule as `issuerIsPerson`: the executor is its Del, the issuer its
 // parent's (§10.1); the goal's issuer is outside the graph and under AUTO the system's, so neither is named
