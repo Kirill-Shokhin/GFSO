@@ -172,10 +172,10 @@ def _reference(agree: "_Agreement") -> str:
 
 
 def _beyond(spec: dict, agree: "_Agreement") -> list[str]:
-    """The repairer's line for each criterion of `spec` written now (`agree._judged`) that the text it is written from
+    """The repairer's line for each criterion of `spec` written now (`agree.judged`) that the text it is written from
     does not ask (`beyond_the_request`): one standing in the graph as it was is no round's to judge again — read
     without its `asked`, a refined plan's every criterion was the system's, the person's own words sent to removal."""
-    now = {(n, c.get("name")) for n, c in agree._judged(spec)}
+    now = {(n, c.get("name")) for n, c in agree.judged(spec)}
     return [f"{node} / criterion {c.get('name')}: states nothing the request asks — its `asked` "
             f"({str(c.get('asked') or '')[:200]!r}) is not words of the request. The goal's criteria are the person's: "
             f"quote the request's words it states; or make it the form of the criterion whose words it serves; or "
@@ -272,7 +272,7 @@ class PinsOnTheBase:
 _CRITERIA_FIELDS = ("root_criteria", "subtasks")
 
 
-def _criterion_key(c) -> tuple:
+def criterion_key(c) -> tuple:
     """A criterion as text: what it says and what its checks run — dicts of a spec and `Criteria` of the graph alike."""
     get = (lambda o, k: o.get(k)) if isinstance(c, dict) else getattr
     return (get(c, "description") or "", tuple((get(p, "behaviour") or "", get(p, "command") or "", get(p, "expect") or "",
@@ -299,24 +299,24 @@ class _Agreement:
         self.undecided: set[tuple] = set()
         self.unplaced = 0
 
-    def _judged(self, spec: dict) -> list[tuple[str, dict]]:
+    def judged(self, spec: dict) -> list[tuple[str, dict]]:
         """(node, criterion) of `spec` with a check, whose text differs from the graph's — held root and settled out."""
         g = self.engine.graph
         def standing(sid):
             """The node as it stands in the graph, and its criteria as text by name."""
             t = g.get_task(TaskId(self.root_id if sid == ROOT_ID else f"{self.root_id}.{sid}"))
-            return t, {c.name: _criterion_key(c) for c in (t.spec.criteria if t else ())}
+            return t, {c.name: criterion_key(c) for c in (t.spec.criteria if t else ())}
         out = []
         for sid, crits in _nodes(spec, self.held):
             t, was = standing(sid)
             if t is None or t.state.name not in ("DONE", "ABANDONED"):
-                out += [(sid, c) for c in crits if c.get("check") and was.get(c.get("name")) != _criterion_key(c)]
+                out += [(sid, c) for c in crits if c.get("check") and was.get(c.get("name")) != criterion_key(c)]
         return out
 
     def judge(self, spec: dict) -> None:
         """Judge the criteria of `spec` written now; their findings replace their old ones (⊥ replaces nothing)."""
         self.forget_gone(spec)
-        if not self.on or not (judged := self._judged(spec)):
+        if not self.on or not (judged := self.judged(spec)):
             return
         shown = [{"node": n, "criterion": c.get("name"), "description": c.get("description"),
                   "checks": [{**{k: p.get(k) for k in ("behaviour", "command", "expect")},

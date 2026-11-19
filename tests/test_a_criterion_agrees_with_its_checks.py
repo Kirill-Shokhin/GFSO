@@ -124,7 +124,7 @@ def test_a_held_contract_and_a_settled_child_are_not_read():
     agree = DEC._Agreement(_LLM(), type("E", (), {"graph": graph})(), "root", "ship head", True, contract_fixed=True)
     spec = _dash_named_plan()
     spec["subtasks"][0]["criteria"] = [dict(spec["subtasks"][0]["criteria"][0], check=[CHECK])]
-    assert all(n not in ("root", "a") for n, _ in agree._judged(spec)), agree._judged(spec)
+    assert all(n not in ("root", "a") for n, _ in agree.judged(spec)), agree.judged(spec)
 
 
 def test_a_finding_outlives_the_round_that_found_it():

@@ -153,12 +153,12 @@ def beyond_said(spec: dict, request: str, before: dict | None = None, said=()) -
     file says it: its own requirement, not the person's (`decompose.beyond_the_request`). Read are the criteria written
     now — every one, or with the plan of `before`, those that differ from it; one standing as it was is said again only
     where the plan's review `said` it, so a plan the person's agent wrote is never judged. Never a gate."""
-    was = {(n, c.get("name")): _decompose._criterion_key(c) for n, x in _parts(before or {}).items()
+    was = {(n, c.get("name")): _decompose.criterion_key(c) for n, x in _parts(before or {}).items()
            for c in x.get("criteria") or ()}
     kept = {x.split(":", 1)[0] for x in said}
     return [line for n, c in _decompose.beyond_the_request(spec, request, True)
             if (line := f"{n} / {c.get('name')}: {c.get('description', '')[:200]}")
-            and (was.get((n, c.get("name"))) != _decompose._criterion_key(c) or line.split(":", 1)[0] in kept)]
+            and (was.get((n, c.get("name"))) != _decompose.criterion_key(c) or line.split(":", 1)[0] in kept)]
 
 
 def _exact_kept(before: dict, after: dict) -> dict:

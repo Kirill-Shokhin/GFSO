@@ -1980,7 +1980,7 @@ def _the_persons_verdict(engine: Engine, tid, sig: str) -> Optional[dict]:
     """Under `solo` and `semi` a root's PASS or FAIL is the person's — the root's issuer is them (§10.1) — so it carries
     their words after they saw the validator's verdict, recorded on the feed; refused without them. A client signing
     the root itself was stopped as self-approval (s21). None: the signal goes on."""
-    if sig not in ("PASS", "FAIL") or engine.mode_kind() not in (Mode.SOLO, Mode.SEMI) \
+    if sig not in (Verdict.PASS.value, Verdict.FAIL.value) or engine.mode_kind() not in (Mode.SOLO, Mode.SEMI) \
             or engine.graph.get_parent(tid) is not None or engine.graph.get_task(tid) is None:
         return None
     if (p := CALLER.get()) is not None and p.a_page:
@@ -3272,7 +3272,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
     if no := _the_persons_verdict(engine, tid, sig):
         return no
     out = _tools.signal(engine, task_id, signal, source, **kw)
-    if out.get("accepted") and sig == "PASS" and (back := back_to_their_branch(engine, tid)):
+    if out.get("accepted") and sig == Verdict.PASS.value and (back := back_to_their_branch(engine, tid)):
         said["say"] = back
         # …and on the feed: signed from the person's page, the PASS's answer goes to the page, and the chat hears it there
         engine.emit_info("verdict", f"{tid}: {back}")
