@@ -16,6 +16,8 @@ CHECK = {"behaviour": "stdin under -v is headed as GNU heads it",
 def _dash_named_plan(description=SAYS, check=(CHECK,)):
     s = _graph_state()
     s["root_criteria"][0] = dict(s["root_criteria"][0], description=description, check=list(check))
+    for c in [*s["root_criteria"], *(c for k in s["subtasks"] for c in k["criteria"])]:
+        c["asked"] = "ship head"            # …the TASK's words, as the model is asked to name them
     return s
 
 

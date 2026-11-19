@@ -113,7 +113,8 @@ def test_a_held_refine_round_spends_no_repair_on_the_contract_it_does_not_author
     calls = []
     monkeypatch.setattr(DEC, "_search", lambda llm, req, view: "a missing part b")
     monkeypatch.setattr(DEC, "_audit_fold", lambda llm, req, view, holes, executor="": {"add_subtasks": [
-        {"id": "b", "name": "b", "description": "part b", "criteria": [criterion("b_ok", "b holds")]}],
+        {"id": "b", "name": "b", "description": "part b",
+         "criteria": [criterion("b_ok", "b holds", asked="the goal")]}],
         "add_mappings": [{"criterion": "g", "child_id": "b"}]})
     monkeypatch.setattr(DEC, "_audit_fix", lambda llm, req, sp, refused, ex="": calls.append(refused) or {})
     monkeypatch.setattr(DEC._Agreement, "judge", lambda self, spec: None)

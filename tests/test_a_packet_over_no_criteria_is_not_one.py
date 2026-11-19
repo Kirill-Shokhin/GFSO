@@ -117,7 +117,7 @@ def test_the_execution_gate_does_not_pass_over_the_empty_set(empty):
 
 # === 3. the authoring: an empty plan is an honest error, not an empty root ===
 
-_PLAN = {"name": "Thing", "root_criteria": [criterion("rc", "the whole holds")],
+_PLAN = {"name": "Thing", "root_criteria": [criterion("rc", "the whole holds", asked="the spreadsheet engine")],
          "subtasks": [{"id": "a", "name": "A", "description": "do A", "criteria": [criterion("a1", "A ok")],
                        "volume": "small", "fits_one_session": True},
                       {"id": "b", "name": "B", "description": "do B", "criteria": [criterion("b1", "B ok")],

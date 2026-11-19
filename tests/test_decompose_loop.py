@@ -19,7 +19,13 @@ from gfso.decompose import decompose_into, decompose_spec, refine, extract_spec
 from gfso.issuer import issuer_context
 from gfso.decompose.loop import (SEARCH_PROMPT, FOLD_SCHEMA, AGREE_SCHEMA, _fold_merge, shape,
                                  SEARCH_FAST, AUDIT_FAST)
-from tests.support import criterion, make_engine, pinned, procedure_under
+from tests.support import criterion as _criterion, make_engine, pinned, procedure_under
+
+
+def criterion(name: str, description: str = "", **kw) -> dict:
+    """A criterion as the fake model writes it: naming the words of the request ("task") it states, as the real one is
+    asked to — one that names none is the system's own, and its repair is a round these sequences do not script."""
+    return _criterion(name, description, **{"asked": "task", **kw})
 
 
 class FakeLLM:
