@@ -122,8 +122,9 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   author, every validator — need one in every mode.
 - A plan no longer passes off the system's own requirements as the person's. Each criterion names the words of the
   request (or of a note) that it states (`asked`), and the system checks them against the request word for word, with
-  no model. When the system writes a plan from the request alone, any criterion whose words are not there goes to the
-  plan's repair. Whatever survives the repair is listed in the plan file (`review.beyond_the_request`) and in the
+  no model. The graph keeps each criterion's `asked`, and only the criteria a round writes are read; a criterion it
+  leaves as it was is not read again. When the system writes a plan from the request (with the customer's notes, which
+  count as asking too), any criterion whose words are not there goes to the plan's repair. Whatever survives the repair is listed in the plan file (`review.beyond_the_request`) and in the
   plan's answer as the system's own, for the person to keep or strike with a note; the plan is never refused for
   it. A three-criterion task used to come back with nine criteria, and a stranger's run once spent 57 minutes on
   escaping rules nobody had asked for. A plan a solo chat filled with the person is theirs: never repaired for it,

@@ -106,6 +106,9 @@ class Criteria:
     # the children happened to add up. The function belongs to the criterion, not to a mapping: it
     # is one statement about cᵢ however many children carry it, and it is the issuer's to write.
     composition: str = ""
+    # WHOSE DEMAND IT IS: the words of the goal it states, as its author named them (`decompose.beyond_the_request`);
+    # None where none were named. Kept with the criterion, or a rebuilt round reads every criterion as the system's own
+    asked: Optional[str] = None
 
     def __post_init__(self):
         if self.check and any(isinstance(p, Mapping) for p in self.check):

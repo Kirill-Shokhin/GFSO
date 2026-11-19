@@ -40,7 +40,8 @@ def extract_spec(engine, root_id: str = ROOT_ID) -> dict:
                  # contract that had just been authored with one, and the plan then failed A1 where a minute
                  # earlier it had passed.
                  "check": [p.to_dict() for p in (cr.check or ())],
-                 **({"depends_on": dens(cr.depends_on)} if cr.depends_on else {})} for cr in c.spec.criteria]
+                 **({"depends_on": dens(cr.depends_on)} if cr.depends_on else {}), **_asked(cr)}
+                for cr in c.spec.criteria]
         subtasks.append({"id": dens(c.id), "name": c.spec.name, "description": c.spec.description,
                          "criteria": crit, **_fit(engine, c.id, ""),
                          **{k: claim[k] for k in ("writes", "runs") if k in claim}})
@@ -48,7 +49,7 @@ def extract_spec(engine, root_id: str = ROOT_ID) -> dict:
     return {
         "name": root.spec.name,
         "root_criteria": [{"name": cr.name, "description": cr.description,
-                           "check": [p.to_dict() for p in (cr.check or ())]}
+                           "check": [p.to_dict() for p in (cr.check or ())], **_asked(cr)}
                           for cr in root.spec.criteria],
         "subtasks": subtasks,
         "mappings": [{"criterion": m.criterion_name, "child_id": dens(m.child_id)}
@@ -60,6 +61,11 @@ def extract_spec(engine, root_id: str = ROOT_ID) -> dict:
         "scope": [{"item": s, "why_out": ""} for s in root.spec.scope],
         **_fit(engine, root.id, "whole_"),
     }
+
+
+def _asked(cr) -> dict:
+    """The criterion's `asked` under the spec's key, absent where its author named none."""
+    return {} if cr.asked is None else {"asked": cr.asked}
 
 
 def _fit(engine, task_id, prefix: str) -> dict:

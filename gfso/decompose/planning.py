@@ -48,9 +48,9 @@ def author(request: str, model: str, executor: str = "", depth: int = 1, review_
     with _booked(ledger, llm):
         res = _decompose.decompose_into(e, request, root_id=ROOT_ID, assignee=agent_id(), depth=depth, model=model,
                                         llm=llm, progress=back, executor=executor, pins=pins)
-    spec = _asked_kept(extract_spec(e, str(res.root_id)), res.spec)
+    spec = extract_spec(e, str(res.root_id))
     return artifact.render(request, spec, back.into(_review(e, res.root_id, review_model or model, execution, ledger,
-                                                            beyond=beyond_said(spec, request, True),
+                                                            beyond=beyond_said(spec, request),
                                                             pins=pins.review(spec)), spec), executor=executor)
 
 
@@ -95,9 +95,10 @@ def refine(text: str, note: str, model: str, review_model: str = "", progress=No
         "criterion only where none states it.\n" + "\n".join(open_) if open_ else "")
     with _booked(ledger, llm):
         changed, made, problems = _decompose.refine_with(e, p["goal"], rid, agent_id(), llm,
-                                                      findings, progress=back, executor=p["executor"], pins=pins)
+                                                      findings, progress=back, executor=p["executor"], pins=pins,
+                                                      asks=noted)
     changed = changed or spec != p["spec"]        # …the repair before the build changed it too
-    after = _asked_kept(_exact_kept(before, extract_spec(e, str(rid))), made, before)
+    after = _exact_kept(before, extract_spec(e, str(rid)))
     pinned = pins.review(after)
     # …said as what it is: one round read the note TOGETHER with the review's open findings, so a change is the round's,
     # not proven the note's; and an unchanged plan is the system's answer to the note, the review below its reasons
@@ -106,7 +107,7 @@ def refine(text: str, note: str, model: str, review_model: str = "", progress=No
             "and the review below, are the answer; send a sharper note, or name a stronger model")
     answer = [head] + (changes(before, after) if changed else [])
     review = _review(e, rid, review_model or model, execution, ledger, asked, pinned,
-                     beyond_said(after, p["goal"] + "\n\n" + noted))
+                     beyond_said(after, p["goal"] + "\n\n" + noted, before, p["review"].get(BEYOND) or ()))
     if left := unrepaired(before, after, [c for c, v in gaps.items() if v["verdict"] == "insufficient"]):
         wider = [c["name"] for c in after.get("root_criteria") or () if c["name"] not in _crits(_parts(before)[ROOT_ID])]
         answer.append(f"NOT REPAIRED — the review found the parts do not secure {', '.join(left)}, and the round "
@@ -147,26 +148,17 @@ def _pairs(s: dict) -> set:
     return {(m["criterion"], m["child_id"]) for m in s.get("mappings") or ()}
 
 
-def _asked_kept(spec: dict, *authored: dict) -> dict:
-    """`spec` (as built, `extract_spec`) with each criterion's `asked` as `authored` wrote it, the first that names it:
-    the graph keeps no such field, and the plan file is where the person reads whose demand each criterion is."""
-    said = {}
-    for a in reversed(authored):
-        said |= {(n, c.get("name")): c["asked"] for n, x in _parts(a or {}).items() for c in x.get("criteria") or ()
-                 if "asked" in c}
-    for n, x in _parts(spec).items():
-        for c in x.get("criteria") or ():
-            if (n, c.get("name")) in said:
-                c["asked"] = said[(n, c.get("name"))]
-    return spec
-
-
-def beyond_said(spec: dict, request: str, unasked: bool = False) -> list[str]:
-    """Each criterion of `spec` the request (with the customer's notes) does not ask, as the plan file says it: the
-    system's own requirement, not the person's (`decompose.beyond_the_request`), one with no `asked` too where the
-    system wrote it now (`unasked`). Never a gate."""
-    return [f"{n} / {c.get('name')}: {c.get('description', '')[:200]}"
-            for n, c in _decompose.beyond_the_request(spec, request, unasked)]
+def beyond_said(spec: dict, request: str, before: dict | None = None, said=()) -> list[str]:
+    """Each criterion of `spec` the system wrote that the request (with the customer's notes) does not ask, as the plan
+    file says it: its own requirement, not the person's (`decompose.beyond_the_request`). Read are the criteria written
+    now — every one, or with the plan of `before`, those that differ from it; one standing as it was is said again only
+    where the plan's review `said` it, so a plan the person's agent wrote is never judged. Never a gate."""
+    was = {(n, c.get("name")): _decompose._criterion_key(c) for n, x in _parts(before or {}).items()
+           for c in x.get("criteria") or ()}
+    kept = {x.split(":", 1)[0] for x in said}
+    return [line for n, c in _decompose.beyond_the_request(spec, request, True)
+            if (line := f"{n} / {c.get('name')}: {c.get('description', '')[:200]}")
+            and (was.get((n, c.get("name"))) != _decompose._criterion_key(c) or line.split(":", 1)[0] in kept)]
 
 
 def _exact_kept(before: dict, after: dict) -> dict:

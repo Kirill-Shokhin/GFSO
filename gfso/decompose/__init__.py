@@ -164,18 +164,23 @@ def beyond_the_request(spec: dict, request: str, unasked: bool = False) -> list[
 
 
 def _reference(agree: "_Agreement") -> str:
-    """What a split's criteria may quote: the text it is written from (`agree.task`) and the project's goal as the
-    person gave it — a deferred split is written from its node's contract, its parts finer forms of the root's words."""
+    """What a split's criteria may quote: the text it is written from (`agree.task`), the customer's notes on it
+    (`agree.asks`) and the project's goal as the person gave it — a deferred split is written from its node's
+    contract, its parts finer forms of the root's words."""
     root = root_of(agree.engine.all_tasks())
-    return agree.task + (f"\n\n{root.spec.description}" if root is not None else "")
+    return "\n\n".join(x for x in (agree.task, agree.asks, root and root.spec.description) if x)
 
 
-def _beyond(spec: dict, request: str) -> list[str]:
-    """The repairer's line for each criterion of `spec`, written now, the request does not ask (`beyond_the_request`)."""
+def _beyond(spec: dict, agree: "_Agreement") -> list[str]:
+    """The repairer's line for each criterion of `spec` written now (`agree._judged`) that the text it is written from
+    does not ask (`beyond_the_request`): one standing in the graph as it was is no round's to judge again — read
+    without its `asked`, a refined plan's every criterion was the system's, the person's own words sent to removal."""
+    now = {(n, c.get("name")) for n, c in agree._judged(spec)}
     return [f"{node} / criterion {c.get('name')}: states nothing the request asks — its `asked` "
             f"({str(c.get('asked') or '')[:200]!r}) is not words of the request. The goal's criteria are the person's: "
             f"quote the request's words it states; or make it the form of the criterion whose words it serves; or "
-            f"remove it, with every check that demands it" for node, c in beyond_the_request(spec, request, True)]
+            f"remove it, with every check that demands it"
+            for node, c in beyond_the_request(spec, _reference(agree), True) if (node, c.get("name")) in now]
 
 
 #: why a host project's pins are read and not run before the go (`PinsOnTheBase.review`)
@@ -287,8 +292,9 @@ class _Agreement:
     ever the TASK it is judged by. Findings are kept per criterion: a re-judged criterion replaces its own, a failed
     call (⊥) changes none. One the TASK itself demands both ways is its author's (§9.7): reported, never repaired."""
 
-    def __init__(self, llm, engine: Engine, root_id: str, task: str, on: bool, contract_fixed: bool):
+    def __init__(self, llm, engine: Engine, root_id: str, task: str, on: bool, contract_fixed: bool, asks: str = ""):
         self.llm, self.engine, self.root_id, self.task, self.on, self.held = llm, engine, root_id, task, on, contract_fixed
+        self.asks = asks        # …the customer's notes: they ask too (`_reference`)
         self.found: dict[tuple, tuple[str, str]] = {}
         self.undecided: set[tuple] = set()
         self.unplaced = 0
@@ -479,7 +485,7 @@ def _repaired_before_build(spec: dict, request: str, llm, executor: str, progres
         if not (refused := admission_refusals(spec, contract_fixed) + agree.repair()
                 + (pins.flags(spec, contract_fixed) if pins and not closed else [])
                 # …only where the request alone is what the system writes from (`agree.on`): a customer's note asks too
-                + (_beyond(spec, _reference(agree)) if agree.on else [])):
+                + (_beyond(spec, agree) if agree.on else [])):
             break
         if closed:
             # …THE USER'S PLAN IS NOT REPAIRED BEHIND HIS BACK: the go called a model and patched a handed-in plan the
@@ -715,17 +721,18 @@ SPLIT_DEFECT = ("Each is a criterion of this node that the parts' criteria do no
 
 
 def refine_with(engine: Engine, request: str, root_id: str, assignee: str, llm, findings: str, progress=None,
-                executor: str = "", pins: "PinsOnTheBase | None" = None) -> tuple[bool, dict, list[str]]:
+                executor: str = "", pins: "PinsOnTheBase | None" = None, asks: str = "") -> tuple[bool, dict, list[str]]:
     """One refine round over the built graph with `findings` in hand — a customer's note, a review's list — folded
-    instead of searched for (`_refine_round`)."""
+    instead of searched for (`_refine_round`); `asks`, the customer's notes, which its criteria may quote."""
     return _refine_round(engine, request, root_id, assignee, llm, progress=progress, executor=executor, findings=findings,
-                         pins=pins)
+                         pins=pins, asks=asks)
 
 
 def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm,
                   progress=None, label: str = "1/1", executor: str = "",
                   contract_fixed: bool = False, findings: str = "",
-                  agree: "_Agreement | None" = None, pins: "PinsOnTheBase | None" = None) -> tuple[bool, dict, list[str]]:
+                  agree: "_Agreement | None" = None, pins: "PinsOnTheBase | None" = None,
+                  asks: str = "") -> tuple[bool, dict, list[str]]:
     """ONE refinement application over the BUILT GRAPH as the state: BOTH roles read the graph's real
     projection (+ any current structural holes) — the one canonical textual read, no separate
     renderer; the auditor folds the findings in as a patch (ids normalized from the projection's
@@ -810,7 +817,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
         rid, new_spec, problems = _build_verified(new_spec, request, engine, root_id, assignee, llm,
                                                   progress=progress, executor=executor, contract_fixed=contract_fixed,
                                                   agree=agree or _Agreement(llm, engine, root_id, request, True,
-                                                                            contract_fixed), pins=pins)
+                                                                            contract_fixed, asks), pins=pins)
     except NoPlan as no:          # a round over a standing plan that authored no contract leaves that plan, said
         _progress(f"{label} {no}", progress)
         return False, spec, [str(no)]

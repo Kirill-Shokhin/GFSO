@@ -593,7 +593,8 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                           "check": [p.to_dict() for p in (c.check or ())],
                           # …and so does the composition function CHECK-7 checks under (§9.6): a
                           # declaration lost on the way to disk puts the check back on its assumed sum
-                          "composition": c.composition}
+                          "composition": c.composition,
+                          **({"asked": c.asked} if c.asked is not None else {})}
                          for c in spec.criteria],
             "accepted_risks": SqliteStorage._accepted_risks_to_json(spec.accepted_risks),
             "risk_components": list(spec.risk_components),
@@ -611,7 +612,7 @@ class SqliteStorage(_ProjectSettings, StoragePort):
                                     input=c.get("input"), expected=c.get("expected"),
                                     n=c.get("n"), timeout=c.get("timeout"),
                                     check=tuple(Probe.of(p) for p in (c.get("check") or ())),
-                                    composition=c.get("composition", ""))
+                                    composition=c.get("composition", ""), asked=c.get("asked"))
                            for c in d["criteria"]),
             accepted_risks=SqliteStorage._accepted_risks_from_json(d.get("accepted_risks", ())),
             risk_components=tuple(d.get("risk_components", ())),

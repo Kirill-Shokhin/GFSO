@@ -11,8 +11,9 @@ CONTROLS: make `beyond_the_request` return [] and the rule tests go red; read `a
 with other quotes and spacing is flagged; drop `_beyond` from `_repaired_before_build`'s list and the repair is never
 told; drop `agree.on` from it and a customer's plan is repaired against the request alone; read the caller's request
 there for `_reference` and a deferred split's honest parts are flagged; skip a criterion with no `asked` written now and
-the invented one passes unsaid; drop the ё fold and Russian quotes are flagged; drop `_asked_kept` in `planning.author`
-and the file says nothing; drop `unasked` from the answer and the person is not told."""
+the invented one passes unsaid; drop the ё fold and Russian quotes are flagged; drop `asked` from `extract_spec`
+and the file says nothing; judge every criterion of a rebuilt round, or none of the note, and the person's own words are
+repaired away; drop `unasked` from the answer and the person is not told."""
 from types import SimpleNamespace
 
 import pytest
@@ -138,7 +139,7 @@ def test_a_customers_note_asks_too(monkeypatch, no_model):
     """`refine_plan`: a criterion quoting the customer's note is theirs; the file of before keeps its words."""
     noted = _crit("empty", "an empty file prints 0")
     monkeypatch.setattr(D, "refine_with", lambda *a, **k: (True, _plan_of(ASKED, noted), []))
-    monkeypatch.setattr(planning, "extract_spec", lambda *a, **k: _plan_of(_crit("top"), _crit("empty")))
+    monkeypatch.setattr(planning, "extract_spec", lambda *a, **k: _plan_of(ASKED, noted))
     monkeypatch.setattr(D, "repaired_before_build", lambda spec, *a, **k: spec)
     monkeypatch.setattr(planning, "build_graph_live", lambda *a, **k: (None, "root", []))
     text = planning.refine(artifact.render(GOAL, _plan_of(ASKED), {"by": "m"}), "an empty file prints 0", "m")
@@ -151,3 +152,50 @@ def test_a_customers_note_asks_too(monkeypatch, no_model):
 def test_the_planner_is_told_to_name_the_words_it_states():
     assert "asked" in AUDIT_SCHEMA["properties"]["root_criteria"]["items"]["properties"]
     assert "`asked`" in AUDIT_PROMPT and "absent from it" in AUDIT_PROMPT
+
+
+NOTE = "an empty file prints 0"
+
+
+def _refined(monkeypatch, plan, added):
+    """`refine_plan` over `plan` with the note NOTE, its fold adding `added`: (what the repairs were told, the new file)."""
+    told = []
+    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {})
+    monkeypatch.setattr(D, "_audit_fold", lambda *a, **k: {"add_root_criteria": [added]})
+    monkeypatch.setattr(D._Agreement, "judge", lambda self, spec: None)
+    text = planning.refine(artifact.render(GOAL, plan, {"by": "m"}), NOTE, "m")
+    return [x for xs in told for x in xs if "states nothing the request asks" in x], artifact.parse(text)
+
+
+def test_a_refine_round_over_a_plan_quoting_the_request_repairs_nothing_and_calls_nothing_the_systems(monkeypatch,
+                                                                                                      no_model):
+    """A rebuilt round reads only what it writes: the graph keeps each `asked`, and an unchanged criterion is not
+    judged again — read without it, every criterion of a refined plan was the system's, its repair told to remove the
+    person's own words (critic)."""
+    told, p = _refined(monkeypatch, _plan_of(ASKED), _crit("words", "most frequent words"))
+    assert told == [] and planning.BEYOND not in p["review"], (told, p["review"])
+    assert {c["name"]: c.get("asked") for c in p["spec"]["root_criteria"]} == {"top": ASKED["asked"],
+                                                                                 "words": "most frequent words"}
+
+
+def test_a_criterion_the_round_writes_from_the_note_is_the_persons(monkeypatch, no_model):
+    told, p = _refined(monkeypatch, _plan_of(ASKED), _crit("empty", NOTE))
+    assert told == [] and planning.BEYOND not in p["review"], (told, p["review"])
+
+
+def test_a_plan_the_persons_agent_wrote_is_never_judged_by_a_refine_round(monkeypatch, no_model):
+    """A hand-filled plan names no `asked`: the round's own criterion is read, the person's are not."""
+    told, p = _refined(monkeypatch, _plan_of(_crit("top"), _crit("labels")), _crit("words", "most frequent words"))
+    assert told == [] and planning.BEYOND not in p["review"], (told, p["review"])
+    assert [c["name"] for c in p["spec"]["root_criteria"]] == ["top", "labels", "words"]
+
+
+def test_the_graph_keeps_whose_words_each_criterion_states(no_model):
+    e = make_engine()
+    e.start()
+    try:
+        D.build_graph_live(_plan_of(ASKED, _crit("bare")), GOAL, e, root_id="root", assignee="user")
+        got = {c["name"]: c.get("asked") for c in D.extract_spec(e, "root")["root_criteria"]}
+    finally:
+        e.stop()
+    assert got == {"top": ASKED["asked"], "bare": None}, got

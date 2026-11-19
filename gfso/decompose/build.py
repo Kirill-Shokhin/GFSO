@@ -20,6 +20,11 @@ from gfso.core.types import (
 log = logging.getLogger(__name__)
 
 
+def _asked_of(c: dict) -> Optional[str]:
+    """A spec criterion's `asked` as the graph keeps it: None where its author named none."""
+    return None if c.get("asked") is None else str(c["asked"])
+
+
 def build_graph_live(d: dict, request: str, engine: Engine, root_id: str = ROOT_ID,
                      assignee: str = "human", max_iterations: int | None = None,
                      child_assignee: str | None = None, contract_fixed: bool = False,
@@ -79,7 +84,7 @@ def _children_from_spec(engine, d: dict, ns, existing_kids: set, C, max_iteratio
     children = []
     for c in d.get("subtasks", []):
         cid = str(c["id"])
-        crit = [Criteria(x["name"], x.get("description", ""), check=_checks_of(x),
+        crit = [Criteria(x["name"], x.get("description", ""), check=_checks_of(x), asked=_asked_of(x),
                          depends_on=TaskId(ns(str(x["depends_on"]))) if x.get("depends_on") else None)
                 for x in c.get("criteria", [])]
         # ONE CRITERION PER NAME. A refine re-derives the set, and a name that appears twice — the
@@ -333,7 +338,7 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
     # always meant, and getting the first when they wanted the second locked one out of their own
     # plan for fifteen minutes (measured 2026-08-21).
     C = C or A
-    root_crit = tuple(Criteria(c["name"], c.get("description", ""), check=_checks_of(c))
+    root_crit = tuple(Criteria(c["name"], c.get("description", ""), check=_checks_of(c), asked=_asked_of(c))
                       for c in d.get("root_criteria", []))
     scp = tuple(f"{s['item']} — {s['why_out']}" if s.get("why_out") else s["item"]
                 for s in d.get("scope", []))  # §9.2 scope-boundary exclusions — objectified on the root

@@ -448,7 +448,7 @@ class Engine:
         _had_fn = {c.name: c.composition for c in t.spec.criteria if c.composition}
         criteria = tuple(Criteria(c.name, c.description, c.input, c.expected, c.n, c.timeout,
                                   c.depends_on, c.check or _had.get(c.name, ()),
-                                  c.composition or _had_fn.get(c.name, ""))
+                                  c.composition or _had_fn.get(c.name, ""), c.asked)
                          for c in criteria)
         new_spec = dataclasses.replace(t.spec, criteria=tuple(criteria))
         return self.revise(task_id, new_spec, agent, reason=reason)
