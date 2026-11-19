@@ -248,7 +248,9 @@ export async function drawHeader() {
         const shown = t => CALLS.includes(t.state) && onAPerson(t);
         // the engine's `mine`, as it is: under AUTO it marks the customer's own rulings on the root (a user's dispute)
         // …and only the names «Mine» shows: locally a person owns every stream's name, and all of them read 230 «for you» (critic)
-        const yours = (f.steps || []).filter(x => x.mine && inView(x.task_id));
+        // …and a step the engine marks `optional` is the person's to take or leave, no call: a delivery the project's
+        // validator observes by itself, a ruling the system answers itself (engineering 0df5c1d); the panel still offers it
+        const yours = (f.steps || []).filter(x => x.mine && !x.optional && inView(x.task_id));
         const own = yours.filter(x => !x.performed_by || mineNames().includes(x.performed_by));
         // …and a view narrowed to one name is no calm word over the moves of the person's other names (critic 3)
         others = yours.length - own.length;
