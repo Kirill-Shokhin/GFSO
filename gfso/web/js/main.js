@@ -1,7 +1,7 @@
 // Wiring: the page's start, its refresh policy, and the one dispatch from `data-action` controls and
 // live messages to the units that own them. No unit imports another's handlers; they meet here.
 import {$, esc, coded, ages, phone} from './dom.js';
-import {PROJECT, TASK, GOAL, FOCUS, getJSON, singleFlight, whenMoved, movedBy, pushStep} from './api.js';
+import {PROJECT, TASK, GOAL, FOCUS, getJSON, post, singleFlight, whenMoved, movedBy, pushStep} from './api.js';
 import {S, kept, keep, signsAs, hereIn, mineShown, procs, inView, inside, goTo, goUp as up} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap, terminal, FM} from './vocab.js';
@@ -16,7 +16,7 @@ import * as author from './author.js';
 import * as goal from './goal.js';
 import {mountDeck, paint as paintDeck, onPipeline, onInflight, suggestHeight, foldDeck} from './deck.js';
 import {connectWS} from './live.js';
-import {askProjectName, clearNotice} from './overlays.js';
+import {askProjectName, clearNotice, act} from './overlays.js';
 import {mountHints, LEAVING} from './hints.js';
 import {untip, TOUCH} from './tip.js';
 import {drawPlanning, togglePlan, leavePlan} from './planning.js';
@@ -167,6 +167,9 @@ const ACT = {
         if (pop) document.querySelector('.hd-mode')?.focus();      // the header is redrawn: its old button is gone
         if (where) setTimeout(() => document.querySelector(`${where === 'goal' ? '#goal-panel' : '.cp-row'} input[data-action="intent"]`)?.focus(), 300); },
     'plan-toggle': () => togglePlan(),
+    // …who checks a part, its issuer's choice: redrawn from the server's answer either way — the browser ticks the box first,
+    // and a refusal left it ticked over an engine holding it off (critic)
+    'set-checker': async d => { await act(post('/api/run/set_checker', {task_id: d.id, checker: d.on === '1' ? 'validator' : 'self'}), {what: 'Who checks this part', ok: null}); await S.reload(); point('select', d.id); },
     close: () => point('select', null), select: d => (leavePlan(), point('select', d.id)), view: d => goTo(d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip'), d.to),
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,

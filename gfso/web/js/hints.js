@@ -342,6 +342,9 @@ export const PANEL = {
     round: (n, v, why, found) => hover(`${v || 'No value'}\tRound ${n}`, !v && cap(NO_VALUE[why]), v !== 'pass' && found),
     full: text => hover(text),
     directive: text => hover(text),
+    // …who checks the part is its issuer's choice, the signature theirs either way (§10.2; the author, 11-20, via engineering)
+    checkAlways: "Checked by the validator (otherwise by you); you sign either way",
+    checkedAlways: "Checked by the validator; its issuer signs",
     signYours: (v, n) => `The validator observed this delivery: ${v}, each criterion under Verdict${n ? `, and ${n} thing${n > 1 ? 's' : ''} it saw outside the criteria` : ''}. The verdict is yours — sign it below`,
     outside: 'Seen outside the criteria — no criterion failed on it; yours to weigh',
     model: id => hover(id),

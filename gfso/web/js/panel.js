@@ -263,7 +263,18 @@ const signedBy = (run, id) => [
 const WHY = {CHALLENGED: ['CHALLENGE', 'Challenged'], BLOCKED: ['BLOCK', 'Blocked']};
 const dispute = ({d}) => { const w = WHY[d.state], c = w && [...(d.audit || [])].reverse().find(a => a.signal === w[0] && !a.rejected);
     return c ? `<div class="pn-verdict check-fail"><b>${w[1]}</b><span class="pn-who">${esc(trim(spoken(c.reason || ''), 200))}</span>${link('history', 'whole')}</div>` : ''; };
-const PARTS = [head, verdict, dispute, facets, criteria, actions];   // the prose chips above the list, always on screen
+// WHO CHECKS A PART — the validator or its issuer themself, the signature the issuer's either way (§10.2, `set_checker`; the
+// author, 11-20: «решает кто будет валидировать; если сам то сам и ставит подпись»). The engine says who checks now
+// (`checker`, on the graph read only where it is the validator) and offers the choice only where one exists — a part the
+// person's chat holds below the root; a seam owes the validator, no box there (critic)
+const checkedByValidator = id => (S.graph.nodes || []).find(n => n.id === id)?.checker === 'validator';
+function checkSetting({d, acts}) {
+    if (!d.parent_id) return '';
+    const on = checkedByValidator(d.id), may = owns(acts?.moves?.set_checker);
+    return may ? `<div class="pn-note"><label class="act-check"><input type="checkbox"${data({action: 'set-checker', id: d.id, on: on ? '0' : '1'})}${on ? ' checked' : ''}> ${esc(PANEL.checkAlways)}</label></div>`
+        : on ? `<div class="pn-note check-skip">${esc(PANEL.checkedAlways)}</div>` : '';
+}
+const PARTS = [head, verdict, dispute, facets, criteria, checkSetting, actions];   // the prose chips above the list, always on screen
 
 let panelRead = 0, opening = Promise.resolve();
 export const panelOpened = () => opening;
