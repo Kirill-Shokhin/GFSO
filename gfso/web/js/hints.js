@@ -345,6 +345,7 @@ export const PANEL = {
     // …who checks the part is its issuer's choice, the signature theirs either way (§10.2; the author, 11-20, via engineering)
     checkAlways: "Checked by the validator (otherwise by you); you sign either way",
     checkedAlways: "Checked by the validator; its issuer signs",
+    checkedApart: "Needs a verdict not its executor's; its issuer signs",
     signYours: (v, n) => `The validator observed this delivery: ${v}, each criterion under Verdict${n ? `, and ${n} thing${n > 1 ? 's' : ''} it saw outside the criteria` : ''}. The verdict is yours — sign it below`,
     outside: 'Seen outside the criteria — no criterion failed on it; yours to weigh',
     model: id => hover(id),
