@@ -34,8 +34,8 @@ class _Validator:
     """The project's validator, stubbed: a read-only session that runs each pinned probe where it is started and reports
     every criterion of the root PASS on what it printed — a check in words cited by the line it saw."""
 
-    def __init__(self, e):
-        self.e, self.calls = e, []
+    def __init__(self, e, outside=()):
+        self.e, self.calls, self.outside = e, [], list(outside)
 
     def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
         self.calls.append({"duration_ms": 1, "output_tokens": 1})
@@ -46,7 +46,7 @@ class _Validator:
             {"criterion": c.name, "verdict": "pass", "evidence": f"ran it: {c.name} holds", "behaviours": [p.behaviour for p in c.check],
              "probe": [{"command": p.command, "behaviour": p.behaviour, "output": (out := ran(p.command)),
                         "expect": p.expect if p.exact else out.strip().splitlines()[0]} for p in c.check]}
-            for c in crits]}) + "\n```"
+            for c in crits], **({"outside": self.outside} if self.outside else {})}) + "\n```"
 
     def tag_last(self, stage):
         self.calls[-1]["stage"] = stage
@@ -172,3 +172,18 @@ def test_delivered_the_chat_hears_the_validator_runs_by_itself_and_how_its_end_i
     said = json.dumps(out)
     assert "validate_result" not in said and "get_verdict" not in said, out
     assert "gfso wait project=p" in said and "by itself" in said, out
+
+
+def test_the_person_is_told_what_the_validator_saw_outside_the_criteria(chat, monkeypatch):
+    """No criterion failed on it, so it is theirs to weigh before their PASS: shown the criteria alone, a fresh client
+    signed over "x.tar.gz is counted as .gz" without a word to the person (s23g1)."""
+    e, repo, call, _ = chat
+    seen = "x.tar.gz is counted as .gz, not .tar.gz"
+    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, [{"what": seen, "evidence": "ran it on x.tar.gz"}]))
+    _set_up(call, repo)
+    call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
+    _worked(repo)
+    call("signal", "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
+    ended = call("wait", seconds=60)
+    told = " ".join(s["directive"] for s in ended["steps"] if s.get("mine"))
+    assert seen in told, f"the sign-off step does not carry what the validator saw: {told}"

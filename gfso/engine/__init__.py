@@ -833,8 +833,13 @@ class Engine:
         seen = [f"{e.get('criterion')}: {e.get('verdict')}" + (f" ({str(e.get('evidence'))[:200]})" if e.get("evidence")
                                                                else "")
                 for e in rec.get("per_criterion") or () if isinstance(e, dict)]
+        # …and what it saw beyond them: no criterion failed on it, so it is theirs to weigh — a client shown the criteria
+        # alone signed over "x.tar.gz is counted as .gz" without telling them (fresh client s23g1)
+        beyond = [o["what"][:160] for o in outside_observations(self._storage, t.id)][:4]
         return (f"The verdict on '{t.id}' is the person's: show them the validator's verdict on each criterion"
                 + (f" — {'; '.join(seen[:12])}" if seen else " (the step that asks for it names each)")
+                + (f" — and what it saw outside the criteria, none of it a failed criterion: {'; '.join(beyond)}"
+                   if beyond else "")
                 + f" — ask them, and sign with their own words: `signal {t.id} PASS|FAIL user_said=<their words>`, or "
                   f"they sign on their page")
 
