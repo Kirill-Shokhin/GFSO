@@ -141,3 +141,22 @@ def test_a_node_a_registered_executor_holds_stops_its_project_at_the_start(monke
     reg = _registry(monkeypatch, tmp_path)
     default_agents().register("bob", "llm-executor", workdir=str(tmp_path))
     assert reg.engine("bobs").paused()["by"] == "system", "a machine holds its node: stopped until the person's Start"
+
+
+def test_a_people_s_graph_with_a_node_on_the_standing_agent_runs_on_until_the_system_has_hands_there(monkeypatch, tmp_path):
+    """No mode, a live node on the standing agent's name — the person's page signs as it: with no executor and no
+    instrument of the project's own, nothing of the system's runs there, and the graph read «Stopped» after every restart
+    (the author's root re-offered to his page's name, 2026-11-20). With a validator of its own the system has hands
+    there and the start's stop stands, or its validation would start unattended."""
+    monkeypatch.setenv("GFSO_HOME", str(tmp_path / "home"))
+    for name in ("mine", "watched"):
+        e = make_engine(storage=SqliteStorage(str(tmp_path / f"{name}.db")))
+        e.start()
+        T.create_task(e, "root", {"description": "goal", "criteria": [criterion("g")]}, assignee="user", agent="user")
+        e.wait_idle()
+        e.stop()
+        e.graph._storage.close()
+    reg = _registry(monkeypatch, tmp_path)
+    default_agents().register("w-val", "llm-validator", workdir=str(tmp_path), project="watched")
+    assert reg.engine("mine").paused() is None, "nothing of the system's runs there"
+    assert reg.engine("watched").paused()["by"] == "system", "its own validator would run unattended"

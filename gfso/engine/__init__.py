@@ -3062,9 +3062,13 @@ class Engine:
         return mode_starts_sessions(_project_mode(self._graph)) or self._machine_holds_a_live_node()
 
     def _machine_holds_a_live_node(self) -> bool:
-        """A live node held or issued by a party the system moves for (`party_kind` machine or legacy)."""
+        """A live node held or issued by a party the system moves for: a machine, or the standing agent with no mode
+        (`legacy`) where the system has hands here — an executor or an instrument of this project. With none, nothing
+        of the system's runs, and a graph people hold read «Stopped» after every restart (the author's root, re-offered
+        to his page's name, 2026-11-20; «перезапуск ничего ломать не может»)."""
         roster = self.workforce.roster()
-        return any(party_kind(self._graph, str(p), roster) in ("machine", "legacy")
+        kinds = ("machine", "legacy") if self.workforce.executor_pool() or self.workforce.has_an_instrument() else ("machine",)
+        return any(party_kind(self._graph, str(p), roster) in kinds
                    for t in self.all_tasks() if t.state not in TERMINAL_STATES
                    for p in (t.assignee, self._graph.issuer_of(t.id)) if p)
 

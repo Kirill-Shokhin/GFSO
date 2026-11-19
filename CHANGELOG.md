@@ -123,6 +123,9 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 - `next_step` and `next_steps` asked under a node walk only its subtree: on a graph carrying several streams the walk
   covered every node, and the holder of one was handed another's verdict to sign.
 - The reply to a signal names the signer's own next step first; another party's is named only when none is theirs.
+- A graph people hold with no mode, a live node on the standing agent's name and no executor or validator of its own
+  runs on at a server's start: it read «Stopped» after every restart though nothing of the system's runs there. With a
+  validator of its own registered it stays stopped until its Start, the instruments now known before that decision.
 - Under `solo` and `semi` every text a client reads where a root's sign-off is owed — the DELIVER's
   `awaiting_verdict`, `next_steps` and `gfso wait`, `get_verdict`'s `say`, the feed — says the verdict is the person's:
   show them the validator's verdict on each criterion with what it observed, ask, and sign with their words or let

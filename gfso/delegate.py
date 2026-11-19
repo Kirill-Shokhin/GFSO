@@ -123,12 +123,22 @@ ISSUER_VERBS = Verbs(llm=llm_factory, busy=_inflight, review=_in_flight_as("revi
                      execution=lambda engine: execution_of(engine, default_agents()))
 
 
+def publish_the_instruments(engine, roster: dict) -> None:
+    """Hand the engine the roster's instruments and whose each is (`Workforce.has_an_instrument`): published with the
+    executors, so a server's start decides a project's stop knowing whether a validator of its own would run there."""
+    kinds = ("llm-validator", "unittest-checker")
+    engine._graph.authorized_validators = {aid for aid, cfg in roster.items() if cfg.get("kind") in kinds}
+    engine.workforce.publish_validator_projects({aid: cfg.get("project") for aid, cfg in roster.items()
+                                                 if cfg.get("kind") in kinds})
+
+
 def publish_the_workforce(engine, roster: dict) -> None:
     """Hand the engine the roster's executors and whose each is — what a mode issues nodes to — and what KIND every
     registered id is. Called by every round of the dispatcher and by the verbs that change the roster or read the pool
     before a round has run (registering, setting a mode): published only by the round, a root created right after its
     executor was registered kept or lost its creator as issuer by which thread ran first."""
     kinds = {aid: cfg.get("kind") for aid, cfg in roster.items()}
+    publish_the_instruments(engine, roster)
     if engine.workforce.publish_roster(kinds):
         # …a role on or off the roster is news to an open page (its goal form's mode readiness), told where every roster
         # change is published — the roster lives in its own file, beside the store the plan's watch sees (`PlanWatch`)
@@ -1399,9 +1409,7 @@ class Dispatcher:
         # the FSM accepts a registered validator's PASS/FAIL as the issuer's role-V instrument (§10.3) —
         # both the LLM validator (a fresh read-only agent) and the deterministic unittest-checker
         _roster = self._agents.list()
-        self._engine._graph.authorized_validators = {
-            aid for aid, cfg in _roster.items()
-            if cfg.get("kind") in ("llm-validator", "unittest-checker")}
+        publish_the_instruments(self._engine, _roster)
         # …AND WHOSE EACH ONE IS. The set above says an instrument EXISTS on this server; it cannot
         # answer whether one will validate a given node, and the surfaces asked it as though it could:
         # a user whose project had registered nothing was told on every delivery that "an
@@ -1411,9 +1419,6 @@ class Dispatcher:
         # them off the one action that would have worked. The scope rule already exists in
         # `validator_for` (this project's roles first, then UNSCOPED ones, never another project's);
         # published here so the read surfaces can ask the same question.
-        self._engine.workforce.publish_validator_projects({
-            aid: cfg.get("project") for aid, cfg in _roster.items()
-            if cfg.get("kind") in ("llm-validator", "unittest-checker")})
         # …and WHO ELSE is registered, published downward for the read surfaces. `gfso.tools` is the
         # layer below this one (core+engine only, held by `test_layering`) and must not import the
         # dispatcher to find out that a node's Del is a machine — but it is the difference between
