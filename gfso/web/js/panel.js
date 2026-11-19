@@ -60,7 +60,8 @@ function head({d, rounds}) {
         // …the goal as the person gave it, on the root: a tap on the header's goal opens this panel, never its hover (critic)
         + prop('As given', !d.parent_id && asGiven(d) ? `<span class="pn-given">${esc(asGiven(d))}</span>` : '')
         // …and the person's own words agreeing to the plan at the go (solo / semi: the go is theirs), as the go recorded them
-        + prop('At the go', !d.parent_id && heard().user_said ? `<span class="pn-given">${esc(heard().user_said)}</span>` : '')
+        + prop('At the go', !d.parent_id && heard().user_said && S.tasks.filter(t => !t.parent_id).length === 1 ?   // …one setting a project: with two goals it may be the other's
+           `<span class="pn-given">${esc(heard().user_said)}</span>` : '')
         + prop('Del', `<code>${esc(d.assignee ? agentName(d.assignee) : '—')}</code>`)
         + prop('Round', n ? `<b class="pn-fig">${n}</b>${inWork ? ' in work' : ''}` : '')
         + prop('Result', !d.parent_id && delivered(d) && S.graph.landed ? `<code${H.landed(S.graph.landed)}>${esc(S.graph.landed.branch || S.graph.landed.path)}</code>` : '')

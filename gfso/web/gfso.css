@@ -604,6 +604,10 @@ body.deck-drag .deck { position: absolute; left: 0; right: 0; bottom: 0; z-index
 @keyframes cy-beat { 50% { opacity: .75; } }
 /* a part's tag says the work taken inside it in words, on a line of its own under its count, in the accent */
 .cy-fold-work { display: block; margin-top: 3px; color: var(--acc); font-weight: 600; }
+/* the person's own words (as given, at the go) wrap whole: a reply like «да, но без X» cut at its condition said the opposite */
+.pn-v .pn-given { white-space: normal; }
+/* work past the system gives way first when the header is full: the goal and its state keep their room */
+#hd-needs .hd-past { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cy-fold-work::after { content: none; }
 .tl .tl-wait { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-caption); font-style: italic; }
 

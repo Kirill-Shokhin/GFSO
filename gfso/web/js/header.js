@@ -160,7 +160,7 @@ export async function setMode(d) {
         && act(post('/api/run/set_mode', {mode: d.mode, ...(d.perform ? {perform: d.perform} : {}),
             ...(d.mode === 'semi' && S.graph.mode?.mode === 'semi' && S.graph.mode.boundary != null ? {boundary: S.graph.mode.boundary} : {})})
             // …a yes may say something to the person (`say`: live nodes kept a short deadline the new mode would not give) — told
-            .then(r => r.clone().json().then(b => (said = b?.say || '', r), () => r)), {what: `To ${to}`, ok: () => said && notice(said)});
+            .then(r => r.clone().json().then(b => (said = b?.say || '', r), () => r)), {what: `To ${to}`, ok: () => said && notice(spoken(said.replace(/^Tell the person:\s*/, '')))});   // …said to the person, as every engine sentence the page shows
 }
 // '' when the switch moved — the page then re-reads its header (main.js); signed by the page's session, `via` telling it from a console
 const switchRun = (verb, body) => act(post(`/api/run/${verb}`, body), {ok: null});
@@ -302,7 +302,7 @@ function pastTheSystem() {
     const u = all.reduce((s, r) => s + (r.undecided?.count || 0), 0);
     if (FOCUS || !repos.length && !seen && !u) return '';
     const n = repos.reduce((s, r) => s + r.count, 0);
-    const said = [n && `${n} commit${n > 1 ? 's' : ''} outside any node`, u && `${u} not decided by any record`,
+    const said = [n && `${n} commit${n > 1 ? 's' : ''} outside any node`, u && `${u} commit${u > 1 ? 's' : ''} not decided by any record`,
         seen && `${seen} write${seen > 1 ? 's' : ''} seen outside any node`].filter(Boolean);
     const rows = [...repos.map(r => `${r.count} in ${r.repository}${r.read_from ? ` (its record since ${clockAt(r.read_from * 1e3)})` : ''}${r.commits?.length ? `: ${r.commits.map(c => c.slice(0, 8)).join(', ')}` : ''}`),
         // …commits no record decides either way: never «past», said apart and never in the count
