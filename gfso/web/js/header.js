@@ -297,13 +297,16 @@ const readMeans = r => { const [, first, rest] = /^(.+?\.)\s+(?=[A-Z0-9⊥(])(.*
 // move for it (JOINT in-work 11-15 §2: «N commits outside any node»); the two measures apart (one edit may be both); the
 // project's whole, so not in a part's view; said only when there is some
 function pastTheSystem() {
-    const m = S.metrics, repos = (m?.past_the_system || []).filter(r => r.count), seen = m?.witnessed?.count || 0;
-    if (FOCUS || !repos.length && !seen) return '';
+    const m = S.metrics, all = m?.past_the_system || [], repos = all.filter(r => r.count), seen = m?.witnessed?.count || 0;
+    // …commits no record decides either way are not «none past»: their own part of the line, never in the count (⊥ ≠ 0)
+    const u = all.reduce((s, r) => s + (r.undecided?.count || 0), 0);
+    if (FOCUS || !repos.length && !seen && !u) return '';
     const n = repos.reduce((s, r) => s + r.count, 0);
-    const said = [n && `${n} commit${n > 1 ? 's' : ''} outside any node`, seen && `${seen} write${seen > 1 ? 's' : ''} seen outside any node`].filter(Boolean);
+    const said = [n && `${n} commit${n > 1 ? 's' : ''} outside any node`, u && `${u} not decided by any record`,
+        seen && `${seen} write${seen > 1 ? 's' : ''} seen outside any node`].filter(Boolean);
     const rows = [...repos.map(r => `${r.count} in ${r.repository}${r.read_from ? ` (its record since ${clockAt(r.read_from * 1e3)})` : ''}${r.commits?.length ? `: ${r.commits.map(c => c.slice(0, 8)).join(', ')}` : ''}`),
         // …commits no record decides either way: never «past», said apart and never in the count
-        ...(m?.past_the_system || []).filter(r => r.undecided?.count).map(r => `${r.undecided.count} in ${r.repository} not decided by any record: ${(r.undecided.commits || []).map(c => c.slice(0, 8)).join(', ')}`),
+        ...all.filter(r => r.undecided?.count).map(r => `${r.undecided.count} in ${r.repository} not decided by any record: ${(r.undecided.commits || []).map(c => c.slice(0, 8)).join(', ')}`),
         ...(m.witnessed?.last || []).map(w => `${clockAt(at(w.at))} ${w.actor}: ${w.text}`)];
     return `<span class="hd-quiet hd-past"${H.past(rows)}>${said.join(' · ')}</span>`;
 }

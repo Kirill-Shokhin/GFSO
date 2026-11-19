@@ -6,7 +6,7 @@
 import {$, el, esc, coded, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task, FOCUS} from './api.js';
-import {S, hasKids, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf} from './state.js';
+import {S, hasKids, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, heard} from './state.js';
 import {bucketOf, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label, enteredWord} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
@@ -59,6 +59,8 @@ function head({d, rounds}) {
         + `<div class="pn-grid">`
         // …the goal as the person gave it, on the root: a tap on the header's goal opens this panel, never its hover (critic)
         + prop('As given', !d.parent_id && asGiven(d) ? `<span class="pn-given">${esc(asGiven(d))}</span>` : '')
+        // …and the person's own words agreeing to the plan at the go (solo / semi: the go is theirs), as the go recorded them
+        + prop('At the go', !d.parent_id && heard().user_said ? `<span class="pn-given">${esc(heard().user_said)}</span>` : '')
         + prop('Del', `<code>${esc(d.assignee ? agentName(d.assignee) : '—')}</code>`)
         + prop('Round', n ? `<b class="pn-fig">${n}</b>${inWork ? ' in work' : ''}` : '')
         + prop('Result', !d.parent_id && delivered(d) && S.graph.landed ? `<code${H.landed(S.graph.landed)}>${esc(S.graph.landed.branch || S.graph.landed.path)}</code>` : '')
