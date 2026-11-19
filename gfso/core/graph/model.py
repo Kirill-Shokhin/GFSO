@@ -392,6 +392,17 @@ class Graph:
         """ALL children incl. ABANDONED tombstones — provenance view (§15.1: nothing deleted)."""
         return self._storage.get_children(task_id)
 
+    def provenance_subtree(self, task_id: TaskId) -> list[Task]:
+        """`task_id` and every node beneath it by `get_children`, cancelled ones included: what a dropped node held —
+        `subtree` stops at a cancelled node, which has left the decomposition but not the record."""
+        out: dict = {}
+        todo = [t] if (t := self.get_task(task_id)) is not None else []
+        while todo:
+            if str((t := todo.pop()).id) not in out:
+                out[str(t.id)] = t
+                todo += self.get_children(t.id)
+        return list(out.values())
+
     def get_active_children(self, task_id: TaskId) -> list[Task]:
         """Children in the ACTIVE decomposition: every child but an ABANDONED one (§12.6: "a child is active unless
         ABANDONED or dropped by a re-admission … a settled cancellation, or the drop, takes it out of the plan").

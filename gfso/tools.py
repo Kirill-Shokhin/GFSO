@@ -23,6 +23,7 @@ from gfso.core.types import (HOST,
 )
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_GRADES, Q_MEANS, alarm, q_T_numerator, q_V_reversed
 from gfso.core.graph.model import door_off_s, on_the_wall, root_of
+from gfso.core.graph.mutations import producers_of, readers_index
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent, verdict_word
 from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
                                           probes_from as _checks_of)
@@ -279,6 +280,9 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
     # …the validator's findings standing on it — what a ruling (ACCEPT_CHALLENGE `retire_findings`) names by id
     if (found := engine.regression_probes(TaskId(task_id))):
         out["regression_probes"] = found
+    # …and the provenance of a move (§11.5: a live child moves by a drop and a copy): what it stands in for, what stands in
+    # for it
+    out.update({k: v for k, v in (("replaces", engine.replaces(t.id)), ("replaced_by", engine.replaced_by(t.id))) if v})
     # …and what its validators, and its children's, observed outside the written criteria — the holder is its issuer
     if (seen := engine.outside_the_criteria(t.id)):
         out["outside_the_criteria"] = {"observations": seen, "judge": OUTSIDE_NOTE}
@@ -1683,6 +1687,133 @@ def _named_spec(engine: Engine, child: dict) -> Spec:
     return dataclasses.replace(spec, **{k: getattr(was.spec, k) for k in _SPEC_KEYS if k not in child["spec"]})
 
 
+def _replaced(engine: Engine, parent, children: list[dict], drops) -> dict:
+    """{dropped id: the child of this act standing in for it}, as the children's `replaces` name them: a child this act
+    drops, or one a re-admission of this node's own split or of the split above it dropped — the level it moves under
+    being this node. A live child moves only so (§11.5: dropped, and a new node issued; no act moves a parent), and
+    only by its issuer: refused (ValueError) else."""
+    out = {}
+    for c in children:
+        for d in map(str, c.get("replaces") or ()):
+            k = engine.graph.get_task(TaskId(d))
+            if k is None:
+                raise ValueError(f"`replaces` names {d}: no node of the graph")
+            if k.state == State.DONE:
+                raise ValueError(f"{d} is settled (DONE): a settled part stays where it closed, no act moves it "
+                                 f"(§11.5) — and REOPEN is not a way to move it: it would say work is open that is done")
+            if not (d in drops and str(k.parent_id) == str(parent.id) or k.state in (State.CANCELLING, State.ABANDONED)
+                    and str(k.parent_id) in {str(parent.id), str(parent.parent_id)}):
+                raise ValueError(f"`replaces` names {d}, {k.state.name} under {k.parent_id}: what a child replaces "
+                                 f"is one this act `drops`, or one a re-admission of {parent.id}'s split or of "
+                                 f"{parent.parent_id or 'the split above'}'s dropped")
+            if was := engine.replaced_by(k.id):
+                raise ValueError(f"{d} is replaced already, by {', '.join(was)}: one node stands in for it")
+            if (issuer := str(engine.graph.issuer_of(k.id))) != str(parent.assignee):
+                raise ValueError(f"{d} is {issuer}'s contract, its issuer's to re-issue (§10.1): {parent.id}'s split "
+                                 f"is {parent.assignee}'s, and a copy of {d} under it is another party's act")
+            if d in out:
+                raise ValueError(f"`replaces` names {d} on {out[d]} and on {c['task_id']}: one node stands in for it")
+            out[d] = str(c["task_id"])
+    return out
+
+
+def resolved(engine: Engine, ref) -> str:
+    """What `ref` names now: a node dropped and replaced, by whatever act and door, followed along its replacements
+    (`replaced_by`) to the end of the chain — the one map of a reference onto a copy. A dropped node nothing replaces
+    yet stays itself, and its reader is named (`readers_of_dropped`)."""
+    t = engine.graph.get_task(TaskId(str(ref)))
+    while t is not None and t.state in (State.CANCELLING, State.ABANDONED) and (by := engine.replaced_by(t.id)):
+        t = engine.graph.get_task(TaskId(by[0]))
+    return str(t.id) if t is not None else str(ref)
+
+
+def _left_out(engine: Engine, c: dict, to) -> dict:
+    """The child `c` with what it leaves out and still reads, for `_read_onto` to map: a standing child keeps its
+    stored edges and criteria — filled in only where one reads a node `to` moves, a key left out otherwise standing as
+    it is — and a copy given no `deps` keeps the edges of what it `replaces` ("left out, a standing child keeps the
+    edges it has", of the node it stands in for). Its criteria are its own, as given."""
+    if not isinstance(c, dict) or not isinstance(c.get("spec"), dict):
+        return c
+    was = engine.graph.get_task(TaskId(str(c["task_id"])))
+    moves = lambda refs: any(to(r) != str(r) for r in refs)
+    if "deps" not in c:
+        edges = [{"from": str(e.from_id), "glue": e.glue} for k in ([was.id] if was else c.get("replaces") or ())
+                 for e in engine.graph.declared_edges(TaskId(str(k)))]
+        if edges and (was is None or moves(x["from"] for x in edges)):
+            c = {**c, "deps": edges}
+    if was is not None and "criteria" not in c["spec"]:
+        crits = task_out(was, engine, plan=False)["criteria"]
+        if moves(x["depends_on"] for x in crits if x["depends_on"]):
+            c = {**c, "spec": {**c["spec"], "criteria": crits}}
+    return c
+
+
+def _read_onto(c: dict, to, once: bool = False) -> dict:
+    """The child `c` as `decompose` takes it, each producer its `deps` and its criteria name read through `to`; `once`:
+    seams onto one producer collapse to one (consumers re-listed onto a copy)."""
+    if isinstance(c.get("deps"), list) and all(isinstance(x, dict) and x.get("from") for x in c["deps"]):
+        c = {**c, "deps": [{**x, "from": to(x["from"])} for x in c["deps"]]}
+    if not (isinstance(c.get("spec"), dict) and isinstance(c["spec"].get("criteria"), list)):
+        return c
+    seen, crits = set(), []
+    for x in c["spec"]["criteria"]:
+        if isinstance(x, dict) and x.get("depends_on"):
+            if (dep := to(x["depends_on"])) in seen and once:
+                continue
+            seen.add(dep)
+            x = {**x, "depends_on": dep}
+        crits.append(x)
+    return {**c, "spec": {**c["spec"], "criteria": crits}}
+
+
+def _repointed(engine: Engine, parent, replaced: dict, to, leaving=frozenset()) -> list[dict]:
+    """Each unsettled child standing in `parent`'s split that consumes one `replaced` takes out, named again in the same
+    act with its seams read through `to` — its declared edges and the criteria whose checks read it. Left on the dropped
+    producer it waited on a cancelled node and starved, a repair nobody needed. Seams onto one producer collapse to one;
+    its deadline and rework bound ride as they stand (`deadlines_the_act_sets` keeps a re-issued child's that still
+    fits)."""
+    index = readers_index(engine.graph)
+    reading = {str(t.id) for d in replaced for t in index.get(str(d), ())}
+    return [_read_onto({"task_id": str(k.id), "assignee": str(k.assignee),
+                        "deps": [{"from": str(e.from_id), "glue": e.glue} for e in engine.graph.declared_edges(k.id)],
+                        "spec": {"criteria": task_out(k, engine, plan=False)["criteria"]}}, to, once=True)
+            for k in engine.graph.get_active_children(parent.id) if str(k.id) in reading and str(k.id) not in leaving]
+
+
+def _readers(engine: Engine, d: str) -> list[tuple]:
+    """(node, what it reads) for each live node, not closing, whose declared edges or criteria read `d` or a node of
+    its subtree — a drop cancels the subtree with it (§12.6) — looked up in `readers_index`."""
+    index = readers_index(engine.graph)
+    return [(t, str(x.id)) for x in engine.graph.provenance_subtree(TaskId(d)) for t in index.get(str(x.id), ())]
+
+
+def _hand_over(engine: Engine, parent, replaced: dict, onto: dict) -> dict:
+    """The admitted replacements carry on what they replace: the provenance (`record_replacement`, whence
+    `carried_work`, §12.16 (ii)), the standing findings under the names each criterion has in the copy (`onto`), and —
+    a node dropped from the split above — its consumers standing there, re-admitted onto the copy by that split's holder,
+    who issued it. A consumer in another branch is its own issuer's revision (§2.7, §12.10): named, never rewritten.
+    {copy id: what its reply adds}."""
+    out: dict = {}
+    for d, cid in replaced.items():
+        engine.record_replacement(TaskId(cid), [d])
+        out.setdefault(cid, {"replaces": engine.replaces(TaskId(cid))})
+        if n := engine.carry_findings(TaskId(cid), TaskId(d), onto.get(cid, {}).get(d, {})):
+            engine.emit_info("issuer", f"{cid}: carries {n} finding(s) standing on {d}, which it replaces")
+    up = {d: cid for d, cid in replaced.items() if str(engine.graph.get_task(TaskId(d)).parent_id) != str(parent.id)}
+    if up and (moved := _repointed(engine, engine.graph.get_task(parent.parent_id), up, lambda r: resolved(engine, r))):
+        try:
+            decompose(engine, str(parent.parent_id), moved)
+        except ValueError as e:
+            for cid in up.values():
+                out[cid]["readers_not_moved"] = f"{', '.join(m['task_id'] for m in moved)} still read what it replaces: {e}"
+    for d, cid in replaced.items():
+        home = engine.graph.get_task(TaskId(d)).parent_id
+        if elsewhere := [{"task_id": str(t.id), "reads": r, "issuer": str(engine.graph.issuer_of(t.id))}
+                         for t, r in _readers(engine, d) if t.parent_id != home or r != d]:
+            out[cid].setdefault("readers_elsewhere", []).extend(elsewhere)
+    return out
+
+
 def decompose(engine: Engine, parent_id: str, children: list[dict],
               mappings: Optional[list[dict]] = None,
               max_iterations: Optional[int] = None,
@@ -1696,9 +1827,18 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     its `spec.accepted_risks` is its packet's pre-fill — `prefilled_accepted_risks` on `get_task`, whose
     `accepted_risks` is the register of the child's own split.
     Desugars to one ASSIGN per child. children: [{task_id, spec, assignee, covers, deadline?, max_iterations?,
-    deps?}]; an omitted assignee = `user` (you execute it yourself; name someone only to really delegate).
+    deps?, replaces?, onto?}]; an omitted assignee = `user` (you execute it yourself; name someone only to really delegate).
     `deps: [{from, glue}]` — the split's declared Dep edges into that child, whole (§15.1): the producers it waits
     for and what of their result it reads; left out, a standing child keeps the edges it has.
+    `replaces: [<id>, …]` — a new child stands in for live children dropped: by this act's `drops`, or by the
+    re-admission of the split above when this node is the new level they move under (a live child moves only so,
+    §11.5; it never changes parent). The copy carries on their committed work and standing findings (under the names
+    `onto: {<replaced id>: {<its criterion>: [<names here>]}}` gives, else their own); the consumers in the replaced
+    one's split are re-admitted onto the copy in the same act, and re-offered; one in another branch is named in the
+    reply (`readers_elsewhere`, with its issuer, whose revision it is); a child of the act reading a node another
+    child replaces reads the copy. Refused for a settled child (it stays where it closed; REOPEN is no way to move it),
+    one replaced already, and one this node's holder did not issue. A drop nothing replaces yet names in the reply
+    the nodes still reading it (`readers_of_dropped`) — to be replaced under the new level next.
 
     `accepted_risks` (and its STD-3 `risk_components`) is the SPLIT's register, yours as its decomposer (§9.2):
     it rides this admission, no revision of the node; each entry as `edit_accepted_risks` documents it.
@@ -1736,6 +1876,21 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
                           f"{_shape}. Got: {_bad[0]!r}. On the CLI a nested value is passed as "
                           f"JSON, or from a file with `children=@children.json`."),
                 "refused": True}
+    # …AND WHAT A CHILD REPLACES, read before anything is written: its consumers standing in this split are named again
+    # in the same act, onto it — unless the caller names them itself
+    _parent = engine.graph.get_task(TaskId(parent_id))
+    replaced = _replaced(engine, _parent, children, {str(d) for d in (drops or ())}) if _parent is not None else {}
+    # …AND EVERY PRODUCER A CHILD NAMES IS READ AS WHAT STANDS FOR IT NOW: a node this act replaces, its copy; one an
+    # earlier act replaced, the end of its chain (`resolved`) — dependent children moved in one act or in several read
+    # each other's copies, not what they left
+    to = lambda r: replaced.get(str(r)) or resolved(engine, r)
+    children = [_read_onto(_left_out(engine, c, to), to) for c in children]
+    fresh = {str(c["task_id"]) for c in children if engine.graph.get_task(TaskId(str(c["task_id"]))) is None}
+    # …and the consumers standing in this split — the dropped node's own, or copies moved under this level before it
+    own = {str(c["task_id"]) for c in children}
+    if replaced:
+        children = [*children, *(k for k in _repointed(engine, _parent, replaced, to, frozenset(map(str, drops or ())))
+                                 if k["task_id"] not in own)]
     # THE DEADLINE RIDES ALONG. `decompose_task` takes `(id, spec, assignee)` OR
     # `(id, spec, assignee, deadline)`, and this always built the three-tuple — so no child created
     # by the product's own decomposition verb could carry one, and CHECK-3 answered
@@ -1763,7 +1918,6 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     # …of the ACTIVE children only: a settled cancellation took its child out of the plan (§12.6), and a mapping
     # carried onto it would be read by the admission as coverage by a node that is not there — the re-decomposition
     # covering around a dropped child was refused for the drop it repairs
-    _parent = engine.graph.get_task(TaskId(parent_id))
     _active = {str(k.id) for k in engine.graph.get_active_children(TaskId(parent_id))} - {str(d) for d in (drops or ())}
     _existing = [m for m in (_parent.criterion_mappings if _parent is not None else ()) if str(m.child_id) in _active]
     _new = ([CriterionMapping(m["criterion_name"], TaskId(m["child_id"])) for m in (mappings or [])]
@@ -1791,10 +1945,26 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     deps = {str(c["task_id"]): tuple(DepEdge(TaskId(f), TaskId(str(c["task_id"])), glue=g) for f, g in
                                      {str(x["from"]): str(x.get("glue") or "") for x in c["deps"] or ()}.items())
             for c in children if "deps" in c}
-    return [task_out(t, engine, plan=False) for t in engine.decompose_task(TaskId(parent_id), kids, maps, max_iterations,
+    out = [task_out(t, engine, plan=False) for t in engine.decompose_task(TaskId(parent_id), kids, maps, max_iterations,
                                                        register=register,
                                                        drops=tuple(TaskId(str(d)) for d in (drops or ())),
                                                        deps=deps or None)]
+    more = _hand_over(engine, _parent, replaced, {str(c["task_id"]): c.get("onto") or {} for c in children})
+    out = [{**o, **more.get(str(o["id"]), {})} for o in out]
+    # …and a drop no copy replaces yet names who still reads it: the copy that takes them over is the next act's
+    # …or a child of this act still names, its chain ending on a node dropped and replaced by none
+    dead = [(str(t.id), p) for o in out if (t := engine.graph.get_task(TaskId(str(o["id"])))) is not None
+            for p in producers_of(t.spec, engine.graph.declared_edges(t.id))
+            if (n := engine.graph.get_task(TaskId(p))) is not None and n.state in (State.CANCELLING, State.ABANDONED)]
+    if waiting := [{"dropped": str(d), "reads": r, "task_id": str(t.id), "issuer": str(engine.graph.issuer_of(t.id))}
+                   for d in drops or () if str(d) not in replaced for t, r in _readers(engine, str(d))] + [
+            {"dropped": p, "reads": p, "task_id": cid, "issuer": str(engine.graph.issuer_of(TaskId(cid)))}
+            for cid, p in dead]:
+        new = [o for o in out if str(o["id"]) in fresh]
+        for o in new:
+            o["readers_of_dropped"] = waiting
+        out += [] if new else [{"readers_of_dropped": waiting}]
+    return out
 
 
 #: The closed sets a verb's string parameters accept, as DATA — keyed by VERB and parameter, never by
@@ -2247,11 +2417,21 @@ def add_dependency(engine: Engine, from_id: str, to_id: str, glue: str = "",
     The direction is worth one sentence because getting it backwards is silent: a person wrote the
     glue "render imports and calls the scan() function delivered by scan", passed them the other way
     round, and made SCAN wait on RENDER — the reply said `ok`, the Level-2 review passed the graph,
-    and only `next_steps` (`waits_on`) showed it. So the answer says which way it went."""
+    and only `next_steps` (`waits_on`) showed it. So the answer says which way it went.
+
+    A producer dropped and replaced (`decompose` … `replaces`) is read as the node standing in for it now; one dropped
+    that nothing replaces is refused."""
+    # …A PRODUCER DROPPED AND REPLACED IS READ AS ITS COPY (`resolved`); one nothing replaces delivers nothing to wait on
+    asked, from_id = from_id, resolved(engine, from_id)
+    if (p := engine.graph.get_task(TaskId(from_id))) is not None and p.state in (State.CANCELLING, State.ABANDONED):
+        raise ValueError(f"{from_id} is dropped or cancelled ({p.state.name}) and nothing replaces it: it delivers "
+                         f"nothing for {to_id} to wait on — name the node that stands in for it, or issue one "
+                         f"(`decompose` with `replaces`)")
     was = _version(engine, to_id)
     engine.add_dependency(TaskId(from_id), TaskId(to_id), glue=glue,
                           check=_checks_of({"check": check}) if check else ())
-    return {"ok": True, "from": from_id, "to": to_id,
+    return {"ok": True, "from": from_id, "to": to_id, **({"read_as": f"{asked} is replaced: the edge stands on {from_id}, which stands in for it"}
+                                                       if asked != from_id else {}),
             "declared": f"'{to_id}' now WAITS for '{from_id}' to pass — '{from_id}' produces, "
                         f"'{to_id}' consumes. If that is backwards, `remove_dependency` and swap.",
             **_the_dep_act(engine, to_id, was)}

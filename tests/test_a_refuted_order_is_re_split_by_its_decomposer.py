@@ -9,7 +9,7 @@ and their findings carried (§12.16 (ii)). A member's delivery awaiting its verd
 for it.
 
 CONTROLS: put the merge back in `settle` and the first test goes red (no question reaches the decomposer, a merged
-child stands); drop the VALIDATING wait and the wait test goes red; make `_repointed` return [] and the consumer tests
+child stands); drop the VALIDATING wait and the wait test goes red; make `tools._repointed` return [] and the consumer tests
 go red; resolve `reads` against standing children only and the same-act read goes red; empty `carried_work` and the
 work-keeping test goes red.
 """

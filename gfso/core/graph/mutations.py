@@ -494,6 +494,25 @@ def producers_of(spec, declared=()) -> tuple[str, ...]:
         str(c.depends_on) for c in (spec.criteria if spec is not None else ()) if c.depends_on is not None]))
 
 
+def readers_index(graph) -> dict:
+    """{producer id: [each live node, not closing, that reads it]} — by its declared edges and its criteria's references
+    (`producers_of`), made once per write of the store: a search over every node's edges at each question of who reads
+    a node cost 35 s on 4,000 nodes."""
+    def read():
+        """The index, from one read of the edges and of the live nodes."""
+        into: dict = {}
+        for e in graph._storage.get_dep_edges():
+            if not e.discovered and not e.removed:
+                into.setdefault(str(e.to_id), []).append(e)
+        out: dict = {}
+        for t in graph.subtree_view(None):
+            if t.state not in TERMINAL_STATES:
+                for p in producers_of(t.spec, into.get(str(t.id), ())):
+                    out.setdefault(p, []).append(t)
+        return out
+    return graph.kept(("readers_index",), read)
+
+
 #: The finest margin the writer tries before it gives up on an order: one clock tick of the log.
 _TICK = timedelta(seconds=1)
 

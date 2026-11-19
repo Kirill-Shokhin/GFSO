@@ -1429,7 +1429,8 @@ def _redecompose(engine, task, actor, answer, why, verbs):
 
 def _readmit(engine, task, answer) -> tuple[bool, str]:
     """The one re-admission behind `reshape`, `add_child` and `drop_child`. A child it drops and replaces — the new
-    child named as it was, or naming it in `replaces` — hands its consumers to the replacement (`_repointed`)."""
+    child named as it was, or naming it in `replaces` — is handed to `decompose` as that child's `replaces`, the one
+    mechanism both doors share: its consumers, work and findings go to the replacement there."""
     drop, named = [_child_ref(engine, task, d) for d in answer.get("drop") or []], answer.get("children") or []
     leaving, cids = frozenset(drop), []
     for c in named:
@@ -1443,8 +1444,7 @@ def _readmit(engine, task, answer) -> tuple[bool, str]:
         kid, bad = _new_child(engine, task, c, cid, ids, leaving)
         if bad:
             return False, bad
-        kids.append(kid)
-    kids += _repointed(engine, task, replaced, leaving)
+        kids.append({**kid, "replaces": [d for d, x in replaced.items() if x == cid], "onto": c.get("onto") or {}})
     register, asked = register_of(task), [str(i) for i in (answer.get("items") or [])]
     if bad := [i for i in asked if i not in set(risks_naming_own_criteria(task))]:
         return False, f"`items` names {', '.join(bad)} — only register entries naming this node's criteria go"
@@ -1467,55 +1467,9 @@ def _readmit(engine, task, answer) -> tuple[bool, str]:
                             mappings=[{"criterion_name": c, "child_id": k} for k, cs in remap.items() for c in cs],
                             **({"accepted_risks": [n.to_dict() for n in kept],
                                 "risk_components": list(register.components)} if asked else {}))
-    # …AND WHAT EACH REPLACEMENT CARRIES ON: the dropped children's work (`carried_work`) and their standing findings,
-    # each under the names its criterion has in the replacement
-    onto = {cid: c.get("onto") or {} for c, cid in zip(named, cids)}
-    for d, cid in ([] if bad else replaced.items()):
-        engine.record_replacement(TaskId(cid), [d])
-        if n := engine.carry_findings(TaskId(cid), TaskId(d), onto[cid].get(d, {})):
-            engine.emit_info("issuer", f"{cid}: carries {n} finding(s) standing on {d}, which it replaces")
     # …said in this issuer's own moves: the refusal names the tool door's verbs, and the whole act here is one reshape
     return (not bad, "; ".join(bad) + (" — as this node's issuer: everything the split needs in ONE `reshape` "
                                        "(`children`, `drop`, `items`, `map`)" if bad else ""))
-
-
-def _repointed(engine, task, replaced: dict, leaving: frozenset) -> list[dict]:
-    """Each unsettled child standing in the split that consumes one `replaced` takes out, named again in the same act
-    with its seams onto the replacement — its declared edges and the criteria whose checks read it. Left on the dropped
-    producer it waited on a cancelled node and starved, a repair nobody needed. Seams onto one producer collapse to one;
-    its deadline and rework bound ride as they stand (`deadlines_the_act_sets` keeps a re-issued child's that still
-    fits)."""
-    out = []
-    for k in engine.graph.get_active_children(task.id):
-        if (str(k.id) in leaving or k.state in (State.DONE, State.ABANDONED, State.CANCELLING)
-                or not set(producers_of(k.spec, engine.graph.declared_edges(k.id))) & set(replaced)):
-            continue
-        out.append({"task_id": str(k.id), "assignee": str(k.assignee), "deps": _edges_onto(engine, k, replaced),
-                    "spec": {"criteria": _onto_once(_tools.task_out(k, engine, plan=False)["criteria"], replaced)}})
-    return out
-
-
-def _edges_onto(engine, k, onto: dict) -> list[dict]:
-    """The declared edges into `k` as `decompose` takes a child's `deps`: each moved by `onto` (producer → its
-    stand-in), one producer read once."""
-    out: dict = {}
-    for e in engine.graph.declared_edges(k.id):
-        p = onto.get(str(e.from_id), str(e.from_id))
-        out.setdefault(p, {"from": p, "glue": e.glue})
-    return list(out.values())
-
-
-def _onto_once(crits: list, onto: dict) -> list[dict]:
-    """`crits` as `task_out` gives them, each one reading a producer moved by `onto` (producer → its stand-in), and one
-    producer read once."""
-    seen, out = set(), []
-    for c in crits:
-        dep = onto.get(str(c["depends_on"]), str(c["depends_on"])) if c["depends_on"] else None
-        if dep and dep in seen:
-            continue
-        seen.add(dep)
-        out.append({**c, "depends_on": dep})
-    return out
 
 
 def _cycle_in_hand(engine, task) -> Optional[dict]:

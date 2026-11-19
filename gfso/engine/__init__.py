@@ -1905,6 +1905,13 @@ class Engine:
         """The dropped children this node stands in for."""
         return json.loads(self._storage.get_critique(replaces_key(task_id)) or "[]")
 
+    def replaced_by(self, task_id: TaskId) -> list[str]:
+        """The nodes standing in for this one — in its own split, or one level down under a sibling (`tools._replaced`)."""
+        t = self._graph.get_task(task_id)
+        near = [k for s in (self._graph.get_children(t.parent_id) if t is not None and t.parent_id else ())
+                for k in (s, *self._graph.get_children(s.id))]
+        return sorted(str(k.id) for k in near if str(task_id) in self.replaces(k.id))
+
     def carried_work(self, task_id: TaskId) -> list[Task]:
         """The work a node carries on from what it replaced (§12.16 (ii): work-keeping): each child it stands in for,
         whatever that child carried in turn, and every PASSed node of their subtrees — a dropped child's committed work
@@ -1916,7 +1923,7 @@ class Engine:
                 continue
             out[str(t.id)] = t
             todo += self.replaces(t.id)
-            out.update({str(d.id): d for d in self._graph.subtree(t.id) if d.state == State.DONE})
+            out.update({str(d.id): d for d in self._graph.provenance_subtree(t.id) if d.state == State.DONE})
         return list(out.values())
 
     def register_versions(self, task_id: TaskId) -> list[dict]:
