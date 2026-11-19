@@ -181,7 +181,7 @@ const sig = (id, a) => btn(a.cls, a.label, 'signal', {id, sig: a.s, prompt: a.pr
 // refuses (engineering, 9853468). Work the mode dispatches is read off its `perform`: the executor's steps but consent
 // are the clean session's, whatever `performed_by` names (outside AUTO it names the holder).
 const DISPATCHED = new Set(['execute', 'rework', 'deliver']);
-function actions({d, acts}) {
+function actions({d, acts, vr}) {
     const s = d.state, id = {id: d.id}, kids = hasKids(d.id), m = S.graph.mode;
     // …a browser that signs as no one is offered nothing — each move would be refused — and is told how to sign in
     if (!signsAs().length) return foot(`<div class="pn-note check-skip">${coded(lift())}</div>`, '');
@@ -219,7 +219,17 @@ function actions({d, acts}) {
     // …a step's directive is written for whoever asked — the session's own name — so it is said only on that name's steps:
     // under another of the person's names it read «NOT YOURS» beside the move offered (critic 3)
     const told = x => m.mode !== 'auto' && (!x.performed_by || x.performed_by === S.me?.name) ? spoken(x.directive || '') : '';
-    const said = steps.map(x => `<div class="pn-step"${told(x) ? PANEL.directive(told(x)) : ''}>${esc(x.action)}`
+    // …a verdict the person signs over the validator's observation is said to the person, not in the words the engine
+    // gives their agent («show them … signal root PASS|FAIL user_said=…» stood on their own page): what the validator
+    // found is the Verdict above, the signature theirs
+    // …only where the step IS that record on this delivery (frontier.py's on-the-record branch): a whole failing through
+    // its part, or a record of an earlier delivery, keeps the engine's own sentence (critic: «PASS … sign it below» over
+    // a root whose part had failed, Pass not even offered)
+    const toThePerson = x => x.action === 'validate' && /^SIGN THE VERDICT .*verdict for THIS delivery is already on the record/.test(x.directive || '')
+        && vr?.verdict && vr.current !== false
+        ? PANEL.signYours(vr.verdict, (vr.outside || []).length) : '';
+    const said = steps.map(x => toThePerson(x) ? `<div class="pn-step">${esc(toThePerson(x))}</div>`
+        : `<div class="pn-step"${told(x) ? PANEL.directive(told(x)) : ''}>${esc(x.action)}`
         + `${told(x) ? ` — ${esc(trim(told(x), 220))}` : ''}</div>`).join('');
     // outside AUTO the engine's performed_by names the holder even for work its hands do, so the mode's perform still
     // decides that work is the clean session's (critic: Deliver offered beside «PERFORMED BY … WAIT»)
@@ -358,7 +368,12 @@ function verdictFull({vr}) {
                 + (byCmd.size ? `<div class="verdict-probes">${[...byCmd].map(([cmd, bhs]) =>
                     `<code${PANEL.probe(bhs)}>${esc(cmd)}</code>`).join('')}</div>` : '')
                 + `</div></li>`;
-        })));
+        }))
+        // …and what the validator saw beyond the criteria, none of it a failed criterion: the person weighs it before
+        // signing (engineering 2ca7f37: a client signed over «x.tar.gz counted as .gz» unseen)
+        + ((vr.outside || []).length ? `<div class="verdict-evidence"><strong>${esc(PANEL.outside)}</strong></div>` + ul('item-list',
+            vr.outside.map(o => `<li class="check-skip"><div class="verdict-body">${esc(o.what || '')}`
+                + (o.evidence ? `<div class="verdict-evidence">${esc(o.evidence)}</div>` : '') + '</div></li>')) : ''));
     return vr?.refused_report ? section('Verdict on the work', refusedOf(vr.refused_report)) : '';
 }
 
