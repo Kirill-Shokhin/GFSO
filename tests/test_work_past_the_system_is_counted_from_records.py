@@ -20,6 +20,7 @@ import pytest
 import gfso.past as P
 import gfso.tools as T
 import gfso.tools_llm as TL
+from gfso.adapters import worktrees as W
 from gfso.core.types import AgentId, Mode
 from tests.support import REGISTER, criterion, make_engine
 
@@ -132,8 +133,8 @@ def test_a_fold_of_a_delivery_rebased_onto_a_moved_base_is_still_the_delivery(re
 
 def test_what_a_reflog_no_longer_holds_the_projects_record_keeps(repo):
     """A reflog expires (90 days by default) and took the hand commit with it; the reading it gave before is kept in
-    the project's record. A record that begins after the project did says from when (`read_from`). CONTROL: `_kept`
-    reading the reflog alone and `_measured` reading no commit's own date — the count drops to 0."""
+    the project's record. A record that begins after the project did says from when (`read_from`). CONTROL: `_seen`
+    reading the reflog alone — the hand commit is undecided, the count 1."""
     e = _in_chat(repo)
     _deliver(e)
     hand = _commit(repo, "hand.txt")
@@ -456,22 +457,6 @@ def test_a_read_again_asks_git_one_rev_parse(repo, monkeypatch):
     assert len(ran) == 2
 
 
-def test_a_commit_made_in_a_worktree_since_removed_is_still_made_by_hand(repo, tmp_path):
-    """The everyday line here: a commit made on a temporary branch in a linked worktree, fast-forwarded into main, the
-    worktree removed and its branch deleted — every reflog entry that made it is gone with them. A commit on the
-    person's lines in the window that no record says was brought (a pull, a fetch) was made here, at its committer
-    date. CONTROL: `_made_here` reading nothing — the commit is made by no hand."""
-    e = _in_chat(repo)
-    _deliver(e)
-    _git(repo, "worktree", "add", "-q", "-b", "tmp", str(wt := tmp_path / "wt"))
-    hand = _commit(wt, "hand.txt")
-    _git(repo, "merge", "-q", "--ff-only", "tmp")
-    _git(repo, "worktree", "remove", str(wt))
-    _git(repo, "branch", "-q", "-d", "tmp")
-    got = _past(e)
-    assert (got["count"], got["commits"]) == (1, [hand]), got
-
-
 def test_a_node_taken_in_a_worktree_since_removed_still_holds_its_work(repo, tmp_path):
     """A chat working in a linked worktree: its ACCEPT and DELIVER record the repository, which outlives the worktree —
     the delivered commit, merged into main, and a commit made in main while the node was taken stay the
@@ -513,3 +498,160 @@ def test_a_commit_in_the_second_its_node_was_delivered_is_the_nodes(repo):
     same = _commit(repo, "g.txt", when=f"@{at} +0000")
     got = _past(e)
     assert (got["count"], same in got["commits"]) == (0, False), got
+
+
+def test_a_commit_made_in_a_worktree_since_removed_is_kept_as_read_and_undecided_where_never_read(repo, tmp_path):
+    """The everyday line here: a commit made on a temporary branch in a linked worktree, fast-forwarded into main, the
+    worktree removed and its branch deleted — every reflog entry that made it is gone with them. A reading taken while
+    they stood keeps it made by hand; one never taken leaves it undecided — no record says it was made here nor brought
+    —, said apart and never counted (dated by its committer it was counted, and a pull's commits with it). CONTROL:
+    the record's `made` not read — the commit read once is undecided."""
+    e = _in_chat(repo)
+    _deliver(e)
+    for name in ("seen", "unseen"):
+        _git(repo, "worktree", "add", "-q", "-b", "tmp", str(wt := tmp_path / name))
+        made = _commit(wt, f"{name}.txt")
+        if name == "seen":
+            seen = made
+            _past(e)                                               # …the page reads while the worktree stands
+        _git(repo, "merge", "-q", "--ff-only", "tmp")
+        _git(repo, "worktree", "remove", str(wt))
+        _git(repo, "branch", "-q", "-d", "tmp")
+    got = _past(e)
+    assert (got["count"], got["commits"], got["undecided"]["commits"]) == (1, [seen], [made]), got
+
+
+def test_a_copy_of_work_from_before_the_project_stays_carried_once_git_forgot_the_original(repo, tmp_path):
+    """A branch made before the project, rebased in a temporary worktree onto the moved line, fast-forwarded into main,
+    the worktree removed, the branch deleted, the reflogs expired and `gc` run: the originals are gone from git, and
+    the content a reading kept of them carries the copies. CONTROL: the carriers read from git alone (`CARRIED` not
+    read) — the copies are undecided."""
+    _git(repo, "switch", "-q", "-c", "old")
+    _commit(repo, "o1.txt", when=OLD)
+    _commit(repo, "o2.txt", "two\n", when=OLD)
+    _git(repo, "switch", "-q", "main")
+    e = _in_chat(repo)
+    _deliver(e)
+    m = _commit(repo, "m.txt")
+    _past(e)
+    _git(repo, "worktree", "add", "-q", str(wt := tmp_path / "wt"), "old")
+    _git(wt, "rebase", "-q", "main")
+    _git(repo, "merge", "-q", "--ff-only", "old")
+    _git(repo, "worktree", "remove", str(wt))
+    _git(repo, "branch", "-q", "-d", "old")
+    _git(repo, "reflog", "expire", "--expire=now", "--all")
+    _git(repo, "gc", "-q", "--prune=now")
+    got = _past(e)
+    assert (got["count"], got["commits"], "undecided" in got) == (1, [m], False), got
+
+
+def test_a_copy_of_work_made_under_a_node_stays_its_once_git_forgot_the_original(repo):
+    """Work made while a node was taken and set aside, the node delivered, a copy cherry-picked, the reflogs expired
+    and `gc` run: the original is gone from git, and the content a reading kept of it carries the copy. CONTROL: the
+    carriers read from git alone — the copy is undecided."""
+    e = _in_chat(repo)
+    w = _commit(repo, "f.txt", "v1\n")
+    _git(repo, "reset", "-q", "--hard", "HEAD~1")
+    _past(e)
+    time.sleep(1.1)                                            # …the reflog's clock is whole seconds
+    _deliver(e)
+    _git(repo, "cherry-pick", w)
+    _git(repo, "reflog", "expire", "--expire=now", "--all")
+    _git(repo, "gc", "-q", "--prune=now")
+    got = _past(e)
+    assert (got["count"], "undecided" in got) == (0, False), got
+
+
+def test_a_node_whose_rows_name_a_worktree_since_removed_still_holds_its_work(repo, tmp_path, monkeypatch):
+    """Rows recorded before the repository was named by its main worktree name a linked one, and once it is removed
+    they name nothing: the repository a reading was taken in stays the project's, a node whose recorded place no longer
+    stands is attached where its project works — as one that recorded none —, and its delivery is read in git. What a
+    reading saw held stays held. CONTROL: no `READ_IN` — no reading at all."""
+    _git(repo, "worktree", "add", "-q", "-b", "tmp", str(wt := tmp_path / "wt"))
+    with monkeypatch.context() as old:                         # …the rows as they were recorded before
+        old.setattr(TL, "W", type("Before", (), {"__getattr__": lambda _, n: getattr(W, n), "main_worktree": str})())
+        old.setattr(P, "delivered", lambda *a: lambda: None, raising=False)
+        e = _in_chat(wt)
+        assert Path(next(x for x in e.audit_log() if x.signal.name == "ACCEPT").repository).resolve() == wt.resolve()
+        _commit(wt, "f.txt", "v1\n")
+        main = _commit(repo, "m.txt")
+        _past(e)                                               # …the page reads while the worktree stands
+        time.sleep(1.1)
+        _deliver(e)
+    e.wait_idle()
+    _git(repo, "merge", "-q", "--no-edit", "tmp")
+    _git(repo, "worktree", "remove", str(wt))
+    _git(repo, "branch", "-q", "-d", "tmp")
+    got = _past(e)
+    assert (got["count"], main in got["commits"], "undecided" in got) == (0, False, False), got
+
+
+def test_what_a_fetch_brought_is_no_work_past_the_system_where_no_reflog_records_it(repo, tmp_path):
+    """`git fetch <url> main` writes no ref's reflog, and `merge --ff-only FETCH_HEAD` logs a merge: the commits came
+    from elsewhere, as FETCH_HEAD says. A pull whose entries expired before any reading is read the same way. CONTROL:
+    FETCH_HEAD not read — the fetched commits are undecided."""
+    _git(tmp_path, "clone", "-q", str(repo), str(up := tmp_path / "up"))
+    e = _in_chat(repo)
+    _deliver(e)
+    [_commit(up, f"u{i}.txt") for i in range(2)]
+    _git(repo, "fetch", "-q", str(up), "main")
+    _git(repo, "merge", "-q", "--ff-only", "FETCH_HEAD")
+    got = _past(e)
+    assert (got["count"], "undecided" in got) == (0, False), got
+    _commit(up, "u3.txt")
+    _git(repo, "pull", "-q", "--ff-only", str(up), "main")
+    _git(repo, "reflog", "expire", "--expire=now", "--all")
+    got = _past(e)
+    assert (got["count"], "undecided" in got) == (0, False), got
+
+
+def test_a_pull_in_a_worktree_since_removed_is_undecided_never_past(repo, tmp_path):
+    """No record git keeps says a pull in a removed worktree brought its commits, nor that they were made here: they
+    are undecided — said, never counted. CONTROL: an undecided commit counted — they read past."""
+    _git(tmp_path, "clone", "-q", str(repo), str(up := tmp_path / "up"))
+    e = _in_chat(repo)
+    _deliver(e)
+    far = [_commit(up, f"u{i}.txt") for i in range(2)]
+    _git(repo, "worktree", "add", "-q", "-b", "tmp", str(wt := tmp_path / "wt"))
+    _git(wt, "pull", "-q", "--ff-only", str(up), "main")
+    _git(repo, "merge", "-q", "--ff-only", "tmp")
+    _git(repo, "worktree", "remove", str(wt))
+    _git(repo, "branch", "-q", "-d", "tmp")
+    got = _past(e)
+    assert (got["count"], sorted(got["undecided"]["commits"])) == (0, sorted(far)), got
+
+
+def test_a_delivery_keeps_its_range_as_its_deliver_saw_it(repo):
+    """What was delivered is recorded at the DELIVER, not read back from git later: its branch deleted, the system's
+    ref of it removed — any process can — and `gc` run, a copy of the delivered work is still the delivery's. CONTROL:
+    `past.delivered` recording nothing — the copy is undecided."""
+    e = _in_chat(repo)
+    _git(repo, "switch", "-q", "-c", "work")
+    d = _commit(repo, "f.txt", "v1\n")
+    _deliver(e)
+    _git(repo, "switch", "-q", "main")
+    _git(repo, "cherry-pick", d)
+    _git(repo, "branch", "-q", "-D", "work")
+    for ref in _git(repo, "for-each-ref", "--format=%(refname)", "refs/gfso").split():
+        _git(repo, "update-ref", "-d", ref)
+    _git(repo, "reflog", "expire", "--expire=now", "--all")
+    _git(repo, "gc", "-q", "--prune=now")
+    assert d not in _git(repo, "cat-file", "--batch-check", "--batch-all-objects"), "the delivered commit is still there"
+    got = _past(e)
+    assert (got["count"], "undecided" in got) == (0, False), got
+
+
+def test_a_node_whose_place_no_longer_stands_is_at_work_where_its_project_works(repo, tmp_path, monkeypatch):
+    """No reading was taken while the linked worktree an old row names stood: the node, still taken, is attached to
+    the repository its project works in (a role's workdir there), as a node whose ACCEPT recorded none is. CONTROL: an
+    unresolved place attached nowhere — the commit made under the node counts."""
+    _git(repo, "worktree", "add", "-q", "-b", "tmp", str(wt := tmp_path / "wt"))
+    with monkeypatch.context() as old:                         # …the row as it was recorded before
+        old.setattr(TL, "W", type("Before", (), {"__getattr__": lambda _, n: getattr(W, n), "main_worktree": str})())
+        e = _in_chat(wt)
+    assert not TL.TOOLS["register_agent"](e, "p-exec-1", "llm-executor", workdir=str(repo)).get("refused")
+    _git(repo, "worktree", "remove", str(wt))
+    _git(repo, "branch", "-q", "-D", "tmp")
+    w = _commit(repo, "f.txt")
+    got = _past(e)
+    assert (got["count"], got["in_work"]) == (0, [w]), got

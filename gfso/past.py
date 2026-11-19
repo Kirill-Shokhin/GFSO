@@ -6,35 +6,37 @@ One predicate for both catches (`at_work` over `spans`), by the moment: a change
 it was made, a node attached to that repository was taken — in a work state (`WORK_STATES`, §12.1), a direction taken
 for months as much as a leaf, whoever holds it —, over every project this server holds, open or only on disk (read
 there without opening it). Attached: to the repository its ACCEPT recorded (`tools_llm.signal`, a chat's ACCEPT: the
-worktree it is performed in, its HEAD); an ACCEPT that recorded none — every one before that record — of a node its
-holder performs in their own chat (no role of the system's roster) to each repository its project works in: the log's,
-its roles' workdirs, those the person installed its witness in (`witness.installed` — their act, never what a call
-names). A node a role of the system performs reaches the person's repository only through the system's refs and
-landings, read by content below.
+repository it is performed in, by its main worktree, and its HEAD); an ACCEPT that recorded none, or one whose place
+no longer stands — every one before that record — of a node its holder performs in their own chat (no role of the
+system's roster) to each repository its project works in: the log's, its roles' workdirs, those the person installed
+its witness in (`witness.installed` — their act, never what a call names), those a reading was taken in. A node a role
+of the system performs reaches the person's repository only through the system's refs and landings, read by content.
 
-- by the artifact (`past_the_system`): the commits made BY HAND in the repository during the project — those git's
-  reflogs of the person's own lines — every worktree's HEAD and every branch but the system's — record as committed, amended, cherry-picked, rebased, not merely moved to by a
-  checkout, a reset, a fetch or a fast-forward pull; and, where no entry that made it survives (its worktree removed,
-  its branch deleted after its merge), one on those lines that no pull, fetch or clone brought, at the date git gave
-  it; kept in the project's own record once read, as a reflog expires.
-  One made while a node attached there was taken is the obligation's — listed apart while that node is still taken
-  (`in_work`). One made while none was is past the system unless its content is carried — its patch, or every path it
-  changes as it leaves it, left by a commit outside its own history (a fold, a squash, an amend, a rebase's copy, a
-  cherry-pick; setting a path back to what a commit it stands on left is a change) —: by the system's work (each
-  chat delivery's own range, from the HEAD its node's ACCEPT recorded to its delivered commit, and what its places'
-  deliveries and its landings recorded, with what those reach — never a ref by its name alone, which any process can
-  write under the system's), by what was made by hand while a node was taken
-  there, or by a commit that existed before the project began. Compared by content, never by descent: this repository
-  folds every branch before a push;
+- by the artifact (`past_the_system`): the commits on the person's lines — every worktree's HEAD and every branch but
+  the system's — made by hand in the repository during the project: those git's reflogs record as committed, amended,
+  cherry-picked, rebased, not merely moved to by a checkout, a reset, a merge or a pull. One made while a node attached
+  there was taken is the obligation's — listed apart while that node is still taken (`in_work`). One made while none
+  was is past the system unless its content is carried — its patch, or every path it changes as it leaves it, left by
+  a commit outside its own history (a fold, a squash, an amend, a rebase's copy, a cherry-pick; setting a path back to
+  what a commit it stands on left is a change) —: by the system's work (each chat delivery's own range as its DELIVER
+  recorded it, what its places' deliveries and its landings recorded with what those reach — never a ref by its name
+  alone, which any process can write under the system's), by what was made by hand while a node was taken there, or
+  by a commit that existed before the project began. Compared by content, never by descent: this repository folds
+  every branch before a push. A commit on those lines no record says was made here nor brought (a pull, a fetch, a
+  clone, a remote's ref, a FETCH_HEAD) — its worktree removed, its branch deleted, its entries expired before a reading
+  saw them — is `undecided`: said apart, never counted;
 - by the moment (`witness`): a console's write to the repository while its own principal holds no node attached there,
   filed once as the project's record (`Engine.witnessed`) and said to the agent — the console's hook (`gfso.witness`)
   carries it, installed only by the person.
 
-What git's records in the repository say is whoever works there's to rewrite (a committer date set back, a reflog
-edited, a worktree made and removed between two reads): the measure catches work kept outside the system, not git's
-records forged or gone. Who made a commit git's reflog
-does not record: a commit is attached while any node is taken there, whoever holds it; the witness, which knows its
-console's principal, asks for that principal's own."""
+Everything the measure reads of git is kept in the project's record AS IT IS OBSERVED — how each commit was made or
+brought, what the system's and the obligations' work held, the content of every carrier, each delivery's range at its
+DELIVER —, so git's hygiene after (a worktree removed, a branch deleted, a reflog expired, `gc`) changes no reading
+already taken: a reading only grows with new records. What git's records say is whoever works there's to rewrite (a
+committer date set back, a reflog edited, work made and removed between two reads): the measure catches work kept
+outside the system, not git's records forged. Who made a commit git's reflog does not record: a commit is attached
+while any node is taken there, whoever holds it; the witness, which knows its console's principal, asks for that
+principal's own."""
 from __future__ import annotations
 
 import json
@@ -62,10 +64,16 @@ MADE = re.compile(r"^(commit|cherry-pick|revert|am)\b|\((pick|squash|fixup|rewor
 BROUGHT = re.compile(r"^(pull|fetch|clone)\b")
 #: the person's own branches: every one but the system's (`_theirs` adds every worktree's HEAD)
 THEIRS = ("--exclude=gfso/*", "--branches")
-#: the most commits past the system one read lists; `count` says how many there are
+#: the most commits one read lists; `count` says how many there are
 LISTED = 50
-#: the record of the commits made by hand in a repository, per project (`_kept`)
+#: what the readings of a repository saw, per project (`_seen`): {from, made: {commit: when}, brought, held}
 KEPT = "made-by-hand:"
+#: the content of every carrier the readings of a repository saw, per project: {commit: [patch id, [[path, blob]]]}
+CARRIED = "carried-by:"
+#: a project's chat deliveries, each with its own range's content as it stood at its DELIVER (`delivered`)
+DELIVERED = "past-delivered"
+#: the repositories a project's readings were taken in: {common git directory: its main worktree}
+READ_IN = "past-read-in"
 #: (project, repository) → (its refs, the window, the records; the reading): a page polling it asks git one `rev-parse`
 _READ: dict = {}
 #: every project this server holds: its engine where open, else its record's path (`ProjectRegistry.projects`, set by
@@ -98,6 +106,10 @@ def _git(repo, *args, input: str | None = None) -> str:
     return r.stdout
 
 
+def _lines(xs) -> str:
+    return "".join(f"{x}\n" for x in xs)
+
+
 def repository(path) -> str | None:
     """The repository `path` stands in, one name for all its worktrees (its common git directory); None for none."""
     if not (path and cheap_to_ask(path) and Path(path).is_dir()):
@@ -109,7 +121,7 @@ def repository(path) -> str | None:
 def _work_of(x) -> dict:
     """{"name", "taken": {node: holder}, "log": [(node, signal name, old state, new state, commit, repository, signer,
     unix time)] — its accepted ACCEPTs, DELIVERs and moves into or out of a work state, oldest first —, "landed": the
-    commit its accepted result landed as or None} of one project:
+    commit its accepted result landed as or None, "delivered" (`DELIVERED`), "read_in" (`READ_IN`)} of one project:
     from its engine where open, else peeked at in its record (`peek_work`), never opened as a store, as building an
     engine starts its dispatcher."""
     if not isinstance(x, (str, os.PathLike)):
@@ -120,14 +132,18 @@ def _work_of(x) -> dict:
                          e.source and str(e.source), math.floor(e.timestamp.timestamp())) for e in x.audit_log()
                         if not e.rejected and (e.signal in (Signal.ACCEPT, Signal.DELIVER)
                                                or {named(e.old_state), named(e.new_state)} & WORK)],
-                "landed": json.loads(x.graph.setting(LANDED) or "{}").get("sha")}
+                "landed": json.loads(x.graph.setting(LANDED) or "{}").get("sha"),
+                **{f: json.loads(x.graph.setting(key) or "{}") for f, key in (("delivered", DELIVERED),
+                                                                               ("read_in", READ_IN))}}
     stamp = tuple((st.st_mtime_ns, st.st_size) if (st := _stat(f)) else None for f in (x, f"{x}-wal"))
     if (hit := _PEEKED.get(x)) is None or hit[0] != stamp:
-        got = peek_work(str(x)) or {"taken": {}, "log": [], "landed": None}
+        got = peek_work(str(x), (DELIVERED, READ_IN)) or {"taken": {}, "log": [], "landed": None, "kept": {}}
         mine = os.path.normcase(os.path.abspath(x)) == os.path.normcase(os.path.abspath(db_path()))
         _PEEKED[x] = hit = (stamp, {**got, "name": DEFAULT_PROJECT if mine else Path(x).stem,
                                     "log": [(*r[:-1], math.floor(datetime.fromisoformat(r[-1]).timestamp()))
-                                            for r in got["log"]]})
+                                            for r in got["log"]],
+                                    "delivered": json.loads(got["kept"].get(DELIVERED) or "{}"),
+                                    "read_in": json.loads(got["kept"].get(READ_IN) or "{}")})
     return hit[1]
 
 
@@ -144,15 +160,19 @@ def _works(engine) -> list[dict]:
 
 
 def _works_in(w, agents, named: dict) -> dict:
-    """{repository: a path at its top} one project's work `w` works in: what its log names (a chat's ACCEPT and
-    DELIVER), its roles' workdirs — where a place of the system's is cut from and a container's result lands —, and
-    where the person installed its witness. `named`: the repositories already asked of git in this reading."""
+    """{repository: its main worktree} one project's work `w` works in: what its log names (a chat's ACCEPT and
+    DELIVER), its roles' workdirs — where a place of the system's is cut from and a container's result lands —, where
+    the person installed its witness, and where its readings were taken — a linked worktree removed leaves them its
+    repository's. `named`: the repositories already asked of git in this reading."""
     paths = [row[5] for row in w["log"] if row[5]] + installed().get(w["name"], []) + [
         c["workdir"] for c in agents.list().values() if c.get("project") == w["name"] and c.get("workdir")]
     out = {}
     for p in dict.fromkeys(paths):
         if (k := named.setdefault(p, repository(p))) and W.is_repo_top(p):
-            out.setdefault(k, p)
+            out.setdefault(k, W.main_worktree(p))
+    for k, top in w["read_in"].items():
+        if named.setdefault(top, repository(top)) == k:
+            out.setdefault(k, top)
     return out
 
 
@@ -167,7 +187,8 @@ def spans(engine, agents) -> list[Span]:
 
         def _attached(node, since, taken_by, until, holder):
             r, signer = taken_by
-            keys = [named.setdefault(r, repository(r))] if r else [] if signer and agents.get(signer) else where
+            k = r and named.setdefault(r, repository(r))
+            keys = [k] if k else [] if signer and agents.get(signer) else where
             return [Span(k, node, since, until, holder) for k in keys if k]
         for node, s, old, new, _, r, signer, at in w["log"]:
             if s == "ACCEPT":
@@ -190,30 +211,51 @@ def at_work(spans_, repository_key: str, at: int, holders=None) -> list[Span]:
             and (holders is None or s.holder in holders)]
 
 
-def _deliveries(engine, key: str, named: dict) -> tuple[list, list]:
-    """([(delivered commit, the HEAD its node's ACCEPT recorded or None)] of the chat deliveries into the repository
-    `key`, over every project held here; [the commits the deliveries made in places of the system's and the landings
-    recorded])."""
-    chats, places = [], []
-    for w in _works(engine):
+def delivered(engine, place, node: str, commit: str):
+    """A chat's DELIVER of `commit` in `place`: its own range — from the HEAD its node's last ACCEPT recorded, else the
+    commit alone — with each commit's change, as it stands now (a rework, an amend or git's `gc` after it leaves what
+    was delivered). Read before the DELIVER is sent, so nothing waits after it; the call it returns keeps it in the
+    project's record once the DELIVER is accepted."""
+    if not (k := repository(place)):
+        return lambda: None
+    head = next((e.commit for e in reversed(engine.audit_log()) if str(e.task_id) == node and e.commit
+                 and e.signal == Signal.ACCEPT and not e.rejected), None)
+    shas = _git(place, "rev-list", "--no-merges", commit,
+                *([f"^{head}"] if head and _there(place, [head]) else ["-1"])).split()
+    got = {"repository": k, "changes": _dumped(_changes(place, shas))}
+    return lambda: engine.graph.store_setting(DELIVERED, json.dumps(
+        {**json.loads(engine.graph.setting(DELIVERED) or "{}"), commit: got}))
+
+
+def _deliveries(works, key: str, named: dict) -> tuple:
+    """(the commits of the chat deliveries into the repository `key` their DELIVER recorded, over every project held
+    here; their content; [(delivered commit, the HEAD its node's ACCEPT recorded or None)] of those delivered before
+    that record — in `key`, or in a place that no longer stands —; [the commits the deliveries made in places of the
+    system's and the landings recorded])."""
+    held, content, live, places = set(), {}, [], []
+    for w in works:
         heads, places = {}, places + ([w["landed"]] if w["landed"] else [])
         for node, s, _, _, c, r, _, _ in w["log"]:
             if not c:
                 continue
             if s == "ACCEPT" and r:
-                heads[node] = (c, r)
+                heads[node] = c
             elif s == "DELIVER" and not r:
                 places.append(c)
-            elif s == "DELIVER" and named.setdefault(r, repository(r)) == key:
-                h = heads.get(node)
-                chats.append((c, h[0] if h and named.setdefault(h[1], repository(h[1])) == key else None))
-    return chats, places
+            elif s == "DELIVER" and (d := w["delivered"].get(c)) is not None:
+                if d["repository"] == key:
+                    held |= d["changes"].keys()
+                    content.update(_loaded(d["changes"]))
+            elif s == "DELIVER" and named.setdefault(r, repository(r)) in (key, None):
+                live.append((c, heads.get(node)))
+    return held, content, live, places
 
 
 def past_the_system(engine, agents) -> list[dict]:
-    """[{repository, count, commits: the newest `LISTED`, in_work, read_from?}] per repository this project works in;
-    [] where it works in none. The window is the project's: from its log's first entry to its root's settling, open
-    while it is not settled; `read_from` where the record of the repository's hand-made commits begins later."""
+    """[{repository, count, commits: the newest `LISTED`, in_work, undecided?, read_from?}] per repository this project
+    works in; [] where it works in none. The window is the project's: from its log's first entry to its root's
+    settling, open while it is not settled; `read_from` where the record of the repository's hand-made commits begins
+    later; `undecided` ({count, commits}) the commits no record decides."""
     log = [e for e in engine.audit_log() if not e.rejected]
     if not log:
         return []
@@ -221,53 +263,58 @@ def past_the_system(engine, agents) -> list[dict]:
     # …by whole seconds, as the reflog keeps its clock: a commit in the second the project began or ended is in it
     window = (math.floor(log[0].timestamp.timestamp()),
               math.ceil(log[-1].timestamp.timestamp()) if root is not None and root.state in TERMINAL_STATES else None)
-    named, taken = {}, spans(engine, agents)
+    named, taken, works = {}, spans(engine, agents), _works(engine)
+    if (repos := _works_in(works[0], agents, named)).items() - works[0]["read_in"].items():
+        engine.graph.store_setting(READ_IN, json.dumps({**works[0]["read_in"], **repos}))
     out = []
-    for k, path in _works_in(_work_of(engine), agents, named).items():
-        chats, places = _deliveries(engine, k, named)
+    for k, path in repos.items():
+        delivered_ = _deliveries(works, k, named)
         mine = tuple(s for s in taken if s.repository == k)
         try:
-            key = (k, _git(path, "rev-parse", *_theirs(k), "--all"), window, tuple(chats), tuple(places), mine)
+            key = (k, _git(path, "rev-parse", *_theirs(k), "--all"), window, tuple(sorted(delivered_[0])),
+                   tuple(delivered_[2]), tuple(delivered_[3]), mine)
             if (got := _READ.get((engine.project_name, k))) is None or got[0] != key:
-                _READ[engine.project_name, k] = got = (key, _measured(engine, k, path, window, chats, places, mine))
+                _READ[engine.project_name, k] = got = (key, _measured(engine, k, path, window, delivered_, mine))
         except OSError:
             continue                    # …a repository git cannot read now has no reading, not a zero
         out.append({"repository": path, **got[1]})
     return out
 
 
-def _measured(engine, k, repo, window, chats, places, taken) -> dict:
+def _measured(engine, k, repo, window, delivered_, taken) -> dict:
     since, until = window
-    logged, brought, start = _kept(engine, k, repo, window)
-    # …a commit on the person's lines that no surviving entry made — its worktree removed, its branch deleted after a
-    # merge — and none brought, was made here when git dated it
-    made = {**{c: int(t) for c, t in (ln.split() for ln in _git(
-        repo, "log", "--no-merges", f"--max-age={since}", "--format=%H %ct", *_theirs(k)).splitlines())
-        if c not in brought}, **logged}
-    left = [c for c in _git(repo, "rev-list", "--no-merges", *_theirs(k)).split()
-            if c in made and since <= made[c] and (until is None or made[c] <= until)]
-    under = {c: at_work(taken, k, made[c]) for c in left}
-    rest = [c for c in left if not under[c]]
-    if rest:
-        held = set(_git(repo, "rev-list", "--no-merges", "--ignore-missing", f"--max-age={since}", "--stdin",
-                        input="".join(f"{c}\n" for c in places)).split()) - logged.keys() if places else set()
-        for c, h in chats:
-            held |= set(_git(repo, "rev-list", "--no-merges", "--ignore-missing", c, *([f"^{h}"] if h else ["-1"])).split())
-        # …and what was made by hand while a node was taken there, delivered or not, the record's as much as git's
-        if under_a_node := [c for c, t in made.items() if since <= t and (until is None or t <= until)
-                            and at_work(taken, k, t)]:
-            held |= set(_git(repo, "rev-list", "--no-walk", "--ignore-missing", "--stdin",
-                             input="".join(f"{c}\n" for c in under_a_node)).split())
-        rest = _uncarried(repo, [c for c in rest if c not in held], held)
-    if rest:
-        # …the commits that stood before the project began, those a rebase replaced among them, touching what these do
-        stood = _git(repo, "--literal-pathspecs", "rev-list", "--no-merges", "--reflog", f"--min-age={since - 1}",
-                     "--stdin", *_theirs(k), input="--\n" + "".join(
-                         f"{p}\n" for p in {p for q in _changes(repo, rest).values() for p, _ in q[1]}))
-        rest = _uncarried(repo, rest, [c for c in stood.split() if made.get(c, since - 1) < since])
-    past = sorted(rest, key=made.get, reverse=True)
+    inside = lambda t: since <= t and (until is None or t <= until)                         # noqa: E731
+    held_now, content, live, places = delivered_
+    rec, made, brought, start = _seen(engine, k, repo, since)
+    # …the commits on the person's lines in the window: made here when its record says, else — no record made it nor
+    # brought it — at the date git gave it, undecided
+    when = {c: made.get(c, int(t)) for c, t in (ln.split() for ln in _git(
+        repo, "log", "--no-merges", "--format=%H %ct", *_theirs(k)).splitlines()) if c in made or c not in brought}
+    left = [c for c, t in when.items() if inside(t)]
+    under = {c: at_work(taken, k, when[c]) for c in left}
+    # …what the system made and what was made while a node was taken there, the record's as much as git's
+    held = set(rec["held"]) | held_now | {c for c, t in {**when, **made}.items() if inside(t) and at_work(taken, k, t)}
+    if there := _there(repo, places):
+        held |= set(_git(repo, "rev-list", "--no-merges", f"--max-age={since}", "--stdin",
+                         input=_lines(there)).split()) - made.keys()
+    for c, h in live:
+        if c in (got := _there(repo, [c, h])):
+            held |= set(_git(repo, "rev-list", "--no-merges", c, *([f"^{h}"] if h in got else ["-1"])).split())
+    # …and every commit that stood before the project began, those a rebase replaced among them
+    stood = set(_git(repo, "rev-list", "--no-merges", "--reflog", f"--min-age={since - 1}", *_theirs(k)).split()) - {
+        c for c, t in made.items() if t >= since}
+    carried = _loaded(json.loads(engine.graph.setting(CARRIED + k) or "{}"))
+    if new := _there(repo, [c for c in held | stood if c not in carried]):
+        carried.update(_changes(repo, new))
+        engine.graph.store_setting(CARRIED + k, json.dumps(_dumped(carried)))
+    if not held <= set(rec["held"]):
+        engine.graph.store_setting(KEPT + k, json.dumps({**rec, "held": sorted(held | set(rec["held"]))}))
+    rest = _uncarried(repo, [c for c in left if not under[c] and c not in held], {**carried, **content})
+    past, undecided = sorted((c for c in rest if c in made), key=made.get, reverse=True), [c for c in rest
+                                                                                           if c not in made]
     return {"count": len(past), "commits": past[:LISTED],
-            "in_work": [c for c in left if any(s.until is None for s in under[c])],
+            "in_work": [c for c in left if c in made and any(s.until is None for s in under[c])],
+            **({"undecided": {"count": len(undecided), "commits": undecided[:LISTED]}} if undecided else {}),
             **({"read_from": start} if start > since else {})}
 
 
@@ -279,15 +326,23 @@ def _theirs(k) -> tuple:
     return ("HEAD", "main-worktree/HEAD", *(f"worktrees/{i}/HEAD" for i in ids), *THEIRS)
 
 
-def _uncarried(repo, shas, by) -> list:
-    """Of `shas`, those whose change no commit of `by` carries: neither its patch nor every path's result — that one
-    left by a commit outside its own history: a copy (a fold, a squash, a rebase's) replaces what it copies, while a
-    commit that stands on one and sets a path back to what it left makes a change."""
-    theirs, ours, left = _changes(repo, by), _changes(repo, shas), {}
-    for c, (_, q) in theirs.items():
+def _there(repo, shas) -> list:
+    """Of `shas`, the commits the repository holds now."""
+    if not (shas := [s for s in dict.fromkeys(shas) if s]):
+        return []
+    return [ln.split()[0] for ln in _git(repo, "cat-file", "--batch-check", input=_lines(shas)).splitlines()
+            if ln.split()[1:2] == ["commit"]]
+
+
+def _uncarried(repo, shas, by: dict) -> list:
+    """Of `shas`, those whose change no commit of `by` ({commit: its change}) carries: neither its patch nor every
+    path's result — that one left by a commit outside its own history: a copy (a fold, a squash, a rebase's) replaces
+    what it copies, while a commit that stands on one and sets a path back to what it left makes a change."""
+    ours, left = _changes(repo, shas), {}
+    for c, (_, q) in by.items():
         for x in q:
             left.setdefault(x, set()).add(c)
-    patches = {p for p, _ in theirs.values()} - {None}
+    patches = {p for p, _ in by.values()} - {None}
 
     def _carried(c):
         q = ours[c][1]
@@ -298,12 +353,12 @@ def _uncarried(repo, shas, by) -> list:
     return [c for c in shas if ours[c][0] not in patches and not _carried(c)]
 
 
-def _kept(engine, k, repo, window) -> tuple[dict, set, int]:
-    """({commit: when} made by hand in the repository, from the reflogs of the person's lines; {commit} brought in the
-    window onto any ref by a pull, a fetch or a clone — what the ref did not reach before, all it reaches where the
-    transfer first wrote it; the time the record begins), with the project's record of what they held before: a reflog
-    expires (`gc.reflogExpire`), the record does not. What falls in the window is kept."""
-    rec = {"from": None, "made": {}, "brought": [], **json.loads(engine.graph.setting(KEPT + k) or "{}")}
+def _seen(engine, k, repo, since) -> tuple[dict, dict, set, int]:
+    """(the record; {commit: when} made by hand in the repository — git's reflogs of the person's lines —; {commit}
+    brought in the window by a pull, a fetch or a clone onto any ref — what the ref did not reach before, all it
+    reaches where the transfer first wrote it —, or standing on a remote's ref or a worktree's FETCH_HEAD; the time
+    the record begins), each the record's as much as git's: what a reading saw stays seen once git forgets it."""
+    rec = {"from": None, "made": {}, "brought": [], "held": [], **json.loads(engine.graph.setting(KEPT + k) or "{}")}
     made, oldest, moves, mine = {}, None, {}, set(_theirs(k))
     for line in _git(repo, "log", "-g", "--date=unix", "--format=%gD %H %gs", *_theirs(k), "--all").splitlines():
         ref, sha, what = (line.split(" ", 2) + ["", ""])[:3]
@@ -314,26 +369,39 @@ def _kept(engine, k, repo, window) -> tuple[dict, set, int]:
                 if MADE.search(what):
                     made.setdefault(sha, at)
             moves.setdefault(name, {}).setdefault((at, sha), bool(BROUGHT.search(what)))
-    brought = set()
+    brought = set(_git(repo, "rev-list", "--no-merges", f"--max-age={since}", "--remotes").split())
     for line in moves.values():
         line = list(line.items())                                     # …newest first: an entry's old value is the next's
         for ((at, sha), transfer), ((_, was), _) in zip(line, [*line[1:], ((0, None), False)]):
-            if transfer and at >= window[0]:
-                brought |= set(_git(repo, "rev-list", "--no-merges", f"--max-age={window[0]}", sha,
+            if transfer and at >= since:
+                brought |= set(_git(repo, "rev-list", "--no-merges", f"--max-age={since}", sha,
                                     *([f"^{was}"] if was else [])).split())
-    start = min((x for x in (rec["from"], oldest) if x is not None), default=window[0])
-    keep = {c: t for c, t in made.items() if t >= window[0]}
+    fetched = [ln.split()[0] for f in (Path(k) / "FETCH_HEAD", *Path(k).glob("worktrees/*/FETCH_HEAD")) if f.is_file()
+               for ln in f.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+    if fetched := _there(repo, fetched):
+        brought |= set(_git(repo, "rev-list", "--no-merges", f"--max-age={since}", "--stdin",
+                            input=_lines(fetched)).split())
+    start = min((x for x in (rec["from"], oldest) if x is not None), default=since)
+    keep = {c: t for c, t in made.items() if t >= since}
     if not (keep.keys() <= rec["made"].keys() and brought <= set(rec["brought"])) or rec["from"] != start:
-        engine.graph.store_setting(KEPT + k, json.dumps({"from": start, "made": {**rec["made"], **keep},
-                                                         "brought": sorted(brought | set(rec["brought"]))}))
-    return {**made, **rec["made"]}, brought | set(rec["brought"]), start
+        rec = {**rec, "from": start, "made": {**rec["made"], **keep}, "brought": sorted(brought | set(rec["brought"]))}
+        engine.graph.store_setting(KEPT + k, json.dumps(rec))
+    return rec, {**made, **rec["made"]}, brought | set(rec["brought"]), start
+
+
+def _dumped(changes: dict) -> dict:
+    return {c: [p, sorted(q)] for c, (p, q) in changes.items()}
+
+
+def _loaded(kept: dict) -> dict:
+    return {c: (p, frozenset(map(tuple, q))) for c, (p, q) in kept.items()}
 
 
 def _changes(repo, shas) -> dict:
     """{commit: (its patch id, {(path, the blob it leaves there)})} — the change each commit makes, asked of git once
     per commit."""
     if new := [s for s in dict.fromkeys(shas) if s not in _CHANGES]:
-        lines = "".join(f"{s}\n" for s in new)
+        lines = _lines(new)
         paths, sha = {s: set() for s in new}, None
         for ln in _git(repo, "log", "--no-walk=unsorted", "--stdin", "--format=commit %H", "--raw", "--no-renames", "-r",
                        "--no-abbrev", input=lines).splitlines():

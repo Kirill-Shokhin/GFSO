@@ -2974,7 +2974,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
     carries the HEAD that repository stood on when the work was taken, and the repository: where and from when a node
     is at work in it, as the system's own record (`past.spans`). Either records the repository by its main worktree
     (`W.main_worktree`): a linked worktree is removed once its work is merged, and the record must outlive it."""
-    said, tid, sig = {}, TaskId(task_id), str(signal).strip().upper()
+    said, tid, sig, keep = {}, TaskId(task_id), str(signal).strip().upper(), lambda: None
 
     def in_chat():
         """Where `source` performs the node in its own chat — its judge's directory —, or a falsy answer."""
@@ -3003,7 +3003,14 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
                                     f"commit: the delivery is not recorded as a commit, and its judge reads what stands "
                                     f"there when it comes — register the validator at the top of a repository with a "
                                     f"commit, and commit your work, for a verdict on what you delivered")
+    if sig == "DELIVER" and (rec := kw.get("_recorded")):
+        try:
+            keep = past.delivered(engine, rec[2], task_id, rec[1])      # …its range read while git still holds it
+        except OSError:
+            pass                                                        # …a measure's record, never the delivery's refusal
     out = _tools.signal(engine, task_id, signal, source, **kw)
+    if out.get("accepted"):
+        keep()
     return {**out, **said} if said and out.get("accepted") else out
 
 

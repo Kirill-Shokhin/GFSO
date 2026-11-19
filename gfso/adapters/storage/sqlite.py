@@ -95,11 +95,12 @@ def settings_of(db_path: str) -> Optional[dict]:
         return None
 
 
-def peek_work(db_path: str) -> Optional[dict]:
+def peek_work(db_path: str, keys: tuple = ()) -> Optional[dict]:
     """A project's work as its file records it, read without opening it as a store (`peek_project` says why):
     {"taken": {node: holder} of its nodes in a work state, "log": [(node, signal, old state, new state, commit,
     repository, signer, ts)] of its accepted ACCEPTs, DELIVERs and moves into or out of a work state, oldest first,
-    "landed": the commit its accepted result landed as, or None}; None where no file stands or none reads."""
+    "landed": the commit its accepted result landed as, or None, "kept": {key: value} of its settings named in `keys`};
+    None where no file stands or none reads."""
     if not os.path.exists(db_path):
         return None
     try:
@@ -112,7 +113,9 @@ def peek_work(db_path: str) -> Optional[dict]:
                         c, "SELECT task_id, signal, old_state, new_state, delivered_commit, delivered_repository, "
                            "source, ts FROM audit_log WHERE rejected = 0 AND (signal IN ('ACCEPT', 'DELIVER') OR "
                            f"old_state IN ({work}) OR new_state IN ({work})) ORDER BY id")],
-                    "landed": landed and landed[0] and json.loads(landed[0]).get("sha")}
+                    "landed": landed and landed[0] and json.loads(landed[0]).get("sha"),
+                    "kept": {r[0]: r[1] for r in _all(c, "SELECT key, value FROM settings WHERE key IN ("
+                                                         + ", ".join(f"'{k}'" for k in keys) + ")")} if keys else {}}
     except (sqlite3.Error, KeyError, ValueError, AttributeError):
         return None
 

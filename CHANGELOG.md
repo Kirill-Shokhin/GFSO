@@ -21,10 +21,12 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   taken there is listed apart (`in_work`), whoever holds it, a direction taken for months included. A chat's ACCEPT now
   records the repository and HEAD it was taken in; a node taken before that record is attached to the repositories its
   project works in, where its holder performs in the chat. The reading is kept in the project's record, as a reflog
-  expires. A commit made in a worktree since removed, or on a branch deleted after its merge, is still read as made by
-  hand (at its own date) unless a pull or a fetch brought it; a chat's ACCEPT and DELIVER record the repository by its
-  main worktree, so its work stays the system's once a linked worktree is removed; a file set back to what an older
-  commit left is a change, not a copy of that commit; a commit in the second its node was delivered is that node's.
+  expires. Everything the reading needs is kept as it is seen — how each commit was made or brought, the content of
+  every commit that carries work, each chat delivery's range at its DELIVER, the repository a reading was taken in —,
+  so a worktree removed, a branch deleted, an expired reflog or `gc` changes no reading already taken. A commit no
+  record says was made here nor brought (a pull, a fetch, a remote's ref, a FETCH_HEAD) is said apart as `undecided`,
+  never counted. A chat's ACCEPT and DELIVER record the repository by its main worktree; a file set back to what an
+  older commit left is a change, not a copy of it; a commit in the second its node was delivered is that node's.
 - `gfso witness <project> --install`: a Claude Code hook the person installs in one repository — written into its
   `.claude/settings.local.json`, kept out of git, and recorded in `data/witness.json` as that project working there;
   `--remove` takes it out. After each tool call it compares git's status of the working tree; a change while the
