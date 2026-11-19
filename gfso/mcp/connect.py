@@ -40,7 +40,7 @@ from gfso.adapters.children import detached
 from gfso.config import (reconcile_allowed, data_dir, db_path as _db_path, home,
                          install_spawned_server_env, spawned_server_popen_env)
 from gfso.config import LOOPBACK as _LOOPBACK, CLIENT_HEADER, LEASE_HEADER, launch_client, shared_url
-from gfso.signin import credential_header, launch_refusal
+from gfso.signin import credential_header, forget_console, launch_refusal, record_console
 
 URL = shared_url()
 
@@ -716,6 +716,7 @@ def main(argv: list | None = None) -> None:  # pragma: no cover — exercised li
     stop = threading.Event()
     hb = threading.Thread(target=_heartbeat, args=(URL, LEASE, stop), daemon=True)
     hb.start()
+    record_console(LEASE)             # …so a `gfso` call from this console's shell signs as this connection's name
     # RECONNECT, don't die. The HTTP leg breaks whenever the shared server restarts — an upgrade, a
     # deliberate `up --force`, a crash — and this used to end the bridge process. The client does not
     # respawn it, so the session loses its gfso tools permanently: measured 2026-08-20, an agent's
@@ -739,7 +740,8 @@ def main(argv: list | None = None) -> None:  # pragma: no cover — exercised li
               file=sys.stderr, flush=True)
     finally:
         stop.set()
-        hb.join(3.0)                  # let the heartbeat thread fire its lease-drop
+        forget_console(LEASE)
+        hb.join(3.0)                 # let the heartbeat thread fire its lease-drop
 
 
 if __name__ == "__main__":  # pragma: no cover

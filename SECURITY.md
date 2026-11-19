@@ -74,7 +74,9 @@ no forwarding header taken for the client, so the OS is always asked of the real
   there would guard nothing and cost a relaunch; under `--protected` only with that name's token; past loopback not at
   all, the token riding every call instead. The taking is kept with your name, the connection's digest and its time,
   and holds for the connection's life — its bridge's lease, unguessable, honoured only from your own process at loopback — so the
-  connection never signs as you again; one live connection holds a name at a time. A name the system's roles hold (an
+  connection never signs as you again, nor does a `gfso` call from that console's shell, which finds the bridge by
+  its process chain (a record under gfso's state, pid and start time); one live connection holds a name at a time, and
+  for one lease grace after a server start every holding counts as live. A name the system's roles hold (an
   executor's, a validator's) is neither issued nor taken;
 - a local client that is no browser, with no credential, from your OS user, asking the server by a loopback name, signs
   as `user`, your name, as your standing agent — what keeps a fresh client working with no step at setup;

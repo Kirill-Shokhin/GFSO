@@ -1141,7 +1141,10 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
                 app.state.leases.pop(k, None)
         return list(app.state.leases)
     app.state.live_leases = _live_leases
-    signin.LIVE_LEASES = _live_leases     # …a name a connection took frees when its bridge's lease lapses (`act_as`)
+    # …a name a connection took frees when its bridge's lease lapses (`act_as`) — known only once the server has been up
+    # one grace: after a restart every holding survives and no bridge has beaten yet, so each would read lapsed
+    up = time.monotonic()
+    signin.LIVE_LEASES = lambda: _live_leases() if time.monotonic() - up > LEASE_GRACE else None
 
     @app.post("/api/lease")
     async def renew_lease(body: dict = Body(...)):

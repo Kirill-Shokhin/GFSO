@@ -502,22 +502,24 @@ def _act_as(resolve):
         ends: `/clear` keeps it, and it never goes back to the person nor takes another. One live connection holds a
         name at a time. Under `gfso up --protected` pass `token`, the one `gfso agent <name>` prints at your shell."""
         if name:
-            p = CALLER.get()
-            if p is not None and not p.signs_as:
-                return {"refused": True, "error": f"this connection signs as no one: {p.lift}"}
-            if p is not None and p.via != "default" and not p.via.startswith("as:"):
-                return {"refused": True, "error": f"this connection signs as `{p.name}` by its {p.how}: a console "
-                        f"launched with a credential keeps it; take `{name}` in a console launched without one"}
             try:
                 req = ctx.request_context.request
             except (ValueError, LookupError, AttributeError):
                 req = None
+            lease = req.headers.get(LEASE_HEADER) if req is not None else None
+            p = CALLER.get()
+            # …its own holding the name's token mends (a claim, under `--protected` since): that call reaches `take`
+            if p is not None and not p.signs_as and not (token and signin.holds(lease) == name):
+                return {"refused": True, "error": f"this connection signs as no one: {p.lift}"}
+            if p is not None and p.signs_as and p.via != "default" and not p.via.startswith("as:"):
+                return {"refused": True, "error": f"this connection signs as `{p.name}` by its {p.how}: a console "
+                        f"launched with a credential keeps it; take `{name}` in a console launched without one"}
             try:
                 issued = _issued_by_the_person(resolve(project or None, ctx, create=False), name)
             except Exception:           # …no project here: the names issued to him alone
                 issued = False
             try:
-                CALLER.set(signin.take(req.headers.get(LEASE_HEADER) if req is not None else None, name, token, issued))
+                CALLER.set(signin.take(lease, name, token, issued))
             except ValueError as ex:
                 return {"refused": True, "error": str(ex)}
         return signin.whoami()

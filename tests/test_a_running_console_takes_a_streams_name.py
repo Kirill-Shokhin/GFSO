@@ -145,3 +145,48 @@ def test_the_bridge_names_its_lease_on_every_leg(monkeypatch):
     finally:
         web.should_exit = True
     assert seen == [C.LEASE, C.LEASE] and len(C.LEASE) == 32
+
+
+def test_a_claim_stranded_by_protected_is_mended_by_the_names_token(go, monkeypatch):
+    e, go = go
+    _stream(e, go, "eng6")
+    one = _lease()
+    assert go(one, "act_as", name="eng6")["name"] == "eng6"
+    monkeypatch.setenv("GFSO_PAGE_AUTH", "key")
+    assert go(one, "act_as")["kind"] == "none"
+    assert go(one, "act_as", name="eng6", token=signin.issue("eng6")[1])["name"] == "eng6"
+
+
+def test_a_server_just_up_counts_every_holding_live(go, monkeypatch):
+    """After a restart the holdings survive and no bridge has beaten yet: none reads lapsed for one lease grace."""
+    from gfso.api.server import create_app
+    from tests.support import make_engine
+    e, go = go
+    _stream(e, go, "engR")
+    one, two = _lease(), _lease()
+    assert go(one, "act_as", name="engR")["name"] == "engR"
+    monkeypatch.setattr(signin, "LIVE_LEASES", None)
+    create_app(make_engine())               # …a server restarted: its lease list is empty
+    out = go(two, "act_as", name="engR")
+    assert out.get("refused") and "held by another connection" in out["error"], out
+    assert go(one, "act_as")["name"] == "engR"
+
+
+def test_a_gfso_call_from_the_consoles_shell_signs_as_its_connections_name(go, tmp_path):
+    """One console is one Del: its shell's `gfso` finds its bridge by the parent chain and signs as the name taken."""
+    import os
+    import subprocess
+    import sys
+    e, go = go
+    _stream(e, go, "eng7")
+    one = _lease()
+    assert go(one, "act_as", name="eng7")["name"] == "eng7"
+    signin.record_console(one)              # …as the bridge does at its start, under the console it runs in
+    try:
+        probe = "from gfso import signin; p = signin.local_principal(); print(p.name, p.via)"
+        out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, env=os.environ, timeout=60)
+        assert out.stdout.split()[0] == "eng7" and out.stdout.split()[1].startswith("as:"), out
+    finally:
+        signin.forget_console(one)
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, env=os.environ, timeout=60)
+    assert out.stdout.split()[0] == "user", out

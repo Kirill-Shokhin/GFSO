@@ -9,6 +9,7 @@ survives a restart; a process of the same OS user can read that state, and SECUR
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import secrets
@@ -21,6 +22,8 @@ from urllib.parse import urlparse
 from gfso.config import (AGENT, CALLER, LEASE_HEADER, LOCAL_PERSON, LOOPBACK_NAMES, PERSON, PERSONS_NAMES,
                          PRINCIPAL_RE, STANDING, Principal, agent_id, bound_beyond_loopback, caller_id, closed_launch_name,
                          data_dir, launch_token, page_auth, protected, reserved_refusal)
+import psutil
+
 from gfso.adapters.storage import person as _person
 from gfso.peer import ours as peer_is_ours, relayed as peer_is_a_relay
 from gfso.roster import AgentRegistry
@@ -346,8 +349,9 @@ def principal_of(conn) -> Principal:
     return held(h.get(LEASE_HEADER)) or STANDING
 
 
-#: the server's live bridge leases, raw (`/api/lease`), handed down by the server that holds them; None: not known here,
-#: so every other connection's holding counts as live
+#: the server's live bridge leases, raw (`/api/lease`), handed down by the server that holds them; None, or None from
+#: it (a server up less than one lease grace, its bridges not yet beaten), not known — every other connection's holding
+#: then counts as live
 LIVE_LEASES = None
 
 
@@ -374,6 +378,11 @@ def held(lease: str | None) -> Principal | None:
         what = f"now the system's ({kind})" if kind else "no longer issued: its token was revoked"
         return _refused(f"`{name}` is {what}: this connection signs as nothing until it is restarted")
     return Principal(name, (name,), f"as:{_hash(lease)[:12]}", f"acting as {name} since {_when(since)}", person)
+
+
+def holds(lease: str | None) -> str | None:
+    """The name the connection of `lease` took, whatever its holding reads as now; None where it took none."""
+    return next(iter(_held("SELECT name FROM holds WHERE lease = ?", _hash(lease))), (None,))[0] if lease else None
 
 
 def take(lease: str | None, name: str, token: str = "", issued: bool = False) -> Principal:
@@ -412,7 +421,8 @@ def take(lease: str | None, name: str, token: str = "", issued: bool = False) ->
                                  f"Take `{name}` in a console of its own, or restart this one's gfso connection (`/mcp`)")
             if token:
                 db.execute("UPDATE holds SET via = ? WHERE lease = ?", (via, h))   # …a claim, now with its token
-        live = None if LIVE_LEASES is None else {_hash(x) for x in LIVE_LEASES()}
+        seen = LIVE_LEASES() if LIVE_LEASES is not None else None
+        live = None if seen is None else {_hash(x) for x in seen}
         for other, since in db.execute("SELECT lease, since FROM holds WHERE name = ? AND lost IS NULL AND lease != ?",
                                        (name, h)).fetchall():
             if live is None or other in live:
@@ -432,7 +442,7 @@ def local_principal() -> Principal:
     if (refused := launch_refusal()) is not None:
         return _refused(refused)
     raw = launch_token()
-    return by_token(raw) if raw else STANDING
+    return by_token(raw) if raw else held(console_lease()) or STANDING
 
 
 def launch_refusal() -> str | None:
@@ -451,7 +461,62 @@ def credential_header() -> dict:
     the client is the standing agent. A console launched the closed way stops here (`launch_refusal`)."""
     if (refused := launch_refusal()) is not None:
         raise SystemExit(f"gfso: {refused}")
-    return {"Authorization": f"Bearer {t}"} if (t := launch_token()) else {}
+    if (t := launch_token()):
+        return {"Authorization": f"Bearer {t}"}
+    return {LEASE_HEADER: lease} if (lease := console_lease()) else {}
+
+
+#: what a bridge is launched through, never the console itself: the bridge's own interpreter and launchers, and a
+#: shell a client may start it by
+_LAUNCHERS = frozenset({"gfso", "python", "python3", "pythonw", "py", "uv", "uvx", "pipx", "cmd", "sh", "bash", "zsh",
+                        "powershell", "pwsh", "conhost"})
+
+
+def _consoles() -> Path:
+    return data_dir() / "consoles"
+
+
+def _console_of(proc: psutil.Process) -> psutil.Process | None:
+    """The console a bridge runs under: its nearest ancestor that is no launcher of it (the MCP client, Claude Code)."""
+    return next((a for a in proc.parents() if a.name().lower().removesuffix(".exe") not in _LAUNCHERS), None)
+
+
+def record_console(lease: str, proc: psutil.Process | None = None) -> None:
+    """This bridge's lease written under its console's process (pid and start time, so a reused pid is not it): a
+    `gfso` call from that console's shell finds it (`console_lease`) and signs as the name its connection took — one
+    console is one Del (§2.6), its shell and its MCP connection alike."""
+    try:
+        if (c := _console_of(proc or psutil.Process())) is None:
+            return
+        _consoles().mkdir(parents=True, exist_ok=True)
+        (_consoles() / f"{_hash(lease)[:16]}.json").write_text(
+            json.dumps({"pid": c.pid, "created": c.create_time(), "lease": lease}), encoding="utf-8")
+    except (psutil.Error, OSError):
+        pass                      # …no console found: its shell signs as it did, by its own credential
+
+
+def forget_console(lease: str) -> None:
+    """The bridge's record, gone with it."""
+    (_consoles() / f"{_hash(lease)[:16]}.json").unlink(missing_ok=True)
+
+
+def console_lease() -> str | None:
+    """The lease of the bridge whose console this process runs inside (`record_console`), found by its parent chain;
+    None outside every console."""
+    if not _consoles().is_dir():
+        return None
+    try:
+        chain = {(a.pid, round(a.create_time(), 3)) for a in psutil.Process().parents()}
+    except psutil.Error:
+        return None
+    for f in _consoles().glob("*.json"):
+        try:
+            r = json.loads(f.read_text(encoding="utf-8"))
+            if (r["pid"], round(r["created"], 3)) in chain:
+                return r["lease"]
+        except (OSError, ValueError, KeyError):
+            continue
+    return None
 
 
 def whoami(project: str | None = None) -> dict:
