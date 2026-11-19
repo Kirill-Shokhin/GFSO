@@ -274,7 +274,7 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
         # answer — and over HTTP a 200 with an empty body, which reads as success.
         return {"error": f"unknown task {task_id} — check the id, or `project=` if you meant "
                          f"another graph (`get_graph` lists what this one holds)"}
-    out = {**task_out(t, engine), "check_required": engine.check_required(t.id)}   # …binding by `require_check`
+    out = {**task_out(t, engine), "checker": engine.checker(t.id)}   # …who checks its deliveries (`set_checker`)
     if (blocked := _blocked_by(engine, t)):
         out["blocked_by"] = blocked
     # …the validator's findings standing on it — what a ruling (ACCEPT_CHALLENGE `retire_findings`) names by id
@@ -1204,7 +1204,8 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
            # kept its own copy of that rule (ui critic, 2026-11-14). A settled node takes only its way back
            "moves": {v: due for v in DOOR_KEYS
                      if (v == "reopen") == (t.state in TERMINAL_STATES) and door_holder(engine, v, task_id) is None
-                     and (due := signer_due(engine, v, task_id)) and who in ("*", due)},
+                     and (due := signer_due(engine, v, task_id)) and who in ("*", due)
+                     and (v != "set_checker" or engine.checker_choosable(TaskId(task_id)))},   # …a seam is no choice
            # …and the checks (anyone may run one, §10.2): the name a page session's call of each is signed
            # as where the person owns it — the role's holder, the door's own default (`tools_llm._signed`)
            "checks": {v: h for v in sorted(CHECKS) if (h := role_holder(engine, v, task_id))}}
@@ -1345,7 +1346,7 @@ def _parties(engine: Engine, tasks) -> list[dict]:
 
 def graph_read(engine: Engine) -> dict:
     """The graph with no word on what comes next: what `get_graph` answers, less the frontier the page reads by `next_steps`."""
-    tasks, _required = engine.all_tasks(), set(engine.checks_required())
+    tasks = engine.all_tasks()
     nodes = [{"id": str(t.id), "name": t.label(), "state": t.state.name,
               "assignee": t.assignee,        # who holds this node — the graph read answered `null` for
                                              # every node while `get_task` named the executor (2026-08-21)
@@ -1362,8 +1363,9 @@ def graph_read(engine: Engine) -> dict:
               # i.e. never while there is still work in it (wave 26, 2026-09-06). `null` until the
               # node settles positive: there is nothing to weigh about a node still in flight.
               "closure": engine.closure_of(t.id),
-              # …and whether its check binds (`require_check`), per node, as the page draws its box
-              **({"check_required": True} if str(t.id) in _required else {}),
+              # …and who checks its deliveries where the validator does (a seam, or its issuer's choice), as the page
+              # draws its box; absent, its holder self-verifies
+              **({"checker": "validator"} if engine.checker(t.id) == "validator" else {}),
               "parent_id": str(t.parent_id) if t.parent_id else None} for t in tasks]
     edges = [{"source": str(t.parent_id), "target": str(t.id), "type": "parent-child"}
              for t in tasks if t.parent_id]
@@ -2780,7 +2782,6 @@ def next_for(engine: Engine, me: Optional[str], about: Optional[str] = None, ent
     # directive read as a statement about the node the caller had in hand. Measured:
     # accepting one leaf answered with an instruction about another, which reads as a
     # defect even when it is the honest next move.
-    other = about is not None and nxt.get("task_id") and str(nxt["task_id"]) != str(about)
     # …THROUGH THE SAME OWNERSHIP FILTER THE FRONTIER USES. The reply carried the raw
     # directive, so a signal on one node answered "EXECUTE leaf 'X': do the actual work"
     # about a node whose Del is somebody else's registered executor — while `next_steps`
@@ -2788,7 +2789,11 @@ def next_for(engine: Engine, me: Optional[str], about: Optional[str] = None, ent
     # tester nearly redid a running executor's work on it (measured on the MCP door
     # 2026-08-21). Del is load-bearing in every surface that speaks about a node, or in
     # none.
-    nxt = _mark_mine(engine, dict(nxt), me=me)
+    # …AND YOURS FIRST. On a graph several parties move, the frontier's head was often another's verdict to sign while
+    # the caller's own taken work stood unnamed (the dev graph, 2026-11-20); theirs is named only when none is yours
+    mine = next((s for s in _mark_mine(engine, engine.next_steps(), me=me).get("steps", []) if s.get("mine")), None)
+    nxt = mine or _mark_mine(engine, dict(nxt), me=me)
+    other = about is not None and str(nxt["task_id"]) != str(about)
     out = {"next": (f"next on the frontier is '{nxt['task_id']}', not {about}: " if other else "")
                    + nxt["directive"]}
     if not nxt.get("mine", True):

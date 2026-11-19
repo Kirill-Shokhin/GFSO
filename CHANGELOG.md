@@ -49,8 +49,10 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   `answers_the_persons_words`: the validator reads the result against the person's own recorded words — the goal as
   given, each go, revision and verdict — and a non-pass quotes one span of them. On by default there; `set_mode
   (intent_check=)` turns it, on the person's words; the page shows the switch before the go.
-- `require_check(task_id, required, user_said)`: the issuer makes a node's check binding — the validator observes its
-  every delivery and its PASS stands on that record — on the person's words (§10.2).
+- `set_checker(task_id, checker, user_said)`: who checks a part below the root's seam is its issuer's choice — `self`,
+  its holder, or `validator`, observing its every delivery, its PASS standing on that record — on the person's words;
+  the signature is the issuer's either way (§10.2). Where the instrument is owed — a seam, or the top of a scope no
+  one session carries — a staffed validator always checks; each node serves `checker`, who checks it now.
 - `set_mode(..., workdir=)` registers the project's validator where it has none, and on the agent door `project=`
   enters that project: a small solo in_chat task takes the canon's acts — set_mode, the plan asked and handed in, the
   go, DELIVER, `gfso wait`, the person's PASS — and no call beside them.
@@ -118,6 +120,9 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   never by a `[review]` line in the file; any other file is gated as any split.
 
 ### Fixed
+- `next_step` and `next_steps` asked under a node walk only its subtree: on a graph carrying several streams the walk
+  covered every node, and the holder of one was handed another's verdict to sign.
+- The reply to a signal names the signer's own next step first; another party's is named only when none is theirs.
 - Under `solo` and `semi` every text a client reads where a root's sign-off is owed — the DELIVER's
   `awaiting_verdict`, `next_steps` and `gfso wait`, `get_verdict`'s `say`, the feed — says the verdict is the person's:
   show them the validator's verdict on each criterion with what it observed, ask, and sign with their words or let

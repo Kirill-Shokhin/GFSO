@@ -486,20 +486,33 @@ def observed_here(graph: Graph, task) -> bool:
     whose parent's subtree is not one session's work, internal or not, since past κ the executor's own check
     is no longer a direct contact-check (§3.7). Inside a scope, no: the scope's validation at its top runs
     every criterion inside it, and a validation per piece bought only a wait for each (a 2.6-minute task
-    took 39 to 70). `GFSO_VALIDATE_INTERNAL=1` observes every delivery, for measurement."""
-    return (graph.is_public(task) or not (within_a_scope(graph, task) or held_in_chat(graph, task))
-            or check_required(graph, task) or _validate_internal())
+    took 39 to 70). `GFSO_VALIDATE_INTERNAL=1` observes every delivery, for measurement. Elsewhere its issuer
+    may have chosen the validator (`validator_chosen`)."""
+    return owed_observer(graph, task) is not None or validator_chosen(graph, task)
 
 
-#: the nodes whose every delivery the person made the instrument observe (`Engine.require_check`)
-CHECK_REQUIRED = "check_required"
+def owed_observer(graph: Graph, task) -> Optional[str]:
+    """Why the instrument observes this node whatever its issuer chooses — None where who checks is his choice."""
+    if graph.is_public(task):
+        return "a seam: its result crosses into another scope (§10.3)"
+    if _validate_internal():
+        return "this installation observes every delivery (GFSO_VALIDATE_INTERNAL=1)"
+    if not (within_a_scope(graph, task) or held_in_chat(graph, task)):
+        return "the top of a scope no one executor session carries, where the system's validation stands (§3.7)"
+    return None
 
 
-def check_required(graph: Graph, task) -> bool:
-    """Did the person make this node's check binding — the instrument observes each delivery and its PASS stands on that
-    record — where no seam would have it observed? An implementation's own check at any node (§10.2), set by its issuer:
-    as the kit's critic is called on a piece of work, and made a must where the person says so (the author, 2026-11-20)."""
-    return str(task.id) in json.loads(graph._storage.get_setting(CHECK_REQUIRED) or "[]")
+#: the nodes whose issuer chose the validator to check them (`Engine.set_checker`)
+VALIDATOR_CHOSEN = "validator_chosen"
+#: who may check a node: its holder, or the instrument
+CHECKERS = ("self", "validator")
+
+
+def validator_chosen(graph: Graph, task) -> bool:
+    """Did its issuer choose the validator to check this node where it would self-verify? Who checks is his choice and
+    the signature his either way (§10.2: the check anyone's, the verdict the issuer's) — as the kit's critic is called
+    on a piece of work; the author, 2026-11-20: «решает кто будет валидировать. Если сам то сам и ставит подпись»."""
+    return str(task.id) in json.loads(graph._storage.get_setting(VALIDATOR_CHOSEN) or "[]")
 
 
 def held_in_chat(graph: Graph, task) -> bool:
@@ -596,10 +609,8 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
                         + ("it is a root its own executor issued: nothing above carries its verdict, so the "
                            "product's own check stands behind it (§10.2, §10.3)"
                            if task.parent_id is None and graph.issuer_of(task.id) == task.assignee else
-                           "it is a seam, where the result crosses into another scope (§10.3)"
-                           if graph.is_public(task) else
-                           "it is the top of a scope one executor session carries, where that scope's "
-                           "validation stands (§3.7, §10.3)")
+                           "it is " + why if (why := owed_observer(graph, task)) is not None else
+                           "its issuer chose the validator to check it (§10.2, `set_checker`)")
                         + "; the executor's own self-check is evidence, not the observation, and a hand "
                           "record binds only from the node's issuer where he is not its executor"),
                 # …the validator first: told "observes it now", a client whose validator was already running paid twice

@@ -308,3 +308,44 @@ def test_a_split_owed_is_the_executors_step_in_every_field():
     step = next(s for s in T.next_steps(e)["steps"] if s["task_id"] == "root")
     assert step["role"] == "executor" and step["signed_by"] == step["performed_by"] == str(step["assignee"]), step
     e.stop()
+
+
+def test_a_step_asked_under_a_node_comes_from_beneath_it():
+    """`root_id` scopes the walk to that node's subtree: on one graph carrying several streams, the holder of one asked
+    for his next step and was handed another stream's verdict to sign, the work in his own hands unnamed (the dev graph,
+    2026-11-20: asked under root.engineering, answered with a ui node, `mine: false`)."""
+    e = make_engine(check_interval=10_000)
+    e.start()
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C"), criterion("d", "D")]},
+                  assignee="boss")
+    T.decompose(e, "root", [{"task_id": "a", "spec": {"description": "a", "criteria": [criterion("a1", "A")]},
+                             "assignee": "ua", "covers": ["c"]},
+                            {"task_id": "b", "spec": {"description": "b", "criteria": [criterion("b1", "B")]},
+                             "assignee": "ub", "covers": ["d"]}], accepted_risks=REGISTER)
+    for n, who in (("a", "ua"), ("b", "ub")):
+        T.signal(e, n, "ACCEPT", who)
+    T.signal(e, "a", "DELIVER", "ua", result="did it")
+    e.wait_idle()
+    assert T.next_step(e)["task_id"] != "b", "control: unscoped, a step outside b comes first"
+    s = T.next_step(e, "b")
+    assert s["task_id"] == "b" and s["action"] == "execute", s
+    assert {x["task_id"] for x in T.next_steps(e, "b")["steps"]} == {"b"}
+    e.stop()
+
+
+def test_a_signal_reply_names_the_signers_own_step_before_anothers():
+    """On a graph several parties move, the reply to a signal named another's verdict first while the signer's own
+    taken work stood unnamed (the dev graph, 2026-11-20); another's step is named only when none is the signer's."""
+    e = make_engine(check_interval=10_000)
+    e.start()
+    T.create_task(e, "root", {"description": "r", "criteria": [criterion("c", "C"), criterion("d", "D")]},
+                  assignee="boss")
+    T.decompose(e, "root", [{"task_id": "a", "spec": {"description": "a", "criteria": [criterion("a1", "A")]},
+                             "assignee": "ua", "covers": ["c"]},
+                            {"task_id": "b", "spec": {"description": "b", "criteria": [criterion("b1", "B")]},
+                             "assignee": "ub", "covers": ["d"]}], accepted_risks=REGISTER)
+    T.signal(e, "a", "ACCEPT", "ua")
+    T.signal(e, "a", "DELIVER", "ua", result="did it")
+    out = T.signal(e, "b", "ACCEPT", "ub")
+    assert "'b'" in out["next"] and "EXECUTE" in out["next"] and "next_is_mine" not in out, out
+    e.stop()

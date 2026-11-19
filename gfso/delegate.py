@@ -982,13 +982,12 @@ class Dispatcher:
         """Say, once per delivery, that no validator is coming and why (§10.3)."""
         self._say_once(
                 f"internal:{self._round_key(task, 'v:')}",
-                f"{s['task_id']}: delivered and NOT auto-validated — it is an internal "
-                f"node (its Del is its parent's), which §10.3 lets self-verify: its "
-                f"guarantee is carried by the validation of the public result above it. "
-                f"It waits for its issuer ({self._engine.graph.issuer_of(TaskId(s['task_id']))}) "
-                f"to signal PASS/FAIL. Observation of every delivery is the default and this "
-                f"installation set GFSO_VALIDATE_INTERNAL=0; to make this node a seam, give it a "
-                f"different executor from its parent's.")
+                f"{s['task_id']}: delivered and checked by its holder, not the validator — below the "
+                f"seam a node self-verifies (§10.3), its guarantee carried by the validation of the "
+                f"result above it. Its issuer ({self._engine.graph.issuer_of(TaskId(s['task_id']))}) "
+                f"signs PASS/FAIL; `validate_result` checks it first when asked, and "
+                f"`set_checker('{s['task_id']}', 'validator')` on the person's words has the validator "
+                f"check every delivery.")
 
     def _say_it_waits_for_its_children(self, s: dict, task) -> None:
         """Say, once per open set, which children a delivered parent is still aggregating."""

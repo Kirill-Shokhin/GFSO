@@ -170,7 +170,9 @@ class NodeSteps:
                     + (f". {theirs}." if (theirs := self.engine.persons_verdict(t.id)) else
                        f". Read it with `get_verdict {t.id}`, then signal "
                        + (f"{Verdict.FAIL} with those criteria." if _f else f"{Verdict.PASS}."))
-                    + " Validating it again would validate the same artifact twice.")
+                    + (" `validate_result` checks it first if you want it checked."
+                       if str(_rec.get("validator") or "") == str(t.assignee or "") else
+                       " Validating it again would validate the same artifact twice."))
             return cand
         # …and the ISSUER's own share of the same fact: a criterion that has failed round
         # after round is a criterion to re-read, not only a delivery to validate. The engine
@@ -680,6 +682,23 @@ def _left_standing(left: list[str]) -> dict:
 _WALKED: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
+def beneath(tasks, root_id) -> list:
+    """`tasks` within `root_id`'s subtree, itself included, in one pass over the parent edges — every task where none."""
+    if not root_id:
+        return list(tasks)
+    parent = {str(t.id): str(t.parent_id) for t in tasks if t.parent_id}
+    inside, outside = {str(root_id)}, set()
+    def _in(i):
+        path = []
+        while i not in inside and i not in outside:
+            path.append(i)
+            if (i := parent.get(i)) is None:
+                break
+        (inside if i in inside else outside).update(path)
+        return path[0] in inside if path else i in inside
+    return [t for t in tasks if _in(str(t.id))]
+
+
 def walked_once(frontier, root_id, walk):
     """`walk()` once per door call (`ONE_CALL`) of a graph nothing wrote meanwhile: a move's reply and the news beside
     it each walked the whole graph for one answer (measured 2026-11-18). Outside a call every walk is fresh — what a
@@ -1112,7 +1131,8 @@ class Frontier:
         under_way = _ancestors_of_work(tasks)   # once per walk: a question must not grow with the graph
 
         cands = []  # (priority, task, action, directive); lower priority acts first
-        for t in tasks:
+        # …only beneath the node asked: walking every task handed one stream's holder another's verdict to sign
+        for t in (tasks := beneath(tasks, root_id)):
             kids = self.engine.graph.get_active_children(t.id)
             # EVERY criterion: V is the conjunction over ALL of them (§2.3), which is what `record_verdict`
             # enforces — a directive listing fewer had a person refused for the one it left out (human door

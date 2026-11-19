@@ -41,8 +41,8 @@ def _observed(monkeypatch):
 
 
 def _solo_delivered_kid(mode=Mode.SOLO, required=True):
-    """…its check made binding by the person where `required`: under solo the person's agent holds every node, so below
-    the root's seam a part self-verifies unless they make its check a must (the author, 2026-11-20)."""
+    """…the validator chosen by its issuer to check it where `required`: under solo the person's agent holds every node,
+    so below the root's seam a part self-verifies unless its issuer chooses the validator (the author, 2026-11-20)."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     e.project_name = "p"
@@ -51,7 +51,7 @@ def _solo_delivered_kid(mode=Mode.SOLO, required=True):
     _split(e)
     e.wait_idle()
     if required:
-        e.require_check(TaskId("kid"), True, AgentId("user"), "проверяй эту часть каждый раз")
+        e.set_checker(TaskId("kid"), "validator", AgentId("user"), "проверяй эту часть каждый раз")
     for s in ("ACCEPT",):
         T.signal(e, "root", s, "user")
         T.signal(e, "kid", s, "user")
@@ -83,7 +83,7 @@ def test_the_observers_record_opens_it():
 
 def test_with_no_mode_the_self_check_still_closes_an_internal_node():
     """No mode, no staffed instrument: the executor's word is the only record there is (§10.3)."""
-    e = _solo_delivered_kid(mode=None)
+    e = _solo_delivered_kid(mode=None, required=False)
     assert T.signal(e, "kid", "PASS", "user")["state"] == "DONE"
     e.stop()
 
@@ -336,7 +336,7 @@ def test_the_page_reads_many_verdicts_at_once_with_each_nodes_own_answers():
     e.stop()
 
 
-def test_under_solo_a_part_whose_check_the_person_did_not_bind_closes_on_its_holders_self_check():
+def test_under_solo_a_part_its_issuer_left_to_himself_closes_on_its_holders_self_check():
     """Below the root's seam a part of the person's agent self-verifies (§10.3): no seam, no appointed observer owed."""
     e = _solo_delivered_kid(required=False)
     assert not e.observed_here(TaskId("kid")) and e.observed_here(TaskId("root"))
@@ -344,20 +344,70 @@ def test_under_solo_a_part_whose_check_the_person_did_not_bind_closes_on_its_hol
     e.stop()
 
 
-def test_binding_a_check_is_the_persons_words_and_the_issuers_act():
+def test_who_checks_is_the_persons_words_and_the_issuers_act():
     e = _solo_delivered_kid(required=False)
-    assert TL.require_check(e, "kid", agent="user").get("refused"), "a check made binding with no word of the person's"
-    assert TL.require_check(e, "kid", user_said="проверяй", agent="someone").get("refused"), "by one not its issuer"
-    assert TL.require_check(e, "kid", user_said="проверяй", agent="user")["required"] and e.observed_here(TaskId("kid"))
-    assert not T.signal(e, "kid", "PASS", "user").get("accepted"), "a bound check's PASS stood on the self-check"
-    assert TL.require_check(e, "kid", False, user_said="хватит", agent="user") and not e.observed_here(TaskId("kid"))
+    assert TL.set_checker(e, "kid", agent="user").get("refused"), "the validator chosen with no word of the person's"
+    assert TL.set_checker(e, "kid", user_said="проверяй", agent="someone").get("refused"), "by one not its issuer"
+    assert TL.set_checker(e, "kid", "nobody", user_said="проверяй", agent="user").get("refused"), "a checker not named"
+    assert not e.observed_here(TaskId("kid")), "a refused choice wrote it"
+    assert TL.set_checker(e, "kid", user_said="проверяй", agent="user")["checker"] == "validator"
+    assert e.observed_here(TaskId("kid"))
+    assert not T.signal(e, "kid", "PASS", "user").get("accepted"), "the validator's check was skipped for the self-check"
+    assert TL.set_checker(e, "kid", "self", user_said="хватит", agent="user") and not e.observed_here(TaskId("kid"))
     e.stop()
 
 
-def test_a_bound_check_is_read_on_the_node():
-    """The page draws the box from the node: a setting it could not read redrew it unticked (ui, 64ef46d)."""
+def test_who_checks_is_read_on_the_node():
+    """The page draws the box from the node: a setting it could not read redrew it unticked (ui, 64ef46d) — and the
+    root, a seam, reads the validator, which it always has."""
     e = _solo_delivered_kid(required=True)
-    assert T.get_task(e, "kid")["check_required"] is True and T.get_task(e, "root")["check_required"] is False
+    assert T.get_task(e, "kid")["checker"] == "validator" and T.get_task(e, "root")["checker"] == "validator"
     nodes = {n["id"]: n for n in T.get_graph(e)["nodes"]}
-    assert nodes["kid"].get("check_required") is True and "check_required" not in nodes["root"]
+    assert nodes["kid"].get("checker") == "validator" and nodes["root"].get("checker") == "validator"
+    TL.set_checker(e, "kid", "self", user_said="сам", agent="user")
+    assert T.get_task(e, "kid")["checker"] == "self" and "checker" not in {n["id"]: n for n in T.get_graph(e)["nodes"]}["kid"]
+    e.stop()
+
+
+def test_at_a_seam_who_checks_is_no_choice():
+    """A part another executor holds is a seam: the validator checks every delivery there whatever its issuer says, so
+    the choice is neither offered nor taken — a box that toggled nothing read «otherwise by you», false (ui's critic)."""
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    e.project_name = "p"
+    _split(e, executor="exec-1")
+    e.wait_idle()
+    assert T.get_task(e, "kid")["checker"] == "self", "no mode staffs a validator: its holder's self-check closes it"
+    assert "set_checker" not in T.available_actions(e, "kid", agent="user")["moves"]
+    e.set_mode(Mode.SOLO, None, AgentId("user"))
+    assert T.get_task(e, "kid")["checker"] == "validator"
+    assert TL.set_checker(e, "kid", "self", user_said="сам", agent="user").get("refused"), "a seam's check waived"
+    assert e.observed_here(TaskId("kid"))
+    assert "set_checker" not in T.available_actions(e, "kid", agent="user")["moves"]
+    e.stop()
+
+
+def test_with_no_mode_the_validator_checks_where_one_is_registered(tmp_path):
+    """No mode: with no validator staffed the holder's self-check closes a node, and the choice cannot be made — said
+    as that, not as a seam; once a validator is registered it observes every delivery by itself and its FAIL holds
+    the PASS, so the node says the validator checks it (critic over the chooser: it said "self" there)."""
+    e = _solo_delivered_kid(mode=None, required=False)
+    assert T.get_task(e, "kid")["checker"] == "self"
+    r = TL.set_checker(e, "kid", user_said="проверяй", agent="user")
+    assert r.get("refused") and "no validator is staffed" in r["error"], r
+    agents = _agents(tmp_path, ("p-val", "llm-validator"))
+    agents._agents["p-val"]["project"] = "p"
+    _dispatch_validate(e, agents, {"verdict": "FAIL", "failed_criteria": ["k"], "per_criterion": [
+        {"criterion": "k", "verdict": "fail", "evidence": "ran `check k`: NO", "behaviours": ["the criterion holds"],
+         "probe": [{"command": "check k", "expect": "it holds"}]}]})
+    assert T.get_task(e, "kid")["checker"] == "validator"
+    assert not T.signal(e, "kid", "PASS", "user").get("accepted")
+    r = TL.set_checker(e, "kid", "self", user_said="сам", agent="user")
+    assert r.get("refused") and "a scope no one executor session carries" in r["error"], "named a seam it is not"
+    e.stop()
+
+
+def test_the_choice_is_offered_where_it_exists():
+    e = _solo_delivered_kid(required=False)
+    assert T.available_actions(e, "kid", agent="user")["moves"].get("set_checker") == "user"
     e.stop()

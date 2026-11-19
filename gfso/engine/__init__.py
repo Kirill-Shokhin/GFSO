@@ -64,7 +64,8 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          issuing_condition, rule_refusal, signer_refusal, whole_waits_for_its_parts,
                          parts_outside_the_delivery as _parts_outside_the_delivery, mode_kind, party_kind, is_auto_root,
                          displaces_a_refutation, observation_blocker,
-                         fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here, held_in_chat as _held_in_chat, CHECK_REQUIRED,
+                         fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here, held_in_chat as _held_in_chat,
+                         owed_observer as _owed_observer, VALIDATOR_CHOSEN, CHECKERS,
                          session_fit as _session_fit, scope_top as _scope_top,
                          scope_members as _scope_members, split_owed as _split_owed,
                          deferral_refused as _deferral_refused, split_waits_on as _split_waits_on,
@@ -3198,30 +3199,48 @@ class Engine:
         t = self._graph.get_task(task_id)
         return t is not None and _held_in_chat(self._graph, t)
 
-    def require_check(self, task_id: TaskId, required: bool, author: AgentId, said: str) -> list:
-        """Make the instrument observe every delivery of `task_id` — its PASS then standing on that record — or lift
-        it: the issuer's setting (§10.2), on the person's words, heard over the goal. The ids it now holds."""
+    def set_checker(self, task_id: TaskId, checker: str, author: AgentId, said: str) -> list:
+        """Who checks `task_id`'s deliveries — "self", its holder, or "validator", the instrument, its PASS then standing
+        on that record: the issuer's choice where no seam owes the instrument (§10.2, §10.3), the signature his either
+        way; on the person's words, heard over the goal. The ids whose issuer chose the validator."""
+        if checker not in CHECKERS:
+            raise ValueError(f"checker is one of {', '.join(CHECKERS)}, not '{checker}'")
         if (t := self._graph.get_task(task_id)) is None:
             raise ValueError(f"task {task_id} not found")
         if str(author) != str(self._graph.issuer_of(task_id)):
-            raise ValueError(f"'{author}' is not the issuer of {task_id}: whether its check binds is its issuer's "
-                             f"setting — '{self._graph.issuer_of(task_id)}' (§10.2)")
-        held = [i for i in json.loads(self._storage.get_setting(CHECK_REQUIRED) or "[]") if i != str(task_id)]
-        held += [str(task_id)] if required else []
-        self._storage.store_setting(CHECK_REQUIRED, json.dumps(held))
+            raise ValueError(f"'{author}' is not the issuer of {task_id}: who checks it is its issuer's choice — "
+                             f"'{self._graph.issuer_of(task_id)}' (§10.2)")
+        if not self.validator_staffed():
+            raise ValueError(f"no validator is staffed in this project to check {task_id}: a mode sets one, or "
+                             f"`register_agent(<name>, 'llm-validator')` (§10.2)")
+        if (why := _owed_observer(self._graph, t)) is not None:
+            raise ValueError(f"the validator checks every delivery of {task_id}, not its issuer's to choose: {why}")
+        held = [i for i in self.validators_chosen() if i != str(task_id)] + ([str(task_id)] if checker == "validator"
+                                                                             else [])
+        self._storage.store_setting(VALIDATOR_CHOSEN, json.dumps(held))
         root = t
         while (p := self._graph.get_parent(root.id)) is not None:
             root = p
-        self.hear(root.id, "check", said, node=str(task_id), required=bool(required))
+        self.hear(root.id, "checker", said, node=str(task_id), checker=checker)
         return held
 
-    def checks_required(self) -> list:
-        """The ids of the nodes whose check the person made binding (`require_check`)."""
-        return json.loads(self._storage.get_setting(CHECK_REQUIRED) or "[]")
+    def validators_chosen(self) -> list:
+        """The ids of the nodes whose issuer chose the validator to check them (`set_checker`)."""
+        return json.loads(self._storage.get_setting(VALIDATOR_CHOSEN) or "[]")
 
-    def check_required(self, task_id: TaskId) -> bool:
-        """Is this node's check binding (`require_check`)?"""
-        return str(task_id) in self.checks_required()
+    def validator_staffed(self) -> bool:
+        """Is there a validator to observe this project's deliveries — a mode staffs one, or one is registered?"""
+        return self.mode() is not None or self.workforce.has_an_instrument()
+
+    def checker_choosable(self, task_id: TaskId) -> bool:
+        """Is who checks this node its issuer's to choose — a validator staffed, nothing owing it there (`set_checker`)?"""
+        t = self._graph.get_task(task_id)
+        return t is not None and self.validator_staffed() and _owed_observer(self._graph, t) is None
+
+    def checker(self, task_id: TaskId) -> str:
+        """Who checks this node's deliveries now: "validator" where a staffed one observes them, else "self", its
+        holder, whose self-check closes it (§10.3)."""
+        return "validator" if self.validator_staffed() and self.observed_here(task_id) else "self"
 
     def observed_here(self, task_id: TaskId) -> bool:
         """Does the instrument observe this node's deliveries (`validation.observed_here`)?"""

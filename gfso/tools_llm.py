@@ -1916,7 +1916,7 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
             f"yourself on the branch `{work_branch(engine)}` and commit; "
             + (f"take each part ({', '.join(parts)}) in turn — ACCEPT it, do it, DELIVER it with your self-check, and "
                f"PASS it yourself: below the root it is yours (`validate_result` has it checked when you want, "
-               f"`require_check` makes that a must on the person's words) — and DELIVER `{root_id}` once every part "
+               f"`set_checker` gives it to the validator on the person's words, you signing either way) — and DELIVER `{root_id}` once every part "
                f"has passed" if parts else f"DELIVER `{root_id}`")
             + f" (`signal`, your self-check in `result`); a validator other than you observes `{root_id}` against its "
               f"checks and the parts' own, by itself.")
@@ -3352,21 +3352,22 @@ MAKES_A_PROJECT = _tools.MAKES_A_PROJECT
 may_make_a_project = _tools.may_make_a_project
 
 
-def require_check(engine: Engine, task_id: str, required: bool = True, user_said: str = "", agent: str = "") -> dict:
-    """Make a node's check BINDING — the project's validator observes each of its deliveries by itself, and its PASS
-    stands on that record — or lift it (`required=False`). Below the root's seam a node of yours self-verifies (§10.3)
-    and you may still have it checked whenever you call `validate_result`; this makes the check a must, the person's
-    choice: pass their words asking for it as `user_said` (§10.2: a check of its own at any node, set by the issuer)."""
+def set_checker(engine: Engine, task_id: str, checker: str = "validator", user_said: str = "", agent: str = "") -> dict:
+    """WHO CHECKS a node below the root's seam — `"self"`, you its holder (the default there, §10.3; `validate_result`
+    still checks it whenever you call it), or `"validator"`, the project's validator observing each delivery by itself,
+    its PASS standing on that record. Either way the signature is yours, its issuer's (§10.2). The person's choice: pass
+    their words asking for it as `user_said`. At a seam the validator always checks — not a choice."""
     if not str(user_said).strip() and not ((p := CALLER.get()) is not None and p.a_page):
-        return {"refused": True, "error": "whether a node's check binds is the person's to set: ask them, and pass their "
-                                          "words asking for it as `user_said`"}
+        return {"refused": True, "error": "who checks a node is the person's to choose: ask them, and pass their words "
+                                          "asking for it as `user_said`"}
     try:
-        held = engine.require_check(TaskId(task_id), bool(required), AgentId(agent or _agent_id()), user_said)
+        held = engine.set_checker(TaskId(task_id), str(checker), AgentId(agent or _agent_id()), user_said)
     except ValueError as e:
         return {"refused": True, "error": str(e)}
-    return {"task_id": task_id, "required": bool(required), "nodes_checked_on_every_delivery": held,
-            "say": (f"each delivery of {task_id} is now observed by the validator, and its PASS stands on that record"
-                    if required else f"{task_id} self-verifies again; `validate_result` still checks it when called")}
+    return {"task_id": task_id, "checker": checker, "checked_by_the_validator": held,
+            "say": (f"the validator now checks each delivery of {task_id}, and its PASS stands on that record; you "
+                    f"sign it" if checker == "validator" else
+                    f"{task_id} is checked by you, its holder, and you sign it; `validate_result` checks it when called")}
 
 
 def canon(engine: Engine, section: str = "") -> dict:
@@ -3491,7 +3492,7 @@ _RAW_TOOLS = {
     "plan": plan, "refine_plan": refine_plan,         # a plan with no project, written in its own thread (`_once`)
     "review_decomposition": _tracked("review_decomposition", review_decomposition),   # L2, §9.1
     "validate_result": _tracked("validate_result", validate_result),                  # §10.1
-    "require_check": require_check,                                                   # §10.2, the issuer's
+    "set_checker": set_checker,                                                       # §10.2, the issuer's
     "register_agent": register_agent, "unregister_agent": unregister_agent, "list_agents": list_agents,                     # the roster
     "set_mode": set_mode,                                                             # who holds what
     "stop_project": stop_project, "start_project": start_project,                     # the run's switch
