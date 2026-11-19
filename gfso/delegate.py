@@ -998,7 +998,8 @@ class Dispatcher:
                 f"signs PASS/FAIL"
                 + ("; `validate_result` checks it first when asked" if self._engine.held_in_chat(task.id) else "")
                 + (f"; `set_checker('{s['task_id']}', 'validator')` on the person's words has the validator "
-                   f"check every delivery" if self._engine.checker_choosable(task.id) else "") + ".")
+                   f"check every delivery" if self._engine.checker_choosable(task.id)
+                   and str(self._engine.graph.issuer_of(task.id)) == _config_agent_id() else "") + ".")
 
     def _say_it_waits_for_its_children(self, s: dict, task) -> None:
         """Say, once per open set, which children a delivered parent is still aggregating."""

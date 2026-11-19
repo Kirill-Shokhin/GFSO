@@ -497,7 +497,7 @@ def owed_observer(graph: Graph, task) -> Optional[str]:
         return "it is a seam: its result crosses into another scope (§10.3)"
     if _validate_internal():
         return "this installation observes every delivery (GFSO_VALIDATE_INTERNAL=1)"
-    if not (within_a_scope(graph, task) or held_in_chat(graph, task)):
+    if not (held_in_chat(graph, task) or within_a_scope(graph, task)):
         return "it is the top of a scope no one executor session carries, where the system's validation stands (§3.7)"
     return None
 

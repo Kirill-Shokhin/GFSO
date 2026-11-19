@@ -1346,7 +1346,7 @@ def _parties(engine: Engine, tasks) -> list[dict]:
 
 def graph_read(engine: Engine) -> dict:
     """The graph with no word on what comes next: what `get_graph` answers, less the frontier the page reads by `next_steps`."""
-    tasks = engine.all_tasks()
+    tasks, staffed = engine.all_tasks(), engine.validator_staffed()      # …read once for every node's checker
     nodes = [{"id": str(t.id), "name": t.label(), "state": t.state.name,
               "assignee": t.assignee,        # who holds this node — the graph read answered `null` for
                                              # every node while `get_task` named the executor (2026-08-21)
@@ -1365,7 +1365,7 @@ def graph_read(engine: Engine) -> dict:
               "closure": engine.closure_of(t.id),
               # …and who checks its deliveries where the validator does (a seam, or its issuer's choice), as the page
               # draws its box; absent, its holder self-verifies
-              **({"checker": c} if (c := engine.checker(t.id)) != "self" else {}),
+              **({"checker": c} if (c := engine.checker(t.id, staffed)) != "self" else {}),
               "parent_id": str(t.parent_id) if t.parent_id else None} for t in tasks]
     edges = [{"source": str(t.parent_id), "target": str(t.id), "type": "parent-child"}
              for t in tasks if t.parent_id]
@@ -2791,8 +2791,8 @@ def next_for(engine: Engine, me: Optional[str], about: Optional[str] = None, ent
     # none.
     # …AND YOURS FIRST. On a graph several parties move, the frontier's head was often another's verdict to sign while
     # the caller's own taken work stood unnamed (the dev graph, 2026-11-20); theirs is named only when none is yours
-    mine = next((s for s in _mark_mine(engine, engine.next_steps(), me=me).get("steps", []) if s.get("mine")), None)
-    nxt = mine or _mark_mine(engine, dict(nxt), me=me)
+    if not (nxt := _mark_mine(engine, dict(nxt), me=me)).get("mine", True):     # …the second walk only when the head is not
+        nxt = next((s for s in _mark_mine(engine, engine.next_steps(), me=me).get("steps", []) if s.get("mine")), nxt)
     other = about is not None and nxt.get("task_id") and str(nxt["task_id"]) != str(about)
     out = {"next": (f"next on the frontier is '{nxt['task_id']}', not {about}: " if other else "")
                    + nxt["directive"]}

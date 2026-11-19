@@ -160,3 +160,17 @@ def test_a_people_s_graph_with_a_node_on_the_standing_agent_runs_on_until_the_sy
     default_agents().register("w-val", "llm-validator", workdir=str(tmp_path), project="watched")
     assert reg.engine("mine").paused() is None, "nothing of the system's runs there"
     assert reg.engine("watched").paused()["by"] == "system", "its own validator would run unattended"
+
+
+def test_a_node_the_standing_agent_issues_to_another_still_stops_its_project(monkeypatch, tmp_path):
+    """No mode, nothing registered, but a live node the standing agent issued to another: the system answers its dispute
+    for the issuer (`issuer.system_mover`), a model turn with nobody there — so the start's stop stands (third critic over
+    9896843, which let it run on)."""
+    monkeypatch.setenv("GFSO_HOME", str(tmp_path / "home"))
+    e = make_engine(storage=SqliteStorage(str(tmp_path / "given.db")))
+    e.start()
+    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("g")]}, assignee="kirill", agent="user")
+    e.wait_idle()
+    e.stop()
+    e.graph._storage.close()
+    assert _registry(monkeypatch, tmp_path).engine("given").paused()["by"] == "system"

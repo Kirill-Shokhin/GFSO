@@ -3063,14 +3063,16 @@ class Engine:
 
     def _machine_holds_a_live_node(self) -> bool:
         """A live node held or issued by a party the system moves for: a machine, or the standing agent with no mode
-        (`legacy`) where the system has hands here — an executor or an instrument of this project. With none, nothing
-        of the system's runs, and a graph people hold read «Stopped» after every restart (the author's root, re-offered
-        to his page's name, 2026-11-20; «перезапуск ничего ломать не может»)."""
-        roster = self.workforce.roster()
-        kinds = ("machine", "legacy") if self.workforce.executor_pool() or self.workforce.has_an_instrument() else ("machine",)
-        return any(party_kind(self._graph, str(p), roster) in kinds
-                   for t in self.all_tasks() if t.state not in TERMINAL_STATES
-                   for p in (t.assignee, self._graph.issuer_of(t.id)) if p)
+        (`legacy`) where the system moves for it — its hands here (an executor or an instrument of this project), or a
+        node it issues to another, whose dispute the system answers (`issuer.system_mover`). Where none, nothing of the
+        system's runs, and a graph people hold read «Stopped» after every restart (the author's root, re-offered to his
+        page's name, 2026-11-20; «перезапуск ничего ломать не может»)."""
+        roster, hands = self.workforce.roster(), self.workforce.executor_pool() or self.workforce.has_an_instrument()
+        def _moved(t, p, issues: bool) -> bool:
+            k = party_kind(self._graph, str(p), roster)
+            return k == "machine" or k == "legacy" and (hands or issues and str(t.assignee) != str(p))
+        return any(_moved(t, t.assignee, False) or _moved(t, self._graph.issuer_of(t.id), True)
+                   for t in self.all_tasks() if t.state not in TERMINAL_STATES)
 
     def issuer_kind(self, task_id: TaskId, registered=None) -> str:
         """`validation.party_kind` of this node's issuer — who makes its issuer moves (holder / machine / legacy /
@@ -3242,14 +3244,14 @@ class Engine:
         t = self._graph.get_task(task_id)
         return t is not None and self.mode() is not None and _owed_observer(self._graph, t) is None
 
-    def checker(self, task_id: TaskId) -> str:
+    def checker(self, task_id: TaskId, staffed: Optional[bool] = None) -> str:
         """Who checks this node's deliveries, read off the gates its PASS meets: "validator" where a staffed one observes
         each by itself; "independent" at a seam none observes — the PASS needs a verdict not the executor's
         (`validate_result`, or the issuer's own record, §10.3); else "self", its holder's self-check closing it."""
         t = self._graph.get_task(task_id)
         if t is None:
             return "self"
-        return ("validator" if self.validator_staffed() and self.observed_here(task_id)
+        return ("validator" if (self.validator_staffed() if staffed is None else staffed) and self.observed_here(task_id)
                 else "independent" if self._graph.is_public(t) else "self")
 
     def observed_here(self, task_id: TaskId) -> bool:
