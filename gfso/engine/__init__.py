@@ -3215,6 +3215,14 @@ class Engine:
         self.hear(root.id, "check", said, node=str(task_id), required=bool(required))
         return held
 
+    def checks_required(self) -> list:
+        """The ids of the nodes whose check the person made binding (`require_check`)."""
+        return json.loads(self._storage.get_setting(CHECK_REQUIRED) or "[]")
+
+    def check_required(self, task_id: TaskId) -> bool:
+        """Is this node's check binding (`require_check`)?"""
+        return str(task_id) in self.checks_required()
+
     def observed_here(self, task_id: TaskId) -> bool:
         """Does the instrument observe this node's deliveries (`validation.observed_here`)?"""
         t = self._graph.get_task(task_id)

@@ -274,7 +274,7 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
         # answer — and over HTTP a 200 with an empty body, which reads as success.
         return {"error": f"unknown task {task_id} — check the id, or `project=` if you meant "
                          f"another graph (`get_graph` lists what this one holds)"}
-    out = task_out(t, engine)
+    out = {**task_out(t, engine), "check_required": engine.check_required(t.id)}   # …binding by `require_check`
     if (blocked := _blocked_by(engine, t)):
         out["blocked_by"] = blocked
     # …the validator's findings standing on it — what a ruling (ACCEPT_CHALLENGE `retire_findings`) names by id
@@ -1345,7 +1345,7 @@ def _parties(engine: Engine, tasks) -> list[dict]:
 
 def graph_read(engine: Engine) -> dict:
     """The graph with no word on what comes next: what `get_graph` answers, less the frontier the page reads by `next_steps`."""
-    tasks = engine.all_tasks()
+    tasks, _required = engine.all_tasks(), set(engine.checks_required())
     nodes = [{"id": str(t.id), "name": t.label(), "state": t.state.name,
               "assignee": t.assignee,        # who holds this node — the graph read answered `null` for
                                              # every node while `get_task` named the executor (2026-08-21)
@@ -1362,6 +1362,8 @@ def graph_read(engine: Engine) -> dict:
               # i.e. never while there is still work in it (wave 26, 2026-09-06). `null` until the
               # node settles positive: there is nothing to weigh about a node still in flight.
               "closure": engine.closure_of(t.id),
+              # …and whether its check binds (`require_check`), per node, as the page draws its box
+              **({"check_required": True} if str(t.id) in _required else {}),
               "parent_id": str(t.parent_id) if t.parent_id else None} for t in tasks]
     edges = [{"source": str(t.parent_id), "target": str(t.id), "type": "parent-child"}
              for t in tasks if t.parent_id]

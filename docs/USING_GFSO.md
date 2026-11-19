@@ -390,7 +390,10 @@ but where it is not covered by one session's scope it is observed: the system's 
 every seam and at the top of every part of the plan larger than one session (the plan's author judges
 each part against the executor's model), and under a mode a PASS there stands on that observer's record,
 not on the evidence the executor put in the delivery. Inside one session's scope the scope's validation at
-its top runs every criterion of its pieces; `GFSO_VALIDATE_INTERNAL=1` observes every delivery.
+its top runs every criterion of its pieces; `GFSO_VALIDATE_INTERNAL=1` observes every delivery. Under solo and
+semi performed in your chat, the parts you hold are one scope whatever their size: they self-verify, the root's
+validation runs their pinned checks, `validate_result` checks one when you ask, and `require_check(node, user_said=)`
+makes a part's check binding on the person's words.
 
 **A green that is not green does not stay quiet.** A signature can land before the instrument's
 verdict does — you sign, and the validator that was already running reports `FAIL` a few seconds later at

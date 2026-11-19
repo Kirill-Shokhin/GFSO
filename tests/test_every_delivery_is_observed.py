@@ -352,3 +352,12 @@ def test_binding_a_check_is_the_persons_words_and_the_issuers_act():
     assert not T.signal(e, "kid", "PASS", "user").get("accepted"), "a bound check's PASS stood on the self-check"
     assert TL.require_check(e, "kid", False, user_said="хватит", agent="user") and not e.observed_here(TaskId("kid"))
     e.stop()
+
+
+def test_a_bound_check_is_read_on_the_node():
+    """The page draws the box from the node: a setting it could not read redrew it unticked (ui, 64ef46d)."""
+    e = _solo_delivered_kid(required=True)
+    assert T.get_task(e, "kid")["check_required"] is True and T.get_task(e, "root")["check_required"] is False
+    nodes = {n["id"]: n for n in T.get_graph(e)["nodes"]}
+    assert nodes["kid"].get("check_required") is True and "check_required" not in nodes["root"]
+    e.stop()

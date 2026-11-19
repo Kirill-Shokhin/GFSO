@@ -45,7 +45,27 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   takes no index lock, and is silent on a settled project. Each recorded write is a `witnessed` line on the project's
   live feed, so an open page re-reads the count at once; the count is every write ever recorded, the last hundred kept.
 
+- Where the person holds the root (solo or semi, performed in their chat) the go adds the criterion
+  `answers_the_persons_words`: the validator reads the result against the person's own recorded words — the goal as
+  given, each go, revision and verdict — and a non-pass quotes one span of them. On by default there; `set_mode
+  (intent_check=)` turns it, on the person's words; the page shows the switch before the go.
+- `require_check(task_id, required, user_said)`: the issuer makes a node's check binding — the validator observes its
+  every delivery and its PASS stands on that record — on the person's words (§10.2).
+- `set_mode(..., workdir=)` registers the project's validator where it has none, and on the agent door `project=`
+  enters that project: a small solo in_chat task takes the canon's acts — set_mode, the plan asked and handed in, the
+  go, DELIVER, `gfso wait`, the person's PASS — and no call beside them.
+- `get_verdict` serves `outside`: what the verdict on the current delivery saw beyond the written criteria, unanswered.
+
 ### Changed
+- A dependency is declared or removed only by its consumer's issuer — the holder of its parent's split (§11.5) — at
+  every door, every refusal read before anything is written; a revision's edges are written once its ASSIGN took.
+- Under solo and semi in_chat a part the person's agent holds self-verifies below the root's seam (§10.3): the
+  validator observes the root, running the parts' pinned checks, and a part only where its check was made binding;
+  `validate_result` checks one whenever the agent asks.
+- DELIVER starts the validation of an observed node by itself and says how its end is waited; the step that asks the
+  person to sign carries each criterion's reading — the one against their words first — and what the validator saw
+  outside the criteria on this delivery, each on one line under a bound that names where it is whole; `gfso wait`
+  prints that step whole.
 - A wait a person owns runs on a person's clock: where the party a waiting state waits on is the user-agent outside
   AUTO (SOLO, the part of SEMI it holds, its issuer moves over the children it issues, and a graph with no mode, where it
   is the person) or a person no registered role stands for, a project that sets no bounds of its own waits OFFERED,
