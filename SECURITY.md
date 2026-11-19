@@ -68,8 +68,14 @@ no forwarding header taken for the client, so the OS is always asked of the real
   `gfso status` and `/api/runtime` as `page_auth: key`; `--no-protected` undoes it) asks it to sign in as well:
   `gfso ui` opens a session on a one-time code written into gfso's state and spent on use, never in any verb's answer,
   so no credential passes through a model or its provider; the session signs as every name you own;
-- a console signs as the one name its token was issued for (`gfso agent <name>`, read from `GFSO_TOKEN`); a name the
-  system's roles hold (an executor's, a validator's) is not issued;
+- a console signs as the one name its token was issued for (`gfso agent <name>`, read from `GFSO_TOKEN`), or as the
+  one name its running connection took (`act_as`): locally by default a name you opened (a node you assigned to it)
+  or issued, taken by the claim alone — your OS user is you already, and the token file is readable by it, so a token
+  there would guard nothing and cost a relaunch; under `--protected` only with that name's token; past loopback not at
+  all, the token riding every call instead. The taking is kept with your name, the connection's digest and its time,
+  and holds for the connection's life — its bridge's lease, unguessable, honoured only from your own process at loopback — so the
+  connection never signs as you again; one live connection holds a name at a time. A name the system's roles hold (an
+  executor's, a validator's) is neither issued nor taken;
 - a local client that is no browser, with no credential, from your OS user, asking the server by a loopback name, signs
   as `user`, your name, as your standing agent — what keeps a fresh client working with no step at setup;
 - a browser page of another site, a call that names a front's host, a server bound past loopback, and any call carrying
@@ -83,7 +89,8 @@ your act whichever process made it. `--protected` adds that a process of yours m
 you from a browser; it can still reach the port as `user`, read gfso's state, or issue itself a token at your shell.
 What the signing protects is attribution: a name an agent saw and typed, or a stale field, signs nothing by itself;
 signing as another name takes its issuance, a step the log records beside the name (`via`: `session`, `local-peer`, the
-token's id, `default`). Sessions and tokens are kept hashed. The check of the OS user holds only while no other way to
+token's id, `default`, `as:` a digest of the connection that took the name). Sessions, tokens and leases are kept
+hashed. The check of the OS user holds only while no other way to
 the port arrives from a process of yours: the system's containers are kept off the host's loopback (below), and a
 connection a port forwarder holds — Docker Desktop's, which relays any container on the machine's engine, another
 account's in `docker-users` too — is not yours, and is served nothing without a token: what it carries may be a

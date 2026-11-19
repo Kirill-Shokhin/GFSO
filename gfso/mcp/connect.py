@@ -39,7 +39,7 @@ from mcp.types import ErrorData, JSONRPCError, JSONRPCMessage, JSONRPCRequest
 from gfso.adapters.children import detached
 from gfso.config import (reconcile_allowed, data_dir, db_path as _db_path, home,
                          install_spawned_server_env, spawned_server_popen_env)
-from gfso.config import LOOPBACK as _LOOPBACK, CLIENT_HEADER, launch_client, shared_url
+from gfso.config import LOOPBACK as _LOOPBACK, CLIENT_HEADER, LEASE_HEADER, launch_client, shared_url
 from gfso.signin import credential_header, launch_refusal
 
 URL = shared_url()
@@ -482,7 +482,8 @@ async def _relay(url: str, client_read, client_write) -> None:
     try:
         # this console's credential, set at its launch outside the agent, signs every move of this connection; its
         # client kind is the door entry's, said beside it
-        named = {**credential_header(), **({CLIENT_HEADER: c} if (c := launch_client()) else {})} or None
+        # …and its lease, the connection a name taken on it (`act_as`) is held under, the same across every rebuilt leg
+        named = {**credential_header(), LEASE_HEADER: LEASE, **({CLIENT_HEADER: c} if (c := launch_client()) else {})}
         async with streamablehttp_client(url, headers=named, terminate_on_close=True) as (srv_read, srv_write, _sid):
             # …on a reconnect; a no-op the first time. Bounded: a server that took the session and never answered its
             # handshake held the bridge here reading nothing of the client's, before any watch of its own (critic)
@@ -519,6 +520,12 @@ async def _relay(url: str, client_read, client_write) -> None:
             print(f"[gfso connect] {n} call(s) in flight were ended rather than left waiting",
                   file=sys.stderr, flush=True)
         raise
+
+
+#: this bridge's lease, one per process: held on the server by the heartbeat, and the connection every call names, so a
+#: name taken on it (`act_as`) outlives a `/clear` and a rebuilt leg and ends with this process; unguessable, as it
+#: names the connection a stream's name is held under
+LEASE = uuid.uuid4().hex
 
 
 def _heartbeat(url: str, lease_id: str, stop) -> None:
@@ -707,7 +714,7 @@ def main(argv: list | None = None) -> None:  # pragma: no cover — exercised li
               file=sys.stderr, flush=True)
         sys.exit(1)
     stop = threading.Event()
-    hb = threading.Thread(target=_heartbeat, args=(URL, uuid.uuid4().hex[:12], stop), daemon=True)
+    hb = threading.Thread(target=_heartbeat, args=(URL, LEASE, stop), daemon=True)
     hb.start()
     # RECONNECT, don't die. The HTTP leg breaks whenever the shared server restarts — an upgrade, a
     # deliberate `up --force`, a crash — and this used to end the bridge process. The client does not

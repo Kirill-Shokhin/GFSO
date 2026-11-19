@@ -293,6 +293,9 @@ STANDING = Principal(PERSON, (PERSON,), "default", "default", LOCAL_PERSON)
 
 #: the principal of the call being served, set by its door for that call only
 CALLER: contextvars.ContextVar = contextvars.ContextVar("gfso_caller", default=None)
+#: the header a bridge names its connection by — its lease (`/api/lease`), one per bridge process: what a name taken
+#: on the connection (`act_as`) is held under, so it outlives a `/clear` and a rebuilt leg, and ends with the bridge
+LEASE_HEADER = "X-GFSO-Lease"
 #: the header a bridge names its connection's client kind by — `GFSO_CLIENT` of the door's entry, set outside the agent
 CLIENT_HEADER = "X-GFSO-Client"
 #: `code`: a shell and files on the person's machine, and a background command whose exit wakes the model (Claude Code);

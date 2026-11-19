@@ -3300,8 +3300,9 @@ def _signed(name: str, fn):
         if (stranger := next((n for n in named if n not in p.signs_as), None)) is not None:
             raise ValueError(
                 f"`{name}` signed as '{stranger}': this call ({p.how}) signs only as {', '.join(p.signs_as)}. A name is "
-                f"signed by its credential, never typed: sign in on the page (`gfso ui`) to sign as any name you own, or "
-                f"launch with that name's token (`gfso agent {stranger}`, then GFSO_TOKEN=<token>)")
+                f"signed by its credential, never typed: take it on this connection (`act_as('{stranger}')`, a console "
+                f"of its own), sign in on the page (`gfso ui`) to sign as any name you own, or launch with that name's "
+                f"token (`gfso agent {stranger}`, then GFSO_TOKEN=<token>)")
         holder = _holder_of(ba.arguments.get("engine"), name, ba.arguments) if p.a_page else None
         signer = named[0] if named else holder if holder in p.signs_as else p.name
         # …into a signer the verb requires; one it defaults reads the caller (`_agent_id`), and its omission keeps its

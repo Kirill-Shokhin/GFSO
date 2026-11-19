@@ -342,15 +342,23 @@ move names no one, `signs_as` every name it may sign as.
 * **An agent session** (MCP, the CLI, `gfso wait`) with no credential signs as `user`, your name, as your standing agent; the name
   `auto_decompose` assigns nodes to unless you pass `assignee` — nothing to set up. `source` on `signal`, `agent` on
   the authoring verbs and `reviewer` on `record_verdict` are not in the MCP schema at all.
-* **A console of its own name** (`engineering`, a reviewer's console) runs with a token: `gfso agent <name>` at your
-  shell issues one for a name you own and prints the launch line, `GFSO_TOKEN=<token> claude`; its bridge and its CLI
-  both read it, and it signs as that name alone. `GFSO_AGENT_ID` names nothing now: a console launched with it and no
-  token is refused at connect, told the command to run.
+* **A console of its own name** (`engineering`, a reviewer's console) takes it while it runs: `act_as("engineering")`
+  over its gfso connection, for a name you opened — a node you assigned to it — or issued (`gfso agent <name>`). From
+  then on that connection signs as that name alone, until its gfso connection ends: `/clear` keeps it, a server
+  restart keeps it, and it never goes back to `user` nor takes another name (restart the connection, `/mcp`, for
+  that). One live connection holds a name at a time: a second console asking for it is refused, naming since when it
+  is held; once the first console's bridge is gone the name passes, and the first, should it come back, signs as no
+  one. `act_as()` with no name says who the connection signs as. Under `gfso up --protected` the claim is not enough:
+  pass `token=`, the one `gfso agent <name>` prints at your shell. Launching with that token (`GFSO_TOKEN=<token>
+  claude`) still works, and is the way past loopback, where every call carries its credential. The console's shell
+  (`gfso run`, `gfso wait`) stays you. `GFSO_AGENT_ID` names nothing now: a console launched with it and no token is
+  refused at connect, told what to do instead.
 * **A signer argument** at the CLI or over HTTP is taken only for a name the credential may sign as, and refused
   otherwise, naming what lifts it. The automatic paths — the dispatcher running an executor, an `llm-validator` role
   relaying its verdict — act only for the identities registered on the roster, never for a name you use once in a call.
 
-The log keeps beside each signer the credential it came through (`via`: `session`, the token's id, `default`): every
+The log keeps beside each signer the credential it came through (`via`: `session`, the token's id, `default`, `as:`
+and a digest of the connection that took the name): every
 name here is yours, so the credential is what tells your click on the page from your console's move.
 
 ## 5. The verdict is not yours to sign

@@ -25,8 +25,8 @@ except ImportError:  # pragma: no cover
     _lowlevel = None
 
 from gfso import updates
-from gfso.config import (CALLER, CLIENT, CLIENT_HEADER, CLIENT_KINDS, DEFAULT_PROJECT, agent_id, caller_id, client_kind,
-                         how_it_is_waited, ONE_CALL, ROOT_ID, project_by_env)
+from gfso.config import (CALLER, CLIENT, CLIENT_HEADER, CLIENT_KINDS, DEFAULT_PROJECT, LEASE_HEADER, PERSONS_NAMES,
+                         agent_id, caller_id, client_kind, how_it_is_waited, ONE_CALL, ROOT_ID, project_by_env)
 from gfso.engine import Engine
 from gfso.engine.moves import SIGNERS
 from gfso import signin
@@ -481,6 +481,50 @@ def _protocol(section: str = "") -> dict:
     return _PROTOCOL.reference(section)
 
 
+def _issued_by_the_person(engine, name: str) -> bool:
+    """Whether a node of `engine`'s graph is held by `name` and its Del was the person's to set (§10.1): issued by him,
+    or a root self-assigned to it — made at a door, every caller of which is the person locally; the system's roles
+    split, they make no root."""
+    g = engine.graph
+    return any(str(t.assignee) == name and (str(i := g.issuer_of(t.id)) in PERSONS_NAMES
+                                            or (g.get_parent(t.id) is None and str(i) == name))
+               for t in g.all_tasks())
+
+
+def _act_as(resolve):
+    """The door's `act_as` over `resolve` (`_resolver`): a verb of the connection, not of a graph."""
+    from mcp.server.fastmcp import Context as _Ctx      # LEFT: the MCP SDK is optional AT IMPORT (see `_bind`)
+
+    def act_as(name: str = "", token: str = "", project: str = "", ctx: _Ctx = None) -> dict:
+        """WHO THIS CONNECTION SIGNS AS, and the door to take a stream's name in a console already running. No `name`:
+        `{name, kind, how, signs_as}` of this connection. With `name` — a stream you opened (a node you assigned to
+        it) or a name issued to you — this connection signs as that name alone from now until its gfso connection
+        ends: `/clear` keeps it, and it never goes back to the person nor takes another. One live connection holds a
+        name at a time. Under `gfso up --protected` pass `token`, the one `gfso agent <name>` prints at your shell."""
+        if name:
+            p = CALLER.get()
+            if p is not None and not p.signs_as:
+                return {"refused": True, "error": f"this connection signs as no one: {p.lift}"}
+            if p is not None and p.via != "default" and not p.via.startswith("as:"):
+                return {"refused": True, "error": f"this connection signs as `{p.name}` by its {p.how}: a console "
+                        f"launched with a credential keeps it; take `{name}` in a console launched without one"}
+            try:
+                req = ctx.request_context.request
+            except (ValueError, LookupError, AttributeError):
+                req = None
+            try:
+                issued = _issued_by_the_person(resolve(project or None, ctx, create=False), name)
+            except Exception:           # …no project here: the names issued to him alone
+                issued = False
+            try:
+                CALLER.set(signin.take(req.headers.get(LEASE_HEADER) if req is not None else None, name, token, issued))
+            except ValueError as ex:
+                return {"refused": True, "error": str(ex)}
+        return signin.whoami()
+    act_as.__annotations__ = {"name": str, "token": str, "project": str, "ctx": _Ctx, "return": dict}
+    return act_as
+
+
 def _mount_project_verbs(server, reg) -> None:
     """The three verbs that are about WHICH graph a session stands in, not about a graph.
 
@@ -688,6 +732,8 @@ def create_server(engine_or_registry):
         server.add_tool(_bind(engine_or_registry, fn), name=name, description=(fn.__doc__ or "").strip(),
                         meta=ANSWER_ROOM.get(name))
     server.add_tool(_protocol, name="protocol", description=(_protocol.__doc__ or "").strip())   # the door's own text
+    act_as = _act_as(_resolver(engine_or_registry))
+    server.add_tool(act_as, name="act_as", description=(act_as.__doc__ or "").strip())
     if hasattr(engine_or_registry, "use"):    # ProjectRegistry → the project verbs
         _mount_project_verbs(server, engine_or_registry)
     return server

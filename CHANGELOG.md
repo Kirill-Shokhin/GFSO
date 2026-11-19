@@ -13,6 +13,16 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 ## [Unreleased]
 
 ### Added
+- A console already running takes a stream's name without a relaunch: `act_as(name)` over its own gfso connection, for
+  a name the person opened (a node he assigned to it, a root he made for it) or issued. The connection — its bridge's
+  lease, now sent with every call (`X-GFSO-Lease`) — signs as that name alone until it ends: `/clear` and a server
+  restart keep it, and it never returns to the person nor takes a second name. One live connection holds a name
+  (§2.6): a second is refused, naming since when it is held; past a lapsed lease the name passes and the old
+  connection signs as no one. The taking is kept in the sign-in state with person, connection digest, credential and
+  time, and every move after it records `via=as:<digest>` (Thm 11). Locally by default the claim suffices (the
+  connection's OS owner is the person); under `--protected` it takes the name's own token; past loopback it is refused
+  for the launch token. `act_as()` with no name says who the connection signs as. The lifts that said "launch with
+  GFSO_TOKEN" name it first.
 - Work past the system is measured from records, never refused (§16.9 #11, Cor. to Thm 11): `metrics` serves
   `past_the_system` per repository a project works in — the commits made there by hand during the project (git's
   reflogs of every worktree's HEAD and the person's branches; a pull, a checkout or a merge is no such commit) while no

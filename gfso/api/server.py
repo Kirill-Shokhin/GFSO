@@ -1141,6 +1141,7 @@ def _mount_lifecycle(app, _e, engine, _scope_name) -> None:
                 app.state.leases.pop(k, None)
         return list(app.state.leases)
     app.state.live_leases = _live_leases
+    signin.LIVE_LEASES = _live_leases     # …a name a connection took frees when its bridge's lease lapses (`act_as`)
 
     @app.post("/api/lease")
     async def renew_lease(body: dict = Body(...)):
