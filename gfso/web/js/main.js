@@ -8,7 +8,7 @@ import {loadCheckMap, terminal, FM} from './vocab.js';
 import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
 import {isHidden} from './fold.js';
 import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
-import {drawHeader, drawQuality, toggleReports, stopRun, startRun, setMode} from './header.js';
+import {drawHeader, drawQuality, toggleReports, stopRun, startRun, setMode, setIntent} from './header.js';
 import {refreshProjects, offerNew, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject, listOnly, switchHostRuns, rereadHostRuns} from './projects.js';
 import {selectTask, panelOpened, closeSidebar, resign, openReader, closeReader} from './panel.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
@@ -158,6 +158,14 @@ const ACT = {
         pop?.classList.remove('open'); pop?.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', 'false');
         pop?.querySelector('[data-action="pop"]')?.focus();
         if (await setMode(d) === '') { await S.reload(); await refreshHeader(); } },
+    // …the words check switched: the plan's criteria and the mode's line both read it again
+    // …redrawn either way: the browser ticks the box before the server answers, and a refusal left it ticked (critic)
+    intent: async (d, b) => { const pop = b.closest('.hd-quality'), where = pop ? null : b.closest('#goal-panel') ? 'goal' : 'plan';
+        pop?.classList.remove('open'); pop?.querySelector('[aria-expanded]')?.setAttribute('aria-expanded', 'false');
+        pop?.querySelector('[data-action="pop"]')?.focus();
+        await setIntent(d.on === '1'); await refreshHeader(); drawPlanning(); goal.recheckHolds();
+        if (pop) document.querySelector('.hd-mode')?.focus();      // the header is redrawn: its old button is gone
+        if (where) setTimeout(() => document.querySelector(`${where === 'goal' ? '#goal-panel' : '.cp-row'} input[data-action="intent"]`)?.focus(), 300); },
     close: () => point('select', null), select: d => point('select', d.id), view: d => goTo(d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip'), d.to),
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,

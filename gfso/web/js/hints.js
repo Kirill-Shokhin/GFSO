@@ -154,6 +154,10 @@ export const PLAN = {
     runs: c => `runs: ${c}`,
     // the criterion the go adds where the person holds the root (`intent_check`): the result read against their own words
     atTheGo: 'added at the go — checked against your own words',
+    intent: on => `The go ${on ? 'adds' : 'adds no'} criterion checking the result against your own words`,
+    intentBox: 'The go adds a criterion checking the result against your own words',
+    intentGoal: 'Creating it adds a criterion checking the result against your own words',
+    intentGoalSaid: on => `Creating it ${on ? 'adds' : 'adds no'} criterion checking the result against your own words`,
     expect: (e, exact) => `expects${exact ? ' exactly' : ''}: ${e}`,
     parts: n => `It splits into ${n} part${n === 1 ? '' : 's'}`,
     after: ids => `split once ${ids.join(', ')} ${ids.length > 1 ? 'are' : 'is'} accepted`,
@@ -222,12 +226,14 @@ export const H = {
     clockStart: hover('Start the clock again', 'The time it stood is left off every deadline and timeout'),
     clockStopped: (by, at, why) => hover(`By ${by}\t${at}`, why, 'No deadline or timeout runs on; every person\'s move still lands'),
     // the mode: the three modes as items, this project's marked, then how this project's was set
-    mode: (doc, mode, set, change = []) => pop('Who holds the work', "It decides which nodes a person holds and which the system does; once the project has work, only the person's page changes it.",
+    mode: (doc, mode, set, change = [], intent = '') => pop('Who holds the work', "It decides which nodes a person holds and which the system does; once the project has work, only the person's page changes it.",
         [...Object.entries(doc).map(([m, text]) => ({head: cap(m), tag: m === mode ? 'this project' : '', on: m === mode, means: text})),
          ...set.length ? [{group: 'How it was set'}, ...set.map(([head, v]) => ({head, val: `<span class="hq-kv">${esc(v)}</span>`}))] : [],
          // …and the change itself, the person's own once the project has work (set_mode refuses an agent then)
          ...change.length ? [{group: 'Change it'}, {head: 'To', val: `<span class="hq-modes">${change.join('')}</span>`,
-             means: 'It governs nodes issued after it; a node already issued keeps its holder'}] : []]),
+             means: 'It governs nodes issued after it; a node already issued keeps its holder'}] : [],
+         ...intent ? [{head: 'Words check', val: `<span class="hq-modes">${intent}</span>`,
+             means: 'Whether a go adds a criterion reading the result against your own words — the next one, a go again on this goal included'}] : []]),
     reports: rs => pop('Tech reports', 'What the system reported about itself — a check contradicting its contract, a tool that cannot run. '
         + 'A report stops and moves nothing. Newest first.', rs),
     quality: rows => pop('Quality', 'How far the plan and its validation can be trusted, each figure with how far it goes.', rows),

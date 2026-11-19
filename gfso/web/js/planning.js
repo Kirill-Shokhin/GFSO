@@ -8,11 +8,12 @@
 // what decides the go — what it refuses, what the repair took back, what stays open — then the parts and the notes; every
 // paragraph (a document the goal names, a reason, a note's answer) one press away, never cut. The go stays the client's.
 import {$, esc, tally, since} from './dom.js';
-import {S, procs, heard} from './state.js';
+import {S, procs, heard, intentOn} from './state.js';
 import {rootOf} from './tree.js';
 import {hm} from './fmt.js';
 import {PLAN} from './hints.js';
 import {PROC_KIND} from './run.js';
+import {intentSwitch} from './header.js';
 
 // the documents a goal names are written under it by the server (tools_llm `_named_documents`), each under `## path`
 const DOCS = '\n\n# THE DOCUMENTS THIS REQUEST NAMES';
@@ -48,6 +49,9 @@ function written(p, go) {
         + (p.undecided ? `<div class="cp-row cp-warn"><span>${esc(PLAN.undecided(p.undecided))}</span></div>` : '')
         // …what the goal is accepted by, each criterion with its checks as agreed — what the go is given on (a critic, 11-19:
         // before the go the page showed only the goal); a name alone where the server sends no checks
+        // …and whether the go adds the check against the person's words, on or off, switched here before it counts (critic:
+        // off, the plan said nothing of it)
+        + (!go && intentSwitch(PLAN.intentBox) ? `<div class="cp-row">${intentSwitch(PLAN.intentBox, PLAN.intent(intentOn()))}</div>` : '')
         + sec(PLAN.criteria, (p.root_criteria || []).map(c => typeof c === 'string' ? line(c) : more(`crit|${c.name}`,
             `<span>${esc(c.name)}</span>${c.added_at_the_go ? `<em>${esc(PLAN.atTheGo)}</em>` : ''}` + tally((c.check || []).length, (c.check || []).length === 1 ? 'check' : 'checks'),
             // …each check in words first (`behaviour`), then what runs and what it expects

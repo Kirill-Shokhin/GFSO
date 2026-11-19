@@ -6,7 +6,7 @@
 import {$, el, esc, coded, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task, FOCUS} from './api.js';
-import {S, hasKids, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, atTheGo} from './state.js';
+import {S, hasKids, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, atTheGo, personHolds} from './state.js';
 import {bucketOf, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label, enteredWord} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
@@ -235,7 +235,10 @@ const signed = pairs => [...pairs.reduce((g, [n, b]) => g.set(n, [...(g.get(n) |
 // A node whose own sessions are booked nowhere — run inside a scope's session booked to its top, or done by the
 // user's agent or a person, whose model the system is not told — is signed by who delivered it, and says so.
 const deliveredBy = (run, id) => { const by = (run?.rounds[id] || []).map(r => r.by).filter(Boolean).at(-1);
-    return by && !run.work.byNode[id]?.exec ? [prop('Executed by', `<b>${esc(agentName(by))}</b> <span class="wk-none">no session booked to this node — its model is not reported here</span>`)] : []; };
+    // …where the person's agent performs what the person holds (in_chat), their chat IS where it ran: «no session» read as a lack
+    const chat = S.graph.mode?.perform === 'in_chat' && personHolds(taskOf(id));
+    return by && !run.work.byNode[id]?.exec ? [prop('Executed by', `<b>${esc(agentName(by))}</b> <span class="wk-none">${chat
+        ? 'in their own chat — its model is not reported here' : 'no session booked to this node — its model is not reported here'}</span>`)] : []; };
 // who ran it, one grid row per role: «Executed by · haiku 5.5 ×12»
 const ROLE_ORDER = ['plan', 'consent', 'exec', 'issuer', 'val'];   // executed, issued, validated — one order on every node
 const signedBy = (run, id) => [

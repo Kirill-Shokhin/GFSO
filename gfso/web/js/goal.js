@@ -4,11 +4,13 @@
 import {$, esc} from './dom.js';
 import {cap} from './fmt.js';
 import {GOAL, getJSON, post, refusal} from './api.js';
-import {S, begun, signsAs, mineNames} from './state.js';
+import {S, begun, signsAs, mineNames, intentOn} from './state.js';
 import {notice, askInPage, act, askProjectName, NO_ANSWER} from './overlays.js';
 import {PLAN_COST, MODES} from './vocab.js';
 import {critRow, readCrits, pairRow, listRow, readPairs, readList, iso, suggest} from './forms.js';
 import {rootOf} from './tree.js';
+import {intentSwitch} from './header.js';
+import {PLAN} from './hints.js';
 
 const root = () => rootOf(S.tasks);
 const panel = () => $('goal-panel');
@@ -56,13 +58,15 @@ async function whoHolds() {
     const need = s => s.ready ? 'ready' : shared ? 'not ready' : esc(s.missing);
     $('gp-modes').innerHTML = m
         ? `<p class="gp-note">This project runs <b>${esc(m)}</b> — ${esc(doc[m] || '')}</p>`
-        : `<p class="gp-note">No mode yet. A mode — who holds which nodes — is the user's choice, set by their agent `
+        :`<p class="gp-note">No mode yet. A mode — who holds which nodes — is the user's choice, set by their agent `
           + `(<code>set_mode</code>) BEFORE the goal is created: it governs nodes issued after it, so a goal created here `
           + `first is held by you, and under AUTO the goal must be stated after the mode. Executors and a validator can be `
           + `registered for a project before it exists (<code>register_agent</code>).</p>`
           + (shared ? `<p class="gp-note gp-shared">${esc(shared)}</p>` : '')
           + ['solo', 'semi', 'auto'].map(k => `<div class="gp-mode off"><b>${cap(k)}</b><span>${esc(doc[k] || '')}</span>`
-              + (r?.modes ? `<span class="gp-needs">${need(r.modes[k].dispatch)}</span>` : '') + '</div>').join('');
+              + (r?.modes ? `<span class="gp-needs">${need(r.modes[k].dispatch)}</span>` : '') + '</div>').join('')
+        // …and whether creating it adds the check against the person's words, a mode or none: this door adds it too (critic)
+    $('gp-modes').innerHTML += intentSwitch(PLAN.intentGoal) && `<p class="gp-note">${intentSwitch(PLAN.intentGoal, PLAN.intentGoalSaid(intentOn()))}</p>`;
 }
 
 // ── the contract's rows ──

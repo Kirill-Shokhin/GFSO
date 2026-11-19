@@ -69,6 +69,9 @@ export const taskOf = id => S.tasks.find(t => t.id === id) || {};
 // WHAT THE GO HEARD (`graph.heard`: where the work runs, what its copy lacks, the goal as given), whatever the mode —
 // the mode block carried it alone, and a project with no mode said none of it (critic); the mode's copy where the server is older
 export const heard = () => S.graph.heard || S.graph.mode || {};
+// WHETHER A GO ADDS THE CHECK AGAINST THE PERSON'S WORDS, as the engine acts on it, set or by default, a mode or none
+// (`heard.intent_check`; the mode's copy where the server is older); undefined where the server says nothing
+export const intentOn = () => S.graph.heard?.intent_check ?? S.graph.mode?.intent_check;
 // …per goal (`by_root`): one setting a project gave every goal the latest go's words; an older server's flat keys only
 // where the project has one goal
 export const atTheGo = root => heard().by_root?.[root?.id] || (heard().by_root || S.tasks.filter(t => !t.parent_id).length > 1 ? {} : heard());

@@ -4,7 +4,7 @@
 import {$, esc, coded, data, tally, daily, phone} from './dom.js';
 import {H, QUALITY, GRADES, doing, hover} from './hints.js';
 import {post, GOAL, PROJECT, FOCUS} from './api.js';
-import {S, taskOf, asGiven, heard, signsAs, lift, reader, mineNames, mineShown, viaWord, procs, begun, stateWord, issuerIsPerson, partyKind, viewTasks, inView} from './state.js';
+import {S, taskOf, asGiven, heard, signsAs, lift, reader, mineNames, mineShown, viaWord, procs, begun, stateWord, issuerIsPerson, partyKind, viewTasks, inView, intentOn} from './state.js';
 import {label, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow, PROC_KIND} from './run.js';
 import {dur, trim, cap, pct, stamp, clockAt, spoken} from './fmt.js';
@@ -43,7 +43,7 @@ function standing(root) {
 
 // the mode's settings in words (set_mode's own names: l2_gate, observe, deadline_s, bounds, max_iterations)
 const SETTING = {l2_gate: 'Plan review gate', observe: 'Checks observed before execution', deadline_s: 'Default deadline', network: 'Network',
-    bounds: 'Waits before a timeout', max_iterations: 'Rework rounds', intent_check: 'The goal checked against your words at the go'};
+    bounds: 'Waits before a timeout', max_iterations: 'Rework rounds', intent_check: 'A go adds the check against your words'};   // the switch for a go, not what a given goal carries (critic)
 const SWITCH = new Set(['l2_gate', 'observe', 'intent_check']);   // switches, whatever their value's type
 // the engine keeps a setting as a string and reads a switch on only at "1" (validation.py): by truth, "0" read «on», the
 // opposite of the engine, on a real run; a time «29160», the network a line of JSON (critic)
@@ -71,7 +71,10 @@ async function goal() {
             : procs().some(w => w.verb === 'auto_decompose') && S.plan?.goal ? 'The go is given: the project is being built'
             : procs().some(w => PROC_KIND[w.verb] === 'plan') ? 'The goal is being planned' : S.plan?.goal ? 'A plan written, the go not given' : 'No goal yet'}</span>`;
     // …and how THIS project's mode was set: by whom, when, the model the system's own roles run on, its settings
-    const m = S.graph.mode, st = m?.settings || {};
+    // …the words check as the engine acts on it (`mode.intent_check`, set or by default): the stored key alone left a
+    // default that is on unsaid
+    const m = S.graph.mode, kept = m?.settings || {}, byDefault = !!m && typeof intentOn() === 'boolean' && !('intent_check' in kept),
+        st = byDefault ? {...kept, intent_check: intentOn()} : kept;
     // …each a capitalised head in words, its moment as the page says moments, an on/off as on/off (audit A10)
     const set = [m?.by && ['Set by', `${m.by}${m.at ? `, ${clockAt(at(m.at))}` : ''}`],
         // …the boundary the engine holds by, its default (the plan's middle) included: the record names only one set by hand
@@ -80,7 +83,7 @@ async function goal() {
         st.planner_model && ['Planner model', `the plan is authored on ${modelName(st.planner_model)}`],
         // a setting in seconds is said as a time (deadline_s 29160 → deadline 8.1h)
         ...Object.entries(st).filter(([k]) => k !== 'system_model' && k !== 'planner_model').map(([k, v]) => [SETTING[k] || cap(k.replace(/_s$/, '').replace(/_/g, ' ')),
-            settingWord(k, v)])].filter(Boolean);
+            settingWord(k, v) + (k === 'intent_check' && byDefault ? ' (by default)' : '')])].filter(Boolean);
     // the goal's short name — up to its first parenthesis or colon — the whole of it on hover
     const full = nameOf(root), short = full.split(/\s[(:—]/)[0].slice(0, 40);
     const done = delivered(root);
@@ -93,7 +96,7 @@ async function goal() {
     return `<button class="hd-root"${data({action: 'select', id: root.id})}${H.root(full, asGiven(root))}>${esc(short)}</button>`
         // …a project with work and no mode is put under one from here too: set_mode refuses an agent there as well
         // …the mode said to every viewer, a reader included; its change offered only where the page signs (critic)
-        + `<span class="hd-quality hd-left"><button class="hd-mode" data-action="pop">${esc(mode || 'no mode')}</button>${H.mode(MODES, mode, set, changes(m))}</span>`
+        + `<span class="hd-quality hd-left"><button class="hd-mode" data-action="pop">${esc(mode || 'no mode')}</button>${H.mode(MODES, mode, set, changes(m), signsAs().length ? intentSwitch('at the go') : '')}</span>`
         + (hd.runs_on_host ? `<span class="hd-warn"${H.host}>outside Docker</span>` : '')
         + (ni.length ? `<span class="hd-warn"${H.notImported(ni)}>not all copied</span>` : '');
 }
@@ -162,6 +165,14 @@ export async function setMode(d) {
             // …a yes may say something to the person (`say`: live nodes kept a short deadline the new mode would not give) — told
             .then(r => r.clone().json().then(b => (said = b?.say || '', r), () => r)), {what: `To ${to}`, ok: () => said && notice(spoken(said.replace(/^Tell the person:\s*/, '')))});   // …said to the person, as every engine sentence the page shows
 }
+// THE WORDS CHECK, switched from the page (the author, 11-19: «галочкой в ui и по умолчанию»): whether a go adds the root
+// criterion read against the person's words — shown where it acts, before the go and in the mode; nothing to a reader
+// …a box to tick, as he asked; the action on the box alone, so a press on its words clicks it once, not twice
+export const intentSwitch = (words, plain = words) => { const on = intentOn();
+    return typeof on !== 'boolean' ? '' : !signsAs().length ? `<span>${esc(plain)}</span>`
+        : `<label class="act-check"><input type="checkbox"${data({action: 'intent', on: on ? '0' : '1'})}${on ? ' checked' : ''}> ${esc(words)}</label>`; };
+export const setIntent = on => act(post('/api/run/set_mode', {intent_check: on}),
+    {what: on ? 'The words check on' : 'The words check off'});
 // '' when the switch moved — the page then re-reads its header (main.js); signed by the page's session, `via` telling it from a console
 const switchRun = (verb, body) => act(post(`/api/run/${verb}`, body), {ok: null});
 export async function stopRun() {
