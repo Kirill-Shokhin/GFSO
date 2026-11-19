@@ -7,6 +7,8 @@ and the only clue was a decline message about a session that no longer existed.
 """
 from __future__ import annotations
 
+import types
+
 import gfso.cli as C
 import gfso.serverctl as S
 import urllib.request as _ur
@@ -46,6 +48,9 @@ def test_a_server_that_will_not_die_is_reported(monkeypatch, capsys):
 
     monkeypatch.setattr(_ur, "urlopen", lambda *a, **k: _Resp())
     monkeypatch.setattr(S, "port_open", lambda host="127.0.0.1", port=None, timeout=0.5: True)
+    now = [0.0]                  # the 20 s bound is driven by a fake clock: nothing real is waited for
+    monkeypatch.setattr(S, "time", types.SimpleNamespace(
+        monotonic=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s)))
     C._down()
     assert "still answering" in capsys.readouterr().out
 
@@ -66,7 +71,10 @@ def test_a_server_that_died_between_the_read_and_the_decision_does_not_veto_its_
         reads["n"] += 1
         # first read: alive, drifted, somebody on it — the reason to decline
         # second read (the re-probe): gone
-        return {"code_version": "OLD", "sessions": 1, "busy": []} if reads["n"] == 1 else None
+        if reads["n"] == 1:
+            return {"code_version": "OLD", "sessions": 1, "busy": []}
+        # third read: the replacement answers, so the post-spawn wait for `/api/runtime` ends at once
+        return None if reads["n"] == 2 else {"code_version": "NEW", "sessions": 0, "busy": []}
 
     monkeypatch.setattr(S, "runtime", _runtime)
     monkeypatch.setattr(S, "source_fingerprint", lambda *a, **k: "NEW")

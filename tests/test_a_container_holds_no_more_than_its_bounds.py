@@ -100,6 +100,16 @@ def _ran_here(argv, cwd=None, timeout=None, env=None):
     return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
 
 
+def _du_here(argv, cwd=None, timeout=None, env=None):
+    """`du -sk .` read in-process: a spawned MSYS `du` that prints nothing under a loaded suite reads as "no size, refuse
+    nothing" (`tree_past_place`), which the tree test's first assertion took for a refusal that never came (one run in a
+    full pass, not reproduced alone). The real `du` is read by the container test above."""
+    if argv[0] != "du":
+        return _ran_here(argv, cwd, timeout, env)
+    kib = sum(-(-f.stat().st_size // 1024) for f in Path(cwd).rglob("*") if f.is_file())
+    return subprocess.CompletedProcess(argv, 0, f"{kib}\t.\n", "")
+
+
 @pytest.mark.skipif(not shutil.which("sh"), reason="no sh here")
 def test_a_host_with_no_du_reads_no_size_and_refuses_nothing(tmp_path):
     def gone(*a, **k):
@@ -117,7 +127,7 @@ def test_a_tree_past_what_its_place_holds_is_never_laid_and_an_honest_one_always
     for i in range(5):
         git("update-index", "--add", "--cacheinfo", f"100644,{blob},f{i}")
     git("commit", "-q", "-m", "c")
-    ex = SimpleNamespace(run=_ran_here, python=sys.executable)
+    ex = SimpleNamespace(run=_du_here, python=sys.executable)
     past = lambda stores=(), base=None: W.tree_past_place(ex, tmp_path, git("rev-parse", "HEAD"), ex, tmp_path, base, stores)
     monkeypatch.setattr(W, "LAY_MARGIN_KIB", 0)
     assert "past what its place holds" in past(), "its names, not its pack"

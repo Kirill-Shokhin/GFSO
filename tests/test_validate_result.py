@@ -749,7 +749,7 @@ def test_an_empty_working_directory_is_refused_not_failed(tmp_path, monkeypatch)
     e.stop()
 
 
-def test_a_refused_report_reaches_the_issuer_who_has_to_decide():
+def test_a_refused_report_reaches_the_issuer_who_has_to_decide(tmp_path):
     """A parked node asks a person to decide, and handed them nothing to decide with.
 
     ⊥ is not a pass (§2.3), so a report the engine refuses ends the node's automatic progress and
@@ -768,7 +768,7 @@ def test_a_refused_report_reaches_the_issuer_who_has_to_decide():
          "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python -c \"print('flush')\"", "expect": "flush"}]},
         {"criterion": "holds", "verdict": "pass", "evidence": "looked at it"}],
         "failed_criteria": []}))
-    out = TL.validate_result(e, "n1", workdir=".", _llm=llm)
+    out = TL.validate_result(e, "n1", workdir=str(tmp_path), _llm=llm)
     assert out["verdict"] is None                       # refused: a criterion with no probe at all
 
     back = T.get_verdict(e, "n1")
@@ -809,7 +809,7 @@ def test_a_retry_that_speaks_a_kept_criterion_again_is_read_by_what_it_saw(monke
     e.stop()
 
 
-def test_a_long_contract_is_validated_in_batches_whose_conjunction_is_the_verdict(monkeypatch):
+def test_a_long_contract_is_validated_in_batches_whose_conjunction_is_the_verdict(monkeypatch, tmp_path):
     """The coverage discipline is what a report fails on a rich contract.
 
     Measured 2026-08-21: the engine refuses a report that leaves any criterion unspoken or any named
@@ -844,7 +844,7 @@ def test_a_long_contract_is_validated_in_batches_whose_conjunction_is_the_verdic
         def tag_last(self, stage):
             self.calls[-1]["stage"] = stage
 
-    out = TL.validate_result(e, "big", _llm=_Batched(), workdir=".")
+    out = TL.validate_result(e, "big", _llm=_Batched(), workdir=str(tmp_path))
     assert [len(b) for b in seen] == [2, 2, 1]                  # …three runs, disjoint
     assert sorted(sum(seen, [])) == sorted(c["name"] for c in crits)   # …every criterion once
     assert out["verdict"] == "PASS" and len(out["per_criterion"]) == 5
@@ -1048,7 +1048,7 @@ def test_an_unreadable_report_still_says_it_did_not_parse():
     assert "did not parse" in out["verdict_defects"], out["verdict_defects"]
 
 
-def test_a_retry_after_a_refused_report_validates_only_what_it_left_undecided():
+def test_a_retry_after_a_refused_report_validates_only_what_it_left_undecided(tmp_path):
     """A report is refused WHOLE for one gap, and a retry that re-validated everything could fail on a
     gap the first run did not have (7 of 10 refused reports on a delegated `coreutils` run,
     2026-09-22). What the refused report decided on its own — a PASS with the pinned probe run and
@@ -1083,9 +1083,9 @@ def test_a_retry_after_a_refused_report_validates_only_what_it_left_undecided():
         def tag_last(self, stage):
             self.calls[-1]["stage"] = stage
 
-    first = TL.validate_result(e, "n", _llm=_Validator(probe_c1=False), workdir=".")
+    first = TL.validate_result(e, "n", _llm=_Validator(probe_c1=False), workdir=str(tmp_path))
     assert first["verdict"] is None, "c1 carried no probe: the first report must be ⊥"
-    again = TL.validate_result(e, "n", _llm=_Validator(probe_c1=True), workdir=".")
+    again = TL.validate_result(e, "n", _llm=_Validator(probe_c1=True), workdir=str(tmp_path))
     assert seen[-1] == ["c1"], f"the retry re-validated {seen[-1]}, not only what was left undecided"
     assert again["verdict"] == "PASS" and {p["criterion"] for p in again["per_criterion"]} == {"c0", "c1"}
     reused = [p for p in again["per_criterion"] if p.get("reused_from_refused")]

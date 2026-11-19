@@ -139,12 +139,12 @@ class _Runs:
 
 @pytest.mark.parametrize("bad", ["check wide 0", "check wide 2"])       # the word in the first run, or the last
 @pytest.mark.parametrize("word", ["fail", "undecidable", "pass"])
-def test_a_split_criterion_is_the_conjunction_of_its_runs(monkeypatch, word, bad):
+def test_a_split_criterion_is_the_conjunction_of_its_runs(monkeypatch, word, bad, tmp_path):
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "2")
     e = _eng()
     _split_node(e)
     llm = _Runs(word, bad)
-    out = TL.validate_result(e, "big", _llm=llm, workdir=".")
+    out = TL.validate_result(e, "big", _llm=llm, workdir=str(tmp_path))
     assert len(llm.packets) == 2 and all("**wide**" in p and "SPLIT between runs" in p for p in llm.packets)
     record = e.get_exec_verdict(T.TaskId("big"))
     wide = [x for x in (record or {}).get("per_criterion") or () if x.get("criterion") == "wide"]
@@ -165,7 +165,7 @@ def test_a_split_criterion_is_the_conjunction_of_its_runs(monkeypatch, word, bad
     e.stop()
 
 
-def test_a_split_run_that_left_the_criterion_out_does_not_pass_it(monkeypatch):
+def test_a_split_run_that_left_the_criterion_out_does_not_pass_it(monkeypatch, tmp_path):
     """The union must cover what the criterion owes: a run silent on its share leaves those probes unobserved."""
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "2")
     e = _eng()
@@ -178,7 +178,7 @@ def test_a_split_run_that_left_the_criterion_out_does_not_pass_it(monkeypatch):
                 return text
             return _fenced({"verdict": "PASS", "failed_criteria": [], "per_criterion": []})
 
-    out = TL.validate_result(e, "big", _llm=_Silent("pass", None), workdir=".")
+    out = TL.validate_result(e, "big", _llm=_Silent("pass", None), workdir=str(tmp_path))
     assert out["verdict"] != "PASS"
     assert (e.get_exec_verdict(T.TaskId("big")) or {}).get("verdict") != "PASS"
     e.stop()

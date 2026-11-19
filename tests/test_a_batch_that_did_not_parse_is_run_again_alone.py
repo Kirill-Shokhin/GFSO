@@ -64,12 +64,12 @@ def _broken_b(monkeypatch):
     monkeypatch.setattr(_Runs, "scratch", [])
 
 
-def test_the_unread_batch_alone_is_run_again_and_the_validation_decides(monkeypatch):
+def test_the_unread_batch_alone_is_run_again_and_the_validation_decides(monkeypatch, tmp_path):
     _broken_b(monkeypatch)
     e = _eng()
     _node(e)
     llm = _Runs()
-    out = TL.validate_result(e, "n", _llm=llm, workdir=".")
+    out = TL.validate_result(e, "n", _llm=llm, workdir=str(tmp_path))
     assert len(llm.packets) == 4 and sum("**b**" in p for p in llm.packets) == 2, len(llm.packets)
     assert out["verdict"] == "PASS", out
     e.stop()
