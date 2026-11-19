@@ -221,3 +221,27 @@ def test_a_second_delivery_is_shown_only_what_its_own_validator_saw(chat, monkey
     call("wait", seconds=60)
     assert [o["what"] for o in TL.TOOLS["get_verdict"](e, "root")["outside"]] == [second]
     assert second in e.persons_verdict("root") and first not in e.persons_verdict("root")
+
+
+def _with_more_criteria(text: str, n: int) -> str:
+    """The filled plan with `n` more criteria, each pinned the same way."""
+    block = ('\n[[plan.root_criteria]]\nname = "says_v1_{i}"\ndescription = "f.txt says v1, read again {i}"\n\n'
+             '[[plan.root_criteria.check]]\nbehaviour = "f.txt read"\ncommand = \'cat f.txt\'\nexpect = "v1"\nexact = true\n')
+    head, tail = text.split("# Parts", 1)
+    return head + "".join(block.format(i=i) for i in range(n)) + "\n# Parts" + tail
+
+
+def test_the_sign_off_never_drops_the_reading_against_the_persons_words_and_says_what_it_cut(chat):
+    """Added last at the go, the criterion read against the person's own words was the first a cap of twelve cut, and
+    nothing said more stood (critic over a8c6035: 15 criteria, three silently dropped)."""
+    e, repo, call, _ = chat
+    _set_up(call, repo)
+    path = call("plan", plan=_with_more_criteria(_filled(call("plan", ASKED)["text"]), 13))["path"]
+    call("auto_decompose", plan=path, user_said=WORDS)
+    _worked(repo)
+    call("signal", "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
+    call("wait", seconds=60)
+    told = e.persons_verdict("root")
+    assert len(e.graph.get_task(TaskId("root")).spec.criteria) == 15
+    assert f"{INTENT}: pass" in told, told
+    assert "and 3 more — `get_verdict root` reads them all" in told, told

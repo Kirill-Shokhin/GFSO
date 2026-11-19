@@ -630,9 +630,10 @@ def _wait(args) -> int:
             print(f"{why} — the move follows here whole, nothing to read again over MCP; the page: "
                   f"{serverctl.ui_link(args.project)}", flush=True)
             # …whole: a verdict to sign carries each criterion's line the person is shown before their PASS, and cut at
-            # 400 characters it sent the client to `get_verdict` for them (e2e5 G_3)
+            # 400 characters it sent the client to `get_verdict` for them (e2e5 G_3); at 3000 it lost the signal line under
+            # the head's "whole" (critic over a8c6035) — the step bounds itself (`Engine.persons_verdict`)
             for s in [s for s in out.get("steps") or () if s.get("mine") and not s.get("optional")][:3]:
-                print(f"- {s.get('task_id')}: {s.get('directive', '')[:3000]}", flush=True)
+                print(f"- {s.get('task_id')}: {s.get('directive', '')}", flush=True)   # whole: the head says so
             return 0
     print(f"still running after {args.hours:g} h — wait again", flush=True)
     return 3

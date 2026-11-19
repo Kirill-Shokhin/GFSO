@@ -836,16 +836,20 @@ class Engine:
         if t is None or self._graph.get_parent(t.id) is not None or self.mode_kind() not in (Mode.SOLO, Mode.SEMI):
             return ""
         rec = self.current_exec_verdict(t.id) or {}
+        # …the reading against their own words FIRST: added last at the go, it was the first a cap cut (critic over
+        # a8c6035, 15 criteria); and a cut says so, never a silent "each"
+        rows = sorted((e for e in rec.get("per_criterion") or () if isinstance(e, dict)),
+                      key=lambda e: e.get("criterion") != INTENT)
         seen = [f"{e.get('criterion')}: {e.get('verdict')}" + (f" ({str(e.get('evidence'))[:200]})" if e.get("evidence")
-                                                               else "")
-                for e in rec.get("per_criterion") or () if isinstance(e, dict)]
+                                                               else "") for e in rows]
         # …and what it saw beyond them: no criterion failed on it, so it is theirs to weigh — a client shown the criteria
         # alone signed over "x.tar.gz is counted as .gz" without telling them (fresh client s23g1)
-        beyond = [o["what"][:160] for o in outside_of_this_delivery(self._storage, t.id, rec)][:4]
+        beyond = [o["what"][:160] for o in outside_of_this_delivery(self._storage, t.id, rec)]
+        more = lambda n, cap: f"; and {n - cap} more — `get_verdict {t.id}` reads them all" if n > cap else ""
         return (f"The verdict on '{t.id}' is the person's: show them the validator's verdict on each criterion"
-                + (f" — {'; '.join(seen[:12])}" if seen else " (the step that asks for it names each)")
-                + (f" — and what it saw outside the criteria, none of it a failed criterion: {'; '.join(beyond)}"
-                   if beyond else "")
+                + (f" — {'; '.join(seen[:12])}{more(len(seen), 12)}" if seen else " (the step that asks for it names each)")
+                + (f" — and what it saw outside the criteria, none of it a failed criterion: {'; '.join(beyond[:4])}"
+                   f"{more(len(beyond), 4)}" if beyond else "")
                 + f" — ask them, and sign with their own words: `signal {t.id} PASS|FAIL user_said=<their words>`, or "
                   f"they sign on their page")
 
