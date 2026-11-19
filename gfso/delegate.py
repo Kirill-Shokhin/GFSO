@@ -632,11 +632,16 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
         # and watched nothing happen at all, because the path was skipped whole rather than split at
         # the signature. `register_agent` had promised it fires "on EVERY delivery".
         if verdict:
+            # …a root under solo or semi is the person's to sign: their agent shows the verdict and asks (s21: a client
+            # signing it itself was stopped as self-approval)
+            theirs = engine.graph.get_parent(task_id) is None and engine.mode_kind() in (Mode.SOLO, Mode.SEMI)
             engine.emit_info(
                 "delegate",
                 f"{task_id}: validated for you — the verdict is {verdict}, on the record "
-                f"(`get_verdict {task_id}`). Signing is yours: `signal {task_id} {verdict} <you>` "
-                f"when you agree with it.")
+                f"(`get_verdict {task_id}`). " + (
+                    f"Signing is the person's: show them the verdict on each criterion, ask them, and sign with their "
+                    f"own words, `signal {task_id} {verdict} user_said=<their words>`." if theirs else
+                    f"Signing is yours: `signal {task_id} {verdict} <you>` when you agree with it."))
         return "recorded" if verdict else _classify_no_verdict(engine, task_id, out)
     _why: list = []
     if verdict == Verdict.PASS:
@@ -1499,10 +1504,10 @@ class Dispatcher:
         the state check catches neither."""
         t = self._engine.graph.get_task(task_id)
         if t is None or t.state.name not in states or generation_of_task(t) != tuple(expect_gen):
-            self._engine.emit_info("delegate",
-                                   f"{task_id}: queued run is stale (state {t.state.name if t else '?'}"
-                                   f", generation {generation_of_task(t) if t else '?'} ≠ "
-                                   f"{tuple(expect_gen)}) — slot released")
+            why = ("the node is gone" if t is None else
+                   f"its state is {t.state.name}, not {' or '.join(states)}" if t.state.name not in states else
+                   f"its generation is {generation_of_task(t)}, not {tuple(expect_gen)}")
+            self._engine.emit_info("delegate", f"{task_id}: queued run is stale ({why}) — slot released")
             return False
         if executor_id is not None and str(t.assignee) != str(executor_id):
             # …and the ROUND is freed with it. A reassignment moves no generation counter, so the

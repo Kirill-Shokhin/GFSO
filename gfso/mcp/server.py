@@ -231,7 +231,8 @@ def _link_and_say(name: str, out: dict, project, engine) -> None:
                          "will not point to a part. " if out.get("open_at_the_go") else "")
                       + "These lines go to the person BEFORE any other call. " + how_it_is_waited(engine.project_name))
     elif name == "auto_decompose" and "goal_as_given" in out:
-        out["say"] = _the_go_says(out) + "These lines go to the person BEFORE any other call."
+        out["say"] = _the_go_says(out) + "These lines go to the person BEFORE any other call." + (
+            f" {out['say']}" if out.get("say") else "")     # …the go's own say (a chat's branch, its parts) kept
 
 
 def _the_go_says(out: dict) -> str:

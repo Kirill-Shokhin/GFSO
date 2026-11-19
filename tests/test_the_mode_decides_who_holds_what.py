@@ -854,7 +854,7 @@ def test_a_held_root_in_rework_is_not_told_to_fix_it_by_hand(monkeypatch):
     assert not TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="aggregate").get("error")
     e.record_exec_verdict(TaskId("root"), "FAIL", ["g"], "validate_result",
                           per_criterion=[{"criterion": "g", "verdict": "fail", "evidence": "g broke"}])
-    TL.TOOLS["signal"](e, "root", "FAIL", "user", failed_criteria=["g"])
+    TL.TOOLS["signal"](e, "root", "FAIL", "user", failed_criteria=["g"], user_said="не принимаю")
     T.TOOLS["create_task"](e, "fix", {"description": "repair g", "criteria": [criterion("f", "F holds")]},
                            parent_id="root", covers=["g"])
     e.wait_idle()
@@ -915,7 +915,7 @@ def test_after_a_root_fail_the_held_holder_is_told_to_re_aggregate_not_to_fix_by
     TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="aggregate")
     e.record_exec_verdict(TaskId("root"), "FAIL", ["g"], "validate_result",
                           per_criterion=[{"criterion": "g", "verdict": "fail", "evidence": "g broke"}])
-    TL.TOOLS["signal"](e, "root", "FAIL", "user", failed_criteria=["g"])
+    TL.TOOLS["signal"](e, "root", "FAIL", "user", failed_criteria=["g"], user_said="не принимаю")
     T.TOOLS["create_task"](e, "fix", {"description": "repair g", "criteria": [criterion("f", "F holds")]},
                            parent_id="root", covers=["g"])
     e.wait_idle()

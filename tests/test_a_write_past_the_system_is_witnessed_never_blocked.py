@@ -58,6 +58,7 @@ def test_a_write_with_no_node_at_work_is_recorded_and_said_and_one_under_a_node_
     """CONTROL: `past.witness` ignoring `at_work` — the write under the node at work is recorded."""
     e = _in_chat(repo)
     assert _call(e, repo, lambda: (repo / "a.txt").write_text("a")) == {}
+    _commit(repo, "a.txt", "a")       # …the work committed: a chat's DELIVER of nothing committed is refused
     _deliver(e)
     out = _call(e, repo, lambda: (repo / "a.txt").write_text("b"))
     said = out["hookSpecificOutput"]
@@ -74,6 +75,7 @@ def test_a_witnessed_write_is_news_an_open_page_hears(repo):
     lines = lambda: [r for r in e.pipeline_log() if r["source"] == "witnessed"]
     _call(e, repo, lambda: (repo / "a.txt").write_text("a"))
     assert lines() == []
+    _commit(repo, "a.txt", "a")       # …the work committed: a chat's DELIVER of nothing committed is refused
     _deliver(e)
     _call(e, repo, lambda: (repo / "a.txt").write_text("b"))
     said = lines()

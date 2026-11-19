@@ -262,7 +262,9 @@ def _execution_report() -> tuple[list[tuple[str, str]], list[str]]:
         rows.append(("credential", "set (`gfso credential` names them)" if has else
                      "none — the system's calls (a plan's author, every validator) run in a container and reach a model "
                      "only on one, in every mode — `in_chat` too, where only your own chat's work runs on your CLI's own "
-                     "sign-in: `gfso credential claude --sign-in` (a window where you sign in and paste it)"))
+                     "sign-in: the person runs `gfso credential claude --sign-in` (in a chat: `! gfso credential "
+                     "claude --sign-in`; a window where they sign in and paste it), and an agent waits on `gfso "
+                     "credential claude --wait`"))
     return rows, blocking
 
 
@@ -690,8 +692,9 @@ def setup(desktop: bool = False) -> int:
     # person steps the person had to ask for (11-08). In one list under "tell the person", the commands went to the person too (11-09)
     held = credentials.held()
     do_now = [*(["what `gfso doctor` names above as blocking, then `gfso setup` again"] if code != 0 else []),
-              *([] if held else ["`gfso credential claude --sign-in`: it opens a window (it may open behind this one) where the person "
-                                 "signs in and pastes the token, never in the chat; then `gfso credential claude --wait`, again until it is held"]),
+              *([] if held else ["the person runs `gfso credential claude --sign-in` themselves (in the chat: `! gfso credential claude "
+                                 "--sign-in`): it opens a window (it may open behind this one) where they sign in and paste the token, "
+                                 "never in the chat; you wait on `gfso credential claude --wait`, again until it is held"]),
               "`gfso demo human_only`: a look that spends no model (the gate refusing a self-signed PASS)"]
     if door and code == 0:
         print("\nWhat it is: a task said in words becomes a plan whose checks are fixed before the work; agents in Docker "

@@ -30,7 +30,7 @@ from typing import Optional, Union
 
 from gfso import canon as _canon, past, runtime
 from gfso.llm import llm_factory
-from gfso.workspaces import declaring_role, delivered_ref, execution_of, performer, where_it_runs, rejected_reports_dir
+from gfso.workspaces import accepted_branch, declaring_role, delivered_ref, execution_of, performer, where_it_runs, rejected_reports_dir
 from gfso.adapters import worktrees as W
 from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snapshot, swap
 from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, committed, left_out,
@@ -1888,6 +1888,10 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
         engine.emit_info("go", f"{root_id}: the plan's review is the person's own, given with the go")
         place = _delegation().validator_workdir(engine, _delegation().default_agents(), TaskId(str(root_id)))
         theirs = on_their_branch(engine, place) if place else ""
+        if place and W.is_repo_top(place):
+            engine.graph.store_setting(f"{CHAT_START}{root_id}", json.dumps({
+                "branch": W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip(),
+                "head": W.git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()}))
         parts = [str(c.id) for c in engine.graph.get_active_children(TaskId(str(root_id)))]
         out["say"] = (theirs + ". " if theirs else "") + (
             f"The checks the person agreed are the contract now, fixed in the graph before the work. Do the work "
@@ -1936,6 +1940,55 @@ def on_their_branch(engine: Engine, place) -> str:
             f"commit there lands on it. Work on the system's branch — `git switch -c {work_branch(engine)}` (`git switch "
             f"{work_branch(engine)}` once it exists) before your first commit, which changes their checkout — tell the "
             f"person so in one line, and switch it back to `{on or 'where it stood'}` once the work is delivered")
+
+
+#: where a chat's work on a root started (`_built_from_a_file`): {branch the person stood on, the commit it started from}
+CHAT_START = "chat_start:"
+
+
+def _started_from(engine: Engine, tid) -> str:
+    """The commit a chat's work on `tid` started from: its last ACCEPT's record, or for a root taken at the go, the go's."""
+    taken = next((e.commit for e in reversed(engine.audit_log(tid)) if e.signal.name == "ACCEPT" and e.commit), None)
+    return taken or json.loads(engine.graph.setting(f"{CHAT_START}{tid}") or "{}").get("head", "")
+
+
+def _nothing_committed(engine: Engine, tid, commit: str, left: list) -> Optional[str]:
+    """The refusal of a chat's DELIVER whose work stands uncommitted while the commit it would hand in is the one the
+    work started from: accepted, it sent a paid validation the base to FAIL (s21). Liftable truthfully by committing
+    (§12.16 (ii)); the work stays where it is. None: the delivery goes on."""
+    if not left or not commit or commit != _started_from(engine, tid):
+        return None
+    return (f"NOT delivered — nothing is committed since the work started ({commit[:12]}), and the work stands "
+            f"uncommitted: {', '.join(left[:10])}{', …' if len(left) > 10 else ''}. Commit it, then DELIVER again; no "
+            f"validator was started")
+
+
+def _the_persons_verdict(engine: Engine, tid, sig: str) -> Optional[dict]:
+    """Under `solo` and `semi` a root's PASS or FAIL is the person's — the root's issuer is them (§10.1) — so it carries
+    their words after they saw the validator's verdict, recorded on the feed; refused without them. A client signing
+    the root itself was stopped as self-approval (s21). None: the signal goes on."""
+    if sig not in ("PASS", "FAIL") or engine.mode_kind() not in (Mode.SOLO, Mode.SEMI) \
+            or engine.graph.get_parent(tid) is not None or engine.graph.get_task(tid) is None:
+        return None
+    if not (said := PERSONS_WORDS.get().strip()):
+        return {"accepted": False, "refused": True,
+                "error": f"{tid}'s {sig} is the person's: show them the validator's verdict on each criterion "
+                         f"(`get_verdict('{tid}')`), ask them, and sign with their own words as `user_said`"}
+    engine.emit_info("verdict", f"{tid}: {sig} on the person's words: «{said[:300]}»")
+    return None
+
+
+def back_to_their_branch(engine: Engine, tid) -> str:
+    """What a chat hears at its root's PASS where the person's repository was left on the work's branch: switch it back."""
+    start = json.loads(engine.graph.setting(f"{CHAT_START}{tid}") or "{}")
+    place = _delegation().validator_workdir(engine, _delegation().default_agents(), tid)
+    if not (place and W.is_repo_top(place)):
+        return ""
+    on = W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
+    if on != work_branch(engine) or not (was := start.get("branch")) or was == on:
+        return ""
+    return (f"{place} still stands on `{on}`: switch it back to theirs, `git switch {was}`, and tell them the result is "
+            f"`{accepted_branch(engine)}` (or tell them how, if they would rather do it)")
 
 
 def not_the_work(engine: Engine, place, commit: str) -> str:
@@ -3176,6 +3229,8 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
             except OSError as ex:
                 return {"accepted": False, "state": st.name,
                         "error": f"NOT delivered — the commit at {place} could not be recorded: {ex}"}
+            if no := _nothing_committed(engine, tid, commit, left):
+                return {"accepted": False, "refused": True, "state": st.name, "error": no}
             if notice := not_the_work(engine, place, commit):
                 said["notice"] = notice
             if left:
@@ -3191,7 +3246,11 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
             keep = past.delivered(engine, rec[2], task_id, rec[1])      # …its range read while git still holds it
         except OSError:
             pass                                                        # …a measure's record, never the delivery's refusal
+    if no := _the_persons_verdict(engine, tid, sig):
+        return no
     out = _tools.signal(engine, task_id, signal, source, **kw)
+    if out.get("accepted") and sig == "PASS" and (back := back_to_their_branch(engine, tid)):
+        said["say"] = back
     if out.get("accepted"):
         keep()
     return {**out, **said} if said and out.get("accepted") else out

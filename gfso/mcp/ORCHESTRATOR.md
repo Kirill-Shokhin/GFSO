@@ -21,8 +21,8 @@ with the system's; C compiler $5.5-9.3 given, no verdict on its own; plus your s
 <!-- code -->
 ## The task: do it yourself, informing in a line
 
-1. **The machine.** `gfso doctor`. No Docker: the install it names, the person confirming. No credential: `gfso credential claude --sign-in`
-opens a window to sign in and paste; never ask its value in chat; `gfso credential claude --wait` until held. No execution declared: `gfso setup`.
+1. **The machine.** `gfso doctor`. No Docker: the install it names, the person confirming. No credential: the person runs `! gfso credential claude --sign-in`:
+a window to sign in and paste; never ask its value in chat; then `gfso credential claude --wait`. No execution declared: `gfso setup`.
 2. **The repository.** No project yet: a fresh directory of its own, `git init`, `git commit --allow-empty -m start`.
 Existing: `W` below is its top; only what is committed enters: commit what the task needs or say what stays out; name
 a secret you see in the history.
