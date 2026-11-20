@@ -56,6 +56,7 @@ from .claims import Claims
 from .joins import Joins
 from .moves import Move, door_holder
 from .parking import Parking
+from .tech_reports import addressee as report_addressee, read as read_reports, report_id, resolution_refusal, resolved as resolved_report
 from .workforce import Workforce
 from .admission import (admit as _admit, admit_register as _admit_register, refuse_a_contract_that_pins_nothing,
                         refuse_what_the_act_cannot_take,
@@ -812,9 +813,14 @@ class Engine:
         """A report about the SYSTEM, not the task — a check contradicting its contract, a tool that cannot run, an answer
         that ignored what was shown. Outside the twelve signals: it moves nothing and no packet reads it back; it lies
         where the system's maker reads it (`tech_reports`)."""
-        rec = {"at": datetime.now().isoformat(timespec="seconds"), "node": str(task_id) if task_id else None,
-               "role": str(role), "actor": str(actor), "text": str(text).strip()[:4000]}
-        self._appended(TECH_KEY, rec)
+        node = str(task_id) if task_id else None
+        with self._tech_lock:
+            seen = self._records(TECH_KEY)
+            rec = {"id": report_id(len(seen)), "at": datetime.now().isoformat(timespec="seconds"), "node": node,
+                   "role": str(role), "actor": str(actor),
+                   "addressee": report_addressee(self._graph, node, self.workforce.roster()),
+                   "text": str(text).strip()[:4000]}
+            self._storage.store_setting(TECH_KEY, json.dumps(seen + [rec]))
         self.emit_info("tech_report", f"TECH REPORT from {role} {actor}" + (f" on {task_id}" if task_id else "")
                                       + f": {rec['text'][:300]}")
         return rec
@@ -878,9 +884,25 @@ class Engine:
         """Record that the plan just built under `root_id` was the user's, handed in whole."""
         self._storage.store_setting(USERS_PLAN_KEY, str(root_id))
 
-    def tech_reports(self) -> list[dict]:
-        """Every tech report filed in this project, oldest first."""
-        return self._records(TECH_KEY)
+    def tech_reports(self, resolved: bool = False) -> list[dict]:
+        """The open tech reports filed in this project, oldest first — with `resolved`, every one: a resolved report stays
+        in the log and presses on nobody (`tech_reports`)."""
+        out = read_reports(self._records(TECH_KEY), self._graph, self.workforce.roster())
+        return out if resolved else [r for r in out if not r.get("resolved_at")]
+
+    def resolve_report(self, report_id, how, by) -> dict | str:
+        """Resolve the tech report `report_id`, `how` its reason, signed `by` — its addressee or its author: the report as
+        resolved, or why not, with nothing written (`tech_reports.resolution_refusal`)."""
+        rid, how, by = str(report_id), str(how or "").strip(), str(by)
+        with self._tech_lock:
+            log = self.tech_reports(resolved=True)
+            i = next((i for i, r in enumerate(log) if r["id"] == rid), None)
+            if why := resolution_refusal(None if i is None else log[i], rid, how, by):
+                return why
+            log[i] = resolved_report(log[i], how, by)
+            self._storage.store_setting(TECH_KEY, json.dumps(log))
+        self.emit_info("tech_report", f"TECH REPORT {rid} resolved by {by}: {how[:300]}")
+        return log[i]
 
     def witnessed(self, text: str, actor: str, key: str = "") -> dict:
         """A write a console's witness saw in this project's repository while no node of it was at work there: work past

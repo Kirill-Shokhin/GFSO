@@ -66,7 +66,7 @@ def signer_arg(verb: str) -> str:
 #: credential may not sign as is refused, and an omitted one is its default (`tools_llm._signed`). A verb's READ of
 #: "whose view" (`next_step(s).actor`, `available_actions.agent`) signs nothing and is not here.
 SIGNERS = {"signal": ("source",), "record_verdict": ("reviewer",), "stop_project": ("by",), "start_project": ("by",),
-           "tech_report": ("actor",), **{v: (a,) for v, a in SIGNED_BY.items()},
+           "tech_report": ("actor",), "resolve_report": ("actor",), **{v: (a,) for v, a in SIGNED_BY.items()},
            **{v: (SIGNER,) for v in ("revise", "edit_accepted_risks", "edit_criteria", "set_mode", "reopen",
                                      "rule_unrun_finding", "return_finding", "decompose", "reassign", "map_criterion",
                                      "add_dependency", "remove_dependency", "dispute_finding", "create_task",

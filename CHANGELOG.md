@@ -58,6 +58,13 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   enters that project: a small solo in_chat task takes the canon's acts — set_mode, the plan asked and handed in, the
   go, DELIVER, `gfso wait`, the person's PASS — and no call beside them.
 - `get_verdict` serves `outside`: what the verdict on the current delivery saw beyond the written criteria, unanswered.
+- A tech report says from whom, to whom and about what: each carries an `id`, its `actor` (who signed it), its `node`
+  and its `addressee` — the node's issuer, whose moves can give the reporter its move back, or the person where that
+  issuer is a machine (no packet reads a report back) or no node is named. `resolve_report(report_id, how)` resolves
+  one, by its addressee or its author only, a refusal writing nothing; a resolved report stays in the log with
+  `resolved_at`, `resolved_by` and `how`, and leaves every open count: `tech_reports` lists the open ones, `count`
+  being theirs and `resolved_count` the others', and `resolved=true` lists every one. Reports stored before take their
+  place in the log as their id and an addressee by the same rule, open until resolved.
 
 ### Changed
 - A dependency is declared or removed only by its consumer's issuer — the holder of its parent's split (§11.5) — at

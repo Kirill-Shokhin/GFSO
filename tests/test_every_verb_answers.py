@@ -107,7 +107,8 @@ _GOOD: dict[str, dict] = {
     "validate_result": {"task_id": "kid"},
     "set_checker": {"task_id": "kid", "checker": "validator", "user_said": "check it every time"},
     "stop_project": {"why": "look"}, "start_project": {},
-    "tech_report": {"text": "a check contradicts the contract", "task_id": "kid"}, "tech_reports": {},
+    "tech_report": {"text": "a check contradicts the contract", "task_id": "kid"}, "tech_reports": {"resolved": True},
+    "resolve_report": {"report_id": "tr-1", "how": "the check was repinned"},
     "canon": {"section": "12.4"},
     "rule_unrun_finding": {"task_id": "kid", "findings": ["nope"], "ruling": "retire", "why": "it cannot run"},
 }
@@ -155,7 +156,8 @@ _BAD: dict[str, dict] = {
     "validate_result": {"task_id": "no-such-node"},
     "set_checker": {"task_id": "no-such-node", "checker": ["not", "a", "name"]},
     "stop_project": {"why": ["not", "a", "reason"]}, "start_project": {"by": ["not", "an", "id"]},
-    "tech_report": {"text": ["not", "text"], "task_id": {"no": "id"}}, "tech_reports": {},
+    "tech_report": {"text": ["not", "text"], "task_id": {"no": "id"}}, "tech_reports": {"resolved": ["no"]},
+    "resolve_report": {"report_id": {"no": "id"}, "how": 3},
     "canon": {"section": ["not", "a", "section"]},
     "rule_unrun_finding": {"task_id": {"no": "id"}, "findings": "x", "ruling": 3, "why": ["no"]},
 }

@@ -26,6 +26,7 @@ When a run does not reach `PASS`:
 | your agent reports `stuck` and a directive | no node can move and the root has no `PASS`; the directive names the node and the moves open | your agent relays them; pick one, or start the goal as a new project |
 | your agent reports the project stopped | you, or the system with its reason, stopped it | read the reason; `start_project` resumes from where it stood |
 | you want it to stop | | the page's **Stop**, or tell your agent (`stop_project`). Sessions already running finish; `start_project` goes on |
+| the page counts tech reports | a role said the system itself, not the task, left it no honest move; each names who wrote it, its node, and its addressee, who can act on it | whoever it is addressed to, or its author, resolves it once dealt with (`resolve_report <id> how=<what was done>`): it leaves the count and stays in the log (`tech_reports resolved=true`) |
 
 The branch lands only on `PASS`. Without one, the work so far stays in the project's Docker volume: `gfso export-places <project> <dir>` writes it out.
 

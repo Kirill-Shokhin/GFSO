@@ -3173,9 +3173,20 @@ def tech_report(engine: Engine, text: str, task_id: Optional[str] = None, actor:
     return {"filed": engine.tech_report(text, "mcp", actor or _agent_id(), task_id)}
 
 
-def tech_reports(engine: Engine) -> dict:
-    """The tech reports filed in this project — {count, reports: [{at, node, role, actor, text}]}, oldest first."""
-    return {"count": len(r := engine.tech_reports()), "reports": r}
+def tech_reports(engine: Engine, resolved: bool = False) -> dict:
+    """The OPEN tech reports filed in this project — {count, resolved_count, reports: [{id, at, node, role, actor,
+    addressee, text}]}, oldest first: each from its `actor` to its `addressee`, who can act on it. `resolved=true` lists
+    the resolved ones too, each with `resolved_at`, `resolved_by` and `how`."""
+    whole = engine.tech_reports(resolved=True)
+    still = [r for r in whole if not r.get("resolved_at")]
+    return {"count": len(still), "resolved_count": len(whole) - len(still), "reports": whole if resolved is True else still}
+
+
+def resolve_report(engine: Engine, report_id: str, how: str, actor: Optional[str] = None) -> dict:
+    """Resolve a tech report you were sent or wrote (`tech_reports` names each one's `addressee` and `actor`): say `how`
+    it was dealt with. It leaves every open count and stays in the log (`tech_reports resolved=true`)."""
+    out = engine.resolve_report(report_id, how, actor or _agent_id())
+    return {"error": out} if isinstance(out, str) else {"resolved": out}
 
 
 # Registry: name -> function — the STRUCTURAL surface (this module is L1: core+engine only).
@@ -3196,5 +3207,5 @@ TOOLS = {
     "signal": signal, "record_verdict": record_verdict, "claim_drift": claim_drift,
     "probe_inputs": probe_inputs,
     "next_step": next_step, "next_steps": next_steps,
-    "tech_report": tech_report, "tech_reports": tech_reports,
+    "tech_report": tech_report, "tech_reports": tech_reports, "resolve_report": resolve_report,
 }
