@@ -232,6 +232,14 @@ class _ProjectSettings:
             row = c.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else None
 
+    def swap_settings(self, change) -> None:
+        """`StoragePort.swap_settings` under the file's own write lock (`BEGIN IMMEDIATE`): a second process over the
+        same .db — a stdio MCP beside the server — waits for it, so neither reads what the other is about to write."""
+        with self._write() as c:
+            c.execute("BEGIN IMMEDIATE")
+            get = lambda k: (r := c.execute("SELECT value FROM settings WHERE key = ?", (k,)).fetchone()) and r["value"]
+            c.executemany("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", change(get).items())
+
 
 #: a Dep record's columns, in `DepEdge`'s field order
 _EDGE_FIELDS = ("from_id", "to_id", "discovered", "glue", "provisional", "closed", "declared_first", "refuted", "removed")

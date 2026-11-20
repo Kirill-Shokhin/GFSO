@@ -717,7 +717,7 @@ def test_unittest_checker_is_a_deterministic_hidden_test_validator(tmp_path):
                   "workdir": str(ws), "criteria": ["test_returns_two", "test_positive"]}}), encoding="utf-8")
 
     class _E:
-        _project_name = "proj"
+        project_name = "proj"
     cfg = {"oracle_map": str(mp)}
 
     (ws / "solution.py").write_text("def f():\n    return 2\n", encoding="utf-8")

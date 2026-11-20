@@ -105,23 +105,20 @@ class _Gate:
         self.ev.acquire()
 
 
-def test_a_host_asleep_around_a_stop_or_a_start_is_off_once(monkeypatch):
+def test_a_host_asleep_around_a_stop_or_a_start_is_off_once():
     """The click right after a wake, before the next tick (critic over the clock, round 2): stopped before the sleep
     and started after it was counted twice; running before it and stopped after it, not at all."""
-    shift = {"s": 0.0}
-    monkeypatch.setattr(L, "time", type("T", (), {"time": staticmethod(lambda: time.time() + shift["s"])}))
     for before, after in (("stopped", "start"), ("running", "stop")):
         e = _carried(make_engine(llm=None))
         gate, halt = _Gate(), threading.Event()
         if before == "stopped":
             e.pause("u", "")
-        shift["s"] = -3600.0                                 # the last tick: an hour ago on the wall
+        e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))   # the last tick: an hour ago on the wall
         th = threading.Thread(target=L.timeout_monitor, args=(e.graph, queue.Queue(), 10.0, halt, None, gate),
                               daemon=True)
         th.start()
         time.sleep(0.2)
         e.resume("u") if after == "start" else e.pause("u", "")
-        shift["s"] = 0.0
         gate.ev.release()
         time.sleep(0.3)
         halt.set()

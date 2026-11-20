@@ -28,6 +28,8 @@ from .primitives import (
 from gfso import config as _config
 from gfso.config import PIPELINE_PAGE, USAGE_PAGE
 
+_ONE_SWAP = threading.RLock()   # …the default `swap_settings`'s: one process
+
 
 class StoragePort(ABC):
     """The persistence contract, split explicitly (the embedder's contract):
@@ -199,6 +201,15 @@ class StoragePort(ABC):
     def get_setting(self, key: str) -> Optional[str]:
         """A stored project-level setting, or `None` if it was never set."""
         return None
+
+    def swap_settings(self, change) -> None:
+        """Read and write settings as ONE act no other writer of the store lands inside: `change(get)` reads what it
+        needs by `get(key)` and returns the `{key: value}` to store. The clock's beat is decided so (`keep_the_beat`):
+        two processes may open one store. Default: one lock of this process — an adapter shared across processes
+        overrides it with the store's own."""
+        with _ONE_SWAP:
+            for k, v in change(self.get_setting).items():
+                self.store_setting(k, v)
 
     def log_pipeline(self, ts: str, source: str, message: str) -> None:
         """Persist one pipeline observation line (live token TICKS are excluded by the caller —

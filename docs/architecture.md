@@ -889,23 +889,31 @@ encoding is where they show, or are engine gaps.)*
    departure, declared. Where the system's own roles carry the work (`Engine.system_carries_work`), a stop and a server
    that is not running are no states of the contract: in them no party's move is made, and every bound the system's
    sessions would spend there was spent by nobody. There every bound is written and read on `project_now` — the wall
-   less the time the project did not run (a tick under a stop, a gap between ticks over 120 s, the gap since the last
-   beat at an engine's start; `gfso/core/graph/model.py`) — which moves every bound of the project by one amount and
-   keeps every order between them (child inside parent, Dep, CHECK-3). Outside, every time reads on the wall. A graph
-   people hold runs on the wall, the canon's clock (the author, 2026-11-15: «там очевидно и часы вести не для кого»):
-   nothing is left off it (`time_holds`, read at each leaving-off, so a project that changes hands mid-stop holds from
-   the tick it carries work, and not before or after). The system stops a project by itself only where its own roles
-   carry the work: an account at its limit or refusing authentication and an execution place down lift by themselves
+   less the time the project did not run: of the wall since the project's last beat, all of it under a stop, all of a
+   gap over 120 s (a host asleep between two ticks, a server down before an engine's start) — which moves every bound
+   of the project by one amount and keeps every order between them (child inside parent, Dep, CHECK-3). One function
+   decides it, at an engine's start and at every tick of its monitor alike (`keep_the_beat`, `gfso/core/graph/model.py`),
+   over the STORED beat and off, in one act on the store (`StoragePort.swap_settings`; on SQLite the file's write lock):
+   any number of engines and monitors over one project — a server and a stdio MCP process can both open one .db — hold
+   each wall second once, as the second to come finds the gap kept. A gap under 120 s outside a stop is a tick's lag and
+   runs on the wall. Outside, every time reads on the wall. A graph people hold runs on the wall, the canon's clock (the
+   author, 2026-11-15: «там очевидно и часы вести не для кого»): nothing is left off it, and a stop there suspends no
+   bound — it stops the system's own spending, of which there is none, so a deadline passing during it fires then
+   (`time_holds`, read at each beat, so a project that changes hands mid-stop holds from the tick it carries work, and
+   not before or after). Who carries the work reads who is a machine, so every engine the factory opens has the roster
+   published before its start (`runtime.build_engine_from_env`: the server, the stdio MCP, the CLI's one verb alike);
+   an engine opened without it (an embedder's) knows the system carries the work only by a mode. The system stops a
+   project by itself only where its own roles carry the work: an account at its limit or refusing authentication and an execution place down lift by themselves
    once the cause is gone; the stop a server's start makes lifts only by a person's Start, as his own stop does. A
    system-carried project nobody loads keeps its bounds still (named). **The departure has its record, on every
    deadline it moves.** Thm 11 asks every decision a record, and leaving time off is a decision the canon does not
-   make. At every lift of a stop that held time, and wherever a gap outside a stop is left off (a server down, at the
+   make. At every lift of a stop that held time, and wherever a gap outside a stop is held (a server down, at the
    engine's start; a host asleep, at the monitor's next tick), each live node with a deadline gets a record of how its
    deadline moved on the wall — before, after, how long the time held, who or what stopped it and what started it
    again, one carrier for all three (`Engine._record_the_held_time`, served on the node as `deadline_moves`, and a
-   `clock` line of the feed; a gap under a stop is the stop's, recorded once at its lift). A gap under 120 s at an
-   engine's start (an ordinary restart's seconds) is left off and not recorded: the deadline moves by those seconds,
-   no more than a tick's lag, unrecorded (named). The record is no revision: a revision enters OFFERED (§12.3), so it
+   `clock` line of the feed; a gap under a stop is the stop's, recorded at its lift). Once across engines: a gap is
+   recorded by the one caller whose act on the store kept it, and a stop is taken off in one act (`_take_the_stop`),
+   so of two engines lifting it one records. The record is no revision: a revision enters OFFERED (§12.3), so it
    would re-offer every consented node, re-present every delivery at the cost of a re-consent and a re-delivery
    (§12.10), and make the person's issuer moves on his own nodes; the record stands beside the log, as a finding's
    ruling does (corner 18), and the version and its consent stand.

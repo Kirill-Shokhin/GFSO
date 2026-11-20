@@ -21,7 +21,7 @@ from gfso.core.protocol.invariants import content_words, is_pure_assent
 from gfso.core.protocol.procedure import admission_defects, criterionless
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.graph import Graph
-from gfso.core.graph.model import (NO_TICK_S, clock_off_s, dep_scope, keep_off, kept_off, non_leaf_ids, project_now, time_holds,
+from gfso.core.graph.model import (clock_off_s, dep_scope, keep_the_beat, non_leaf_ids, project_now, time_holds,
                                    project_state_bound, standing_split)
 from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation
 from gfso.core.handlers import run_all_checks, recommend
@@ -595,8 +595,8 @@ def timeout_monitor(
 
     `lift(wall)`, asked at every tick under a stop: starts a stop the system made by itself once what made it is gone —
     the account's limit lifted, the execution place answering (`Engine.lift_the_system_stop`) — from the stop's record,
-    so a restart re-arms it. `held(since, before)`, told of a gap between two ticks left off its clocks outside a stop
-    (a host asleep): its start and the off kept before it, for the deadlines' record (`Engine._record_the_gap`).
+    so a restart re-arms it. `held(since, before)`, told of a gap held outside a stop that this tick kept (a host asleep;
+    `keep_the_beat`): its start and the off kept before it, for the deadlines' record (`Engine._record_the_gap`).
 
     Inv-5 (§12.12): EVERY non-terminal state is finite. Two clocks feed the same TIMEOUT trigger:
     (a) the task's own deadline (exact, when set); (b) the per-STATE clock — a state older than
@@ -616,15 +616,13 @@ def timeout_monitor(
     """
     clock = clock or SystemClock()   # Inv-5 reads the ClockPort, never the wall clock directly
     last_fired: dict[TaskId, tuple[State, object]] = {}   # task → (state, entered_at) of the fired visit
-    # …ON THE PROJECT'S CLOCKS (`project_now`): every wall second between two ticks is the project's or off, once — off
-    # under a stop, off in a gap too long to be a tick (a host asleep); the gap before this engine was left off at its
-    # start (`Engine.start`)
-    wall = time.time()
     while True:
         if stop_event and stop_event.is_set():
             break
         clock.wait(check_interval)
-        last, wall = wall, time.time()
+        if stop_event and stop_event.is_set():   # …its engine stopped inside the wait: no tick over the store it left
+            break
+        wall = time.time()
         now = clock.now()
         try:
             _active = graph.active_tasks()
@@ -636,19 +634,19 @@ def timeout_monitor(
             # 2026-09-02). A monitor whose graph has closed has nothing left to monitor: it leaves.
             log.debug(f"the timeout monitor is stopping: its graph is closed ({e})")
             break
-        # …AND WHILE THE USER HAS STOPPED THE PROJECT, NO TIMEOUT: a stop writes nothing into the graph, and every tick
-        # under it is left off the project's clocks (above), so no bound ran out during it
-        # …the beat kept at every tick, with what the tick leaves off (`keep_off`): pending between ticks is read by
-        # `clock_off_s` by this same rule, so the clock is the same whether a reader comes before or after a tick
-        stopped, before = pause_record(graph), kept_off(graph)
-        holds = (stopped or wall - last > NO_TICK_S) and time_holds(graph)    # …read once a pass, only where asked
-        keep_off(graph, wall - last if holds else 0.0, beat=wall)
-        if held is not None and holds and not stopped:    # …under a stop, the stop's lift records it
-            held(last, before)
-        if stopped:
+        # …ON THE PROJECT'S CLOCKS (`project_now`): what of the wall since the project's last beat is held, decided over
+        # the stored beat (`keep_the_beat`) — pending between ticks is read by `clock_off_s` by the same rule, so the
+        # clock is the same whether a reader comes before or after a tick, and whichever monitor comes
+        if (gap := keep_the_beat(graph, wall)) and held is not None:
+            held(*gap)
+        if pause_record(graph):
             if lift is not None:
                 lift(wall)
-            continue
+            # …AND WHERE THE SYSTEM CARRIES THE WORK, NO TIMEOUT UNDER A STOP: its time is held (above), so no bound ran
+            # out in it. On a graph people hold it runs on the wall (§12.2, never suspended): the stop stops the system's
+            # own spending, of which there is none, and a deadline passing in it fires then
+            if time_holds(graph):
+                continue
         now -= clock_off_s(graph)
         for task in _active:
             overdue = task.deadline and now > task.deadline.timestamp()

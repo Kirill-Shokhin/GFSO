@@ -200,24 +200,35 @@ def time_holds(graph: "Graph") -> bool:
     return graph.carries_work is None or bool(graph.carries_work())
 
 
-def keep_off(graph: "Graph", seconds: float, beat: Optional[float] = None) -> None:
-    """Leave `seconds` of wall time off this project's clocks — and, with `beat`, move the beat with it, so what was
-    pending becomes kept without a second carrier: the beat first, then the off time (a reader between the two writes
-    sees the gap neither kept nor pending — never both)."""
-    if beat is not None:
-        graph.store_setting(CLOCK_BEAT_KEY, str(beat))
-    if seconds > 0:
-        graph.store_setting(CLOCK_OFF_KEY, str(kept_off(graph) + seconds))
+def keep_off(graph: "Graph", seconds: float) -> None:
+    """Leave `seconds` of wall time off this project's clocks, as one act on the store (`Graph.swap_settings`)."""
+    graph.swap_settings(lambda get: {CLOCK_OFF_KEY: str(float(get(CLOCK_OFF_KEY) or 0) + seconds)})
 
 
-def leave_off_the_gap(graph: "Graph") -> float:
-    """At an engine's start, before anything reads a bound: the wall time since the project's last beat is left off its
-    clocks where time holds (`time_holds`), and the beat is kept at once, so a death in the next seconds counts nothing
-    twice. Returns the gap's start and the off kept before it — None where nothing was left off."""
-    now, was, before = time.time(), graph.setting(CLOCK_BEAT_KEY), kept_off(graph)
-    held = bool(was) and time_holds(graph)
-    keep_off(graph, now - float(was) if held else 0.0, beat=now)
-    return (float(was), before) if held else None
+def keep_the_beat(graph: "Graph", wall: float) -> Optional[tuple[float, float]]:
+    """THE ONE DECISION of how much wall time is held between the project's last kept beat and `wall` — an engine's start
+    (a server down) and every tick of its monitor (a host asleep, a stop) ask it alike. Read over the STORED beat and
+    off, in one act on the store (`Graph.swap_settings`), never over a caller's memory: any number of monitors and
+    engines over one project — a server and a stdio MCP process on one .db — leave each wall second off once, as the
+    second to come finds the gap kept (the beat at or past its `wall`) and keeps nothing. Held, by `clock_off_s`'s rule:
+    all of it under a stop, all of a gap too long to be a tick, and only where time holds (`time_holds`); the beat moves
+    to `wall` either way. Returns the start of a gap held outside a stop and the off kept before it — what the deadlines'
+    record names (`Engine._record_the_gap`), by the one caller that kept it — else None."""
+    holds, out = time_holds(graph), None    # …who carries the work, read before the act: it is not the clock's to race
+
+    def beat(get):
+        """The beat moved to `wall` and the gap held, inside the store's one act — nothing where it is kept already."""
+        nonlocal out
+        was = get(CLOCK_BEAT_KEY)
+        if was and float(was) >= wall:
+            return {}
+        before, gap = float(get(CLOCK_OFF_KEY) or 0), wall - float(was or wall)
+        stopped = bool(json.loads(get(PAUSE_KEY) or "null"))
+        held = holds and (stopped or gap > NO_TICK_S)
+        out = (float(was), before) if held and not stopped else None   # …under a stop, the stop's lift records it
+        return {CLOCK_BEAT_KEY: str(wall), **({CLOCK_OFF_KEY: str(before + gap)} if held else {})}
+    graph.swap_settings(beat)
+    return out
 
 
 def project_now(graph: Optional["Graph"]) -> datetime:
@@ -389,8 +400,12 @@ class Graph:
         return self._storage.get_setting(key)
 
     def store_setting(self, key: str, value: str) -> None:
-        """Keep a setting of this graph's project — the clocks' own record (`keep_off`, the monitor's beat)."""
+        """Keep a setting of this graph's project — the user's choices, the stop's record."""
         self._storage.store_setting(key, value)
+
+    def swap_settings(self, change) -> None:
+        """Read and write settings as one act on the store (`StoragePort.swap_settings`) — the clock's beat, a stop's lift."""
+        self._storage.swap_settings(change)
 
     def get_state(self, task_id: TaskId) -> Optional[State]:
         """The node's current state, or `None` if this id is not in the graph. `None` is what the

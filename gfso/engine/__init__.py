@@ -22,8 +22,8 @@ from gfso.core.types import (
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
                                    start_waits,
-                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, NO_TICK_S, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, root_of, root_issuer_key,
-                                   register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s,
+                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, root_of, root_issuer_key,
+                                   register_log_key, stamp, stamped_with, keep_the_beat, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
 from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair
 from gfso.core.handlers.structural import run_structural
@@ -225,8 +225,9 @@ class Engine:
         if self._started:
             return
         self._started = True
-        gap = leave_off_the_gap(self._graph)   # before anything reads a bound (§12.2)
-        if gap and not self.paused():           # …under a stop the gap is the stop's, recorded at its lift (one carrier)
+        # …the gap since the project's last beat, decided before anything reads a bound (§12.2) by the monitor's own rule
+        # over the stored beat (`keep_the_beat`): an engine opened beside a running one finds it kept
+        if gap := keep_the_beat(self._graph, time.time()):
             self._record_the_gap("the server was down", *gap, "the server's start")
         # THE CACHED CHECKS ARE THIS BUILD'S: a project written by an older one carried its verdicts, and `list_holes`
         # answered [] from them while the plan gate, reading the live rule, named the hole (critic r15)
@@ -800,21 +801,36 @@ class Engine:
         """START again: the stop that stood, or None where none did. Its time is already off the project's clocks: the
         monitor leaves off every tick made under a stop (`project_now`)."""
         with self._stop_lock:
-            was = self.paused()
-            self._storage.store_setting(PAUSE_KEY, "")
+            was = self._take_the_stop()
         if was:
             self.emit_info("pause", f"STARTED again by {by}{_via_said()} (stopped since {was.get('at')})")
             self._record_the_held_time(was, by)
         return was
 
+    def _take_the_stop(self, standing: Optional[dict] = None) -> Optional[dict]:
+        """The stop taken off as one act on the store (`Graph.swap_settings`) — `standing`, where given, only while it is
+        the stop that stood: of two engines over one project lifting it, one takes it and records its held time."""
+        took = None
+
+        def take(get):
+            """The stop cleared inside the store's one act, if it stands (as `standing`, where given)."""
+            nonlocal took
+            was = json.loads(get(PAUSE_KEY) or "null")
+            if not was or standing is not None and was != standing:
+                return {}
+            took = was
+            return {PAUSE_KEY: ""}
+        self._graph.swap_settings(take)
+        return took
+
     def _record_the_gap(self, cause: str, since: float, before: float, by: str) -> None:
         """A gap nobody ran the project in, left off its clocks — a server down, a host asleep — recorded on the deadlines
-        it moves as a stop's held time is (`_record_the_held_time`), `cause` in the stop's place. A gap under NO_TICK_S
-        (an ordinary restart's seconds) is left off and not recorded: no more than the lag of a tick."""
+        it moves as a stop's held time is (`_record_the_held_time`), `cause` in the stop's place — told by the one caller
+        that kept it (`keep_the_beat`)."""
         self._record_the_held_time({"by": cause, "at": datetime.fromtimestamp(since).isoformat(timespec="seconds"),
-                                    "off_s": before, "gap": True}, by, least=NO_TICK_S)
+                                    "off_s": before, "gap": True}, by)
 
-    def _record_the_held_time(self, was: dict, by: str, least: float = 1.0) -> None:
+    def _record_the_held_time(self, was: dict, by: str) -> None:
         """THE RECORD OF THE DECLARED DEPARTURE, ON EVERY DEADLINE IT MOVES. Where the system carries the work, the time
         a stop held is left off the project's clocks (`time_holds`) — a decision the canon does not make, its deadline
         "never suspended" (§12.2), declared as the product's (architecture, corner 16) — so each live deadline reads that
@@ -822,7 +838,7 @@ class Engine:
         and after, how long the time held, who or what stopped it and what started it again. Beside the log, as a
         finding's ruling is (corner 18), not a revision: a re-ASSIGN would re-offer every consented node (Inv-1),
         re-present every delivery (§12.10) and make a person's issuer move on his own nodes."""
-        if was.get("off_s") is None or (held := clock_off_s(self._graph) - float(was["off_s"])) < least:
+        if was.get("off_s") is None or (held := clock_off_s(self._graph) - float(was["off_s"])) < 1:
             return
         rec = {"held_s": round(held, 1), "stopped_by": was.get("by"), "why": was.get("why") or "",
                "since": was.get("at"), "started_by": str(by), "at": datetime.now().isoformat(timespec="seconds"),
@@ -942,9 +958,8 @@ class Engine:
         if was.get("place") and (self._place_probe is None or self._probe_says(was["place"]) is not None):
             return
         with self._stop_lock:
-            if self.paused() != was:      # a stop made while the place was probed is that stop's
+            if not self._take_the_stop(was):      # a stop made while the place was probed is that stop's
                 return
-            self._storage.store_setting(PAUSE_KEY, "")
         self.emit_info("pause", "STARTED again by system: " + " and ".join(
             ([f"the execution place {was['place']} answers"] if was.get("place") else [])
             + ([] if not was.get("until") else ["a credential was set"] if moved else

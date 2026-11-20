@@ -70,7 +70,7 @@ ALLOWED_PRIVATE: set[tuple[str, str]] = {
 ALLOWED_DUCK_PRIVATE: set[tuple[str, str]] = {
     ("gfso.decompose", "_dispatch_quiesce"), ("gfso.decompose", "_dispatch_wake"),
     ("gfso.decompose.build", "_dispatch_quiesce"), ("gfso.decompose.build", "_dispatch_wake"),
-    ("gfso.delegate", "_dispatch_quiesce"), ("gfso.delegate", "_project_name"),
+    ("gfso.delegate", "_dispatch_quiesce"),
     ("gfso.roster", "_owner_live"), ("gfso.runtime", "_on_create"),
     ("gfso.critic.runner", "_model"), ("gfso.critic.runner", "_critique_log_path"),
     ("gfso.tools_llm", "_model"),
@@ -131,7 +131,7 @@ def _root_name(node) -> str:
 # never expires, exactly like a stale allowlist entry.
 # Measured 2026-08-20 20:5x on a tree the E3 stream was editing live — these WILL differ by the
 # time the plan runs. S1 re-snaps them: run the file once, read "X -> Y" and set Y.
-BASE_COUNT = {"private_reach": 2,   # ← `issuer_of` published (2026-08-22)
+BASE_COUNT = {"private_reach": 1,   # ← `issuer_of` published (2026-08-22); ← `_project_name` retired (2026-11-20)
               # a private NAME imported from another module (`from gfso.x import _y`): the layering gate reads it as an
               # ordinary import, and nothing counted it (sync audit, D-F17, 2026-10-05) — measured, to fall from here;
               # 39 read as written, 53 resolved (relative imports: a package's own re-exports, gfso.engine's siblings)
@@ -154,7 +154,7 @@ BASE_COUNT = {"private_reach": 2,   # ← `issuer_of` published (2026-08-22)
               # a guard whose own bookkeeping makes it blind — appeared inside these instruments.
               # 28: the SDK's `initialize` answer, the one carrier of a client kind's instructions (2026-11-15)
               "allowed_private": 28,
-              "allowed_duck": 12,
+              "allowed_duck": 11,   # ← `_project_name` retired: one spelling of an engine's project (2026-11-20)
               "allowed_path": 3,
               "allowed_patch": 4}
 

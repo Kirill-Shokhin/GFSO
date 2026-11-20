@@ -4,11 +4,14 @@ revision: no packet field moved, so the node keeps its version and the consent s
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
+import gfso.driver as D
 import gfso.engine.loop as L
 import gfso.tools as T
 from gfso.adapters.storage.memory import MemoryStorage
+from gfso.adapters.storage.sqlite import SqliteStorage
+from gfso.roster import AgentRegistry
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.core.graph.model import CLOCK_BEAT_KEY, clock_off_s, keep_off
 from tests.support import criterion, make_engine
@@ -115,6 +118,71 @@ def test_a_graph_people_hold_runs_on_absolute_time_through_a_server_down_and_a_s
     again.stop()
     assert clock_off_s(again.graph) < 1 and got["deadline"] == was, (clock_off_s(again.graph), was, got["deadline"])
     assert again.deadline_moves("n") == [], again.deadline_moves("n")
+
+
+def test_two_engines_on_one_store_leave_each_held_second_off_once_and_record_it_once(tmp_path, monkeypatch):
+    """A server and a stdio MCP process open one .db: each monitor measured its tick from its own last, so a 1800 s stop
+    left 3600 s off and a host asleep was recorded twice (critic's probe). The gap is decided over the STORED beat."""
+    shift = {"s": 0.0}
+    monkeypatch.setattr(L, "time", type("T", (), {"time": staticmethod(lambda: time.time() + shift["s"])}))
+    db = str(tmp_path / "one.db")
+    a = _consented(SqliteStorage(db), check_interval=0.05)
+    b = make_engine(storage=SqliteStorage(db), validate_signals=True, state_timeout=0, check_interval=0.05)
+    b.start()
+    time.sleep(0.2)
+    a.pause("the-user", "")
+    shift["s"] = 1800.0                                  # half an hour under the stop, between two ticks of each
+    time.sleep(0.4)
+    a.resume("the-user")
+    time.sleep(0.2)
+    shift["s"] = 1800.0 + 3600.0                         # …then the host sleeps an hour
+    time.sleep(0.4)
+    moves = a.deadline_moves("n")
+    a.stop(), b.stop()
+    assert [m["stopped_by"] for m in moves] == ["the-user", "the host slept"], moves
+    assert abs(moves[0]["held_s"] - 1800) < 5 and abs(moves[1]["held_s"] - 3600) < 5, moves
+
+
+def test_the_cli_path_keeps_the_server_down_gap_of_a_project_a_registered_executor_holds(tmp_path, monkeypatch):
+    """No mode, the live node a registered executor's: the system carries the work. The CLI opened the engine before
+    anyone published the roster, read the node as a person's and let the server-down hour run on the wall."""
+    for k, v in (("GFSO_DATA_DIR", tmp_path / "data"), ("GFSO_HOME", tmp_path), ("GFSO_AGENTS_PATH", tmp_path / "a.json"),
+                 ("GFSO_DB_PATH", tmp_path / "data" / "gfso.db"), ("GFSO_STORAGE", "sqlite"), ("GFSO_LLM", "none")):
+        monkeypatch.setenv(k, str(v))
+    monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    AgentRegistry().register("x-exec", "llm-executor", workdir=str(tmp_path))
+    e = make_engine(storage=SqliteStorage(str(tmp_path / "data" / "gfso.db")), validate_signals=True, state_timeout=0)
+    e.start()
+    T.create_task(e, "n", {"description": "x", "criteria": [criterion("a", "A")]}, "x-exec")
+    e.wait_idle()
+    e.stop()
+    e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
+    opened, real = [], D.build_engine_from_env
+    monkeypatch.setattr(D, "build_engine_from_env", lambda: opened.append(real()) or opened[-1])
+    D._locally(T.TOOLS["get_task"], None, ["n"], {})
+    [cli] = opened
+    moves, off = cli.deadline_moves("n"), clock_off_s(cli.graph)
+    cli.stop()
+    assert cli.system_carries_work() and abs(off - 3600) < 5, off
+    assert [m["stopped_by"] for m in moves] == ["the server was down"], moves
+
+
+def test_a_persons_stop_on_a_graph_people_hold_does_not_suspend_a_deadline(monkeypatch):
+    """§12.2: the deadline runs across every state and is never suspended. On a graph people hold a stop stops the
+    system's own spending, of which there is none — a deadline passing during it fires then, not at the Start."""
+    e = make_engine(validate_signals=True, state_timeout=0, check_interval=0.05)
+    e.start()
+    due = (datetime.now() + timedelta(seconds=1)).isoformat(timespec="seconds")
+    T.create_task(e, "n", {"description": "x", "criteria": [criterion("a", "A")]}, "w", deadline=due)
+    e.wait_idle()
+    assert not e.system_carries_work()
+    e.pause("the-user", "")
+    deadline = time.time() + 5
+    while e.graph.get_state(TaskId("n")).name == "OFFERED" and time.time() < deadline:
+        time.sleep(0.05)
+    st, stopped = e.graph.get_state(TaskId("n")).name, e.paused()
+    e.stop()
+    assert stopped and st != "OFFERED", st
 
 
 def test_a_host_asleep_between_two_ticks_is_on_each_deadlines_record(monkeypatch):

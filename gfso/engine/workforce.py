@@ -82,10 +82,8 @@ class Workforce:
         whose = self._validator_projects
         if not whose:                          # nothing published yet — the set is all we know
             return bool(self._graph.authorized_validators)
-        # THE DECLARED SPELLING. This engine carries the project under two names — `project_name`,
-        # which every reader in the product uses, and `_project_name`, which `runtime` also sets
-        # and calls "the older spelling, still read downstream". A third one written here would
-        # be the same defect one turn later.
+        # THE DECLARED SPELLING: `project_name`, the one name the engine carries the project under —
+        # a second one written here would be the defect `_project_name` was until it was retired.
         mine = self._project() or DEFAULT_PROJECT
         return any(p in (None, "", mine) for aid, p in whose.items()
                    if aid in self._graph.authorized_validators)

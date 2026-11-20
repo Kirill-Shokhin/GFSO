@@ -295,7 +295,7 @@ def _auto_validate_scope(engine, top_id: TaskId, agents: AgentRegistry, _llm=Non
 def _oracle_workdir(engine, vcfg: dict):
     """The workspace for this project from the issuer-side oracle map (same map the unittest-checker
     uses), so a criteria validator runs the code where the executor delivered it. None if absent."""
-    project = getattr(engine, "_project_name", None) or "default"
+    project = getattr(engine, "project_name", None) or "default"
     try:
         entry = json.loads(Path(vcfg["oracle_map"]).read_text(encoding="utf-8")).get(project)
         return entry.get("workdir") if entry else None
@@ -315,7 +315,7 @@ def _checker_validate(engine, task_id: TaskId, vcfg: dict, workdir: str | None =
     if execution is not None and execution.files is not HOST:
         return {"verdict": None, "note": "a unittest-checker runs a delivery on this machine, and this project's work runs "
                                          "in a container: refused — register an llm-validator with pinned checks"}
-    project = getattr(engine, "_project_name", None) or "default"
+    project = getattr(engine, "project_name", None) or "default"
     try:
         entry = json.loads(Path(vcfg["oracle_map"]).read_text(encoding="utf-8")).get(project)
     except Exception:
