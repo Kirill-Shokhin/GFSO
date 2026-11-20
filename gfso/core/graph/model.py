@@ -171,7 +171,8 @@ CLOCK_BEAT_KEY = "clock_beat"
 NO_TICK_S = 120.0
 
 
-def _kept_off(graph: "Graph") -> float:
+def kept_off(graph: "Graph") -> float:
+    """What the ticks and starts kept off this project's clocks — `clock_off_s` without what is pending."""
     v = graph.setting(CLOCK_OFF_KEY) if graph is not None else None
     return float(v) if v else 0.0
 
@@ -187,7 +188,7 @@ def clock_off_s(graph: "Graph") -> float:
         gap = time.time() - float(beat)
         stopped = bool(json.loads(graph.setting(PAUSE_KEY) or "null"))
         pending = gap if stopped or gap > NO_TICK_S else 0.0
-    return _kept_off(graph) + max(0.0, pending)
+    return kept_off(graph) + max(0.0, pending)
 
 
 def keep_off(graph: "Graph", seconds: float, beat: Optional[float] = None) -> None:
@@ -197,16 +198,16 @@ def keep_off(graph: "Graph", seconds: float, beat: Optional[float] = None) -> No
     if beat is not None:
         graph.store_setting(CLOCK_BEAT_KEY, str(beat))
     if seconds > 0:
-        graph.store_setting(CLOCK_OFF_KEY, str(_kept_off(graph) + seconds))
+        graph.store_setting(CLOCK_OFF_KEY, str(kept_off(graph) + seconds))
 
 
 def leave_off_the_gap(graph: "Graph") -> float:
     """At an engine's start, before anything reads a bound: the wall time since the project's last beat is left off its
-    clocks, and the beat is kept at once, so a death in the next seconds counts nothing twice. Returns the beat."""
-    now = time.time()
-    was = graph.setting(CLOCK_BEAT_KEY)
+    clocks, and the beat is kept at once, so a death in the next seconds counts nothing twice. Returns the gap's start
+    and the off kept before it — None where no beat was ever kept."""
+    now, was, before = time.time(), graph.setting(CLOCK_BEAT_KEY), kept_off(graph)
     keep_off(graph, now - float(was) if was else 0.0, beat=now)
-    return now
+    return (float(was), before) if was else None
 
 
 def project_now(graph: Optional["Graph"]) -> datetime:

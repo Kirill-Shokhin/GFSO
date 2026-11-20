@@ -894,9 +894,11 @@ encoding is where they show, or are engine gaps.)*
    at its limit or refusing authentication and an execution place down lift by themselves once the cause is gone; the
    stop a server's start makes lifts only by a person's Start, as his own stop does. A project nobody loads keeps its
    bounds still, a person's included (named). **The shift is on the record, not a revision.** At every lift of a stop
-   that held time, each live node with a deadline gets a record of how its deadline moved on the wall — before, after,
-   how long the stop held, who stopped and who started (`Engine.deadline_moves`, served on the node as
-   `deadline_moves`, and a `clock` line of the feed) — since Thm 11 asks every decision a record and the log's packet
+   that held time, and wherever a gap outside a stop is left off (a server down, at the engine's start; a host asleep,
+   at the monitor's next tick), each live node with a deadline gets a record of how its deadline moved on the wall —
+   before, after, how long the time held, who or what stopped it and what started it again, one carrier for all three
+   (`Engine._record_the_held_time`, served on the node as `deadline_moves`, and a `clock` line of the feed; a gap under
+   a stop is the stop's, recorded once at its lift) — since Thm 11 asks every decision a record and the log's packet
    did not move. A re-ASSIGN carrying the new date is refused as the carrier: no packet field changed (the deadline is
    the same instant on the project's clock), and a revision enters OFFERED (§12.3), so it would re-offer every consented
    node, re-present every delivery at the cost of a re-consent and a re-delivery (§12.10), and make the person's issuer

@@ -21,7 +21,7 @@ from gfso.core.protocol.invariants import content_words, is_pure_assent
 from gfso.core.protocol.procedure import admission_defects, criterionless
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.graph import Graph
-from gfso.core.graph.model import (NO_TICK_S, clock_off_s, dep_scope, keep_off, non_leaf_ids, project_now,
+from gfso.core.graph.model import (NO_TICK_S, clock_off_s, dep_scope, keep_off, kept_off, non_leaf_ids, project_now,
                                    project_state_bound, standing_split)
 from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation
 from gfso.core.handlers import run_all_checks, recommend
@@ -589,12 +589,14 @@ def timeout_monitor(
     state_timeout: float | None = None,
     clock: ClockPort | None = None,
     lift=None,
+    held=None,
 ) -> None:
     """Background thread: checks deadlines AND per-state age, emits timeout signals.
 
     `lift(wall)`, asked at every tick under a stop: starts a stop the system made by itself once what made it is gone —
     the account's limit lifted, the execution place answering (`Engine.lift_the_system_stop`) — from the stop's record,
-    so a restart re-arms it.
+    so a restart re-arms it. `held(since, before)`, told of a gap between two ticks left off its clocks outside a stop
+    (a host asleep): its start and the off kept before it, for the deadlines' record (`Engine._record_the_gap`).
 
     Inv-5 (§12.12): EVERY non-terminal state is finite. Two clocks feed the same TIMEOUT trigger:
     (a) the task's own deadline (exact, when set); (b) the per-STATE clock — a state older than
@@ -638,8 +640,10 @@ def timeout_monitor(
         # under it is left off the project's clocks (above), so no bound ran out during it
         # …the beat kept at every tick, with what the tick leaves off (`keep_off`): pending between ticks is read by
         # `clock_off_s` by this same rule, so the clock is the same whether a reader comes before or after a tick
-        stopped = pause_record(graph)
+        stopped, before = pause_record(graph), kept_off(graph)
         keep_off(graph, wall - last if stopped or wall - last > NO_TICK_S else 0.0, beat=wall)
+        if held is not None and not stopped and wall - last > NO_TICK_S:   # …under a stop, the stop's lift records it
+            held(last, before)
         if stopped:
             if lift is not None:
                 lift(wall)

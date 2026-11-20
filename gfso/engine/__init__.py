@@ -224,7 +224,9 @@ class Engine:
         if self._started:
             return
         self._started = True
-        leave_off_the_gap(self._graph)   # before anything reads a bound (§12.2)
+        gap = leave_off_the_gap(self._graph)   # before anything reads a bound (§12.2)
+        if gap and not self.paused():           # …under a stop the gap is the stop's, recorded at its lift (one carrier)
+            self._record_the_gap("the server was down", *gap, "the server's start")
         # THE CACHED CHECKS ARE THIS BUILD'S: a project written by an older one carried its verdicts, and `list_holes`
         # answered [] from them while the plan gate, reading the live rule, named the hole (critic r15)
         for t in self.all_tasks():
@@ -238,7 +240,9 @@ class Engine:
 
         self._runner.spawn(
             lambda: timeout_monitor(self._graph, self._queue, self._check_interval, self._stop,
-                                    self._state_timeout, self._clock, self.lift_the_system_stop),
+                                    self._state_timeout, self._clock, self.lift_the_system_stop,
+                                    lambda since, before: self._record_the_gap("the host slept", since, before,
+                                                                               "the monitor's next tick")),
             name="gfso-timeout-monitor")
 
         self._recover_orphans()
@@ -802,6 +806,12 @@ class Engine:
             self._record_the_held_time(was, by)
         return was
 
+    def _record_the_gap(self, cause: str, since: float, before: float, by: str) -> None:
+        """A gap nobody ran the project in, left off its clocks — a server down, a host asleep — recorded on the deadlines
+        it moves as a stop's held time is (`_record_the_held_time`), `cause` in the stop's place."""
+        self._record_the_held_time({"by": cause, "at": datetime.fromtimestamp(since).isoformat(timespec="seconds"),
+                                    "off_s": before, "gap": True}, by)
+
     def _record_the_held_time(self, was: dict, by: str) -> None:
         """THE TIME A STOP HELD, ON EVERY DEADLINE IT MOVES (Thm 11: every decision has a record). Left off the project's
         clocks, it moves each live deadline that much later on the wall, and the log's packet stood still: a node's own
@@ -821,7 +831,8 @@ class Engine:
                 self._appended(f"{DEADLINE_MOVES}{t.id}", {
                     "was": (t.deadline + timedelta(seconds=float(was["off_s"]))).isoformat(), "now": now.isoformat(), **rec})
                 self.emit_info("clock", f"{t.id}: its deadline reads {held / 60:.0f} min later, {now:%Y-%m-%d %H:%M} — "
-                                        f"the stop by {was.get('by')} since {was.get('at')} held the project's time; "
+                                        f"{'' if was.get('gap') else 'the stop by '}{was.get('by')} since "
+                                        f"{was.get('at')}, the project's time held; "
                                         f"its contract and consent stand")
 
     def deadline_moves(self, task_id) -> list[dict]:

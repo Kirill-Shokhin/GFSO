@@ -6,9 +6,11 @@ from __future__ import annotations
 import time
 from datetime import datetime
 
+import gfso.engine.loop as L
 import gfso.tools as T
+from gfso.adapters.storage.memory import MemoryStorage
 from gfso.core.types import AgentId, Mode, TaskId
-from gfso.core.graph.model import keep_off
+from gfso.core.graph.model import CLOCK_BEAT_KEY, keep_off
 from tests.support import criterion, make_engine
 
 
@@ -54,3 +56,50 @@ def test_the_systems_own_stop_lifting_by_itself_records_it_too_and_a_stop_that_h
     [m] = e.deadline_moves("n")
     assert m["stopped_by"] == m["started_by"] == "system" and "limit" in m["why"] and abs(m["held_s"] - 600) < 5, m
     e.stop()
+
+
+def _consented(storage=None, **kw):
+    e = make_engine(storage=storage, validate_signals=True, state_timeout=0, **kw)
+    e.start()
+    T.create_task(e, "n", {"description": "x", "criteria": [criterion("a", "A")]}, "w")
+    e.wait_idle()
+    assert T.signal(e, "n", "ACCEPT", "w")["accepted"]
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
+    return e
+
+
+def test_a_server_down_left_off_at_the_engines_start_is_on_each_deadlines_record_once():
+    """Case 2: the gap since the last beat is left off at the start; the record names the cause. With a stop standing
+    across it, the stop's lift records it (case 3: one carrier) and the start records nothing."""
+    for stopped in (False, True):
+        kept = MemoryStorage()
+        e = _consented(kept)
+        if stopped:
+            e.pause("the-user", "")
+        e.stop()
+        kept.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
+        again = make_engine(storage=kept, validate_signals=True, state_timeout=0)
+        again.start()
+        if stopped:
+            assert again.deadline_moves("n") == [], "the gap under a stop is the stop's, recorded at its lift"
+            again.resume("the-user")
+        [m] = again.deadline_moves("n")
+        assert abs(m["held_s"] - 3600) < 5, m
+        assert m["stopped_by"] == ("the-user" if stopped else "the server was down"), m
+        assert stopped or any("the server was down" in x["message"] for x in again.pipeline_log(about="n: "))
+        again.stop()
+
+
+def test_a_host_asleep_between_two_ticks_is_on_each_deadlines_record(monkeypatch):
+    """Case 4: a gap between two of the monitor's ticks over NO_TICK_S is left off at the next tick, and recorded."""
+    e = _consented(check_interval=0.05)
+    shift = {"s": 0.0}
+    monkeypatch.setattr(L, "time", type("T", (), {"time": staticmethod(lambda: time.time() + shift["s"])}))
+    time.sleep(0.2)
+    shift["s"] = 3600.0                                  # the wall jumps an hour between two ticks
+    deadline = time.time() + 3
+    while not e.deadline_moves("n") and time.time() < deadline:
+        time.sleep(0.05)
+    moves = e.deadline_moves("n")
+    e.stop()
+    assert len(moves) == 1 and moves[0]["stopped_by"] == "the host slept" and abs(moves[0]["held_s"] - 3600) < 5, moves
