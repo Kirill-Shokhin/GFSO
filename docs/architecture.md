@@ -891,10 +891,10 @@ encoding is where they show, or are engine gaps.)*
    and keeps every order between them (child inside parent, Dep, CHECK-3). Outside, every time reads on the wall. Two
    consequences are named: a project nobody loads keeps its bounds still, a person's included; an account-limit window is
    not yet left off (no server-wide fact for it).
-17. **The machine's re-issues of the AUTO root out of ESCALATED are counted (`MAX_EXTENSIONS`).** §12.15: "ESCALATED's
-   re-ASSIGN unmakes no settlement and is not counted". Below the AUTO root nothing is counted — the parent's deadline
-   bounds every re-issue. At the AUTO root the machine stands in for the user, the root's issuer (§10.1), and nothing above
-   it bounds its patience; past the count it is told so and may still write a contract that changes what failed.
+17. **No re-issue out of ESCALATED is counted, the AUTO root included (CLOSED).** §12.15: "ESCALATED's re-ASSIGN
+   unmakes no settlement and is not counted". The machine re-issuing the AUTO root once had a count of its own; it is
+   gone. Every re-issue is a new version that ends by its deadline and the per-state bounds (Φ2), below the root inside
+   the parent's deadline, and what the re-issues spend is bounded by the account's limit.
 
 **Two boundaries, delineated rather than patched.**
 

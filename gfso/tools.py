@@ -1338,7 +1338,7 @@ def record_at_the_go(engine: Engine, root_id, said: dict) -> None:
 
 def _parties(engine: Engine, tasks) -> list[dict]:
     """Every party of this graph — each node's holder and each node's issuer — with WHO makes its moves
-    (`validation.party_kind`: person, holder, legacy, machine): a page offers a person their own name to sign by and
+    (`validation.party_kind`: person, holder, machine): a page offers a person their own name to sign by and
     knows whether the system holds anything here from this, never from a list of its own (ui critic, 2026-11-14)."""
     names = {str(t.assignee) for t in tasks if t.assignee} | {str(i) for t in tasks if (i := engine.graph.issuer_of(t.id))}
     return [{"name": n, "kind": _party_kind(engine.graph, n, engine.workforce.roster())} for n in sorted(names)]

@@ -1,13 +1,14 @@
-"""With no mode set the system answers a dispute at a seam only. A node whose issuer is its own executor has no
+"""With no mode set the system answers only a machine issuer's dispute. A node whose issuer is its own executor has no
 counterparty to its CHALLENGE — "a dispute against oneself is meaningless" (§10.3) — and its answer is its holder's:
-the system answering it is a party outside Del deciding the contract under the holder's name (Thm 11, §11.6).
+the system answering it is a party outside Del deciding the contract under the holder's name (Thm 11, §11.6). At a seam
+the person issues, the answer is his too: Del names the role's holder (§10.1), and the system holds none there.
 
 Measured on the UI stream (2026-10-26): no mode, `create_task` root held by `agent`, ACCEPT, a CHALLENGE naming a
 validator's finding — 4 s later the sweep's issuer model accepted it, retired the finding, and the log row read
 ACCEPT_CHALLENGE source=`agent`, a justification `agent` never wrote.
 
-CONTROL: drop the `assignee != issuer` clause in `system_mover`'s no-mode branch and the first test goes red; the seam
-test is its pair — the system still answers there, as it always did.
+CONTROL: answer the standing agent's disputes in `system_mover`'s no-mode branch and the first two tests go red; the
+machine issuing to itself is their pair — the system still answers there.
 """
 from __future__ import annotations
 
@@ -55,14 +56,14 @@ def test_the_system_does_not_answer_a_self_assigned_roots_own_dispute(tmp_path):
     e.stop()
 
 
-def test_control_the_system_still_answers_a_dispute_at_a_seam(tmp_path):
+def test_the_system_does_not_answer_the_persons_dispute_at_a_seam(tmp_path):
     e = _engine()
     e.record_root_issuer(TaskId("root"), "user")
     _root(e, assignee="exec-1")
     assert str(e.graph.issuer_of(TaskId("root"))) == "user" != str(e.graph.get_task(TaskId("root")).assignee)
     pid = _challenged_with_a_finding(e, "root", "g")
     llm = _sweep(e, tmp_path, pid)
-    assert llm.calls and e.graph.get_state(TaskId("root")) == State.OFFERED, "the seam's dispute went unanswered"
+    assert not llm.calls and e.graph.get_state(TaskId("root")) == State.CHALLENGED, "the system answered the person"
     e.stop()
 
 

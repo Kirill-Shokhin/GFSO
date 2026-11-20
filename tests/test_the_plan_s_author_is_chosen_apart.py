@@ -117,7 +117,6 @@ def test_a_dispute_a_closed_plan_cannot_answer_stops_the_run_and_says_why(monkey
     paused = []
     monkeypatch.setattr(I, "_still_open", lambda *a: True)
     monkeypatch.setattr(I, "episode", lambda t: None)
-    monkeypatch.setattr(I, "extensions_spent", lambda *a: False)
     monkeypatch.setattr(I, "review_due", lambda *a: False)
     monkeypatch.setattr(I, "refused_on_this_version", lambda *a: "")
     monkeypatch.setattr(I, "issuer_turn", lambda *a, **k: {"status": "unparsed", "why": "changed no criterion"})

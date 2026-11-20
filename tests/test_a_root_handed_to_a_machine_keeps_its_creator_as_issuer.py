@@ -24,8 +24,8 @@ def test_a_root_reassigned_to_a_machine_keeps_its_creator_as_issuer():
     T.signal(e, "root", "ACCEPT", "exec-1")
     T.signal(e, "root", "CHALLENGE", "exec-1", reason="g is unmeetable")
     assert e.graph.issuer_of(TaskId("root")) == AgentId("user")
-    # with no mode the system answers a dispute at a seam — in the ISSUER's name, never in the disputant's own
-    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "user"
+    # with no mode the dispute is the issuer's — the person's, never the system's nor the disputant's (§10.1)
+    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") is None
     out = TL.TOOLS["signal"](e, "root", "REJECT_CHALLENGE", "user", reason="the goal stands")
     assert "error" not in str(out).lower()[:200], out
     assert e.graph.get_task(TaskId("root")).state == State.EXECUTING

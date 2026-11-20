@@ -858,24 +858,19 @@ class Dispatcher:
         return self._engine.observed_here(task.id)
 
     def _issuer_is_automated(self, task_id: TaskId) -> bool:
-        """Is this node's ISSUER automated — the standing agent id, or a registered participant?
+        """Is this node's ISSUER automated — a registered participant, or the standing agent under AUTO?
 
-        A person is any OTHER name: their node is validated and recorded and then waits for them to
-        signal (§10.2 keeps the verdict the issuer's act). The line falls exactly there and nowhere
-        else — which matters, because the default identity on every door is the standing agent, so a
-        person who never names themselves IS the standing agent as far as this question goes, and
-        their nodes auto-sign. Measured 2026-08-22: a tester driving the CLI as the default identity
-        watched six of six nodes signed for them while the roster's own help promised the opposite.
-        Naming yourself (`source=<your name>`, and an `assignee` of your own) is what makes you a
-        person here."""
-        issuer = str(self._engine.graph.issuer_of(task_id))
-        return issuer == _config_agent_id() or self._agents.get(issuer) is not None   # the standing agent
+        A person — the standing agent with no mode included — gets their node validated and recorded, and then it
+        waits for them to sign (§10.2 keeps the verdict the issuer's act); SOLO/SEMI's holder too (`holder_signs`).
+        Measured 2026-08-22: a tester driving the CLI as the default identity watched six of six nodes signed for
+        them while the roster's own help promised the opposite."""
+        return self._engine.issuer_kind(task_id, self._agents) == "machine"
 
     def _resolves_blocks_for(self, task_id: TaskId) -> bool:
         """Is resolving this node's dependency-ready block the SYSTEM's move? It is mechanical (every
-        producer DONE), so it follows who holds the issuer's moves: a registered participant, the
-        standing agent under AUTO, or — with no mode set, as before modes — the standing agent too."""
-        return self._engine.issuer_kind(task_id, self._agents) in ("machine", "legacy")
+        producer DONE), so it follows who holds the issuer's moves: a registered participant or the
+        standing agent under AUTO — never a person's (§10.1)."""
+        return self._engine.issuer_kind(task_id, self._agents) == "machine"
 
     def _release_after_answer(self, task_id: TaskId, redispatch: bool = False) -> None:
         """An issuer's answer is in: the node's question may be asked again. Only an ANSWERED dispute

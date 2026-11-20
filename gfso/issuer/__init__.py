@@ -70,14 +70,6 @@ def _prompt() -> str:
     """The issuer's instructions, the per-check bound said from its one owner (`procedure.PROBE_S`)."""
     return PROMPT.read_text(encoding="utf-8").replace("<PROBE_S>", str(PROBE_S))
 
-#: How many contracts the machine writes for the AUTO ROOT out of ESCALATED before the next must CHANGE what failed — there
-#: it stands in for the user, the root's issuer, and nothing above bounds it; below the root no count (§12.15). Not a
-#: close by count: §12.15 — "a counter there would, exhausted, leave the owner of a live goal only CANCEL or silence …
-#: re-created by fiat" — and under AUTO the machine IS that owner. Past it the issuer is asked, told the count; it may
-#: write a contract that changes the criteria, the executor or the budget, or close with its reason (critic over
-#: session 475ba784: the count used to close before any issuer turn was asked).
-MAX_EXTENSIONS = 2
-
 #: The largest rework budget a re-issued contract may carry, as a multiple of the project's default: an extension, not
 #: an open loop.
 REWORK_EXTENSION = 2
@@ -822,9 +814,9 @@ def spec_with(task, criteria: list, additions_only: bool = False, repin: frozens
 
 
 def held_by_a_holder(engine, party: str) -> bool:
-    """Is this party the user-agent holding its part of the tree (SOLO/SEMI) — whose moves the system
-    never makes for it?"""
-    return party_kind(engine.graph, party) in ("holder", "legacy")
+    """Is this party the user's standing agent wherever the system does not move for it — holding its part of the tree
+    (SOLO/SEMI), or the person himself with no mode — whose moves the system never makes for it?"""
+    return str(party) == str(_config_agent_id()) and party_kind(engine.graph, party) != "machine"
 
 
 def system_splits(engine, task) -> bool:
@@ -990,29 +982,6 @@ def seam_keeping_executor(engine, task, another: bool) -> Optional[AgentId]:
     return ([a for a in ok if str(a) != str(task.assignee)] or ok or [None])[0]
 
 
-def what_can_change(engine, task) -> str:
-    """What a next contract may change once re-issues are spent — the executor only where another keeps the seams: at a
-    root, whose pool is its own executor and its children's, the hint sent the issuer after a move refused every time
-    (finder over 190f4db)."""
-    other = seam_keeping_executor(engine, task, True)
-    return ("the criteria, the executor (`another_executor`) or the rework budget (`max_iterations`)"
-            if other is not None and str(other) != str(task.assignee) else
-            "the criteria or the rework budget (`max_iterations`) — no other executor keeps this node's seams")
-
-
-def extensions_spent(engine, task) -> bool:
-    """Are the AUTO root's re-issues out of ESCALATED spent (`MAX_EXTENSIONS`)? Below the AUTO root never (§12.15): the
-    one rule `settle` tells the issuer and `_reassign` holds it to."""
-    return is_auto_root(engine.graph, task) and extensions_granted(engine, task.id) >= MAX_EXTENSIONS
-
-
-def extensions_granted(engine, task_id: TaskId) -> int:
-    """How many contracts this issuer RE-issued for this node (`_reassign`), across generations — kept
-    with the project where the move is made. A plan repair is not a re-issue and does not spend this; a
-    budget reset by the move it bounds bounds nothing (a leaf cut at its turn cap looped park → re-issue)."""
-    return engine.tally(f"reissue:{task_id}")
-
-
 # === The moves — each one the canon gives the mover in that state, checked before it is made ===
 
 def _signalled(engine, task_id, sig, actor, **kw) -> tuple[bool, str]:
@@ -1079,13 +1048,6 @@ def _cause(answer, *types: RevisionReason, default=RevisionReason.OTHER) -> Revi
     return cause if cause in types else default
 
 
-def _changes_what_failed(task, spec, to, budget) -> bool:
-    """Does this re-issue change more than the date — the criteria, the executor it will REALLY have, or the budget as
-    clamped? Asked of the request, `another_executor` with nobody else to take it and a budget past the cap passed as
-    changes while nothing changed (critic r2, F2)."""
-    return spec.criteria != task.spec.criteria or str(to) != str(task.assignee) or budget != task.max_iterations
-
-
 def _reassign(engine, task, actor, answer, why, verbs, where=None):
     if (bad := _carry(task, answer.get("criteria"), _split_of(engine, task))[1]):
         return False, bad
@@ -1097,12 +1059,7 @@ def _reassign(engine, task, actor, answer, why, verbs, where=None):
     # …never below the node's own bound: an answer that asks no budget change changes none (critic)
     budget = min(max(1, int(answer.get("max_iterations") or task.max_iterations)),
                  max(REWORK_EXTENSION * project_max_iterations(engine.graph), task.max_iterations))
-    # …AT THE AUTO ROOT ONLY: below it the parent's deadline bounds every re-issue (`Schedule`), and §12.15 counts no
-    # re-ASSIGN out of ESCALATED; at the AUTO root nothing above bounds the machine standing in for the user's patience
-    if extensions_spent(engine, task) and not _changes_what_failed(task, spec, to, budget):
-        return False, (f"{MAX_EXTENSIONS} contracts were already written for this node and none reached a verdict: "
-                       f"another must change what failed — {what_can_change(engine, task)} — not only the date; or "
-                       f"close it with the reason")
+    # …and no count of re-issues (§12.15 Φ3): each version ends by its deadline and the bounds, spend by the account's limit
     if to is None:
         return False, "no executor of this project keeps the seams around this node"
     want = project_now(engine.graph) + timedelta(hours=min(MAX_EXTEND_HOURS, max(1.0, float(answer.get("extend_hours") or 24))))
@@ -1119,7 +1076,6 @@ def _reassign(engine, task, actor, answer, why, verbs, where=None):
     engine.revise(task.id, spec, AgentId(actor), deadline=deadline, max_iterations=budget,
                   reason=_cause(answer, RevisionReason.SPEC_DEFECT, RevisionReason.SCOPE_EXPANSION)
                   if spec.criteria != task.spec.criteria else RevisionReason.OTHER)
-    engine.tally(f"reissue:{task.id}", add=1)
     if str(to) != str(task.assignee):
         engine.reassign(task.id, to, reason=_cause(answer, RevisionReason.CAPABILITY_MISMATCH))
     return True, ""
@@ -2368,23 +2324,16 @@ def system_mover(engine, agents, task_id: TaskId, question: str) -> Optional[str
     """Who moves for the SYSTEM on this question — or None when the move is a person's or a holder's.
 
     A split question is the node's executor's (a registered one). An issuer question is the machine
-    issuer's (`_machine_issuer`); with NO mode set the standing agent's disputes are still answered by
-    the system — the one issuer move it made before modes existed — and nothing else of it is, nor that one where the
-    node's issuer is its own executor: a dispute against oneself is meaningless (§10.3), and its answer is the node's own
-    holder's — the system answering it is a party outside Del deciding the contract under the holder's name (§11.6)."""
+    issuer's (`_machine_issuer`); with NO mode set only its disputes are — the one issuer move the system made before
+    modes existed. A person's issuer moves, the standing agent's with no mode included, are never the system's: it holds
+    no role there (§10.1), and answering would be a party outside Del deciding the contract under his name (§11.6)."""
     task = engine.graph.get_task(task_id)
     if engine.mode() is None:
-        # before modes, the only issuer move the system made was answering a dispute — kept, at a seam only: at a
-        # self-assigned root it accepted its holder's own CHALLENGE 4 s later and retired a finding signed as him (ui, 2026-10-26)
-        issuer = str(engine.graph.issuer_of(task_id))
-        # …the AGENT's own: a registered machine issuing to itself has no other live mover, so the system still answers it
-        return issuer if question == "dispute" and not (issuer == _config_agent_id() and str(task.assignee) == issuer) and (
-            agents.get(issuer) is not None or issuer == _config_agent_id()) else None
+        # …a registered machine issuing to itself included: it has no other live mover
+        return _machine_issuer(engine, agents, task_id) if question == "dispute" else None
     if question in SPLIT_QUESTIONS:
         return str(task.assignee) if agents.get(str(task.assignee)) is not None else None
-    if (issuer := _machine_issuer(engine, agents, task_id)) is not None:
-        return issuer
-    return _config_agent_id() if engine.issuer_kind(task_id, agents) == "legacy" and question == "dispute" else None
+    return _machine_issuer(engine, agents, task_id)
 
 
 def episode(task) -> str:
@@ -2499,19 +2448,14 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
                 "why": why or ("" if split else "the refine round built no split")}
     if question == "repair" and (out := _cycle_in_hand(engine, engine.graph.get_task(task_id))):
         return out
-    spent = question in ("escalation", "parked") and extensions_spent(engine, engine.graph.get_task(task_id))
     # an issuer's question is about the contract against the world — what failed, what blocks — and is answered from
     # contact; the split's questions are the executor's planning over the map
     where = (verbs.place(engine, agents, task_id)
              if verbs and verbs.place and question not in SPLIT_QUESTIONS else None)
     out = issuer_turn(engine, task_id, question, actor, verbs, where=where, refusal=(
-        f"{MAX_EXTENSIONS} contracts were already written for this node and none reached a verdict. " + (
-            "Its place is past its disk bound, so no next contract runs there: `cancel` with the reason."
-            if question == "parked" and engine.parking.execution_park_reason(engine.graph.get_task(task_id)) else
-            f"Decide: a next contract that changes what failed ({what_can_change(engine, engine.graph.get_task(task_id))})"
-            + ("." if "cancel" not in moves_for(engine, engine.graph.get_task(task_id), question)
-               else ", or `cancel` with the reason.")) if spent else "" if question in SPLIT_QUESTIONS else refused_on_this_version(
-            engine, task_id, actor)))
+        "Its place is past its disk bound, so no next contract runs there: `cancel` with the reason."
+        if question == "parked" and engine.parking.execution_park_reason(engine.graph.get_task(task_id)) else
+        "" if question in SPLIT_QUESTIONS else refused_on_this_version(engine, task_id, actor)))
     if out["status"] != "applied" and _still_open(engine, task_id, question, ep):
         out = issuer_turn(engine, task_id, question, actor, verbs, where=where,
                           refusal=str(out.get("why") or out["status"]))

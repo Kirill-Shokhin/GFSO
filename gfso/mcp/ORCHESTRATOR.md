@@ -168,9 +168,10 @@ stops with that cause.
    seam). There, a PASS by the node's own executor is REJECTED by the FSM unless a FRESH
    independent verdict (a `validate_result` run for the CURRENT delivery) is on record with
    verdict PASS — a FAIL verdict blocks it, a rework or a reopen stales it (verifier ≠ executor).
-   So after such a DELIVER either (a) a registered `llm-validator` auto-validates and auto-signals
-   the verdict for you (register one once — recommended), or (b) you call
-   `validate_result(task_id, workdir=…)` and then relay: `PASS`, or
+   So after such a DELIVER either (a) a registered `llm-validator` auto-validates it (register one
+   once — recommended), signing the verdict itself only where the system holds the issuer's role
+   (`auto`, a registered issuer), or (b) you call `validate_result(task_id, workdir=…)`; where the
+   verdict is yours, relay it: `PASS`, or
    `FAIL(failed_criteria=<copied from the report>)` → the node returns as a `rework` step — fix
    exactly those criteria and re-deliver (max_iterations bounds the cycle). A `verdict: null`
    report is NEVER a pass — read report_text and decide as issuer.
@@ -219,7 +220,8 @@ stops with that cause.
 Self-execute a node that needs YOUR session context. Delegate (assign to a registered executor) a
 SELF-CONTAINED leaf whose criteria + inputs fully specify it; `next_steps` marks parallel ones `parallel_ok`.
 Assign to a HUMAN's name work that is theirs in reality; the graph then waits for them. With a registered
-llm-validator every delivery is auto-validated and auto-verdicted regardless of who executed.
+llm-validator every delivery is auto-validated regardless of who executed; the verdict is signed by the system only
+where a registered role issued the node — on a node you issued it is recorded and waits for your signature.
 
 ## The workforce (what `semi` and `auto` run on, and delegation with no mode set)
 
@@ -227,11 +229,11 @@ To run nodes on PARALLEL workers instead of executing them yourself, register th
 `register_agent("exec-1", "llm-executor", workdir=…)` + `register_agent("val-1", "llm-validator", workdir=…)`. BOTH take `workdir`, the directory of the project being worked on. The roster is server-wide: `unregister_agent(<id>, workdir=…)` takes your roles off when the work is done.
 From then on your ONLY act is assignment: create/`reassign` a node to `exec-1` and the system does the
 rest — spawns the executor in its workdir, wraps its report into ACCEPT/DELIVER/BLOCK/CHALLENGE (its
-consent is its own report), auto-runs the validator on delivery, auto-signals the verdict
-(PASS → DONE; FAIL → automatic rework loop with the failed criteria as feedback), and answers a
-dispute it raises with your own two closures (a corrected contract, re-consented, or a rejection
-with its reason) so a challenged node is not left waiting out its bound. You stay the issuer: resolve
-BLOCKs/CHALLENGEs, handle the one escalation (an unparsed report), and report to the user what finished, runs, blocks.
+consent is its own report) and auto-runs the validator on delivery, recording its observation. You
+stay the issuer, and with no mode the system makes none of your moves: you sign the verdict
+(PASS → DONE; FAIL → rework with the failed criteria as feedback), answer a dispute with one of the
+two closures (a corrected contract, re-consented, or a rejection with its reason), resolve BLOCKs and
+decide an escalation — on the user's word, for they are their moves — and report what finished, runs, blocks.
 Humans are never registered: a node on a person's name waits for THEIR signals (they act via the UI).
 
 ## Discipline

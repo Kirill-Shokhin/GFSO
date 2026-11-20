@@ -3089,7 +3089,7 @@ class Engine:
 
     def system_carries_work(self) -> bool:
         """Do the system's own roles carry this project's work — a mode set, or a live node held or issued by a party
-        the system moves for (`party_kind` machine or legacy)? Where none does, people hold everything and nothing of
+        the system moves for (`_machine_holds_a_live_node`)? Where none does, people hold everything and nothing of
         the system's would run into a refusal."""
         return self.mode_kind() is not None or self._machine_holds_a_live_node()
 
@@ -3100,21 +3100,20 @@ class Engine:
         return mode_starts_sessions(_project_mode(self._graph)) or self._machine_holds_a_live_node()
 
     def _machine_holds_a_live_node(self) -> bool:
-        """A live node held or issued by a party the system moves for: a machine, or the standing agent with no mode
-        (`legacy`) where the system moves for it — its hands here (an executor or an instrument of this project), or a
-        node it issues to another, whose dispute the system answers (`issuer.system_mover`). Where none, nothing of the
-        system's runs, and a graph people hold read «Stopped» after every restart (the author's root, re-offered to his
-        page's name, 2026-11-20; «перезапуск ничего ломать не может»)."""
+        """A live node held or issued by a machine, or one on the standing agent's name with no mode where the system
+        has hands here (an executor or an instrument of this project, whose sessions would start unattended). The
+        person's own moves are never the system's (§10.1), so where none, nothing of the system's runs, and a graph
+        people hold read «Stopped» after every restart (the author's root, re-offered to his page's name, 2026-11-20;
+        «перезапуск ничего ломать не может»)."""
         roster, hands = self.workforce.roster(), self.workforce.executor_pool() or self.workforce.has_an_instrument()
-        def _moved(t, p, issues: bool) -> bool:
+        def _moved(p) -> bool:
             k = party_kind(self._graph, str(p), roster)
-            return k == "machine" or k == "legacy" and (hands or issues and str(t.assignee) != str(p))
-        return any(_moved(t, t.assignee, False) or _moved(t, self._graph.issuer_of(t.id), True)
+            return k == "machine" or k == "person" and str(p) == str(_config_agent_id()) and bool(hands)
+        return any(_moved(t.assignee) or _moved(self._graph.issuer_of(t.id))
                    for t in self.all_tasks() if t.state not in TERMINAL_STATES)
 
     def issuer_kind(self, task_id: TaskId, registered=None) -> str:
-        """`validation.party_kind` of this node's issuer — who makes its issuer moves (holder / machine / legacy /
-        person), over the dispatcher's registry when given, else the roster it published."""
+        """`validation.party_kind` of this node's issuer — who makes its issuer moves (holder / machine / person), over the dispatcher's registry when given, else the roster it published."""
         return party_kind(self._graph, str(self._graph.issuer_of(task_id)),
                           self.workforce.roster() if registered is None else registered)
 
@@ -3181,10 +3180,7 @@ class Engine:
         the graph (and, in its first spelling, into the delegation layer the layer gate forbids it).
         """
         task = self._graph.get_task(task_id)
-        if task is None or not self.workforce.has_an_instrument() or self.holder_signs(task_id):
-            return False
-        issuer = str(self._graph.issuer_of(task_id))
-        return issuer == _config_agent_id() or self.workforce.kind_of(issuer) is not None
+        return task is not None and self.workforce.has_an_instrument() and self.issuer_kind(task_id) == "machine"
 
 
     def record_session_fit(self, task_id: TaskId, volume: str, fits: Optional[bool],

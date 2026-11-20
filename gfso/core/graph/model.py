@@ -232,14 +232,13 @@ def party_kind(graph: "Graph", party: str, registered=None) -> str:
     """WHO makes a party's issuer moves — the one owner of a question four places answered four ways (D-F9):
     `holder` — the user's standing agent under SOLO/SEMI, whose moves the system never makes;
     `machine` — the standing agent under AUTO (the customer, who does not intervene), or a registered participant;
-    `legacy` — the standing agent with no mode set: as before modes, the system answers its disputes at a seam (one its
-    own node raises is its own, §10.3) and resolves its mechanical blocks, the instrument signs, and its plan moves stay its own;
-    `person` — anyone else, unregistered: the system is passive.
+    `person` — the standing agent with no mode set, or anyone else unregistered: the system holds no role of theirs
+    (§10.1: Del names the role's holder) and is passive — their moves come only when they write.
     The standing agent is read first: a role registered under the user's own id does not make it a machine.
     `registered` is the registry consulted (the dispatcher's own; the engine's published roster by default)."""
     if str(party) == str(agent_id()):
         mode = _mode(graph)
-        return "legacy" if not mode else "machine" if mode["mode"] == Mode.AUTO else "holder"
+        return "person" if not mode else "machine" if mode["mode"] == Mode.AUTO else "holder"
     return "machine" if (registered or {}).get(str(party)) is not None else "person"
 
 
@@ -267,14 +266,13 @@ def waits_on_a_person(graph: Optional["Graph"], party) -> bool:
     """Is `party` one whose moves come only when a person writes — the standing agent, unless AUTO makes it the system's
     customer, or a person the published roster does not carry? Their waits run on a person's scale (`PERSON_BOUNDS`);
     the system's own sessions keep the server's. With no mode the standing agent IS the person (the page's signer, the
-    OS owner of a local connection): the system answers some of its moves (`legacy`), and a longer bound on a wait it
-    answers costs nothing while it answers — a hung validator is still cut by the server's T_validate
+    OS owner of a local connection) whatever the roster says; a hung validator is still cut by the server's T_validate
     (`tools_llm._validation_cap`). Before the dispatcher publishes a roster nobody else is taken for a person by
     absence from it."""
     if graph is None or party is None:
         return False
     kind = party_kind(graph, str(party), graph.roster or {})
-    return kind in ("holder", "legacy") or kind == "person" and graph.roster is not None
+    return kind == "holder" or kind == "person" and (graph.roster is not None or str(party) == str(agent_id()))
 
 
 def project_deadline_s(graph: "Graph", assignee=None, issuer=None) -> float:

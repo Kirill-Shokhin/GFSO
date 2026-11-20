@@ -224,26 +224,23 @@ def test_under_semi_the_holder_keeps_its_discretion():
         "the child's split is its executor's"
 
 
-def test_past_two_contracts_the_issuer_is_asked_and_a_next_one_must_change_what_failed(monkeypatch):
-    """§12.15: a counter at ESCALATED "would, exhausted, leave the owner of a live goal only CANCEL or silence". Kept at
-    the AUTO root only, where the machine stands in for the user and nothing above bounds it: there, past it, the issuer
-    decides, told the count, and a contract changing only the date is refused. Below it no count at all (the parent's
-    deadline bounds every re-issue) — `test_who_signs_and_which_visit`."""
+def test_no_re_issue_out_of_escalated_is_counted_at_the_auto_root(monkeypatch):
+    """§12.15 Φ3: "ESCALATED's re-ASSIGN unmakes no settlement and is not counted: a counter there would, exhausted, leave
+    the owner of a live goal only CANCEL or silence". The AUTO root included: each version ends by its deadline and the
+    bounds (Φ2), spend by the account's limit. A contract changing only the date stands at every visit, and the issuer is
+    never told a count."""
     e = _engine(Mode.AUTO)
     _goal(e)
-    monkeypatch.setattr(I, "extensions_granted", lambda engine, task_id: I.MAX_EXTENSIONS)
+    monkeypatch.setattr(I, "seam_keeping_executor", lambda engine, task, other: task.assignee)
+    for n in range(4):
+        root = e.graph.get_task(TaskId("root"))
+        ok, why = I._reassign(e, root, str(e.graph.issuer_of(root.id)), {"extend_hours": 24}, "more time", None)
+        assert ok, (n, why)
     monkeypatch.setattr(I, "_still_open", lambda *a: True)          # the node stands ESCALATED
     asked = []
     monkeypatch.setattr(I, "issuer_turn", lambda *a, refusal="", **k: asked.append(refusal) or {"status": "applied"})
     I.settle(e, _Roster(), TaskId("root"), "escalation", "exec-1", verbs=None)
-    assert asked and "none reached a verdict" in asked[0], asked
-    assert e.graph.get_state(TaskId("root")) != State.CANCELLING, "nobody decided to close it"
-    monkeypatch.setattr(I, "seam_keeping_executor", lambda engine, task, other: task.assignee)
-    root = e.graph.get_task(TaskId("root"))
-    ok, why = I._reassign(e, root, str(e.graph.issuer_of(root.id)), {"extend_hours": 24}, "again", None)
-    assert not ok and "change what failed" in why, why
-    ok, why = I._reassign(e, root, str(e.graph.issuer_of(root.id)), {"max_iterations": root.max_iterations + 2}, "a raised budget", None)
-    assert ok, why
+    assert asked and "none reached a verdict" not in asked[0], asked
 
 
 def test_the_issuers_questions_are_answered_from_contact_and_the_splits_are_not(monkeypatch, tmp_path):
@@ -275,12 +272,13 @@ def test_a_system_held_parent_gives_its_own_consent(tmp_path):
     assert e.graph.get_state(TaskId("root")) == State.EXECUTING
 
 
-def test_with_no_mode_the_system_answers_only_the_disputes_it_always_answered():
-    """…at a seam: a node its own issuer executes has no counterparty to its dispute (§10.3) — its holder answers it."""
+def test_with_no_mode_the_system_answers_none_of_the_persons_disputes():
+    """Not at a seam he issues — Del names the role's holder, and the system holds none there (§10.1) — nor at a node
+    its own issuer executes, which has no counterparty to its dispute (§10.3)."""
     e = _engine()
     _goal(e)
     _admit(e, "root", {**_kid("seam", ["g"], criterion("s", "S holds")), "assignee": "exec-1"})
-    assert I.system_mover(e, _Roster(), TaskId("seam"), "dispute") == "user"
+    assert I.system_mover(e, _Roster(), TaskId("seam"), "dispute") is None, "the system answered the person's dispute"
     assert I.system_mover(e, _Roster(), TaskId("kid"), "dispute") is None, "the system answered its holder's own dispute"
     assert I.system_mover(e, _Roster(), TaskId("seam"), "escalation") is None,         "a solo user's escalation is theirs to decide; the system must not write or close their contract"
 
@@ -342,18 +340,6 @@ def test_a_restated_probe_keeps_its_pinned_inputs():
     spec = I.spec_with(task, [{"name": c.name, "description": "restated", "check": [
         {"behaviour": p.behaviour, "command": p.command, "expect": p.expect}]}])
     assert spec.criteria[0].check[0].inputs == (("in.txt", "x"),), "the corpus would be dropped"
-
-
-def test_a_plan_repair_does_not_spend_the_re_issue_budget():
-    e = _engine(Mode.AUTO)
-    root, _ = _goal(e)
-    ok, why = I.apply_move(e, TaskId("root"), "plan", "exec-1", {
-        "move": "add_criterion", "justification": "the goal also needs H",
-        "criteria": [{"name": "h", "description": "H holds", "check": [
-            {"behaviour": "b", "command": "test -d . && echo 0", "expect": "0"}]}],
-        "derivations": [{"criterion": "h", "probe": "test -d . && echo 0", "derived_by": "echo 0"}]})
-    assert ok, why
-    assert I.extensions_granted(e, TaskId("root")) == 0, "a repair is not a re-issue of the contract"
 
 
 def test_with_no_mode_a_registered_issuers_node_is_not_the_systems_to_decide():

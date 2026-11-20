@@ -103,7 +103,7 @@ export const kept = (k, read = x => x) => { try { return read(localStorage.getIt
 export const keep = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* a per-viewer nicety */ } };
 
 // THE PARTIES OF THIS GRAPH, as the engine names them — each holder and each issuer, with who makes its moves (`person`,
-// `holder`, `legacy`, `machine`, validation.party_kind): the one reading of whether the system holds anything, never a list
+// `holder`, `machine`, validation.party_kind): the one reading of whether the system holds anything, never a list
 // the page builds of its own (two such lists disagreed about the agent — ui critic, 2026-11-14)
 export const parties = () => S.graph.parties || [];
 export const partyKind = name => parties().find(p => p.name === name)?.kind;

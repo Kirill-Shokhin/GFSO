@@ -24,7 +24,7 @@ def e():
     eng.stop()
 
 
-@pytest.mark.parametrize("mode, kind", [(None, "legacy"), (Mode.SOLO, "holder"), (Mode.SEMI, "holder"),
+@pytest.mark.parametrize("mode, kind", [(None, "person"), (Mode.SOLO, "holder"), (Mode.SEMI, "holder"),
                                         (Mode.AUTO, "machine")])
 def test_the_standing_agent_holds_by_the_mode(e, mode, kind):
     if mode is not None:
@@ -36,6 +36,28 @@ def test_the_standing_agent_holds_by_the_mode(e, mode, kind):
 def test_a_role_under_the_users_own_id_does_not_make_it_a_machine(e):
     e.set_mode(Mode.SEMI, None, AgentId("user"))
     assert e.issuer_kind(TaskId("root"), {"user": "llm-validator"}) == "holder"
+
+
+def test_with_no_mode_the_system_makes_none_of_the_persons_issuer_moves(tmp_path):
+    """§10.1: Del names the role's holder. With no mode the person issues his nodes and the system holds no role there:
+    it answers none of his disputes, resolves none of his blocks and signs none of his verdicts — his agent moves only
+    when he writes (USING_GFSO). A machine holding a role still moves for it."""
+    from gfso import issuer as I
+    from gfso.delegate import Dispatcher
+    from gfso.roster import AgentRegistry
+    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    agents.register("exec-1", "llm-executor", workdir=str(tmp_path))
+    e = make_engine()
+    e.start()
+    T.create_task(e, "given", {"description": "part", "criteria": [criterion("k", "K")], "accepted_risks": REGISTER},
+                  assignee="exec-1", agent="user")
+    d = Dispatcher(e, agents, poll=30, runner=lambda *a, **k: None, validator_runner=lambda *a, **k: None)
+    kid = TaskId("given")
+    assert str(e.graph.issuer_of(kid)) == "user"
+    assert I.system_mover(e, agents.list(), kid, "dispute") is None, "the system answered the person's dispute"
+    assert not d._resolves_blocks_for(kid), "the system resolved the person's block"
+    assert not d._issuer_is_automated(kid), "the system signed the person's verdict"
+    e.stop()
 
 
 def test_anyone_else_is_a_machine_only_when_registered(e):

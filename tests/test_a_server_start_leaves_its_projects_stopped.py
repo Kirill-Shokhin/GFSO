@@ -162,10 +162,10 @@ def test_a_people_s_graph_with_a_node_on_the_standing_agent_runs_on_until_the_sy
     assert reg.engine("watched").paused()["by"] == "system", "its own validator would run unattended"
 
 
-def test_a_node_the_standing_agent_issues_to_another_still_stops_its_project(monkeypatch, tmp_path):
-    """No mode, nothing registered, but a live node the standing agent issued to another: the system answers its dispute
-    for the issuer (`issuer.system_mover`), a model turn with nobody there — so the start's stop stands (third critic over
-    9896843, which let it run on)."""
+def test_a_node_the_person_issues_to_another_runs_on(monkeypatch, tmp_path):
+    """No mode, nothing registered, a live node the standing agent issued to another person: the issuer is the person,
+    and the system holds no role there to answer his dispute for him (§10.1) — people hold the whole graph, so it runs
+    on after a restart."""
     monkeypatch.setenv("GFSO_HOME", str(tmp_path / "home"))
     e = make_engine(storage=SqliteStorage(str(tmp_path / "given.db")))
     e.start()
@@ -173,4 +173,4 @@ def test_a_node_the_standing_agent_issues_to_another_still_stops_its_project(mon
     e.wait_idle()
     e.stop()
     e.graph._storage.close()
-    assert _registry(monkeypatch, tmp_path).engine("given").paused()["by"] == "system"
+    assert _registry(monkeypatch, tmp_path).engine("given").paused() is None

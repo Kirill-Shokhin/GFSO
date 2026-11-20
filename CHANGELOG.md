@@ -67,6 +67,12 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   place in the log as their id and an addressee by the same rule, open until resolved.
 
 ### Changed
+- With no mode set the person's agent is the person: the system answers none of his disputes, resolves none of his
+  blocks and signs none of his verdicts — a registered validator observes his deliveries and records, and he signs
+  (§10.1: Del names the role's holder). It moves only where a machine holds a role, and a graph only people hold runs
+  on after a restart.
+- No re-issue out of ESCALATED is counted, the AUTO root included (§12.15 Φ3): every re-issue is a new version that
+  ends by its deadline and the bounds, its spend bounded by the account's limit.
 - A dependency is declared or removed only by its consumer's issuer — the holder of its parent's split (§11.5) — at
   every door, every refusal read before anything is written; a revision's edges are written once its ASSIGN took.
 - Under solo and semi in_chat a part the person's agent holds self-verifies below the root's seam (§10.3): the

@@ -950,16 +950,15 @@ def test_a_parents_consent_in_a_place_past_its_bound_parks_it_at_once_with_the_c
         e.stop()
 
 
-def test_a_node_past_its_disk_bound_whose_contracts_ran_out_is_told_to_cancel_not_to_write_another(monkeypatch):
-    """Its contracts spent, the machine issuer was told «a next contract that changes what failed, or cancel» — a next
-    contract runs in the same place and is ended again; cancelling is its one move (critic)."""
+def test_a_node_past_its_disk_bound_is_told_to_cancel_not_to_write_another(monkeypatch):
+    """A next contract of a node past its disk bound runs in the same place and is ended again; cancelling is its one
+    move (critic). Parked for another reason, it is told nothing of the kind."""
     e = _engine(Mode.AUTO)
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
     _admit(e, "root", _kid("root.part", ["g"], criterion("k", "K holds")))
     part, told = e.graph.get_task(TaskId("root.part")), []
-    monkeypatch.setattr(I, "extensions_spent", lambda *a: True)
     monkeypatch.setattr(I, "issuer_turn", lambda *a, refusal="", **k: told.append(refusal) or {"status": "applied"})
-    for why, says in (("past its bound", "no next contract runs there: `cancel`"), (None, "Decide: a next contract")):
+    for why, says in (("past its bound", True), (None, False)):
         e.parking.park_execution(part.id, why)
         I.settle(e, None, part.id, "parked", str(e.graph.issuer_of(part.id)), None)
-        assert says in told[-1], told[-1]
+        assert ("no next contract runs there: `cancel`" in told[-1]) is says, told[-1]

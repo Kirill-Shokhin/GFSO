@@ -30,19 +30,22 @@ def _no_plan_gate(monkeypatch):
 
 
 def _delivered_internal_node(whose: dict):
-    """An INTERNAL node (Del == its parent's) delivered while `whose` is the published roster."""
+    """An INTERNAL node (Del == its parent's) a machine issued, delivered while `whose` is the published roster. A
+    machine's, since only there is the instrument's verdict the signal: a person signs his own (§10.1)."""
     e = make_engine()
     e.start()
     e.project_name = "mine"
+    e.workforce.publish_roster({"exec-1": "llm-executor"})
     T.create_task(e, "p", {"description": "parent",
                            "criteria": [criterion("g", "G")],
-                           "accepted_risks": _RISK}, assignee="user")
+                           "accepted_risks": _RISK}, assignee="exec-1")
     T.decompose(e, "p", [{"task_id": "k", "spec": {"description": "kid",
-                           "criteria": [criterion("c", "C")]}, "assignee": "user", "covers": ["g"]}], accepted_risks=REGISTER)
-    T.signal(e, "k", "ACCEPT", "user")
+                           "criteria": [criterion("c", "C")]}, "assignee": "exec-1", "covers": ["g"]}],
+                accepted_risks=REGISTER, agent="exec-1")
+    T.signal(e, "k", "ACCEPT", "exec-1")
     e._graph.authorized_validators = set(whose)
     e.workforce.publish_validator_projects(whose)
-    said = T.signal(e, "k", "DELIVER", "user", result="v1").get("awaiting_verdict") or ""
+    said = T.signal(e, "k", "DELIVER", "exec-1", result="v1").get("awaiting_verdict") or ""
     e.stop()
     return said
 

@@ -62,6 +62,10 @@ class _AgentLLM:
         self.calls[-1]["stage"] = stage
 
 
+#: a registered executor holding the goal, so its children's issuer is a machine — whose moves the system makes
+BOSS = "boss"
+
+
 def _goal(e, tid="goal", assignee="kirill"):
     """The project's ONE root, which the leaves below hang under.
 
@@ -190,7 +194,8 @@ def test_a_new_version_tells_the_executor_what_failed_on_the_last_one(tmp_path):
 
 def test_selfexecuted_delivery_also_autovalidated(tmp_path):
     """The guinea-pig regime: the agent executes ITSELF (no executor registration) — with a registered
-    llm-validator the dispatcher still auto-validates its delivery and auto-signals the verdict."""
+    llm-validator the dispatcher still auto-validates its delivery; with no mode the node is the person's, so the
+    verdict waits for his signature (§10.1, §10.2)."""
     e = _eng()
     _node(e, "s1", assignee="user")
     agents = _agents(tmp_path, ("val-1", "llm-validator"))   # validator only
@@ -199,7 +204,7 @@ def test_selfexecuted_delivery_also_autovalidated(tmp_path):
     started, _ = _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "checked", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}]}], "failed_criteria": []})
     assert "validate:s1" in started
-    assert e.graph.get_state(TaskId("s1")).name == "DONE"          # verdict signed by val-1, not the agent
+    assert e.graph.get_state(TaskId("s1")).name == "VALIDATING"    # observed, not signed for the person
 
 
 def test_challenge_and_unparsed_paths(tmp_path):
@@ -290,11 +295,12 @@ def _drive_done(e, tid, assignee="exec-1"):
     # …NAMING THE PINNED RUN. A criterion now carries the procedure that decides it (A1/§2), so a
     # PASS that does not say it ran that procedure is demoted to ⊥ — nothing is decided by a probe
     # invented at validation time, the scaffolding included.
-    T.record_verdict(e, tid, "PASS", reviewer="user",
+    issuer = str(e.graph.issuer_of(TaskId(tid)))
+    T.record_verdict(e, tid, "PASS", reviewer=issuer,
                      observed={c.name: {"note": f"ran {tid} and read its output",
                                         "ran": [p.command for p in (c.check or ())]}
                                for c in t.spec.criteria})
-    T.signal(e, tid, "PASS", "user")
+    T.signal(e, tid, "PASS", issuer)
 
 
 def test_accept_spawn_gated_on_dependency_producers(tmp_path):
@@ -318,10 +324,11 @@ def test_resolved_block_auto_clears_and_respawns_executor(tmp_path):
     """A BLOCKED node auto-resolves once its recorded producer is DONE: RESOLVE_BLOCK(confirm) fires and
     the node's spawn-dedup key is dropped so a FRESH executor run picks it up — both in ONE poll. Contrast:
     a block on an INVENTED name (no such node → the mutation layer records no Dep edge) has no producer to
-    wait on and correctly STAYS BLOCKED for a human — the auto-resolver never touches producer-less blocks."""
+    wait on and correctly STAYS BLOCKED for a human — the auto-resolver never touches producer-less blocks. The
+    resolution is the issuer's move (§11.2), so the children's issuer is a machine here: a person's stays his (§10.1)."""
     e = _eng()
-    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "user")
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"), (BOSS, "llm-executor"))
+    _goal(e, "par", BOSS)
     _children(e, "prod", "blk", "ph")
     _drive_done(e, "prod")
     # blk works far enough to find it needs prod, then BLOCKs on it (records the provisional prod→blk Dep)
@@ -365,8 +372,8 @@ def test_multi_blocker_report_records_all_edges_and_gates_on_every_producer(tmp_
     (observed live: a 3-blocker deadlock reported through the singular schema recorded 0 edges →
     q_Dep starved, auto-resolve blind). The node then auto-resolves only when ALL producers are DONE."""
     e = _eng()
-    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "user")
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"), (BOSS, "llm-executor"))
+    _goal(e, "par", BOSS)
     _children(e, "p1", "p2", "cli")
     llm = _AgentLLM(_fenced({"status": "blocked", "summary": "stopped at imports",
                              "reason": "need p1 and p2 outputs",
@@ -395,8 +402,8 @@ def test_mixed_phantom_auto_resolve_drops_only_the_bogus_edge(tmp_path):
     external=True did exactly that): the auto-resolver adjudicates the corrected set = the real
     sources, so only the bogus edge goes."""
     e = _eng()
-    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _goal(e, "par", "user")
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"), (BOSS, "llm-executor"))
+    _goal(e, "par", BOSS)
     _children(e, "prod", "blk")
     _drive_done(e, "prod")
     T.signal(e, "blk", "ACCEPT", "exec-1")
@@ -667,9 +674,9 @@ def test_autoverdict_accepted_on_child_nodes_and_human_issuer_skipped(tmp_path):
     author's question). (b) A node whose ISSUER is a human keeps the human's verdict: the dispatcher
     observes the delivery and records it, and never signs it."""
     e = _eng()
-    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    # child under an agent-issued parent → auto-validated, validator verdict ACCEPTED by the FSM
-    _goal(e, "par", "user")
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"), (BOSS, "llm-executor"))
+    # child under a machine-issued parent → auto-validated, validator verdict ACCEPTED by the FSM
+    _goal(e, "par", BOSS)
     _children(e, "kid", crit="k")
     T.signal(e, "kid", "ACCEPT", "exec-1")
     T.signal(e, "kid", "DELIVER", "exec-1", result="done; see files")

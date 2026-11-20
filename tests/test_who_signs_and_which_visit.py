@@ -12,7 +12,7 @@ import time
 import gfso.delegate as D
 import gfso.tools as T
 from gfso.core.types import Signal, SignalData, TaskId
-from gfso.issuer import MAX_EXTENSIONS, _reassign, signal_ok
+from gfso.issuer import _reassign, signal_ok
 from gfso.roster import AgentRegistry
 from tests.support import REGISTER, criterion, make_engine, reviewer_passes
 
@@ -73,7 +73,7 @@ def test_no_re_issue_out_of_escalated_is_counted_below_the_auto_root():
     e.wait_idle()
     e.workforce.publish_executor_pool({"user": None})
     issuer = str(e.graph.issuer_of(TaskId("root")))
-    for _ in range(MAX_EXTENSIONS + 1):
+    for _ in range(3):
         t = e.graph.get_task(TaskId("root"))
         e.send_signal_sync(SignalData(signal=Signal.TIMEOUT, task_id=t.id, visit=(t.state, t.state_entered_at)))
         e.wait_idle()
