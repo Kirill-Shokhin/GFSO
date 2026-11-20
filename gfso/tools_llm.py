@@ -3269,8 +3269,7 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
     except ValueError:
         return {"refused": True, "error": f"mode must be one of solo | semi | auto, got {mode!r}"}
     # …a mode scoped to a node is answered whole by its own door; a project's, refused where it is not the person's
-    if no := (_scoped(engine, str(node), m, perform, str(user_said).strip(),
-                      lambda held: _with_its_validator(engine, workdir, system_model, held))
+    if no := (_scoped(engine, str(node), m, perform, str(user_said).strip(), workdir, system_model)
               if node is not None else _not_the_persons(engine, m, user_said)):
         return no
     # …at any time, before the go too: the default stands for the person against the agent whose work it reads, and
@@ -3329,11 +3328,12 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
             **({} if out.get("refused") else _short_supplied(engine))}
 
 
-def _scoped(engine: Engine, node: str, m: Optional[Mode], perform: Optional[str], said: str, staffed) -> dict:
+def _scoped(engine: Engine, node: str, m: Optional[Mode], perform: Optional[str], said: str, workdir, model) -> dict:
     """The mode scope at `node`, a node the person holds, set — or, with no mode, dropped — by his page alone: who holds
     the work he issues below it is his choice as its issuer (§10.1), and a stream's own console that set it would choose
     its own autonomy. No packet changes: a top's criterion read against his words comes only with his own act on that
-    top (`_his_intent`). `staffed(held)`: `held()` with the scope's validator registered first."""
+    top (`_his_intent`). Its validator is registered first where the project has none (`_with_its_validator`), at
+    `workdir` or, the page sending none, at the repository the project's roles record."""
     p, t = CALLER.get(), engine.graph.get_task(TaskId(node))
     if t is None:
         return {"refused": True, "error": f"task {node} not found"}
@@ -3358,7 +3358,15 @@ def _scoped(engine: Engine, node: str, m: Optional[Mode], perform: Optional[str]
         return {"scope": rec, "holds": f"each node {node}'s holder issues to another below it is a top: its Del holds "
                                        f"every node under it and works it in its chat; the top itself is the "
                                        f"person's — its contract changes and it closes on his words"}
-    return staffed(held)
+    roles = [c for c in _roster(engine).list().values() if c.get("project") == engine.project_name]
+    base = workdir or next((c["workdir"] for c in roles if c.get("workdir")), None)
+    if base is None and not _validators_of(engine, _roster(engine)):
+        return {"refused": True, "error": f"this project has no repository recorded yet for the system to check the work "
+                                          f"under '{node}' against: your agent attaches it from its console — "
+                                          f"`register_agent(\"{engine.project_name or DEFAULT_PROJECT}-val\", "
+                                          f"\"llm-validator\", workdir=<the repository>)` — and the scope is set here "
+                                          f"then"}
+    return _with_its_validator(engine, base, model, held)
 
 
 def _his_intent(engine: Engine, criteria: list, rec: Optional[dict]) -> list:
@@ -3370,6 +3378,30 @@ def _his_intent(engine: Engine, criteria: list, rec: Optional[dict]) -> list:
     if rec is None or not engine.intent_check(rec) or any(c.get("name") == INTENT for c in criteria):
         return criteria
     return [*criteria, json.loads(json.dumps(INTENT_CRITERION))]
+
+
+def _his_criteria_mapped(engine: Engine, parent_id, children, mappings) -> list:
+    """`children` with each criterion of `parent_id` this act newly maps onto a standing top written into that top's
+    packet: his criterion reaches the seam he issued as a criterion of its contract (MODE_PER_SUBTREE §6.1 point 2), the
+    top re-issued once and its holder consenting again (Inv-1) — a mapping alone left its packet silent on what it now
+    answers for. Elsewhere a child's criteria are its own, as given."""
+    parent = engine.graph.get_task(TaskId(str(parent_id)))
+    if parent is None or not isinstance(children, list) or not all(isinstance(c, dict) for c in children):
+        return children or []
+    had = {(m.criterion_name, str(m.child_id)) for m in parent.criterion_mappings}
+    his = {c["name"]: c for c in its_criteria(parent)}
+    named = {str(c.get("task_id")): c for c in children}
+    asked = [(str(m.get("criterion_name")), str(m.get("child_id"))) for m in mappings or () if isinstance(m, dict)] + [
+        (str(n), str(c.get("task_id"))) for c in children for n in c.get("covers") or ()]
+    for name, kid in dict.fromkeys(asked):
+        k = engine.graph.get_task(TaskId(kid))
+        if (name, kid) in had or name not in his or k is None or not engine.issued_by_the_person(k.id):
+            continue
+        c = named.get(kid) or {"task_id": kid, "spec": {}, "assignee": str(k.assignee)}
+        crits = list(c["spec"]["criteria"] if "criteria" in c.get("spec", {}) else its_criteria(k))
+        if all(x.get("name") != name for x in crits):
+            named[kid] = {**c, "spec": {**c.get("spec", {}), "criteria": [*crits, his[name]]}}
+    return [named.pop(str(c.get("task_id")), c) for c in children] + list(named.values())
 
 
 def _with_his_intent(fn, *, issued: bool):
@@ -3391,7 +3423,8 @@ def _with_his_intent(fn, *, issued: bool):
             top = lambda held: e.would_be_a_top(at["parent_id"], held)
             if "children" in at:
                 at["children"] = [{**c, "spec": spec(e, c["spec"], top(c.get("assignee")))}
-                                  if isinstance(c, dict) and "spec" in c else c for c in at["children"] or ()]
+                                  if isinstance(c, dict) and "spec" in c else c
+                                  for c in _his_criteria_mapped(e, at["parent_id"], at["children"], at.get("mappings"))]
             else:
                 at["spec"] = spec(e, at.get("spec"), top(at.get("assignee")))
         elif "assignee" in at and not issued:

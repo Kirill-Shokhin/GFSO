@@ -5,6 +5,7 @@ import {S} from './state.js';
 import {notice, act} from './overlays.js';
 import {frame} from './hints.js';
 import {critRow, listRow, readCrits, readList, iso, suggest} from './forms.js';
+import {terminal} from './vocab.js';
 
 const modal = (id, on) => $(id).classList.toggle('active', on);
 export const closeModal = ({modal: id}) => modal(id, false);
@@ -56,12 +57,19 @@ export async function submitEdit() {
 }
 
 // ── Decompose: children, each with its own criteria and risks, and the parent's criteria mapped onto them ──
-const dec = {id: null, crits: []};
+// …a re-admission maps onto the children standing too (§11.5): a criterion added to the node by a revision is flagged
+// uncovered (CHECK-1, §12.10) and mapped onto a child at work, which only this form's options let the page do
+const dec = {id: null, crits: [], standing: [], mapped: {}};
 const childForms = () => [...document.querySelectorAll('.child-form')];
+const STANDING = 's:';
 
 export async function openDecompose({id}) {
     dec.id = id;
-    try { dec.crits = (await task(id)).criteria || []; } catch (e) { dec.crits = []; }
+    try {
+        const d = await task(id);
+        Object.assign(dec, {crits: d.criteria || [], standing: (d.children || []).filter(c => !terminal(c.state)),
+                            mapped: Object.fromEntries((d.criterion_mappings || []).map(m => [m.criterion_name, m.child_id]))});
+    } catch (e) { Object.assign(dec, {crits: [], standing: [], mapped: {}}); }
     $('decompose-children').innerHTML = '';
     addChildForm();
     modal('decompose-modal', true);
@@ -94,11 +102,13 @@ function renderMappings() {
     const box = $('decompose-mappings');
     if (!dec.crits.length) { box.innerHTML = ''; return; }
     const kept = Object.fromEntries([...box.querySelectorAll('select')].map(s => [s.dataset.crit, s.value]));
-    const kids = childForms().map((f, i) => (f.querySelector('.dc-desc').value || `Child ${i + 1}`).slice(0, 30));
+    const kids = [...dec.standing.map(k => [STANDING + k.id, (k.description || k.id).slice(0, 30)]),
+                  ...childForms().map((f, i) => [String(i), (f.querySelector('.dc-desc').value || `Child ${i + 1}`).slice(0, 30)])];
+    const at = c => kept[c.name] ?? (dec.mapped[c.name] ? STANDING + dec.mapped[c.name] : '');
     box.innerHTML = `<div class="section-title map-title">Criterion mappings (CHECK-1, joint sufficiency)</div>`
         + dec.crits.map(c => `<div class="crit-mapping"><span class="crit-name">${esc(c.name)}</span><select data-crit="${esc(c.name)}">`
-            + `<option value="">— unmapped —</option>` + kids.map((k, i) =>
-                `<option value="${i}"${kept[c.name] === String(i) ? ' selected' : ''}>${esc(k)}</option>`).join('')
+            + `<option value="">— unmapped —</option>` + kids.map(([v, k]) =>
+                `<option value="${esc(v)}"${at(c) === v ? ' selected' : ''}>${esc(k)}</option>`).join('')
             + `</select></div>`).join('');
 }
 
@@ -110,10 +120,11 @@ export async function submitDecompose() {
         ...S.graph.mode?.mode ? {} : {assignee: f.querySelector('.dc-assignee').value.trim()},
         deadline: iso(f.querySelector('.dc-deadline').value),
     })).filter(c => c.spec.description && (S.graph.mode?.mode || c.assignee));
-    if (!children.length) return;
+    const sels = [...$('decompose-mappings').querySelectorAll('select')];
+    // …with no new child, a re-admission that maps onto the standing ones (`children: []`, its mappings and register)
+    if (!children.length && !sels.some(s => s.value.startsWith(STANDING) && dec.mapped[s.dataset.crit] !== s.value.slice(STANDING.length))) return;
     // The API maps criteria to EXISTING child ids, and these are about to be created: ids are minted here.
     children.forEach((c, i) => { c.task_id = `c${Date.now().toString(36)}-${i}`; });
-    const sels = [...$('decompose-mappings').querySelectorAll('select')];
     // WHAT THE ENGINE WILL REFUSE, REFUSED HERE, WHILE THE FORM IS STILL OPEN: a plan sent unmapped or with
     // no register created children whose every Accept is refused, and re-opening Decompose could only
     // duplicate them — the project became unrecoverable through the page (wave 26 UI pass, 2026-09-06).
@@ -132,6 +143,7 @@ export async function submitDecompose() {
     // …signed by the session as the split's holder (§11.5), never by a name sent
     await act(post('/api/run/decompose', {parent_id: dec.id, children,
         accepted_risks: [{denial: true, p, justification: why}],
-        mappings: sels.map(s => ({criterion_name: s.dataset.crit, child_id: children[+s.value].task_id}))}),
+        mappings: sels.map(s => ({criterion_name: s.dataset.crit, child_id: s.value.startsWith(STANDING)
+            ? s.value.slice(STANDING.length) : children[+s.value].task_id}))}),
         {ok: async () => { modal('decompose-modal', false); await S.reload(); }});
 }

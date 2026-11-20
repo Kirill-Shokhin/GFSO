@@ -618,3 +618,110 @@ def test_a_server_start_leaves_a_scoped_project_running_beside_a_registered_exec
     monkeypatch.delenv("GFSO_PROJECT", raising=False)
     monkeypatch.setenv(SERVES_ENV, "1")
     assert ProjectRegistry().engine("p").paused() is None
+
+
+# ── his page, by the bodies it sends ──────────────────────────────────────────
+
+def _page(e, verb, **body) -> dict:
+    """`POST /api/run/<verb>` from his signed-in page: the body as the page writes it, no name and no `user_said` —
+    the door signs it as the session (`server.run_tool`)."""
+    out = _call(PAGE, verb, e, **body)
+    return out if isinstance(out, dict) else {"answer": out}
+
+
+def _took(out):
+    assert not (out.get("refused") or out.get("error")), out
+
+
+def test_his_page_revises_a_tops_criteria_as_its_edit_form_sends_them(tmp_path):
+    """author.js `submitEdit`: `{task_id, criteria}`. The page signed in as him is his act, his words what he typed
+    there: heard at the top as the criteria he wrote."""
+    e = _stream(tmp_path)
+    d = e.graph.get_task(TaskId(DIRS[0]))
+    _took(_page(e, "edit_criteria", task_id=DIRS[0],
+                criteria=TL.its_criteria(d) + [criterion("logs", "и логи пишутся в файл")]))
+    assert "и логи пишутся в файл" in e.persons_words(e.graph.get_task(TaskId(DIRS[0])))
+
+
+def test_his_page_moves_a_tops_deadline(tmp_path):
+    """A deadline is a packet field (Inv-1): his page revising it is his act, as for the criteria — the time as the
+    page writes every deadline (forms.js `iso`: `toISOString()`, UTC)."""
+    e = _stream(tmp_path)
+    at = "2099-01-01T12:00:00.000Z"
+    _took(_page(e, "revise", task_id=DIRS[2], deadline=at))
+    assert e.graph.get_task(TaskId(DIRS[2])).deadline.year == 2099
+
+
+def test_his_page_revises_his_solo_root_as_its_edit_form_sends_it(tmp_path):
+    """The same guard at the root of his solo project: the page is his act there too."""
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    e.project_name = "p"
+    e.set_mode(Mode.SOLO, None, AgentId("user"))
+    _took(_page(e, "create_task", spec={"name": "g", "description": "the goal", "criteria": [criterion("g")],
+                                        "scope": [], "accepted_risks": []}, deadline=None))
+    root = e.all_tasks()[0]
+    _took(_page(e, "edit_criteria", task_id=str(root.id),
+                criteria=TL.its_criteria(root) + [criterion("more", "и ещё README")]))
+    assert "more" in [c.name for c in e.graph.get_task(root.id).spec.criteria]
+
+
+def test_his_stream_level_criterion_reaches_a_direction_from_his_page(tmp_path):
+    """§12.10, §11.5: he adds a criterion to Y from his page → CHECK-1 flags it uncovered at Y → his frontier names
+    that as his step at Y → his page re-admits Y's split mapping it onto a standing direction → the direction is
+    re-issued once with it in its packet, its holder consenting again, and the words read at it carry his."""
+    e = _stream(tmp_path)
+    y = e.graph.get_task(TaskId(Y))
+    _took(_page(e, "edit_criteria", task_id=Y, criteria=TL.its_criteria(y) + [criterion("first", "сначала логи")]))
+    steps = [s for s in _page(e, "next_steps")["steps"] if s.get("task_id") == Y]
+    assert any("first" in str(s) and str(s.get("performed_by")) in PAGE.signs_as for s in steps), steps
+    assigns = len([x for x in e.audit_log(TaskId(DIRS[0])) if x.signal.name == "ASSIGN" and not x.rejected])
+    # author.js `submitDecompose`: no new child, every criterion's select sent — the standing mapping preselected
+    _took(_page(e, "decompose", parent_id=Y, children=[],
+                accepted_risks=[{"denial": True, "p": 0.1, "justification": "the directions stand as split"}],
+                mappings=[{"criterion_name": "k", "child_id": DIRS[0]}, {"criterion_name": "first", "child_id": DIRS[0]}]))
+    e.wait_idle()
+    d = e.graph.get_task(TaskId(DIRS[0]))
+    assert "сначала логи" in [c.description for c in d.spec.criteria], d.spec.criteria
+    assert len([x for x in e.audit_log(d.id) if x.signal.name == "ASSIGN" and not x.rejected]) == assigns + 1
+    assert d.state.name == "OFFERED", d.state
+    assert "сначала логи" in e.persons_words(d)
+    assert not [s for s in _page(e, "next_steps")["steps"] if s.get("task_id") == Y and "first" in str(s)]
+
+
+# ── setting the scope from his page ───────────────────────────────────────────
+
+def test_a_scope_is_refused_while_a_seam_it_would_make_a_top_is_held_by_a_machine(tmp_path):
+    """`in_chat` performs in a chat; a machine executes by dispatch: a seam he already issued under Y to a registered
+    machine would be a top no chat performs, so the scope is refused, naming it and the ways out."""
+    e = _stream(tmp_path, scoped=False)
+    for n, k in (("p-exec-1", "llm-executor"), ("p-val", "llm-validator")):
+        assert not TL.register_agent(e, n, k, workdir=str(tmp_path)).get("refused")
+    _his(e, "root.stream.m", "p-exec-1")
+    assert e.graph.get_task(TaskId("root.stream.m")) is not None
+    out = _page(e, "set_mode", mode="solo", perform="in_chat", node=Y)
+    assert out.get("refused") and "root.stream.m" in out["error"] and "chat" in out["error"], out
+    assert not e.mode_scopes()
+
+
+def test_a_scope_set_from_his_page_staffs_its_validator_at_the_projects_repository(tmp_path):
+    """The page sends `{mode, perform, node}`, no workdir: where the project's roles record its repository, the
+    validator is registered there, as `set_mode(workdir=)` would."""
+    e = _stream(tmp_path, scoped=False)
+    assert not TL.register_agent(e, "p-exec-1", "llm-executor", workdir=str(tmp_path)).get("refused")
+    out = _page(e, "set_mode", mode="solo", perform="in_chat", node=Y)
+    _took(out)
+    assert list(e.mode_scopes()) == [Y] and out["validator"]["workdir"], out
+
+
+def test_a_scope_with_no_repository_recorded_is_refused_in_his_words(tmp_path):
+    """No role records where the work is: the page cannot attach a repository, so the refusal tells him his agent
+    attaches it from its console — and the way it names is one that console has."""
+    e = _stream(tmp_path, scoped=False)
+    out = _page(e, "set_mode", mode="solo", perform="in_chat", node=Y)
+    assert out.get("refused") and "no repository" in out["error"] and "your agent" in out["error"], out
+    probe = _call(ISSUER, "set_mode", e, "solo", perform="in_chat", workdir=str(tmp_path))
+    assert probe.get("refused"), probe      # …a mode from an agent's console is no way out where the project has work
+    _took(_call(ISSUER, "register_agent", e, "p-val", "llm-validator", workdir=str(tmp_path)))
+    _took(_page(e, "set_mode", mode="solo", perform="in_chat", node=Y))
+    assert list(e.mode_scopes()) == [Y]

@@ -81,7 +81,7 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          holder_boundary as _holder_boundary, held_plan_node_refusal, hands_of as _hands_of,
                          HEARD_ON, MODE_SCOPES, mode_scopes as _mode_scopes, mode_at as _mode_at, scope_at as _scope_at,
                          outside_the_scopes, heard_on as _heard_on, goal_top as _goal_top, persons_node as _persons_node,
-                         observes_by_itself as _observes_by_itself, would_be_a_top as _would_be_a_top)
+                         observes_by_itself as _observes_by_itself, would_be_a_top as _would_be_a_top, his_seam)
 from .events import EventBus, PlanWatch, TransitionCallback, ErrorCallback, RejectCallback
 from .loop import _guard_context, event_loop, record_refusal, refresh_checks, timeout_monitor
 
@@ -606,7 +606,10 @@ class Engine:
                    f"this project has a mode ({self.mode()['mode']}): a scope beside it would answer who holds a node "
                    f"twice" if self.mode() is not None else
                    f"a mode is already scoped here ({', '.join(self.mode_scopes())}): one scope record per project"
-                   if self.mode_scopes() else None)
+                   if self.mode_scopes() else next(filter(None, (self._a_machine_at_a_top(
+                       k.assignee, node, f"reassign {k.id} to a name that works in a chat, or leave the work under "
+                                         f"{node} outside the scope by not scoping there", what=str(k.id))
+                       for k in self._tops_it_would_make(t))), None))
         if refusal:
             raise ValueError(refusal)
         rec = {"node": str(node), "mode": Mode.SOLO.value, "perform": "in_chat", "by": str(author),
@@ -624,12 +627,31 @@ class Engine:
         """Why a node issued under `parent_id` to `held` — a top of an in_chat scope — cannot be: `held` is a registered
         machine, which executes by dispatch, while in_chat performs in a chat. None: it may."""
         rec = self.would_be_a_top(parent_id, held)
-        if rec is None or rec.get("perform") != "in_chat" or not (
-                AgentId(held) in self.workforce.executor_pool() or self.workforce.kind_of(held)):
+        return self._a_machine_at_a_top(held, rec["node"], f"issue it to a name that works in a chat, or drop the scope "
+                                                           f"at {rec['node']} first") \
+            if rec is not None and rec.get("perform") == "in_chat" else None
+
+    def _a_machine_at_a_top(self, held, node, out: str, what: str = "a node") -> Optional[str]:
+        """Why `held` cannot hold a top of the in_chat scope at `node` — a registered machine executes by dispatch — with
+        the ways `out`; None where `held` works in a chat."""
+        if not (AgentId(held) in self.workforce.executor_pool() or self.workforce.kind_of(held)):
             return None
-        return (f"{held} is a registered machine, which executes by dispatch, and a node the person issues under "
-                f"{rec['node']} is a top of its in_chat mode, performed in a chat: issue it to a name that works in a "
-                f"chat, or drop the scope at {rec['node']} first")
+        return (f"{held} is a registered machine, which executes by dispatch, and {what} the person issues under "
+                f"{node} is a top of its in_chat mode, performed in a chat: {out}")
+
+    def _tops_it_would_make(self, node: Task) -> list[Task]:
+        """The live seams he issued below `node` that a scope set there would make tops: the nearest under it, issued by a
+        name of his to another (`his_seam`)."""
+        out, todo = [], list(self._graph.get_children(node.id))
+        while todo:
+            t = todo.pop(0)
+            if t.state in TERMINAL_STATES:
+                continue
+            if his_seam(self._graph.issuer_of(t.id), t.assignee):
+                out.append(t)
+            else:
+                todo += self._graph.get_children(t.id)
+        return out
 
     def drop_mode_scope(self, node: TaskId, author: AgentId) -> dict:
         """The scope at `node` dropped: its nodes keep their Del (Inv-1), and are read as the project's again."""
@@ -2563,7 +2585,9 @@ class Engine:
         field is the contract (Inv-1) — only on the person's own words (`PERSONS_WORDS`), which go on the feed; refused
         without them. Asked before the queue of every act that installs a packet. At the node a mode scope stands at,
         his redirections of the stream (his decision of 11-12) are heard there, his words or, from his page, the
-        criteria he wrote: each top's criterion read against his words quotes them (`persons_words`); none is asked."""
+        criteria he wrote: each top's criterion read against his words quotes them (`persons_words`); none is asked.
+        His signed-in page is his act wherever his word stands — what he typed there is his words, heard as the
+        criteria he wrote — so it is asked for none."""
         persons, scope = self.issued_by_the_person(old.id), str(old.id) in self.mode_scopes()
         if not (persons or scope):
             return
@@ -2573,17 +2597,18 @@ class Engine:
         moved += ["deadline"] if deadline is not None and deadline != old.deadline else []
         if not moved:
             return
-        said = PERSONS_WORDS.get().strip()
+        words, page = PERSONS_WORDS.get().strip(), (p := CALLER.get()) is not None and p.a_page
+        said = words or ("\n".join(c.description for c in (new_spec or old.spec).criteria
+                                   if c not in old.spec.criteria and c.name != INTENT) if page else "")
         if not persons:
-            page = (p := CALLER.get()) is not None and p.a_page
-            self.hear(old.id, "revise", said or "\n".join(
-                c.description for c in (new_spec or old.spec).criteria if page and c not in old.spec.criteria))
+            self.hear(old.id, "revise", said)
             return
-        if not said:
+        if not (words or page):
             raise ValueError(f"{old.id}'s {', '.join(moved)} are what the person agreed: under {self.mode_at(old.id)['mode']} "
                              f"they change only on the person's own words — show them the change, and pass their words "
                              f"agreeing as `user_said`, recorded on the project's feed")
-        self.emit_info("revise", f"{old.id}'s {', '.join(moved)} changed on the person's words: «{said[:300]}»")
+        self.emit_info("revise", f"{old.id}'s {', '.join(moved)} changed on the person's words: «{words[:300]}»" if words
+                       else f"{old.id}'s {', '.join(moved)} changed from the person's page")
         # …and the text of `answers_the_persons_words` it installs, where it moves: only such a text of it stands on a
         # later go beside the system's (`tools_llm.with_the_intent`) — one the plan's agent wrote does not
         mine = lambda s: next(({"description": c.description, "check": [p.to_dict() for p in c.check]}

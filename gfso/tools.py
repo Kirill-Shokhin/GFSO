@@ -1684,13 +1684,16 @@ def _deadline(raw, graph=None):
     turned the string into a datetime and `decompose` (once it began carrying the field at all)
     would have passed the raw string straight through, so CHECK-3 met `str >= datetime` and RAISED
     inside the structural gate — a crash where a check belongs. A value already a `datetime` is
-    returned untouched, which is what the engine's own callers pass.
+    returned untouched, which is what the engine's own callers pass. A string with an offset — the page writes
+    `toISOString()`, in UTC — is read on this host's clock, as the graph's naive times are: compared aware, the step
+    raised and was dropped.
     """
     if raw is None or raw == "":
         return None
     if isinstance(raw, datetime):
         return raw
-    return datetime.fromisoformat(str(raw)) - timedelta(seconds=door_off_s(graph))
+    at = datetime.fromisoformat(str(raw))
+    return (at.astimezone().replace(tzinfo=None) if at.tzinfo else at) - timedelta(seconds=door_off_s(graph))
 
 
 #: a spec's keys as `_spec_from` reads them — each the Spec field of the same name
