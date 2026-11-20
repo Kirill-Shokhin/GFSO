@@ -48,7 +48,11 @@ export const decidedBefore = (g, canvas) => {
 export function viewed(g) {
     if (!FOCUS || !g.nodes.some(n => n.id === FOCUS)) return g;
     const keep = new Set(g.nodes.filter(n => inView(n.id)).map(n => n.id));      // one rule of what is in the view (state.js)
-    const across = g.edges.filter(e => e.type !== 'parent-child' && keep.has(e.source) !== keep.has(e.target));
+    // …a WAIT, an edge with neither end settled: one whose end is done or cancelled orders nothing still to come (§11.5 reads
+    // no edge one of whose ends is settled), and the cancelled parts of the author's own view drew twenty nodes from
+    // elsewhere along their dead edges (the author, 11-20: «отменил кучу нод и они мусором висят на странице»)
+    const live = id => { const s = g.nodes.find(n => n.id === id)?.state; return s !== 'DONE' && s !== 'ABANDONED'; };
+    const across = g.edges.filter(e => e.type !== 'parent-child' && keep.has(e.source) !== keep.has(e.target) && live(e.source) && live(e.target));
     const outside = new Set(across.map(e => keep.has(e.source) ? e.target : e.source));
     return {...g, nodes: [...g.nodes.filter(n => keep.has(n.id)).map(n => n.id === FOCUS ? {...n, parent_id: null} : n),
                           ...g.nodes.filter(n => outside.has(n.id)).map(n => ({...n, parent_id: null, outside: true}))],
