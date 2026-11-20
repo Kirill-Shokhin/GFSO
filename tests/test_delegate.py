@@ -296,10 +296,13 @@ def _drive_done(e, tid, assignee="exec-1"):
     # PASS that does not say it ran that procedure is demoted to ⊥ — nothing is decided by a probe
     # invented at validation time, the scaffolding included.
     issuer = str(e.graph.issuer_of(TaskId(tid)))
-    T.record_verdict(e, tid, "PASS", reviewer=issuer,
-                     observed={c.name: {"note": f"ran {tid} and read its output",
-                                        "ran": [p.command for p in (c.check or ())]}
-                               for c in t.spec.criteria})
+    if e.persons_seam(tid):                 # …a seam the person issues closes on the validator's record alone
+        instrument_passes(e, TaskId(tid), validator="val-1")
+    else:
+        T.record_verdict(e, tid, "PASS", reviewer=issuer,
+                         observed={c.name: {"note": f"ran {tid} and read its output",
+                                            "ran": [p.command for p in (c.check or ())]}
+                                   for c in t.spec.criteria})
     T.signal(e, tid, "PASS", issuer)
 
 

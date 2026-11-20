@@ -499,10 +499,29 @@ def observes_by_itself(graph: Graph, task) -> bool:
     return not outside_the_scopes(graph, task) and observed_here(graph, task)
 
 
+#: why the validator checks a seam the person issues, in his words
+HIS_WORD_ON_THE_SEAM = ("a seam the person issued, and before its result is brought to him the project's validator "
+                        "checks it against every criterion, his words' included — the author, 2026-11-20: «на шве … "
+                        "должен стоять обязательный … и не даст сказать готово»")
+#: the lift where no validator is registered to observe his seams (`Engine.staffs_his_seam`)
+STAFF_HIS_SEAMS = ("registering the project's validator makes it observe each delivery by itself — "
+                   "`register_agent(\"<project>-val\", \"llm-validator\", workdir=<the repository>)`")
+
+
+def persons_seam(graph: Graph, task) -> bool:
+    """Is `task` a seam the person issues — his name its issuer, another's its Del (`his_seam`) — in a project with no
+    mode, or the root he hands to another under one? There the validator observes every delivery, its FAIL binds his
+    signature and its observation is owed before it (`owed_observer`, `observation_blocker`): his word, the check is
+    mandatory and he may add to it, never remove it. Under a mode the nodes below his root are the mode's, its record
+    answering who holds and who observes each."""
+    return (task is not None and his_seam(graph.issuer_of(task.id), task.assignee)
+            and (project_mode(graph) is None or task.parent_id is None))
+
+
 def owed_observer(graph: Graph, task) -> Optional[str]:
     """Why the instrument observes this node whatever its issuer chooses — None where who checks is his choice."""
-    if (scoped := scope_at(graph, task)) is not None and str(scoped[1].id) == str(task.id):
-        return None               # …a top's check is its issuer's choice, his own reading by default (`set_checker`)
+    if persons_seam(graph, task):
+        return f"it is {HIS_WORD_ON_THE_SEAM}"
     if graph.is_public(task):
         return "it is a seam: its result crosses into another scope (§10.3)"
     if _validate_internal():
@@ -560,27 +579,41 @@ def displaces_a_refutation(graph: Graph, task, recorder, by_hand) -> bool:
             and str(recorder or "") == str(graph.issuer_of(task.id) or ""))
 
 
-def observation_standing(graph: Graph, task, audit) -> dict:
+def delivered_tree(audit, task) -> Optional[str]:
+    """The tree the last DELIVER of `task` recorded, or None."""
+    last = next((e for e in reversed(audit.get_entries(task.id)) if e.signal == Signal.DELIVER and not e.rejected),
+                None) if audit is not None and task is not None else None
+    return last.artifact if last is not None else None
+
+
+def observation_standing(graph: Graph, task, audit, tree: Optional[str] = None) -> dict:
     """What the APPOINTED observers recorded on the node's CURRENT delivery: {pass, fails}.
 
     Every record that stands is read (`record_stands`), not the latest (a later record by anyone does not
     unmake an appointed observer's refutation), with the current record included for rows written before
     the ledger existed. Appointed = the instrument, or the node's issuer where he is not its executor
-    (`recorded_by_an_appointed_observer`)."""
-    issuer = graph.issuer_of(task.id)
+    (`recorded_by_an_appointed_observer`). At a seam the person issues (`persons_seam`) his hand adds to the validator's
+    check and never stands for it: his FAIL binds, his PASS is no observation and displaces no refutation. There a
+    check names the tree it judged, so of a delivery only the checks of its own tree are read — `tree`, else the one
+    the last DELIVER recorded: a FAIL of the tree before a repair is no verdict on the repair."""
+    issuer, his = graph.issuer_of(task.id), persons_seam(graph, task)
     recs = [r for r in observations(graph._storage, task.id) if record_stands(graph, audit, task, r)]
     cur = graph.exec_verdict_record(task.id)
     if record_stands(graph, audit, task, cur):
         recs.append(cur)
-    appointed = [r for r in recs if recorded_by_an_appointed_observer(r, task, issuer)]
-    # at a seam the issuer's own latest record is his check, and what came before it is a logged disagreement
-    mine = [i for i, r in enumerate(appointed)
-            if displaces_a_refutation(graph, task, r.get("validator"), r.get("by_hand"))]
+    tree = (tree or delivered_tree(audit, task)) if his else None
+    appointed = [r for r in recs if recorded_by_an_appointed_observer(r, task, issuer)
+                 and (tree is None or r.get("tree") in (None, tree))]
+    # at a seam the issuer's own latest record is his check, and what came before it is a logged disagreement — save at
+    # his own seam, where his hand adds a FAIL and never displaces the validator's
+    mine = [] if his else [i for i, r in enumerate(appointed)
+                           if displaces_a_refutation(graph, task, r.get("validator"), r.get("by_hand"))]
     if mine:
         appointed = appointed[mine[-1]:]
     fails = sorted({str(c) for r in appointed if str(r.get("verdict")) == Verdict.FAIL
                     for c in (r.get("failed_criteria") or ())})
-    return {"pass": any(str(r.get("verdict")) == Verdict.PASS for r in appointed), "fails": fails}
+    return {"pass": any(str(r.get("verdict")) == Verdict.PASS and not (his and r.get("by_hand")) for r in appointed),
+            "fails": fails}
 
 
 def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
@@ -592,10 +625,18 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
     the system observes every delivery whoever holds it, and a mode is where the instrument is staffed
     (C-12). The second is lifted by the refused party's own move, `validate_result` (§12.16 (ii)). With no
     mode a seam keeps the older rule below it (a current PASS on the record, whoever recorded it) —
-    the appointed requirement is C-12's, and it came with the modes."""
+    the appointed requirement is C-12's, and it came with the modes. A seam the person issues owes the validator
+    in any mode, and its FAIL binds him (`persons_seam`): his lift is the FAIL, and its holder's a repair (§12.16 (ii))."""
     if task is None:
         return None
-    st = observation_standing(graph, task, audit)
+    st, his = observation_standing(graph, task, audit), persons_seam(graph, task)
+    if st["fails"] and his:
+        return {"kind": "observed_fail", "fails": st["fails"],
+                "why": (f"the project's validator recorded this delivery FAIL on {', '.join(st['fails'])}, and {task.id} "
+                        f"is {HIS_WORD_ON_THE_SEAM}; no later record of his hand turns it into a pass"),
+                "opens_with": (f"signal FAIL with those criteria — its holder repairs and re-delivers what the FAIL "
+                               f"indicts (§12.16 (ii)) — or, where the validator's own pinned probe is what is wrong, "
+                               f"revise the criterion (`edit_criteria('{task.id}', …)`)")}
     if st["fails"] and observation_binds(graph, task):
         return {"kind": "observed_fail", "fails": st["fails"],
                 "why": (f"an appointed observer recorded this delivery FAIL on {', '.join(st['fails'])}, and "
@@ -612,7 +653,7 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
                                f"observation (`record_verdict('{task.id}', 'PASS', …)`) — it stands beside the "
                                f"earlier one as a logged disagreement — then sign. Another run of the instrument "
                                f"does not undo a refutation")}
-    must = mode_at(graph, task) is not None and observed_here(graph, task)
+    must = (mode_at(graph, task) is not None or his) and observed_here(graph, task)
     if must and not st["pass"]:
         return {"kind": "unobserved", "fails": [],
                 "why": ("no appointed observer has observed this delivery — "
@@ -626,7 +667,7 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
                 # …the validator first: told "observes it now", a client whose validator was already running paid twice
                 "opens_with": (f"where the project has a validator it observes this delivery by itself — wait for "
                                f"its verdict (`gfso wait`), no call starts it; with none, `validate_result('{task.id}')` "
-                               f"observes it now")}
+                               f"observes it now" + (f", and {STAFF_HIS_SEAMS}" if his else ""))}
     return None
 
 
@@ -1311,8 +1352,38 @@ def _deliver_rules(signal_data: SignalData, graph: Graph, audit) -> None:
         # refuted criterion also deletes the mapping that pointed at it, so a mapping-keyed trigger
         # would let exactly the false close through. A leaf is out of scope by the same reading —
         # its contract belongs to the issuer above, whose CHECK-1 surfaces any hole a rewrite leaves.
-        if (refusal := redelivery_refusal(graph, task, audit)) is not None:
+        if (refusal := redelivery_refusal(graph, task, audit)
+                or unchecked_at_his_seam(graph, task, signal_data.artifact)) is not None:
             raise ValidationError(refusal)
+
+
+def unchecked_at_his_seam(graph: Graph, task, artifact) -> Optional[str]:
+    """Why a DELIVER at a seam the person issues is refused — the validator's latest check of the very tree being handed
+    in failed, or none was made — or None. The check stands before the result is brought to him (his word): a check of
+    the committed tree before the delivery (`validate_result` on the node at work, `Engine.judging_before_delivery`),
+    or the validation of an earlier delivery of the same tree. The lift is the holder's own truthful work: repair what
+    failed, have the repair checked, deliver it (§12.16 (ii): a standing verdict under the current criteria indicts that
+    tree). Under a revision of the criteria every check is of an earlier version and none stands. A delivery that
+    records no tree, and one a registered machine makes, is observed after it lands, its PASS bound as at every seam of
+    his (`observation_blocker`)."""
+    if (task is None or not artifact or not persons_seam(graph, task)
+            or party_kind(graph, str(task.assignee), graph.roster or {}) == "machine"):
+        return None
+    issuer = graph.issuer_of(task.id)
+    checks = [r for r in [*observations(graph._storage, task.id), graph.exec_verdict_record(task.id)]
+              if r and r.get("tree") == artifact and not r.get("by_hand")
+              and recorded_by_an_appointed_observer(r, task, issuer)
+              and (r.get("reopens", 0), r.get("revisions", 0)) == (task.reopens, task.revisions)]
+    last = max(checks, key=lambda r: int(r.get("log_at", -1)), default=None)
+    if last is not None and str(last.get("verdict")) == Verdict.PASS:
+        return None
+    return (f"cannot DELIVER {task.id}: "
+            + (f"the validator's latest check of this tree failed on {', '.join(last.get('failed_criteria') or ())}"
+               if last is not None else "the validator has not checked this tree")
+            + f", and {task.id} is {HIS_WORD_ON_THE_SEAM}. "
+            + ("Rework what failed (`get_verdict` reads why), commit it, and " if last is not None else "Commit the work and ")
+            + f"have it checked before you deliver it — `validate_result('{task.id}')` judges your committed tree — "
+              f"then DELIVER that tree once its check passes; where a criterion is what is wrong, CHALLENGE it")
 
 
 def project_mode(graph: Graph) -> Optional[dict]:
@@ -1408,8 +1479,10 @@ def outside_the_scopes(graph: Graph, task) -> bool:
     """Does `task` lie in a project with no mode where a name works in a chat (`in_chat_names`), under no top of one?
     There the system starts and binds nothing, as in a project with no mode: a validator a top's issuer chose is the
     project's, and read project-wide it reached every other stream — validating their deliveries unasked, binding
-    their verdicts, stopping their graph at a restart."""
-    return project_mode(graph) is None and bool(in_chat_names(graph)) and mode_at(graph, task) is None
+    their verdicts, stopping their graph at a restart. A seam the person issues is no other stream's: the validator is
+    owed there (`persons_seam`)."""
+    return (project_mode(graph) is None and bool(in_chat_names(graph)) and mode_at(graph, task) is None
+            and not persons_seam(graph, task))
 
 
 def heard_on(graph: Graph, node) -> list[dict]:

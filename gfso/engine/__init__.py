@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
+import contextlib
 import dataclasses
 import json
 import logging
@@ -81,7 +82,8 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          holder_boundary as _holder_boundary, held_plan_node_refusal, hands_of as _hands_of,
                          HEARD_ON, IN_CHAT, in_chat_names as _in_chat_names, mode_scopes as _mode_scopes, mode_at as _mode_at, scope_at as _scope_at,
                          outside_the_scopes, heard_on as _heard_on, goal_top as _goal_top, persons_node as _persons_node,
-                         observes_by_itself as _observes_by_itself, would_be_a_top as _would_be_a_top)
+                         observes_by_itself as _observes_by_itself, would_be_a_top as _would_be_a_top,
+                         persons_seam as _persons_seam, STAFF_HIS_SEAMS)
 from .events import EventBus, PlanWatch, TransitionCallback, ErrorCallback, RejectCallback
 from .loop import _guard_context, event_loop, record_refusal, refresh_checks, timeout_monitor
 
@@ -204,6 +206,8 @@ class Engine:
         self._queue = self._runner.new_queue()
         self._stop = threading.Event()
         self._audit = AuditLog(storage)   # persists + hydrates when the storage carries audit methods
+        #: {node: (tree, commit, build)} a check before its delivery is judging now (`judging_before_delivery`)
+        self._judging: dict = {}
         self._graph.audit = self._audit   # R′'s finality reads consumption off the log (`Graph.is_consumed`)
         self._started = False
         self.frontier = Frontier(self)    # what the graph owes next, and to whom (`next_step(s)`)
@@ -1536,7 +1540,8 @@ class Engine:
         if (verdict == Verdict.PASS and task is not None
                 and not displaces_a_refutation(self._graph, task, validator_id, by_hand)
                 and tuple(generation or self._graph.generation_of(task_id)) == generation_of_task(task)
-                and (fails := observation_standing(self._graph, task, self._audit)["fails"])):
+                and (fails := observation_standing(self._graph, task, self._audit,
+                                                   (self.delivered(task_id) or (None,))[0])["fails"])):
             self.emit_info("verdict", f"{task_id}: {validator_id} observed a PASS where an appointed observer had "
                                       f"recorded FAIL on {', '.join(fails)} for the same delivery — kept as a "
                                       f"report; the FAIL stands (Inv-2)")
@@ -1588,7 +1593,7 @@ class Engine:
                       generation or self._graph.generation_of(task_id), len(self._audit) if log_at is None else log_at,
                       per_criterion=per_criterion, tools_used=tools_used, model=model,
                       workdir=workdir, by_hand=by_hand, validated=self._validated_versions(task_id),
-                      inputs_dirs=inputs_dirs, outside=outside,
+                      inputs_dirs=inputs_dirs, outside=outside, tree=(self.delivered(task_id) or (None,))[0],
                       # …which parts this FAIL did not show holding on the delivered result, read now, while this
                       # round's inputs directories still name what the report ran (`_refuted_coverage_refusal`)
                       parts_not_shown_holding=parts_not_shown_holding(self.parts_procedure(task_id), per_criterion or (),
@@ -3410,10 +3415,12 @@ class Engine:
         if str(author) != str(self._graph.issuer_of(task_id)):
             raise ValueError(f"'{author}' is not the issuer of {task_id}: who checks it is its issuer's choice — "
                              f"'{self._graph.issuer_of(task_id)}' (§10.2)")
-        if _mode_at(self._graph, t) is None:
+        if _mode_at(self._graph, t) is None and not _persons_seam(self._graph, t):
             raise ValueError(f"who checks {task_id} is chosen under a mode: with none set, no PASS waits for a "
                              f"validator's record (`set_mode`)")
         if (why := _owed_observer(self._graph, t)) is not None:
+            if _persons_seam(self._graph, t) and checker == "validator":
+                return self.validators_chosen()      # …his seam: his word adds a check, never removes the validator's
             raise ValueError(f"the validator checks every delivery of {task_id}, not its issuer's to choose: {why}")
         held = [i for i in self.validators_chosen() if i != str(task_id)] + ([str(task_id)] if checker == "validator"
                                                                              else [])
@@ -3427,9 +3434,18 @@ class Engine:
         return json.loads(self._storage.get_setting(VALIDATOR_CHOSEN) or "[]")
 
     def validator_staffed(self) -> bool:
-        """Is there a validator to observe this project's deliveries — a mode staffs one, or one is registered? A top held
-        in a chat staffs none: its check is its issuer's choice (`set_checker`), his own reading by default."""
+        """Is there a validator to observe this project's deliveries — a mode staffs one, or one is registered?"""
         return self.mode() is not None or self.workforce.has_an_instrument()
+
+    def persons_seam(self, task_id) -> bool:
+        """Is this node a seam the person issues, the validator owed at it (`validation.persons_seam`)?"""
+        return _persons_seam(self._graph, self._graph.get_task(TaskId(str(task_id))))
+
+    def staffs_his_seam(self, task_id) -> Optional[str]:
+        """The lift where `task_id` is a seam the person issues and no validator is staffed to observe it — None
+        elsewhere: said at its issue and its delivery, so the check his word owes it is not found missing at his PASS."""
+        return None if not self.persons_seam(task_id) or self.validator_staffed() else STAFF_HIS_SEAMS.replace(
+            "<project>", self.project_name or "project")
 
     def checker_choosable(self, task_id: TaskId) -> bool:
         """Is who checks this node its issuer's to choose — a mode over it, so a chosen validator's record gates the PASS
@@ -3439,12 +3455,14 @@ class Engine:
 
     def checker(self, task_id: TaskId, staffed: Optional[bool] = None) -> str:
         """Who checks this node's deliveries, read off the gates its PASS meets: "validator" where a staffed one observes
-        each by itself; "independent" at a seam none observes — the PASS needs a verdict not the executor's
-        (`validate_result`, or the issuer's own record, §10.3); else "self", its holder's self-check closing it."""
+        each by itself, and at a seam the person issues, whose PASS waits for it staffed or not (`persons_seam`);
+        "independent" at a seam none observes — the PASS needs a verdict not the executor's (`validate_result`, or the
+        issuer's own record, §10.3); else "self", its holder's self-check closing it."""
         t = self._graph.get_task(task_id)
         if t is None:
             return "self"
-        return ("validator" if (self.validator_staffed() if staffed is None else staffed) and self.observes_by_itself(task_id)
+        return ("validator" if _persons_seam(self._graph, t) or (
+            self.validator_staffed() if staffed is None else staffed) and self.observes_by_itself(task_id)
                 else "independent" if self._graph.is_public(t) else "self")
 
     def observed_here(self, task_id: TaskId) -> bool:
@@ -3867,10 +3885,27 @@ class Engine:
     def delivered(self, *task_ids) -> "tuple | None":
         """(tree, commit, build) of the last DELIVER under this version among `task_ids` — the tree their one place stood
         at when it was last handed in (a scope's whole is delivered after its parts), and how its judge builds it — None
-        where it recorded no commit."""
+        where it recorded no commit. While a check before a delivery runs, the tree it judges (`judging_before_delivery`)."""
+        if (judged := next((self._judging[str(t)] for t in task_ids if str(t) in self._judging), None)) is not None:
+            return judged
         last = max((e for t in task_ids for e in on_current_version(self._audit.get_entries(t))
                     if e.signal == Signal.DELIVER), key=lambda e: e.timestamp, default=None)
         return (last.artifact, last.commit, last.build) if last is not None and last.commit else None
+
+    def judges_before_delivery(self, task_id) -> bool:
+        """Is a check of `task_id`'s committed tree before its delivery running now (`judging_before_delivery`)?"""
+        return str(task_id) in self._judging
+
+    @contextlib.contextmanager
+    def judging_before_delivery(self, task_id, tree: str, commit: str):
+        """A check of `task_id`'s committed tree before its DELIVER: the validation judges that commit as delivered
+        (`delivered`), and its record names the tree (`record_exec_verdict`) — no state moves. At a seam the person
+        issues, its DELIVER waits for that check to pass (`validation.unchecked_at_his_seam`)."""
+        self._judging[str(task_id)] = (tree, commit, None)
+        try:
+            yield
+        finally:
+            self._judging.pop(str(task_id), None)
 
     def accepted_artifact(self, task_id: TaskId):
         """The tree of `accepted_delivery`."""

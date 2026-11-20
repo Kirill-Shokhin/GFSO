@@ -188,15 +188,15 @@ def test_inside_the_scope_a_node_goes_to_its_holder_and_a_third_party_is_refused
         T.del_by_mode(e, X, "ui")
 
 
-def test_inside_the_scope_the_holders_parts_self_verify_and_its_top_is_checked_as_he_chooses(tmp_path):
-    """Solo in_chat below the seam: the holder's own nodes self-verify (§10.3). Its top — a seam — needs a verdict not
-    its executor's: his own reading by default, the validator observing each delivery where he chose it (§10.2: the
-    check anyone's, the verdict the issuer's)."""
+def test_inside_the_scope_the_holders_parts_self_verify_and_its_top_is_checked_by_the_validator(tmp_path):
+    """Solo in_chat below the seam: the holder's own nodes self-verify (§10.3). Its top — a seam he issued — is
+    observed by the project's validator on every delivery, and he cannot turn it off (the author, 2026-11-20: «на шве
+    … должен стоять обязательный»)."""
     e = _shared(tmp_path)
     _split(e, X, ASK, HOLDER, HOLDER)
     assert e.held_in_chat(TaskId(ASK)) and not e.observed_here(TaskId(ASK))
-    assert not e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "independent"
-    assert _call(PAGE, "set_checker", e, X, agent="user").get("checker") == "validator"
+    assert e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "validator"
+    assert _call(PAGE, "set_checker", e, X, "self", agent="user").get("refused")
     assert e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "validator"
 
 
@@ -314,17 +314,17 @@ def test_a_delivery_inside_the_scope_names_no_branch_of_the_shared_checkout(tmp_
     assert out.get("refused") and "where you work" in out["error"] and "gfso/p/work" not in out["error"], out
 
 
-@pytest.mark.parametrize("chosen", [False, True], ids=["by default", "his choice"])
-def test_a_top_is_validated_by_the_projects_validator_where_he_chose_it(tmp_path, chosen):
-    """The project's validator observes a top by itself only where its issuer chose it (`set_checker`); by default the
-    check is his own reading, and nothing starts."""
+@pytest.mark.parametrize("asked", [False, True], ids=["by default", "asked again"])
+def test_a_top_is_validated_by_the_projects_validator_whatever_he_chose(tmp_path, asked):
+    """The project's validator observes a top he issued by itself on every delivery: by default, and where he asks
+    for it again, which adds nothing to what is owed."""
     e = _shared(tmp_path)
-    if chosen:
+    if asked:
         assert _call(PAGE, "set_checker", e, X, agent="user").get("checker") == "validator"
     _delivered(e, X, HOLDER)
     started, _ = _dispatch_validate(e, AgentRegistry(path=str(tmp_path / "agents.json")), {
         "verdict": "PASS", "failed_criteria": [], "per_criterion": []})
-    assert (f"validate:{X}" in started) == chosen, started
+    assert f"validate:{X}" in started, started
 
 
 # ── outside the scope: nothing changes ────────────────────────────────────────

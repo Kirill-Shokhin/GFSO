@@ -203,8 +203,12 @@ def reviewer_passes(engine, task_id, reviewer: str = "reviewer") -> None:
     `record_reviewer_verdict(id, "PASS", [], "reviewer")`, whose empty observation set is precisely
     the evidence-free PASS the engine now refuses (§2.3: a conjunct nobody spoke to is ⊥, and ⊥
     does not carry a pass). Written once and reading the criteria off the node, so the scaffolding
-    cannot drift away from a contract a test changes.
+    cannot drift away from a contract a test changes. At a seam the person issues no hand record stands for the
+    validator's observation, so there the scaffolding is the validator's record (`instrument_passes`).
     """
+    if engine.persons_seam(task_id):
+        instrument_passes(engine, TaskId(str(task_id)), validator=reviewer)
+        return
     task = engine.graph.get_task(task_id)
     engine.record_reviewer_verdict(
         task_id, "PASS", [], reviewer,

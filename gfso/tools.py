@@ -2660,6 +2660,9 @@ def _what_an_ACCEPTED_signal_owes_its_sender(engine: Engine, task_id: str, sig, 
             out["coverage_lost"] = _lost
     if sig == Signal.BLOCK and (_red := _cycle_closed_by(engine, task_id)):
         out["plan_order_refuted"] = _red
+    # …and a delivery at a seam the person issued with no validator to check it: his PASS waits for one
+    if sig in (Signal.ASSIGN, Signal.DELIVER) and (_lift := engine.staffs_his_seam(task_id)):
+        out["staff"] = _lift
     # …AND WHAT AN ACCEPTED NODE IS STILL WAITING FOR. §12.4 admits ACCEPT from OFFERED whatever the
     # seams say, and the engine is not narrower than the canon — but the reply said nothing, so a
     # graph showed EXECUTING for nodes that provably could not start, and their executor found out by

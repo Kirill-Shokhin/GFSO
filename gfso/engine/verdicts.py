@@ -47,7 +47,8 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
                   tools_used: Optional[dict] = None,
                   model: Optional[str] = None, workdir: Optional[str] = None,
                   by_hand: bool = False, validated: Optional[dict] = None,
-                  parts_not_shown_holding: Optional[dict] = None, inputs_dirs: tuple = (), outside=()) -> None:
+                  parts_not_shown_holding: Optional[dict] = None, inputs_dirs: tuple = (), outside=(),
+                  tree: Optional[str] = None) -> None:
     """Write the record for THIS delivery — `storage` is the port, handed in by the caller that owns it. `generation` = (iteration, reopens, revisions) as it stood
     when the verdict was earned — a rework, a reopen or a revision under it makes the record stale,
     which is what every reader checks before trusting it. `log_at` = the length of the signal log when it was
@@ -66,7 +67,7 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
     _ledger.append({"verdict": str(verdict), "failed_criteria": list(failed_criteria or ()),
                     "per_criterion": list(per_criterion or ()), **_outside(outside), "validator": str(validator_id),
                     "validator_model": model, "by_hand": bool(by_hand), "ts": ts, "log_at": int(log_at),
-                    **stamp(generation)})
+                    **stamp(generation), **({"tree": tree} if tree else {})})
     ledger_write(storage, task_id, OBSERVATIONS, _ledger)
     storage.store_exec_verdict(task_id, json.dumps({
         "verdict": verdict, "failed_criteria": list(failed_criteria or ()),
@@ -85,6 +86,9 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
         # and the roster is server-wide and mutable.
         "by_hand": bool(by_hand),
         **stamp(generation),
+        # …and the tree it judged, where one is known: a seam the person issues admits a DELIVER of a tree only on the
+        # validator's latest check of that tree passing (`validation.unchecked_at_his_seam`)
+        **({"tree": tree} if tree else {}),
         "per_criterion": list(per_criterion or ()),
         # …and what the run observed that no criterion states: for the issuer, decided by nothing (Inv-2)
         **_outside(outside),

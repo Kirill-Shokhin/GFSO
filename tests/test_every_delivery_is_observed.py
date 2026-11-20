@@ -32,7 +32,8 @@ def _split(e, executor="user", holder=None):
     """`root` over one part `kid` covering its criterion, the split admitted whole with its register (§11.5, §9.2)."""
     T.create_task(e, "root", {"description": "goal", "criteria": [criterion("g")]}, assignee=holder)
     T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "part", "criteria": [criterion("k")]},
-                             "assignee": executor, "covers": ["g"]}], accepted_risks=_RISK)
+                             "assignee": executor, "covers": ["g"]}], accepted_risks=_RISK,
+                **({"agent": holder} if holder else {}))
 
 @pytest.fixture(autouse=True)
 def _observed(monkeypatch):
@@ -251,13 +252,18 @@ def test_where_the_system_signs_a_binding_fail_is_signed_not_left_standing(tmp_p
     e.stop()
 
 
+#: the issuer of a seam that is no person's: at one he issues the validator's FAIL binds him
+#: (`test_a_seam_he_issues_is_checked_by_the_validator`)
+BOSS = "boss"
+
+
 def _seam_delivered_kid():
-    """A child its issuer does not execute: a seam (§10.3), the issuer `agent`, the executor `exec-1`."""
+    """A child its issuer does not execute: a seam (§10.3), the issuer `boss`, the executor `exec-1`."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
-    _split(e, "exec-1")
+    _split(e, "exec-1", holder=BOSS)
     e.wait_idle()
-    T.signal(e, "root", "ACCEPT", "user")
+    T.signal(e, "root", "ACCEPT", BOSS)
     T.signal(e, "kid", "ACCEPT", "exec-1")
     T.signal(e, "kid", "DELIVER", "exec-1", result="ran `check k`: it printed OK", self_validation="PASS")
     e.wait_idle()
@@ -270,11 +276,11 @@ def test_at_a_seam_the_issuer_signs_on_his_own_observation_and_the_instruments_d
     signature reads the latest appointed record; an earlier divergence is a logged disagreement."""
     e = _seam_delivered_kid()
     _fail(e, "kid")
-    r = T.signal(e, "kid", "PASS", "user")
+    r = T.signal(e, "kid", "PASS", BOSS)
     assert not r.get("accepted"), r                         # his PASS must read a check, and the last one fails
-    T.record_verdict(e, "kid", "PASS", reviewer="user",
+    T.record_verdict(e, "kid", "PASS", reviewer=BOSS,
                      observed={"k": {"note": "ran check k myself: it printed OK", "ran": ["check k"]}})
-    assert T.signal(e, "kid", "PASS", "user")["state"] == "DONE"
+    assert T.signal(e, "kid", "PASS", BOSS)["state"] == "DONE"
     assert any(str(o.get("verdict")) == "FAIL" for o in observations(e._graph._storage, TaskId("kid")))
     e.stop()
 
@@ -286,13 +292,13 @@ def test_at_a_seam_another_instrument_run_does_not_undo_a_refutation():
     _fail(e, "kid")
     with pytest.raises(ValueError, match="Inv-2"):
         instrument_passes(e, TaskId("kid"), validator="val-1")
-    assert not T.signal(e, "kid", "PASS", "user").get("accepted")
+    assert not T.signal(e, "kid", "PASS", BOSS).get("accepted")
     e.stop()
 
 
 def test_at_a_seam_an_instrument_pass_does_not_undo_the_issuer_s_own_fail():
     e = _seam_delivered_kid()
-    e.record_reviewer_verdict(TaskId("kid"), "FAIL", ["k"], reviewer="user",
+    e.record_reviewer_verdict(TaskId("kid"), "FAIL", ["k"], reviewer=BOSS,
                               observed={"k": "ran `check k` myself: it printed NO"})
     with pytest.raises(ValueError, match="Inv-2"):
         instrument_passes(e, TaskId("kid"), validator="val-1")
@@ -305,7 +311,7 @@ def test_an_instrument_run_recorded_under_the_issuer_s_name_is_still_an_instrume
     e = _seam_delivered_kid()
     _fail(e, "kid")
     with pytest.raises(ValueError, match="Inv-2"):
-        instrument_passes(e, TaskId("kid"), validator="user")
+        instrument_passes(e, TaskId("kid"), validator=BOSS)
     e.stop()
 
 
@@ -314,7 +320,7 @@ def test_every_verdict_is_served_with_what_each_criterion_read():
     is the observations, each with its per-criterion values and the delivery it answers, served per node."""
     e = _seam_delivered_kid()
     _fail(e, "kid")
-    T.record_verdict(e, "kid", "PASS", reviewer="user",
+    T.record_verdict(e, "kid", "PASS", reviewer=BOSS,
                      observed={"k": {"note": "ran check k myself: it printed OK", "ran": ["check k"]}})
     with TestClient(create_app(e)) as c:
         got = c.get("/api/tasks/kid/verdicts").json()
@@ -371,15 +377,16 @@ def test_who_checks_is_read_on_the_node():
 
 
 def test_at_a_seam_who_checks_is_no_choice():
-    """A part another executor holds is a seam: with no validator observing it, its PASS needs a verdict not its
-    executor's (§10.3), so it reads "independent", never "self" (second critic); under a mode the validator checks every
-    delivery there whatever its issuer says, so the choice is neither offered nor taken (ui's critic)."""
+    """A part another executor holds is a seam: issued by the person, the project's validator checks it, staffed or
+    not, and his PASS waits for it (the author, 2026-11-20: «на шве … должен стоять обязательный»), so it reads
+    "validator", never "self"; under a mode the validator checks every delivery there whatever its issuer says, so the
+    choice is neither offered nor taken (ui's critic)."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     e.project_name = "p"
     _split(e, executor="exec-1")
     e.wait_idle()
-    assert T.get_task(e, "kid")["checker"] == "independent", "a seam none observes: a verdict not its executor's"
+    assert T.get_task(e, "kid")["checker"] == "validator", "his seam: the validator's, staffed or not"
     assert not T.signal(e, "kid", "ACCEPT", "exec-1").get("refused")
     T.signal(e, "kid", "DELIVER", "exec-1", result="ran `check k`: OK", self_validation="PASS")
     assert not T.signal(e, "kid", "PASS", "user").get("accepted"), "the seam's PASS stood on the executor's self-check"

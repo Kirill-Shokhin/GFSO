@@ -913,6 +913,29 @@ def _ready_to_validate(engine, task_id, deliverable, workdir, validator, model, 
     return None, (task, deliverable, llm, _cb, inflight_key, workdir, ex)
 
 
+def _before_its_delivery(engine: Engine, task_id: str, workdir, validator) -> Optional[dict]:
+    """{tree, commit, workdir, deliverable} of a check before the delivery — a seam the person issued, at work, its
+    holder's place a repository's top with a commit —, the refusal naming what is missing, or None: no such check here,
+    the validation as it always was."""
+    t = engine.graph.get_task(TaskId(task_id))
+    if (t is None or t.state not in (State.EXECUTING, State.REWORKING) or not engine.persons_seam(t.id)
+            or engine.judges_before_delivery(t.id)):
+        return None
+    place = (workdir or _delegation().validator_workdir(engine, _delegation().default_agents(), t.id)
+             or _registered_workdir(engine, task_id, validator))
+    head = W.git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip() if place and W.is_repo_top(place) \
+        else ""
+    if not head:
+        return {"task_id": task_id, "state": t.state.name, "verdict": None,
+                "error": f"nothing to check before {task_id}'s delivery: {place or 'no place'} is not the top of a git "
+                         f"repository with a commit — the check judges the committed tree you will deliver; commit "
+                         f"your work there, or pass `workdir=` naming that repository"}
+    tree = W.git(place, "rev-parse", f"{head}^{{tree}}").stdout.strip()
+    return {"tree": tree, "commit": head, "workdir": str(place),
+            "deliverable": f"the committed tree of {task_id} at {place} (commit {head[:12]}), checked before its "
+                           f"delivery: what the holder will hand in"}
+
+
 def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = None,
                   model: str = MODEL_DEFAULT, workdir: Optional[str] = None,
                   validator: Optional[str] = None,
@@ -932,7 +955,18 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
     read the old sentence and waited to be asked for a PASS that was never coming.) `deliverable` defaults to the node's last DELIVER result from the audit log —
     pass it explicitly if the server restarted since delivery. `workdir` defaults to the registered
     workdir of the node's Del (or of `validator`) — pass it only when the work is somewhere the roster does not say. `verdict: null` = the validator's report
-    did not parse; NEVER read that as pass — the raw report_text is attached for your own assessment."""
+    did not parse; NEVER read that as pass — the raw report_text is attached for your own assessment.
+
+    At a seam the person issued, called by its holder while the node is at work (EXECUTING, REWORKING), it checks the
+    holder's committed tree before the delivery: the same validator over that commit, recorded as a check of that tree,
+    no state moved. Its DELIVER of that tree is admitted once that check passes (`validation.unchecked_at_his_seam`)."""
+    if (before := _before_its_delivery(engine, task_id, workdir, validator)) is not None:
+        if before.get("error"):
+            return before
+        with engine.judging_before_delivery(task_id, before["tree"], before["commit"]):
+            out = validate_result(engine, task_id, deliverable or before["deliverable"], model, before["workdir"],
+                                  validator, _llm, _progress, _spawn)
+        return {**out, "checked_before_delivery": {"tree": before["tree"], "commit": before["commit"]}}
     _stop, _ctx = _ready_to_validate(engine, task_id, deliverable, workdir, validator, model,
                                  _llm, _progress)
     if _stop is not None:
@@ -3407,7 +3441,14 @@ def _with_his_intent(fn, *, issued: bool):
                 at["criteria"] = _his_intent(e, list(at["criteria"] or ()), True)
             else:
                 at["spec"] = spec(e, at.get("spec"), True)
-        return fn(**at)
+        out = fn(**at)
+        # …and a seam of his issued where no validator is staffed: named at its issue, not found missing at his PASS
+        if issued and at.get("parent_id") and (lift := next(filter(None, (
+                e.staffs_his_seam(k.id) for k in e.graph.get_children(TaskId(str(at["parent_id"]))))), None)):
+            e.emit_info("validator", f"a seam the person issued under {at['parent_id']} is checked by the project's "
+                                     f"validator before his PASS, and none is registered: {lift}")
+            out = {**out, "staff": lift} if isinstance(out, dict) else out
+        return out
     return _call
 
 

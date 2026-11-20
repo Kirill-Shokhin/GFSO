@@ -961,10 +961,29 @@ encoding is where they show, or are engine gaps.)*
    (`validation.scope_at`), held solo `in_chat` as the scope held it, the record derived and never stored. A
    project's mode answers alone where one is set, and is refused over a standing top. `set_mode(node=…)` is refused
    with that reason, and the page dropped its switch. A scope an earlier build stored reads its seams' holders as
-   working in a chat (`in_chat_names`). Who checks a top is its issuer's choice (§10.2: the check is anyone's, the
-   signature his): his own reading by default, since a seam's check must be not its executor's (§10.3) and he is
-   not its executor, and the validator observing each delivery where he chose it (`set_checker`). A top therefore
-   owes no observer of its own (`owed_observer`), and a top staffs no validator (`validator_staffed`).
+   working in a chat (`in_chat_names`). Who checks a seam he issues, a top or not, is fixed by his word, not chosen
+   (the author, 2026-11-20: «по gfso на шве (то есть перед тем как принести результат мне) должен стоять
+   обязательный. который проверит на соответствие исходному замыслу и соответствие всем явным критериям и не даст
+   сказать готово … и система заставит уходить на реворк после непрохождения шва»). §10.2 lets an implementation
+   run its own check on every delivery, and this is that check made mandatory: `validation.persons_seam` (his seam
+   in a project with no mode, or his root handed to another under one) makes the project's validator its owed
+   observer (`owed_observer`), so it observes every delivery by itself, `checker` reads `validator` whether one is
+   staffed or not, and `set_checker` refuses `self` there (he may ask for the validator again, which adds nothing).
+   The validator reads every criterion, `answers_the_persons_words` included. The check stands before the result
+   reaches him, so it gates the holder's DELIVER (`validation.unchecked_at_his_seam`). A delivery of a tree is refused
+   while the validator's latest check of that tree failed, or no check of it exists, and the refusal names the
+   failed criteria and the lift. The lift is to rework, commit, and have the tree checked again: `validate_result` on
+   the node at work judges the holder's committed tree (`tools_llm._before_its_delivery`,
+   `Engine.judging_before_delivery`), records the result as a check of that tree (the record's `tree`), and moves no
+   state. Every validation record at his seam names the tree it judged, so the FAIL of a delivered tree refuses
+   handing that tree in again. This reads §12.16 (ii): a standing verdict under the current criteria indicts that
+   tree, and the lift is truthful work. Once delivered, his PASS stands on that check, and the observation binds it
+   (`observation_blocker`): while the check is owed his PASS is refused, a record by his own hand is no observation
+   (`observation_standing`, which reads only the checks of the delivered tree), and past a FAIL his PASS is refused
+   too. The system makes none of his moves: his FAIL is his own (§10.2). A delivery that records no tree, and one a
+   registered machine makes, is observed after it lands, and the same binding applies. Where no validator is
+   registered, his issue and the delivery name its registration (`Engine.staffs_his_seam`), and so does the refused
+   PASS. Inside a top the holder still chooses who checks its own nodes.
 
 **Two boundaries, delineated rather than patched.**
 

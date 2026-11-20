@@ -25,8 +25,14 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   turns it off).
 - A seam's holder working in its chat holds it solo by its own act: a move under its name over MCP (taken by `act_as`, or launched with its token) records that it performs in a
   chat, and each seam the person issues to it is a top as the mode scope made it. `set_mode(node=…)` is refused with
-  that reason, the page's switch is gone, and a scope stored earlier reads its holders as working in a chat. Who checks
-  a top is its issuer's choice: his own reading by default, the validator where he chose it (`set_checker`).
+  that reason, the page's switch is gone, and a scope stored earlier reads its holders as working in a chat.
+- Every seam the person issues, a top or not, is checked by the project's validator against every criterion, his words'
+  included, and `set_checker(…, "self")` is refused there. The check comes before the result reaches him: the holder's
+  DELIVER of a tree is refused while the validator's latest check of that tree failed or none was made, naming the
+  failed criteria. `validate_result` on the node at work checks the holder's committed tree, recording the check of
+  that tree and moving no state. Once delivered, his PASS stands on that check, and a record by his own hand does not
+  stand in for it. The system makes none of his moves. With no validator registered, the issue, the delivery and the
+  refused PASS name its registration.
 
 ### Added
 - A mode holds on the work the person issues below a node he holds (§10.4: autonomy is per task and role, not a global

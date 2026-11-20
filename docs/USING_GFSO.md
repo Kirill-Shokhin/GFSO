@@ -398,7 +398,12 @@ not on the evidence the executor put in the delivery. Inside one session's scope
 its top runs every criterion of its pieces; `GFSO_VALIDATE_INTERNAL=1` observes every delivery. Under solo and
 semi performed in your chat, the parts you hold are one scope whatever their size: they self-verify, the root's
 validation runs their pinned checks, `validate_result` checks one when you ask, and `set_checker(node, "validator",
-user_said=)` has the validator check every delivery of a part, on the person's words — you sign either way.
+user_said=)` has the validator check every delivery of a part, on the person's words — you sign either way. A seam
+the person issues to another name is always the validator's, and its check comes before the result reaches him.
+Its holder runs `validate_result` on the node while at work to have its committed tree checked, and a DELIVER of a
+tree whose latest check failed, or that has not been checked, is refused with the failed criteria named. His PASS
+stands on that check, and a record by his own hand does not stand in for it. `set_checker(…, "self")` is refused
+there, and with no validator registered the delivery names how to register one.
 
 **A green that is not green does not stay quiet.** A signature can land before the instrument's
 verdict does — you sign, and the validator that was already running reports `FAIL` a few seconds later at

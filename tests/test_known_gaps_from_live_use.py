@@ -55,12 +55,24 @@ def _root(e, extra_criteria=(), holder="user"):
         holder)
 
 
-def _split(e, covers: dict, assignee="worker"):
+def _split(e, covers: dict, assignee="worker", agent="user"):
     """`root`'s split admitted whole (§11.5): each child with the root criterion it carries, and the register
     written at the split, its decomposer's (§9.2) — the root's own pre-filled one is task data."""
     return T.decompose(e, "root", [{"task_id": kid, "assignee": assignee, "covers": [c],
                                     "spec": {"description": kid, "criteria": [criterion("k", "K")]}}
-                                   for kid, c in covers.items()], accepted_risks=REGISTER)
+                                   for kid, c in covers.items()], accepted_risks=REGISTER, agent=agent)
+
+
+#: a seam's issuer who is no person: the seam rule these tests pin holds there as written; at a seam the person
+#: issues the validator is owed besides (`test_a_seam_he_issues_is_checked_by_the_validator`)
+BOSS = "boss"
+
+
+def _boss_seam(e, kid="kid", crit=("k", "K")):
+    """`root` held by BOSS, split into `kid` held by `worker`: a seam whose issuer is BOSS."""
+    _root(e, holder=BOSS)
+    T.decompose(e, "root", [{"task_id": kid, "spec": {"description": "leaf", "criteria": [criterion(*crit)]},
+                             "assignee": "worker", "covers": ["c1"]}], accepted_risks=REGISTER, agent=BOSS)
 
 
 def test_a_revised_contract_can_be_read_back_from_the_log():
@@ -800,9 +812,10 @@ def test_the_validate_directive_names_the_instrument_on_a_seam():
     On an INTERNAL node the sentence is true as it stands (D6: it self-verifies), so the addition is
     conditional, like the rule it reports."""
     e = _engine()
-    _root(e)
+    _root(e, holder=BOSS)
     T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "delegated child",
-                             "criteria": [criterion("k", "K")]}, "assignee": "someone-else", "covers": ["c1"]}], accepted_risks=REGISTER)
+                             "criteria": [criterion("k", "K")]}, "assignee": "someone-else", "covers": ["c1"]}],
+                accepted_risks=REGISTER, agent=BOSS)
     T.signal(e, "kid", "ACCEPT", "someone-else")
     T.signal(e, "kid", "DELIVER", "someone-else", result="did it")
 
@@ -1964,25 +1977,25 @@ def test_a_block_is_not_cleared_by_saying_so():
     own state said EXECUTING (measured on the human door 2026-08-22). "EXECUTING" has to mean someone
     can execute."""
     e = _engine()
-    _root(e)
+    _root(e, holder=BOSS)
     T.edit_criteria(e, "root", [criterion("c1", "one"),
-                                criterion("c2", "two")])
-    _split(e, {"producer": "c1", "consumer": "c2"})
-    T.add_dependency(e, "producer", "consumer", glue="consumer uses it")
+                                criterion("c2", "two")], BOSS)
+    _split(e, {"producer": "c1", "consumer": "c2"}, agent=BOSS)
+    T.add_dependency(e, "producer", "consumer", glue="consumer uses it", agent=BOSS)
     T.signal(e, "consumer", "ACCEPT", "worker")
     T.signal(e, "consumer", "BLOCK", "worker", reason="needs the producer",
              blocker_task_ids=["producer"])
 
-    refused = T.signal(e, "consumer", "RESOLVE_BLOCK", "user", reason="I think it is fine now")
+    refused = T.signal(e, "consumer", "RESOLVE_BLOCK", BOSS, reason="I think it is fine now")
     assert refused["accepted"] is False and "producer" in refused["error"]
     assert e.graph.get_state(TaskId("consumer")).name == "BLOCKED"
 
     T.signal(e, "producer", "ACCEPT", "worker")
     T.signal(e, "producer", "DELIVER", "worker", result="made it")
-    T.record_verdict(e, "producer", "PASS", reviewer="user", observed={"k": {"note": "ran it", "ran": ["check k"]}})
-    T.signal(e, "producer", "PASS", "user")                  # the issuer signs across the seam
+    T.record_verdict(e, "producer", "PASS", reviewer=BOSS, observed={"k": {"note": "ran it", "ran": ["check k"]}})
+    T.signal(e, "producer", "PASS", BOSS)                    # the issuer signs across the seam
     assert e.graph.get_state(TaskId("producer")).name == "DONE"
-    assert T.signal(e, "consumer", "RESOLVE_BLOCK", "user")["accepted"] is True
+    assert T.signal(e, "consumer", "RESOLVE_BLOCK", BOSS)["accepted"] is True
     e.stop()
 
 
@@ -1994,15 +2007,14 @@ def test_the_step_asks_for_a_signature_when_the_validation_is_done():
     waited for a report that had already arrived (measured on the human door 2026-08-22). What is
     owed at that point is the signal, not the validation."""
     e = _engine()
-    _root(e)
-    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "leaf", "criteria": [criterion("k", "K")]}, "assignee": "worker", "covers": ["c1"]}], accepted_risks=REGISTER)
+    _boss_seam(e)
     T.signal(e, "kid", "ACCEPT", "worker")
     T.signal(e, "kid", "DELIVER", "worker", result="made it")
 
     step = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid"][0]
     assert "VALIDATE" in step["directive"]
 
-    T.record_verdict(e, "kid", "FAIL", reviewer="user", failed_criteria=["k"],
+    T.record_verdict(e, "kid", "FAIL", reviewer=BOSS, failed_criteria=["k"],
                      observed={"k": "ran it, wrong output"})
     step = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid"][0]
     assert "SIGN THE VERDICT" in step["directive"], step["directive"]
@@ -2090,27 +2102,27 @@ def test_a_seam_pass_needs_a_verdict_whoever_signs_it():
     reproduced with nothing on the record at all: accepted, DONE. A false PASS reachable in one call
     from the ordinary door, in the product whose claim is that nothing completes by impression."""
     e = _engine()
-    _root(e)
-    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "leaf", "criteria": [criterion("k", "K")]}, "assignee": "worker", "covers": ["c1"]}], accepted_risks=REGISTER)           # …Del ≠ its parent's ⟹ a SEAM
+    _boss_seam(e)                                               # …Del ≠ its parent's ⟹ a SEAM
     T.signal(e, "kid", "ACCEPT", "worker")
     T.signal(e, "kid", "DELIVER", "worker", result="built it")
 
-    blocked = T.signal(e, "kid", "PASS", "user")                # the ISSUER, not the executor
+    blocked = T.signal(e, "kid", "PASS", BOSS)                  # the ISSUER, not the executor
     assert blocked["accepted"] is False and "independent verdict" in blocked["error"]
     assert "record_verdict" in blocked["error"] and "validate_result" in blocked["error"]
     assert e.graph.get_state(TaskId("kid")).name == "VALIDATING"
 
     # …and a STALE verdict does not open it either (the wave's own case)
-    T.record_verdict(e, "kid", "FAIL", reviewer="user", failed_criteria=["k"],
+    T.record_verdict(e, "kid", "FAIL", reviewer=BOSS, failed_criteria=["k"],
                      observed={"k": "ran it, wrong output"})
-    T.signal(e, "kid", "FAIL", "user", failed_criteria=["k"])   # → REWORKING, verdict now stale
+    T.signal(e, "kid", "FAIL", BOSS, failed_criteria=["k"])     # → REWORKING, verdict now stale
     T.signal(e, "kid", "DELIVER", "worker", result="fixed it")
-    stale = T.signal(e, "kid", "PASS", "user")
+    stale = T.signal(e, "kid", "PASS", BOSS)
     assert stale["accepted"] is False and "STALE" in stale["error"]
 
-    # A person validating by hand is still free to: the record is what is required, not the instrument.
-    T.record_verdict(e, "kid", "PASS", reviewer="user", observed={"k": {"note": "re-ran it, printed 42", "ran": ["check k"]}})
-    assert T.signal(e, "kid", "PASS", "user")["accepted"] is True
+    # An issuer validating by hand is still free to: the record is what is required, not the instrument — save at a
+    # seam the person issues, where the validator is owed (`test_a_seam_he_issues_is_checked_by_the_validator`).
+    T.record_verdict(e, "kid", "PASS", reviewer=BOSS, observed={"k": {"note": "re-ran it, printed 42", "ran": ["check k"]}})
+    assert T.signal(e, "kid", "PASS", BOSS)["accepted"] is True
     assert e.graph.get_state(TaskId("kid")).name == "DONE"
     e.stop()
 
@@ -2130,14 +2142,13 @@ def test_a_criterion_that_keeps_failing_is_named_to_both_sides():
     a rule the canon has since replaced: the FSM rows moved with v4.1 and the prose an executor READS
     did not, so the suite was guarding the stale sentence."""
     e = _engine()
-    _root(e)
-    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "leaf", "criteria": [criterion("imp", "I")]}, "assignee": "worker", "covers": ["c1"]}], accepted_risks=REGISTER)
+    _boss_seam(e, crit=("imp", "I"))
     T.signal(e, "kid", "ACCEPT", "worker")
     for _ in range(3):
         T.signal(e, "kid", "DELIVER", "worker", result="tried again")
-        T.record_verdict(e, "kid", "FAIL", reviewer="user", failed_criteria=["imp"],
+        T.record_verdict(e, "kid", "FAIL", reviewer=BOSS, failed_criteria=["imp"],
                          observed={"imp": "ran it; the criterion cannot hold"})
-        T.signal(e, "kid", "FAIL", "user", failed_criteria=["imp"])
+        T.signal(e, "kid", "FAIL", BOSS, failed_criteria=["imp"])
     assert e.stuck_on(TaskId("kid")) == ["imp"]
 
     step = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "kid"][0]
@@ -2300,17 +2311,16 @@ def test_a_pass_on_an_undelivered_node_is_refused_for_the_real_reason():
     not exist, or fails again for the reason nobody named. Measured on the human door 2026-08-22, on
     a rule I had added the same day; outside VALIDATING the FSM's own answer is the true one."""
     e = _engine()
-    _root(e)
-    T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "leaf", "criteria": [criterion("k", "K")]}, "assignee": "worker", "covers": ["c1"]}], accepted_risks=REGISTER)
+    _boss_seam(e)
 
-    early = T.signal(e, "kid", "PASS", "user")               # nothing delivered yet
+    early = T.signal(e, "kid", "PASS", BOSS)                 # nothing delivered yet
     assert early["accepted"] is False
     assert "not admitted by state OFFERED" in early["error"] and early["refused_by"] == "state"
     assert "record_verdict" not in early["error"]             # …no invitation to a false close
 
     T.signal(e, "kid", "ACCEPT", "worker")
     T.signal(e, "kid", "DELIVER", "worker", result="built it")
-    late = T.signal(e, "kid", "PASS", "user")                # …and there the seam rule speaks
+    late = T.signal(e, "kid", "PASS", BOSS)                  # …and there the seam rule speaks
     assert late["accepted"] is False and late["refused_by"] == "rule"
     assert "independent verdict" in late["error"]
     e.stop()
