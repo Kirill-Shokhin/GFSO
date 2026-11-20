@@ -975,8 +975,8 @@ encoding is where they show, or are engine gaps.)*
    failed criteria and the lift. The lift is to rework, commit, and have the tree checked again: `validate_result` on
    the node at work judges the holder's committed tree (`tools_llm._before_its_delivery`,
    `Engine.judging_before_delivery`), records the result as a check of that tree (the record's `tree`), and moves no
-   state. Every validation record at his seam names the tree it judged, so the FAIL of a delivered tree refuses
-   handing that tree in again. This reads §12.16 (ii): a standing verdict under the current criteria indicts that
+   state. Every validation record at his seam names the tree it judged, so the validator's FAIL of a delivered tree
+   refuses handing that tree in again (the person's own FAIL records no tree yet: not closed). This reads §12.16 (ii): a standing verdict under the current criteria indicts that
    tree, and the lift is truthful work. Once delivered, his PASS stands on that check, and the observation binds it
    (`observation_blocker`): while the check is owed his PASS is refused, a record by his own hand is no observation
    (`observation_standing`, which reads only the checks of the delivered tree), and past a FAIL his PASS is refused
