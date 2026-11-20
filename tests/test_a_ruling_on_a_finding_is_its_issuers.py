@@ -8,7 +8,7 @@ CONTROLS: drop the two verbs from `DOOR_KEYS` and the executor's rulings are tak
 from __future__ import annotations
 
 from gfso import tools_llm as TL
-from gfso.core.types import Mode
+from gfso.core.types import Mode, TaskId
 from tests.test_the_mode_decides_who_holds_what import _engine, _goal
 from tests.test_a_finding_its_validator_could_not_run_is_its_issuers_question import (CMD, FID, KID, WHY, _no_l2,  # noqa: F401
                                                                                       _refused, _standing)
@@ -48,4 +48,21 @@ def test_the_issuer_rules_and_only_the_issuer_gives_it_back():
     assert TL.is_refusal(out) and "issuer" in out["error"], out
     assert FID not in str(e.regression_probes(KID)), "a refused return demanded the finding again"
     assert TL.TOOLS["return_finding"](e, str(KID), FID, "the goal asks for it", agent="me")["returned"] == FID
+    e.stop()
+
+
+def test_a_returned_finding_keeps_the_ruling_it_answers():
+    """Thm 11: every ruling has its record. Giving a finding back deleted the ruling that had retired it, so the ledger
+    no longer said who had ruled it out and why; each ruling is now a new record on the finding, and its standing is
+    read off the latest."""
+    e = _unrun()
+    TL.TOOLS["rule_unrun_finding"](e, str(KID), [FID], "retire", "its cd fails on any delivery", agent="me")
+    TL.TOOLS["return_finding"](e, str(KID), FID, "the goal asks for it", agent="me")
+    ledger = str(e._graph._storage.get_critique(TaskId(f"{KID}#regression-probes")))
+    assert "its cd fails on any delivery" in ledger, "the retiring ruling was erased by the return"
+    assert [(r["kind"], r["by"], r["why"]) for r in e.finding_rulings(KID, FID)] == [
+        ("not_reproduced", "me", f"not run by its validator ({WHY}); ruled out by me: its cd fails on any delivery"),
+        ("returned", "me", "the goal asks for it")]
+    assert all(r["at"] for r in e.finding_rulings(KID, FID))
+    assert FID in str(e.regression_probes(KID)) and e.findings_not_reproduced(KID) == []
     e.stop()

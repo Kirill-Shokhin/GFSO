@@ -48,7 +48,7 @@ from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
                        OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations, answer_outside,
                        outside_of_this_delivery)
-from .findings import (disputed_findings, ever_pinned, keep_files, keep_unrun, lay_files, not_reproduced, record_not_reproduced,
+from .findings import (disputed_findings, ever_pinned, finding_rulings, keep_files, keep_unrun, lay_files, not_reproduced, record_not_reproduced,
                        released, return_finding as _return_finding, ruled, unrun,
                        regression as standing_regression, round_stands, standing_rulings)
 from .frontier import Frontier
@@ -1492,6 +1492,11 @@ class Engine:
         """The findings an independent validator re-ran and did not reproduce, standing no longer (`findings.not_reproduced`)."""
         t = self._graph.get_task(task_id)
         return not_reproduced(self._storage, t) if t is not None else []
+
+    def finding_rulings(self, task_id: TaskId, finding: str) -> list[dict]:
+        """Every ruling on one finding of the node, oldest first (`findings.finding_rulings`)."""
+        t = self._graph.get_task(task_id)
+        return finding_rulings(self._storage, t, finding) if t is not None else []
 
     def return_finding(self, task_id: TaskId, finding: str, by: str, why: str) -> bool:
         """A person gives back a finding a validator did not reproduce: demanded again (`findings.return_finding`)."""

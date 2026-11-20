@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -34,6 +35,11 @@ from .verdicts import REGRESSION, criterion_version, ledger_read, ledger_write
 NOT_REPRODUCED = "not_reproduced"
 #: … and a person gave it back, so no validator's run takes it off again (`return_finding`)
 RETURNED = "returned"
+#: … or a later report filed it again: reproduced, it stands (`record_not_reproduced`)
+REPRODUCED = "reproduced"
+#: on a finding: every ruling on it, oldest first, each {kind, by, why, at, …} — appended, never rewritten (Thm 11);
+#: its standing is read off the latest of the kinds that decide it (`_latest`)
+RULINGS = "rulings"
 #: what keys a validation or contact round in the record of the rounds standing (`round_stands`), by its name
 _ROUND = "round-made:"
 #: the rounds this process asked about where the record had none, and found not standing (`round_stands`)
@@ -270,18 +276,47 @@ def _criterion_now(name: str, task):
     return list(criterion_version(c.description, [p.to_dict() for p in c.check or ()])) if c is not None else None
 
 
+def _rulings_of(p: dict) -> list[dict]:
+    """The finding's rulings, oldest first. A ledger written before they were kept carries one per kind as a field."""
+    return p.get(RULINGS) or [{"kind": k, **p[k]} for k in (NOT_REPRODUCED, RETURNED, KEPT_UNRUN) if p.get(k)]
+
+
+def _rule(p: dict, kind: str, **record) -> None:
+    """Append a ruling to the finding — the fields of an older ledger moved into the list, nothing dropped."""
+    p[RULINGS] = _rulings_of(p) + [{"kind": kind, **record}]
+    for k in (NOT_REPRODUCED, RETURNED, KEPT_UNRUN):
+        p.pop(k, None)
+
+
+def _latest(p: dict, *kinds: str) -> Optional[dict]:
+    """The finding's latest ruling of `kinds`, or None."""
+    return next((r for r in reversed(_rulings_of(p)) if r["kind"] in kinds), None)
+
+
+def _not_reproduced_now(p: dict) -> Optional[dict]:
+    """The ruling that took the finding off, where its latest word on that is one: a return or a reproduction answers it."""
+    r = _latest(p, NOT_REPRODUCED, REPRODUCED, RETURNED)
+    return r if r and r["kind"] == NOT_REPRODUCED else None
+
+
 def _unreproduced(p: dict, name: str, task) -> bool:
     """Did an independent validator not reproduce this finding, under the criterion as it reads now? A later act rewriting
     that text ends it, as it ends a ruling."""
-    return bool(p.get(NOT_REPRODUCED)) and p[NOT_REPRODUCED].get("text") == _criterion_now(name, task)
+    return bool(r := _not_reproduced_now(p)) and r.get("text") == _criterion_now(name, task)
 
 
 def not_reproduced(storage, task) -> list[dict]:
     """The record of what no later run demands because a validator did not reproduce it (Thm 11): {criterion, id, command,
     expect, by, at, why, printed}."""
     return [{"criterion": k, "id": p.get("id"), "command": p.get("command"), "expect": p.get("expect"),
-             **{x: p[NOT_REPRODUCED].get(x) for x in ("by", "at", "why", "printed")}}
+             **{x: _not_reproduced_now(p).get(x) for x in ("by", "at", "why", "printed")}}
             for k, ps in (ledger_read(storage, task.id, REGRESSION, {}) or {}).items() for p in ps if _unreproduced(p, k, task)]
+
+
+def finding_rulings(storage, task, finding: str) -> list[dict]:
+    """Every ruling on one finding of the node, oldest first: {kind, by, why, at, …}."""
+    return [r for ps in (ledger_read(storage, task.id, REGRESSION, {}) or {}).values() for p in ps
+            if p.get("id") == finding for r in _rulings_of(p)]
 
 
 def record_not_reproduced(storage, task, marks: Iterable[tuple], by: str, at: str, found: dict) -> None:
@@ -294,9 +329,12 @@ def record_not_reproduced(storage, task, marks: Iterable[tuple], by: str, at: st
     for k, ps in stored.items():
         for p in ps:
             if (k, str(p.get("id")).split("#")[-1]) in again:
-                p.pop(NOT_REPRODUCED, None)
-            elif (k, p.get("id")) in said and not p.get(RETURNED):
-                p[NOT_REPRODUCED] = {**said[(k, p.get("id"))], "by": by, "at": at, "text": _criterion_now(k, task)}
+                if _not_reproduced_now(p):
+                    _rule(p, REPRODUCED, by=by, at=at, why="filed again")
+            elif (k, p.get("id")) in said and not _latest(p, RETURNED):
+                now = _criterion_now(k, task)
+                if not ((r := _not_reproduced_now(p)) and r.get("text") == now):
+                    _rule(p, NOT_REPRODUCED, **{**said[(k, p.get("id"))], "by": by, "at": at, "text": now})
     if said or again:
         ledger_write(storage, task.id, REGRESSION, stored)
 
@@ -316,7 +354,7 @@ def unrun(storage, entries: list, task, report: Optional[dict]) -> list[dict]:
                 _hash(i) == _hash(str(p.get("id") or "")) or i == probe_id(name, p))]
             out += [{"criterion": name, "id": f["id"], "as_run": f.get("as_run") or f.get("command"),
                      "why": str(p.get("expect") or p.get("why") or "no reason given")}
-                    for f in hit if not ((k := f.get(KEPT_UNRUN)) and k.get("text") == _criterion_now(name, task))
+                    for f in hit if not ((k := _latest(f, KEPT_UNRUN)) and k.get("text") == _criterion_now(name, task))
                     and all(f["id"] != o["id"] for o in out)]
     return out
 
@@ -332,17 +370,20 @@ def keep_unrun(storage, task, ids: Iterable[str], by: str, why: str) -> None:
     for k, ps in stored.items():
         for p in ps:
             if p.get("id") in ids:
-                p[KEPT_UNRUN] = {"by": by, "why": why, "text": _criterion_now(k, task)}
+                _rule(p, KEPT_UNRUN, by=by, why=why, at=_now(), text=_criterion_now(k, task))
     ledger_write(storage, task.id, REGRESSION, stored)
+
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def return_finding(storage, task, finding: str, by: str, why: str) -> bool:
     """A person's word: this finding is demanded again, and no validator's run takes it off."""
     stored = ledger_read(storage, task.id, REGRESSION, {}) or {}
-    hit = [p for ps in stored.values() for p in ps if p.get("id") == finding and p.get(NOT_REPRODUCED)]
+    hit = [p for ps in stored.values() for p in ps if p.get("id") == finding and _not_reproduced_now(p)]
     for p in hit:
-        p.pop(NOT_REPRODUCED)
-        p[RETURNED] = {"by": by, "why": why}
+        _rule(p, RETURNED, by=by, why=why, at=_now())
     if hit:
         ledger_write(storage, task.id, REGRESSION, stored)
     return bool(hit)
