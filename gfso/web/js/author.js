@@ -122,7 +122,9 @@ export async function submitDecompose() {
     })).filter(c => c.spec.description && (S.graph.mode?.mode || c.assignee));
     const sels = [...$('decompose-mappings').querySelectorAll('select')];
     // …with no new child, a re-admission that maps onto the standing ones (`children: []`, its mappings and register)
-    if (!children.length && !sels.some(s => s.value.startsWith(STANDING) && dec.mapped[s.dataset.crit] !== s.value.slice(STANDING.length))) return;
+    // …nothing to send says so: a press that did nothing read as a refusal unexplained
+    if (!children.length && !sels.some(s => s.value.startsWith(STANDING) && dec.mapped[s.dataset.crit] !== s.value.slice(STANDING.length)))
+        return notice('Nothing to change: add a part, or map a criterion onto a part other than the one it is on.', 'bad');
     // The API maps criteria to EXISTING child ids, and these are about to be created: ids are minted here.
     children.forEach((c, i) => { c.task_id = `c${Date.now().toString(36)}-${i}`; });
     // WHAT THE ENGINE WILL REFUSE, REFUSED HERE, WHILE THE FORM IS STILL OPEN: a plan sent unmapped or with
