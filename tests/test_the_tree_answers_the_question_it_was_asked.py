@@ -51,7 +51,7 @@ def _one_branch_closed_by_hand(e):
 
 def _local(monkeypatch, e):
     monkeypatch.setattr(driver, "_through_server", lambda *a, **k: None)
-    monkeypatch.setattr(driver, "build_engine_from_env", lambda: e)
+    monkeypatch.setattr(driver, "build_engine_from_env", lambda **k: e)
 
 
 def test_a_hand_closure_is_still_marked_while_the_project_is_unfinished(monkeypatch, capsys):

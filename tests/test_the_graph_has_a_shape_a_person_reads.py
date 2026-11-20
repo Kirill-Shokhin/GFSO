@@ -19,7 +19,7 @@ def test_the_tree_shows_state_and_holder_per_node_and_what_the_frontier_holds(mo
     T.signal(e, "kid", "ACCEPT", "worker")
 
     monkeypatch.setattr(driver, "_through_server", lambda *a, **k: None)
-    monkeypatch.setattr(driver, "build_engine_from_env", lambda: e)
+    monkeypatch.setattr(driver, "build_engine_from_env", lambda **k: e)
     assert driver.status([]) == 0
     out = capsys.readouterr().out
 

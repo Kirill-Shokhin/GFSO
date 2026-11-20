@@ -637,7 +637,14 @@ def timeout_monitor(
         # …ON THE PROJECT'S CLOCKS (`project_now`): what of the wall since the project's last beat is held, decided over
         # the stored beat (`keep_the_beat`) — pending between ticks is read by `clock_off_s` by the same rule, so the
         # clock is the same whether a reader comes before or after a tick, and whichever monitor comes
-        if (gap := keep_the_beat(graph, wall)) and held is not None:
+        try:
+            gap = keep_the_beat(graph, wall)
+        except Exception as e:
+            # …A STORE ANOTHER WRITER HOLDS (SQLite's lock past its busy timeout): the beat stays where it was, so the
+            # next tick decides the same gap — a raise here ended the monitor, and every bound with it, for good
+            log.warning(f"the timeout monitor could not keep the beat this tick ({e}); the next one retries")
+            continue
+        if gap and held is not None:
             held(*gap)
         if pause_record(graph):
             if lift is not None:

@@ -62,17 +62,20 @@ def _delegate():
 
 def build_engine_from_env(*, validate_signals: bool = True, default_storage: str = "sqlite",
                           default_llm: str = "none", seed: bool = False,
-                          db_path: str | None = None, project: str = DEFAULT_PROJECT) -> Engine:
+                          project: str = DEFAULT_PROJECT) -> Engine:
     """The ONE Engine factory for every entry point. Reads the environment:
-    `GFSO_STORAGE` (sqlite|memory, default `default_storage`) · `GFSO_DB_PATH` (sqlite path) ·
+    `GFSO_STORAGE` (sqlite|memory, default `default_storage`) · `GFSO_DB_PATH` (the default project's sqlite path) ·
     `GFSO_LLM` (llm|stub|none, default `default_llm`; `llm` = the real provider via `llm_factory`,
     `GFSO_MODEL` selects its model). Headless entry points (MCP, CLI) take the defaults (sqlite,
-    no llm, no seed); `gfso serve` passes default_storage='memory', default_llm='stub'; seeding is opt-in (`--seed`).
-    `db_path` overrides the sqlite file (the ProjectRegistry's per-project isolation).
+    no llm, no seed); `gfso serve` passes default_storage='memory', default_llm='stub'; seeding is opt-in (`--seed`),
+    the default project's alone. `project` names its own file (`config.db_path`: one file per project — the
+    ProjectRegistry's isolation, and the CLI's with no server up).
     Returns a STARTED engine of `project`, who works there published before its start: the start decides the gap
     since the project's last beat, which reads who carries the work (`time_holds`) — on every path, whoever opens it."""
+    named = project != DEFAULT_PROJECT
+    seed = seed and not named
     if _config.storage_kind(default_storage) == "sqlite":
-        storage = SqliteStorage(str(db_path or _config.db_path()))
+        storage = SqliteStorage(str(_config.db_path(project if named else None)))
     else:
         storage = MemoryStorage()
 
@@ -163,11 +166,7 @@ class ProjectRegistry:
             return eng
         with self._creating:
             if name not in self._engines:
-                kw = dict(self._kw)
-                if name != "default":
-                    kw["db_path"] = os.path.join(self._dir, f"{name}.db")
-                    kw["seed"] = False
-                self._engines[name] = build_engine_from_env(**kw, project=name)
+                self._engines[name] = build_engine_from_env(**self._kw, project=name)
                 if name in self._held:       # …before its dispatcher: a project that stood is opened stopped, once —
                     self._held.discard(name)  # one deleted and made again after the start runs
                     try:

@@ -227,8 +227,7 @@ class Engine:
         self._started = True
         # …the gap since the project's last beat, decided before anything reads a bound (§12.2) by the monitor's own rule
         # over the stored beat (`keep_the_beat`): an engine opened beside a running one finds it kept
-        if gap := keep_the_beat(self._graph, time.time()):
-            self._record_the_gap("the server was down", *gap, "the server's start")
+        self._keep_the_beat("the server was down", "the server's start")
         # THE CACHED CHECKS ARE THIS BUILD'S: a project written by an older one carried its verdicts, and `list_holes`
         # answered [] from them while the plan gate, reading the live rule, named the hole (critic r15)
         for t in self.all_tasks():
@@ -779,6 +778,7 @@ class Engine:
         over it takes it, keeping its start, so the system never starts what a person stopped. `off_s`: the doors' off
         time while it stands (`model.door_off_s`). `account`: the credential store's stamp an account's stop was made
         on — a person setting a credential changes it, and the stop lifts then (`lift_the_system_stop`)."""
+        self._keep_the_beat("the host slept", "the stop")
         with self._stop_lock:
             was = self.paused()
             held = {k: was[k] for k in LIFTS if (was or {}).get(k) or k == "account" and (was or {}).get(k) is not None}
@@ -800,12 +800,20 @@ class Engine:
     def resume(self, by: str) -> Optional[dict]:
         """START again: the stop that stood, or None where none did. Its time is already off the project's clocks: the
         monitor leaves off every tick made under a stop (`project_now`)."""
+        self._keep_the_beat("the host slept", "the start")
         with self._stop_lock:
             was = self._take_the_stop()
         if was:
             self.emit_info("pause", f"STARTED again by {by}{_via_said()} (stopped since {was.get('at')})")
             self._record_the_held_time(was, by)
         return was
+
+    def _keep_the_beat(self, cause: str, by: str) -> None:
+        """The beat kept NOW, before a start, a stop or its lift reads the clock (`keep_the_beat`): the gap since the last
+        beat is decided under the stop as it stood across it — a sleep a Start right after a wake would count once in the
+        stop's held time and again at the next tick, and a Stop there would leave off unrecorded — and recorded, `cause`."""
+        if gap := keep_the_beat(self._graph, time.time()):
+            self._record_the_gap(cause, *gap, by)
 
     def _take_the_stop(self, standing: Optional[dict] = None) -> Optional[dict]:
         """The stop taken off as one act on the store (`Graph.swap_settings`) — `standing`, where given, only while it is

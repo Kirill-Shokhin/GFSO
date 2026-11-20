@@ -8,6 +8,7 @@ import json
 import pytest
 
 from gfso.engine import Engine
+from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, AcceptedRiskItem, Predictability, State,
                              Register)
@@ -356,3 +357,17 @@ def test_gfso_run_still_works_with_no_server(monkeypatch, tmp_path):
     monkeypatch.setenv("GFSO_DB_PATH", str(tmp_path / "g.db"))
     driver.run(["create_task", "n1", '{"description": "x", "criteria": [criterion("a", "A")]}'])
     driver.run(["get_task", "n1"])
+
+
+def test_gfso_run_with_no_server_works_on_the_project_it_names(monkeypatch, tmp_path):
+    """`project=X` with no server up set GFSO_PROJECT alone and opened the default project's file: the verb worked on
+    "default". It opens X's own file, as the server's registry does."""
+    monkeypatch.setattr(serverctl, "runtime", lambda *a, **k: None)
+    data = tmp_path / "data"
+    for k, v in (("GFSO_DATA_DIR", data), ("GFSO_HOME", tmp_path), ("GFSO_AGENTS_PATH", tmp_path / "a.json"),
+                 ("GFSO_DB_PATH", data / "gfso.db"), ("GFSO_STORAGE", "sqlite"), ("GFSO_LLM", "none")):
+        monkeypatch.setenv(k, str(v))
+    monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    driver.run_verb("create_task", "beta", "in-beta", {"description": "x", "criteria": [criterion("a", "A")]}, "w")
+    where = {f: SqliteStorage(str(data / f)).get_task(TaskId("in-beta")) is not None for f in ("beta.db", "gfso.db")}
+    assert where == {"beta.db": True, "gfso.db": False}, where

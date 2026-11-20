@@ -35,7 +35,7 @@ from gfso.doctor import BY_HAND
 from gfso import tools as _T     # the verb surface
 from gfso.serverctl import UI_LINK_VERBS, ui_link
 from gfso.adapters.netrecord import said_apart
-from gfso.config import DEFAULT_PROJECT, agent_id, narrate, project_by_env, select_project
+from gfso.config import DEFAULT_PROJECT, active_project, agent_id, narrate, project_by_env, select_project
 from gfso import serverctl
 from gfso import tools_llm as T  # the COMPLETE registry (structural + LLM verbs)
 
@@ -442,7 +442,8 @@ def _locally(fn, project: str | None, pos: list, kw: dict):
     """
     if project:
         select_project(project)
-    engine = build_engine_from_env()
+    # …the project's own file, as the server's registry opens it: the default one's alone did the verb on "default"
+    engine = build_engine_from_env(project=active_project())
     # …signed as the server would sign it: by this console's token (`GFSO_TOKEN`), else as the standing agent
     token, caller = WRITTEN_IN_THE_CALL.set(True), CALLER.set(signin.local_principal())
     try:

@@ -180,6 +180,8 @@ def test_a_bound_read_between_two_ticks_already_sees_the_sleep_off():
     e = _carried(make_engine(llm=None))             # not started: no monitor ticks over it
     e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
     assert abs(clock_off_s(e.graph) - 3600) < 2
-    e.pause("the-user", "")
+    e.pause("the-user", "")                         # …which keeps the sleep before it stands (`Engine._keep_the_beat`)
+    kept = clock_off_s(e.graph)
+    assert abs(kept - 3600) < 2
     e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 5))
-    assert 4 < clock_off_s(e.graph) < 7, "under a stop every pending second is off"
+    assert 4 < clock_off_s(e.graph) - kept < 7, "under a stop every pending second is off"

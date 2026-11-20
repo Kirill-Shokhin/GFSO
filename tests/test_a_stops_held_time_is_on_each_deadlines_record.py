@@ -3,6 +3,7 @@ the record says so (Thm 11: every decision has a record; §12.2: the deadline is
 revision: no packet field moved, so the node keeps its version and the consent standing for it (Inv-1)."""
 from __future__ import annotations
 
+import sqlite3
 import time
 from datetime import datetime, timedelta
 
@@ -15,6 +16,7 @@ from gfso.roster import AgentRegistry
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.core.graph.model import CLOCK_BEAT_KEY, clock_off_s, keep_off
 from tests.support import criterion, make_engine
+from tests.test_the_run_stops_and_starts import _Gate
 
 
 def test_a_stop_lifted_on_a_system_carried_project_records_each_live_deadlines_shift():
@@ -158,7 +160,7 @@ def test_the_cli_path_keeps_the_server_down_gap_of_a_project_a_registered_execut
     e.stop()
     e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
     opened, real = [], D.build_engine_from_env
-    monkeypatch.setattr(D, "build_engine_from_env", lambda: opened.append(real()) or opened[-1])
+    monkeypatch.setattr(D, "build_engine_from_env", lambda **k: opened.append(real(**k)) or opened[-1])
     D._locally(T.TOOLS["get_task"], None, ["n"], {})
     [cli] = opened
     moves, off = cli.deadline_moves("n"), clock_off_s(cli.graph)
@@ -183,6 +185,57 @@ def test_a_persons_stop_on_a_graph_people_hold_does_not_suspend_a_deadline(monke
     st, stopped = e.graph.get_state(TaskId("n")).name, e.paused()
     e.stop()
     assert stopped and st != "OFFERED", st
+
+
+def test_a_start_or_a_stop_right_after_a_wake_records_the_sleep_once():
+    """Before the next tick: a Start counted the sleep in the stop's held time and again as the host's; a Stop left it
+    off and recorded it nowhere. Both keep the beat before they act (`keep_the_beat`)."""
+    for stopped in (True, False):
+        gate = _Gate()
+        e = _consented(clock=gate)
+        if stopped:
+            e.pause("the-user", "")
+        e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))   # the host slept an hour, no tick since
+        e.resume("the-user") if stopped else e.pause("the-user", "")
+        if not stopped:
+            e.resume("the-user")
+        gate.ev.release()                                                   # …the monitor's next tick
+        time.sleep(0.3)
+        moves = e.deadline_moves("n")
+        off = clock_off_s(e.graph)
+        e.stop()
+        gate.ev.release()
+        assert len(moves) == 1 and abs(moves[0]["held_s"] - 3600) < 5 and abs(off - 3600) < 5, (stopped, off, moves)
+        assert moves[0]["stopped_by"] == ("the-user" if stopped else "the host slept"), moves
+
+
+class _LockedOnce(MemoryStorage):
+    """A store another writer holds past SQLite's busy timeout, once."""
+
+    def __init__(self):
+        super().__init__()
+        self.armed = False
+
+    def swap_settings(self, change):
+        """Raises once when armed, as `database is locked` does."""
+        if self.armed:
+            self.armed = False
+            raise sqlite3.OperationalError("database is locked")
+        super().swap_settings(change)
+
+
+def test_a_store_locked_at_a_tick_leaves_the_monitor_ticking():
+    kept = _LockedOnce()
+    e = _consented(kept, check_interval=0.05)
+    kept.armed = True
+    time.sleep(0.3)
+    e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
+    deadline = time.time() + 3
+    while not e.deadline_moves("n") and time.time() < deadline:
+        time.sleep(0.05)
+    moves = e.deadline_moves("n")
+    e.stop()
+    assert not kept.armed and [m["stopped_by"] for m in moves] == ["the host slept"], "the monitor died at the lock"
 
 
 def test_a_host_asleep_between_two_ticks_is_on_each_deadlines_record(monkeypatch):

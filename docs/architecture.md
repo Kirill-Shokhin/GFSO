@@ -892,8 +892,9 @@ encoding is where they show, or are engine gaps.)*
    less the time the project did not run: of the wall since the project's last beat, all of it under a stop, all of a
    gap over 120 s (a host asleep between two ticks, a server down before an engine's start) — which moves every bound
    of the project by one amount and keeps every order between them (child inside parent, Dep, CHECK-3). One function
-   decides it, at an engine's start and at every tick of its monitor alike (`keep_the_beat`, `gfso/core/graph/model.py`),
-   over the STORED beat and off, in one act on the store (`StoragePort.swap_settings`; on SQLite the file's write lock):
+   decides it, at an engine's start, at every tick of its monitor and before every stop and its lift alike
+   (`keep_the_beat`, `gfso/core/graph/model.py`), over the STORED beat and off, in one act on the store
+   (`StoragePort.swap_settings`; on SQLite the file's write lock; a tick it fails at is retried by the next):
    any number of engines and monitors over one project — a server and a stdio MCP process can both open one .db — hold
    each wall second once, as the second to come finds the gap kept. A gap under 120 s outside a stop is a tick's lag and
    runs on the wall. Outside, every time reads on the wall. A graph people hold runs on the wall, the canon's clock (the
