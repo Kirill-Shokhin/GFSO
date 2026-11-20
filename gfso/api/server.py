@@ -1271,6 +1271,9 @@ _OPEN_SENDS = frozenset({"/api/run/{tool}", "/api/admission", "/api/verdicts", "
 #: …and the reads that are not the graph but the person's own setup — which credentials they hold, by name — read
 #: only by a call some name signs: what was opened is the graph (critic, 2026-11-16)
 _OWN_READS = frozenset({"/api/credentials"})
+#: …and what a process of the person's own sends with no credential that signs no name in any graph — a bridge's
+#: heartbeat, a stop of the server, a console's wait and its hook's witness (`signin.BARE`): the server's life, no move
+_CONSOLES_OWN = frozenset({"/api/lease", "/api/lease/{lease_id}", "/api/shutdown", "/api/wait", "/api/witness"})
 
 
 def _a_move(conn: HTTPConnection) -> None:
@@ -1279,6 +1282,8 @@ def _a_move(conn: HTTPConnection) -> None:
     stood on each route by hand, and a new one would have been open to any reader)."""
     method, path = conn.scope.get("method"), conn.scope["route"].path   # a socket has no method: it is served reads
     if (method in (None, "GET", "HEAD", "OPTIONS") and path not in _OWN_READS) or path in _OPEN_SENDS:
+        return
+    if path in _CONSOLES_OWN and (p := _config.CALLER.get()) is not None and p.via == signin.BARE.via:
         return
     if not (p := _config.CALLER.get()) or not p.signs_as:
         what = "the person's own setup" if path in _OWN_READS else "a move"

@@ -341,8 +341,11 @@ move names no one, `signs_as` every name it may sign as.
   to this loopback (through Docker's port forwarder) is served nothing without a token, in every mode. A session signs as every name you own; a move that names no
   signer is signed by the holder of the role it needs where that name is yours, else by `user`. Where the page signs
   in, the link an agent hands you opens it unsigned: it reads, and a move asks you to sign in.
-* **An agent session** (MCP, the CLI, `gfso wait`) with no credential signs as `user`, your name, as your standing agent; the name
-  `auto_decompose` assigns nodes to unless you pass `assignee` — nothing to set up. `source` on `signal`, `agent` on
+* **Your agent's MCP connection** with no credential, having taken no stream's name, signs as `user`, your name, as your
+  standing agent; the name `auto_decompose` assigns nodes to unless you pass `assignee` — nothing to set up. At a seam
+  you issued to another name, its issuer moves carry your words (`user_said`); your page makes them as it is. A client
+  with no credential that is no MCP connection — a script, curl, `gfso run` from any shell — reads, and signs nothing:
+  a console of a stream's name signs with its token (`gfso agent <name>`, then `GFSO_TOKEN`). `source` on `signal`, `agent` on
   the authoring verbs and `reviewer` on `record_verdict` are not in the MCP schema at all.
 * **A console of its own name** (`engineering`, a reviewer's console) takes it while it runs: `act_as("engineering")`
   over its gfso connection, for a name you opened — a node you assigned to it — or issued (`gfso agent <name>`). From

@@ -106,7 +106,7 @@ def _instrument_pass(e) -> str:
 
 def _drive(path: Path) -> dict:
     """The person's moves on the graph, door by door, and what each left: the page FAILs the kid, the MCP client with
-    no token signs its PASS over the redelivery, the CLI delivers the root."""
+    no token signs its PASS over the redelivery on his words, his agent's stdio connection delivers the root."""
     storage = SqliteStorage(str(path))
     e = make_engine(storage)
     e.start()
@@ -125,9 +125,10 @@ def _drive(path: Path) -> dict:
         T.signal(e, "kid", "DELIVER", "bob", result="built k again")
         e.wait_idle()
         out["second_pass"] = _instrument_pass(e)
-        anyio.run(MS.create_server(e).call_tool, "signal", {"task_id": "kid", "signal": "PASS"})
+        # …his own agent's connection (a stdio server: an MCP client launched it) — at a seam he issued, on his words
+        anyio.run(MS.create_server(e).call_tool, "signal", {"task_id": "kid", "signal": "PASS", "user_said": "да"})
         e.wait_idle()
-        _as(signin.local_principal(), lambda: TL.TOOLS["signal"](e, "root", "DELIVER", result="the aggregate"))
+        _as(signin.local_principal(mcp=True), lambda: TL.TOOLS["signal"](e, "root", "DELIVER", result="the aggregate"))
         e.wait_idle()
         out["states"] = {t: str(e.graph.get_task(TaskId(t)).state) for t in ("root", "kid")}
         out["log"] = [(str(a.task_id), a.signal.name, str(a.source or ""), bool(a.rejected)) for a in e.audit_log()]

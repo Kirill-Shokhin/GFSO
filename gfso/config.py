@@ -287,7 +287,9 @@ class Principal(typing.NamedTuple):
 
 #: the one local person, owner of every name on this machine
 LOCAL_PERSON = "local"
-#: a local client that is no browser, with no credential: the standing agent, the local person's (`signin.principal_of`)
+#: the standing agent, the local person's own: an MCP connection of his that took no stream's name — a bridge carrying
+#: its lease, a stdio server (`signin.principal_of`); a client with no credential and no bridge signs nothing
+#: (`signin.BARE`)
 STANDING = Principal(PERSON, (PERSON,), "default", "default", LOCAL_PERSON)
 
 

@@ -14,7 +14,7 @@ from gfso.core.types import (TaskId, AgentId, Spec, Criteria, CriterionMapping, 
                              Register)
 from gfso.critic.runner import _named, _numbered, critique_node, review_decomposition
 from tests.support import DENIAL, criterion, make_engine, pinned
-from gfso import tools as T, driver, serverctl
+from gfso import tools as T, driver, serverctl, signin
 
 
 def _engine() -> Engine:
@@ -368,6 +368,8 @@ def test_gfso_run_with_no_server_works_on_the_project_it_names(monkeypatch, tmp_
                  ("GFSO_DB_PATH", data / "gfso.db"), ("GFSO_STORAGE", "sqlite"), ("GFSO_LLM", "none")):
         monkeypatch.setenv(k, str(v))
     monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    # …a console launched with a name's token: the CLI with no credential reads, and signs nothing
+    monkeypatch.setenv("GFSO_TOKEN", signin.issue("w")[1])
     driver.run_verb("create_task", "beta", "in-beta", {"description": "x", "criteria": [criterion("a", "A")]}, "w")
     where = {f: SqliteStorage(str(data / f)).get_task(TaskId("in-beta")) is not None for f in ("beta.db", "gfso.db")}
     assert where == {"beta.db": True, "gfso.db": False}, where

@@ -478,7 +478,7 @@ def test_a_reader_deletes_and_makes_no_project_over_mcp(monkeypatch, tmp_path):
     reg.engine("victim")
     server = create_server(reg)
     reader = signin._refused(signin._FRONT)
-    monkeypatch.setattr(signin, "local_principal", lambda: reader)   # the door resolves each call's own caller
+    monkeypatch.setattr(signin, "local_principal", lambda mcp=False: reader)   # the door resolves each call's own caller
     token = CALLER.set(reader)
     try:
         for verb, args in (("delete_project", {"project": "victim"}), ("use_project", {"project": "fresh"})):

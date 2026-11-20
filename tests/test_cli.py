@@ -5,8 +5,7 @@ import threading
 
 import pytest
 
-from gfso import driver
-from gfso.config import agent_id
+from gfso import driver, signin
 from gfso.driver import run
 
 
@@ -49,17 +48,22 @@ def test_a_long_argument_can_come_from_a_file(tmp_path, capsys):
     assert driver._as_list(f"@{src}") == [{"name": "a", "description": "b"}]   # …list params too
 
 
-def test_the_help_says_what_the_callers_own_id_is(capsys):
+def test_the_help_says_what_the_callers_own_id_is(capsys, monkeypatch):
     """A person at this door was invited to name themselves and then refused for doing it.
 
     Measured on the human door 2026-09-01: `next_step` reported `"assignee": "user", "mine": true`,
     `signal --help` said a person names themselves, so the tester sent `source=w18c-human` and was
     told `w18c-human is not executor for root (executor=agent)`. The refusal is right; the
     invitation before it was the defect — a graph built by `auto_decompose` assigns every node to
-    the literal id `agent`, and nothing said that this door's caller IS `agent`."""
+    the literal id `agent`, and nothing said that this door's caller IS `agent`. With no credential the door names
+    none and says how to get one: it reads, and signs nothing."""
     assert run(["signal", "--help"]) == 0
     out = capsys.readouterr().out
-    assert agent_id() in out and "auto_decompose" in out
+    assert "no id at this door" in out.lower() and "gfso agent" in out
+    monkeypatch.setenv("GFSO_TOKEN", signin.issue("cli-console")[1])     # …a console launched with a name's token
+    assert run(["signal", "--help"]) == 0
+    out = capsys.readouterr().out
+    assert "cli-console" in out and "auto_decompose" in out
     assert "your id at this door" in out.lower()
     # …and a name is signed by its credential, never typed
     assert "GFSO_TOKEN" in out and "never typed" in out

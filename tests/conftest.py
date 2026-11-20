@@ -160,14 +160,17 @@ LOCAL_CLIENT = "http://127.0.0.1:8000"
 def _the_suites_person(_own_state_home):
     """THE SUITE'S PAGE IS SIGNED IN, as a person's is: its person is issued its names and a page session the way `gfso
     agent` and `gfso ui` issue them (`signin.issue`, `signin.code` → `redeem`), and every test client carries that
-    session — a door no test bypasses — asking a loopback name, as a local script does: where a test moves the state
-    home the session is not held there, and its calls are the standing agent's. A test of what a call with no session
-    gets clears the cookie (`client.cookies.clear()`); one of another host names it (`base_url`)."""
+    session — a door no test bypasses — asking a loopback name: where a test moves the state home the session is not held
+    there, and its calls are still his page's, admitted as this machine's user (`signin.PAGE`) — a client with no
+    credential and no page reads and signs nothing (`signin.BARE`). A test of what a call with no session gets clears
+    the cookie (`client.cookies.clear()`) and names its headers; one of another host names it (`base_url`)."""
     for name in SUITE_NAMES:
         signin.issue(name)
     session, made = signin.redeem(signin.code()), TestClient.__init__
 
     def signed_in(self, app, *a, **k):
+        if not a and "base_url" not in k and "headers" not in k:
+            k["headers"] = {"Sec-Fetch-Site": "same-origin"}
         made(self, app, *a, **({} if a or "base_url" in k else {"base_url": LOCAL_CLIENT}), **k)
         self.cookies.set(signin.COOKIE, session)
     TestClient.__init__ = signed_in

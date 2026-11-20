@@ -8,6 +8,7 @@ import os
 import socket
 import threading
 import time
+import uuid
 
 import anyio
 import pytest
@@ -43,10 +44,11 @@ _TOKENS: dict = {}
 
 
 def bearer(name) -> dict:
-    """The header a console launched with `name`'s token sends; none for the standing agent."""
+    """The header a console launched with `name`'s token sends; for the standing agent, the person's own, its bridge's
+    lease alone (a connection with neither reads, and signs nothing)."""
     if name and name not in _TOKENS:
         _TOKENS[name] = signin.issue(name)[1]
-    return {"Authorization": f"Bearer {_TOKENS[name]}"} if name else {}
+    return {"Authorization": f"Bearer {_TOKENS[name]}"} if name else {config.LEASE_HEADER: uuid.uuid4().hex}
 
 
 async def _call(url, name, verb, args):

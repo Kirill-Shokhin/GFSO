@@ -2,8 +2,9 @@
 
 A move is signed by a name its person owns, resolved here from the call's credential and never typed by the caller
 (docs/notes/SIGN_IN.md): a page session signs as any name the person owns, a token as its one name; with no credential,
-on a server bound to loopback and from a process of its own OS user, a page as the person and any other client as the
-standing agent — or as the one name its connection took (`take`). Everything is kept hashed in gfso's state, so it
+on a server bound to loopback and from a process of its own OS user, a page as the person, an MCP bridge's connection as
+the one name it took (`take`) or, having taken none, as the standing agent — his own agent — and any other client signs
+nothing (`BARE`): it reads. Everything is kept hashed in gfso's state, so it
 survives a restart; a process of the same OS user can read that state, and SECURITY.md says so.
 """
 from __future__ import annotations
@@ -51,6 +52,27 @@ STRANGER = Principal("", (), "stranger", "not this machine's user", None, _STRAN
 #: the person's own page, admitted as this machine's user with no sign-in: it signs as his person-name — `user`, the
 #: name his user-agents act as — never as an agent-name of his (`LOCAL_PERSON` is the owner, no name in a graph)
 PAGE = Principal(STANDING.name, (STANDING.name,), "local-peer", "local-peer", LOCAL_PERSON)
+#: a process of the person's own with no credential, no page and no bridge — a script, curl, `gfso run` from any shell:
+#: it reads, and signs nothing. Writing as `user` is his page or his own agent's MCP connection (a bridge whose lease
+#: took no stream's name); any other console signs with a name's token. The author, 2026-11-20: «не в любой пустой
+#: консоли можно подписывать от юзера. это как минимум должно быть mcp»
+BARE = Principal(STANDING.name, (), "bare", "no credential", LOCAL_PERSON,
+                 "a move signs as someone, and this call carries no credential: as the person, on his page (`gfso ui`) "
+                 "or through his agent's gfso MCP connection; as a stream, with its token (`gfso agent <name>`, then "
+                 "GFSO_TOKEN=<token>)")
+#: …under `--protected`, where a bridge is no agent of his by itself: his page, or a name's token
+BARE_PROTECTED = Principal(BARE.name, (), BARE.via, BARE.how, LOCAL_PERSON,
+                           "a move signs as someone, and this call carries no credential: as the person, on his "
+                           "signed-in page (`gfso ui`); as a stream, with its token (`gfso agent <name>`, then "
+                           "`act_as('<name>', token=…)` or GFSO_TOKEN=<token>)")
+
+
+def _bare() -> Principal:
+    return BARE_PROTECTED if protected() else BARE
+
+
+#: where an MCP client's bridge reaches the server: the one door a lease that took no name signs as the person at
+MCP_PATH = "/mcp"
 
 
 
@@ -319,8 +341,9 @@ def principal_of(conn) -> Principal:
     """Who a request comes from (its `headers`, `cookies`, `client` and `scope`): its bearer token or its page session
     where either names someone; else, on a server bound to loopback, the OS says whether the connection's other end is a
     process of this server's user (`peer.ours`): if so, asking a loopback name with nothing a front adds, a browser is
-    the person's page (`page_auth`: `local-peer`, or `key`, where it signs in) and any other client the standing agent.
-    A port forwarder's connection (a container's) is `STRANGER`, the page's shell alone. Every other call — a front's,
+    the person's page (`page_auth`: `local-peer`, or `key`, where it signs in); a bridge's connection at the MCP door the
+    name it took, or, having taken none, the standing agent — the person's own agent; any other client a reader
+    (`BARE`): the CLI's HTTP path and a script are no agent of his. A port forwarder's connection (a container's) is `STRANGER`, the page's shell alone. Every other call — a front's,
     the LAN's, another account's — is a reader (`_a_reader`): a front's every client arrives from this machine, so
     loopback says nothing there."""
     h = conn.headers
@@ -346,7 +369,9 @@ def principal_of(conn) -> Principal:
         return p                  # …a credential that names no one, from the person's own process: its refusal said
     if h.get("origin") or h.get("sec-fetch-site"):
         return _refused(_SIGN_IN) if page_auth() == "key" else PAGE
-    return held(h.get(LEASE_HEADER)) or STANDING
+    lease = h.get(LEASE_HEADER)
+    at_mcp = any(str(conn.scope.get(k) or "").startswith(MCP_PATH) for k in ("root_path", "path"))
+    return held(lease) or (STANDING if lease and at_mcp and not protected() else _bare())
 
 
 #: the server's live bridge leases, raw (`/api/lease`), handed down by the server that holds them; None, or None from
@@ -436,13 +461,14 @@ def take(lease: str | None, name: str, token: str = "", issued: bool = False) ->
     return held(lease)
 
 
-def local_principal() -> Principal:
-    """Who a call with no server between comes from — the CLI's own path, a stdio server: the token in `GFSO_TOKEN`,
-    else the standing agent."""
+def local_principal(mcp: bool = False) -> Principal:
+    """Who a call with no server between comes from — the CLI's own path, a stdio server (`mcp`): the token in
+    `GFSO_TOKEN`, else the name this console's bridge took; else, over MCP, the standing agent — an MCP client launched
+    it, the person's agent — and from the CLI a reader (`BARE`), as at the server's door: any shell runs it."""
     if (refused := launch_refusal()) is not None:
         return _refused(refused)
     raw = launch_token()
-    return by_token(raw) if raw else held(console_lease()) or STANDING
+    return by_token(raw) if raw else held(console_lease()) or (STANDING if mcp and not protected() else _bare())
 
 
 def launch_refusal() -> str | None:
@@ -457,8 +483,9 @@ def launch_refusal() -> str | None:
 
 
 def credential_header() -> dict:
-    """The header a client's token rides in to the server (`GFSO_TOKEN`, set at its launch outside the agent); none:
-    the client is the standing agent. A console launched the closed way stops here (`launch_refusal`)."""
+    """The header a client's token rides in to the server (`GFSO_TOKEN`, set at its launch outside the agent), else its
+    console's bridge lease: the name that connection took signs; none, the client reads (`BARE`). A console launched the
+    closed way stops here (`launch_refusal`)."""
     if (refused := launch_refusal()) is not None:
         raise SystemExit(f"gfso: {refused}")
     if (t := launch_token()):

@@ -275,21 +275,13 @@ function checkSetting({d, acts}) {
         // …a seam no validator observes needs a verdict not its executor's (engineering 6bb0819): said too
         : on || who === 'independent' ? `<div class="pn-note check-skip">${esc(on ? PANEL.checkedAlways : PANEL.checkedApart)}</div>` : '';
 }
-// A MODE ON THE WORK BELOW A NODE OF HIS (§10.4: autonomy per task and role; engineering b443174): at a node the person
-// holds his page sets «solo, in my chat» for every seam he issues beneath it; each such seam is a TOP, held by its Del as
-// his solo agent holds his project, his word standing there. The engine admits it only from his page, at a node whose Del
-// is his (`user`), in a project with no mode — the box is offered there alone; the engine's refusal says the rest
+// A SEAM HE ISSUES, HELD IN ITS HOLDER'S CHAT (§10.4: autonomy per task and role): no button sets it — the holder's own
+// connection taking its name records that it works in a chat, and each seam he issues to it is a TOP, his word standing
+// there. The page says so to anyone: who holds it and that its verdict is the person's
 const nodeOf = id => (S.graph.nodes || []).find(n => n.id === id) || {};
 function modeScope({d}) {
-    const sc = S.graph.scopes || {}, here = sc[d.id], n = nodeOf(d.id);
-    // …and one scope per project: a second node of his reads where it stands, no box the engine refuses (critic)
-    const at = Object.keys(sc)[0], may = d.assignee === 'user' && signsAs().includes('user') && !S.graph.mode?.mode && (!at || here);
-    const box = may ? `<div class="pn-note"><label class="act-check"><input type="checkbox"${data({action: 'set-scope', id: d.id, on: here ? '0' : '1'})}${here ? ' checked' : ''}> ${esc(PANEL.scopeBox)}</label></div>`
-        : here ? `<div class="pn-note check-skip">${esc(PANEL.scopeSet)}</div>`
-        : at && d.assignee === 'user' && signsAs().includes('user') ? `<div class="pn-note check-skip">${esc(PANEL.scopeElsewhere(nameOf(taskOf(at)) || at))}</div>` : '';
-    // …a top says so to anyone: who holds it and that its verdict is the person's
-    const top = n.mode_top === d.id && n.scope ? `<div class="pn-note check-skip">${esc(PANEL.scopeTop(agentName(d.assignee || ''), nameOf(taskOf(n.scope)) || n.scope))}</div>` : '';
-    return box + top;
+    const n = nodeOf(d.id);
+    return n.mode_top === d.id && n.scope ? `<div class="pn-note check-skip">${esc(PANEL.scopeTop(agentName(d.assignee || ''), nameOf(taskOf(n.scope)) || n.scope))}</div>` : '';
 }
 const PARTS = [head, verdict, dispute, facets, criteria, checkSetting, modeScope, actions];   // the prose chips above the list, always on screen
 

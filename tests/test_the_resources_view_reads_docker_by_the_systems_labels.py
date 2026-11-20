@@ -232,7 +232,8 @@ def test_any_spelling_of_a_held_project_is_known_and_no_removal_takes_a_name(tmp
         {"Name": "v", "Labels": f"gfso.home={E._home()},gfso.project=alpha", "Size": "1MB"}]})] if a[0] == "system"
         else [])
     reg = ProjectRegistry()
-    c = TestClient(create_app(reg.engine(), registry=reg), base_url="http://127.0.0.1:8000")
+    c = TestClient(create_app(reg.engine(), registry=reg), base_url="http://127.0.0.1:8000",
+                   headers={"Sec-Fetch-Site": "same-origin"})      # …his page: a removal is his move
     monkeypatch.setattr(R, "watch", lambda: None)              # …the server's reading, taken by the test's own turn
     R.refresh()
     assert [(p["project"], p["known"]) for p in c.get("/api/resources").json()["projects"]] == [("alpha", True)]

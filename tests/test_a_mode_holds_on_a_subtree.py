@@ -16,6 +16,7 @@ and says, and what a restart stops, read as in a project with no mode — what c
 from __future__ import annotations
 
 import contextlib
+import json
 
 import pytest
 
@@ -27,7 +28,7 @@ from gfso.config import CALLER, SERVES_ENV, Principal
 from gfso.core.protocol.invariants import INTENT
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.delegate import AgentRegistry, ensure_dispatcher
-from gfso.engine.validation import observation_binds, owed_observer
+from gfso.engine.validation import MODE_SCOPES, in_chat_names, observation_binds, owed_observer
 from gfso.runtime import ProjectRegistry
 from tests.support import REGISTER, a_repository, criterion, instrument_passes, make_engine
 from tests.test_delegate import _dispatch_validate
@@ -82,10 +83,17 @@ def _call(p: Principal, verb: str, e, *a, **kw) -> dict:
         return TL.TOOLS[verb](e, *a, **kw)
 
 
+def _in_its_chat(e, workdir):
+    """`engineering`'s own connection took its name (`act_as`): it performs in a chat here — what the scope recorded
+    for it, now its own fact — and the project's validator is registered at the repository, for a check he chooses."""
+    e.performs_in_chat(HOLDER)
+    assert not TL.register_agent(e, "p-val", "llm-validator", workdir=str(workdir)).get("refused")
+
+
 def _shared(tmp_path, scoped: bool = True, workdir=None):
     """The author's one graph: his root, the node he holds beside the other streams' tops and a node of the standing
-    agent's, `engineering`'s direction issued by him from his page under it — and, where `scoped`, the scope set at Y
-    from his page, its validator registered in the project."""
+    agent's, `engineering`'s direction issued by him from his page under it — and, where `scoped`, `engineering`
+    working in its chat (`_in_its_chat`)."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     e.project_name = "p"
@@ -97,8 +105,7 @@ def _shared(tmp_path, scoped: bool = True, workdir=None):
                 accepted_risks=REGISTER, agent=AUTHOR)
     e.wait_idle()
     if scoped:
-        out = _call(PAGE, "set_mode", e, "solo", perform="in_chat", node=Y, workdir=str(workdir or tmp_path))
-        assert not out.get("refused"), out
+        _in_its_chat(e, workdir or tmp_path)
     _call(PAGE, "decompose", e, Y, [{"task_id": X, "spec": {"description": X, "criteria": [criterion(HOLDER)]},
                                      "assignee": HOLDER, "covers": ["stream"]}], accepted_risks=REGISTER, agent="user")
     e.wait_idle()
@@ -132,12 +139,13 @@ def _the_go(e, node=ASK, said="") -> dict:
 
 # ── setting it ────────────────────────────────────────────────────────────────
 
-def test_the_persons_page_scopes_the_node_he_holds_and_the_project_keeps_no_mode(tmp_path):
-    """The scope is the person's choice for one task and role (§10.4), recorded at the node he holds and read by the
-    page per node with the top it lies under; the project itself stays modeless for the other streams."""
+def test_the_name_taken_in_a_chat_makes_each_seam_he_issues_to_it_a_top_and_the_project_keeps_no_mode(tmp_path):
+    """The level is the executor's own fact for one task and role (§10.4): its connection took its name, so each seam
+    he issues to it is a top, read by the page per node with the node above it; the project itself stays modeless for
+    the other streams, and nothing is set at any node."""
     e = _shared(tmp_path)
     rec = e.mode_scopes()[Y]
-    assert (rec["mode"], rec["perform"]) == ("solo", "in_chat") and "holder" not in rec, rec
+    assert (rec["mode"], rec["perform"], rec["by"]) == ("solo", "in_chat", HOLDER), rec
     assert e.mode() is None and e.mode_at(TaskId("root.ui")) is None
     graph = T.get_graph(e)
     assert list(graph["scopes"]) == [Y]
@@ -146,46 +154,26 @@ def test_the_persons_page_scopes_the_node_he_holds_and_the_project_keeps_no_mode
     assert "scope" not in nodes["root.ui"] and "scope" not in nodes[Y], nodes
 
 
-def test_the_streams_own_console_cannot_scope_itself(tmp_path):
-    """Who holds which work is the person's, from his page: an agent's connection that set its own scope would choose
-    its own autonomy, the move the canon gives its issuer (§10.1) — a connection signing as his name included."""
+def test_no_one_sets_a_mode_at_a_node_his_page_included(tmp_path):
+    """No button: what the scope did for the executor follows from the name it took."""
     e = _shared(tmp_path, scoped=False)
-    for p in (CONSOLE, ISSUER):
-        assert _call(p, "set_mode", e, "solo", perform="in_chat", node=Y, workdir=str(tmp_path)).get("refused")
+    for p in (PAGE, CONSOLE, ISSUER):
+        out = _call(p, "set_mode", e, "solo", perform="in_chat", node=Y, workdir=str(tmp_path))
+        assert out.get("refused") and "act_as" in out["error"], out
     assert not e.mode_scopes()
 
 
-def test_a_scope_is_set_only_at_a_node_he_holds(tmp_path):
-    """A node held by another — a stream's top, a task inside it — is no node of his to scope: his page owns
-    `engineering` too, so only the record's name tells him (`PERSONS_NAMES`, §6.1)."""
-    e = _shared(tmp_path, scoped=False)
-    _split(e, X, ASK, HOLDER, HOLDER)
-    for n in (X, ASK, "root.ui"):
-        out = _call(PAGE, "set_mode", e, "solo", perform="in_chat", node=n, workdir=str(tmp_path))
-        assert out.get("refused") and "name of the person's" in out["error"], out
-    assert _call(PAGE, "set_mode", e, "semi", perform="in_chat", node=Y, workdir=str(tmp_path)).get("refused"), \
-        "slice 1 scopes solo in_chat alone"
-    assert not e.mode_scopes()
-
-
-def test_a_scope_stands_alone_beside_no_project_mode(tmp_path):
-    """One scope record per project, in a project with no mode: two carriers of who holds a node would answer it
-    twice."""
+def test_a_project_mode_is_refused_while_a_top_stands_and_answers_alone_where_set(tmp_path):
+    """Two carriers of who holds a node would answer it twice: a project mode is refused over a standing top; set
+    before, it answers alone and no seam is a top."""
     e = _shared(tmp_path)
-    assert _call(PAGE, "set_mode", e, "solo", perform="in_chat", node="root.mine", workdir=str(tmp_path)).get("refused")
-    assert _call(PAGE, "set_mode", e, "solo", perform="in_chat").get("refused"), "a project mode over a standing scope"
-    assert e.mode() is None
+    assert _call(PAGE, "set_mode", e, "solo", perform="in_chat").get("refused"), "a project mode over a standing top"
     with pytest.raises(ValueError):
         e.set_mode(Mode.SOLO, None, AgentId("user"))
-    assert not _call(PAGE, "set_mode", e, None, node=Y).get("refused")
-    assert not e.mode_scopes(), "no mode named with the node drops the scope"
-
-
-def test_a_scope_is_refused_in_a_project_with_a_mode(tmp_path):
-    e = _shared(tmp_path, scoped=False)
-    e.set_mode(Mode.SOLO, None, AgentId("user"))
-    assert _call(PAGE, "set_mode", e, "solo", perform="in_chat", node=Y, workdir=str(tmp_path)).get("refused")
-    assert not e.mode_scopes()
+    bare = _shared(tmp_path / "bare", scoped=False)
+    bare.set_mode(Mode.SOLO, None, AgentId("user"))
+    bare.performs_in_chat(HOLDER)
+    assert bare.scope_at(X) is None and not bare.mode_scopes()
 
 
 # ── inside the scope ──────────────────────────────────────────────────────────
@@ -200,11 +188,15 @@ def test_inside_the_scope_a_node_goes_to_its_holder_and_a_third_party_is_refused
         T.del_by_mode(e, X, "ui")
 
 
-def test_inside_the_scope_the_holders_parts_self_verify_and_its_top_is_observed(tmp_path):
-    """Solo in_chat below the seam: the holder's own nodes self-verify (§10.3), its top — a seam — is observed."""
+def test_inside_the_scope_the_holders_parts_self_verify_and_its_top_is_checked_as_he_chooses(tmp_path):
+    """Solo in_chat below the seam: the holder's own nodes self-verify (§10.3). Its top — a seam — needs a verdict not
+    its executor's: his own reading by default, the validator observing each delivery where he chose it (§10.2: the
+    check anyone's, the verdict the issuer's)."""
     e = _shared(tmp_path)
     _split(e, X, ASK, HOLDER, HOLDER)
     assert e.held_in_chat(TaskId(ASK)) and not e.observed_here(TaskId(ASK))
+    assert not e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "independent"
+    assert _call(PAGE, "set_checker", e, X, agent="user").get("checker") == "validator"
     assert e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "validator"
 
 
@@ -255,15 +247,12 @@ def test_a_plan_at_the_top_is_checked_and_gone_on_its_contract_as_issued(tmp_pat
     assert not shown.get("added_at_the_go"), "the go at the top adds nothing: it maps onto the contract"
 
 
-def test_his_issue_of_a_top_installs_the_criterion_and_dropping_the_scope_leaves_it(tmp_path):
-    """His ASSIGN of a top is his own act on it, the counterpart of his go in his own project: the criterion read against
-    his words is on by default in solo in_chat (the author, 2026-11-19); the same issue with no scope installs none, and
-    dropping the scope leaves it, for a criterion changes only by a revision."""
+def test_his_issue_of_a_seam_installs_the_criterion_whoever_holds_it(tmp_path):
+    """His ASSIGN of a seam is his own act on it, the counterpart of his go in his own project: the criterion read
+    against his words is on by default (the author, 2026-11-19), whether its holder works in a chat or not."""
     e, bare = _shared(tmp_path), _shared(tmp_path / "bare", scoped=False)
     assert INTENT in [c.name for c in e.graph.get_task(TaskId(X)).spec.criteria]
-    assert INTENT not in [c.name for c in bare.graph.get_task(TaskId(X)).spec.criteria]
-    _call(PAGE, "set_mode", e, None, node=Y)
-    assert INTENT in [c.name for c in e.graph.get_task(TaskId(X)).spec.criteria], "dropping the scope removed it"
+    assert INTENT in [c.name for c in bare.graph.get_task(TaskId(X)).spec.criteria]
 
 
 def test_the_tops_packet_changes_only_on_the_persons_words(tmp_path):
@@ -285,7 +274,8 @@ def test_the_top_is_observed_and_closes_on_the_persons_verdict(tmp_path):
     early = _call(ISSUER, "signal", e, X, "PASS", "user", user_said=ACCEPTED)
     assert not early.get("accepted"), "the top closed with no observer's record"
     instrument_passes(e, TaskId(X), validator="p-val")
-    assert "is the person's" in e.persons_verdict(X)
+    with _as(ISSUER):
+        assert "is the person's" in e.persons_verdict(X)
     assert _call(ISSUER, "signal", e, X, "PASS", "user").get("refused"), "the top signed without his words"
     assert _call(ISSUER, "signal", e, X, "PASS", "user", user_said=ACCEPTED)["state"] == "DONE"
     assert [h["said"] for h in e.heard_on(X) if h["act"] == "verdict"] == [ACCEPTED]
@@ -324,13 +314,17 @@ def test_a_delivery_inside_the_scope_names_no_branch_of_the_shared_checkout(tmp_
     assert out.get("refused") and "where you work" in out["error"] and "gfso/p/work" not in out["error"], out
 
 
-def test_inside_the_scope_a_childless_seam_is_validated_by_the_scopes_validator(tmp_path):
-    """The scope's validator observes the scope's top by itself, as a project's does under its mode."""
+@pytest.mark.parametrize("chosen", [False, True], ids=["by default", "his choice"])
+def test_a_top_is_validated_by_the_projects_validator_where_he_chose_it(tmp_path, chosen):
+    """The project's validator observes a top by itself only where its issuer chose it (`set_checker`); by default the
+    check is his own reading, and nothing starts."""
     e = _shared(tmp_path)
+    if chosen:
+        assert _call(PAGE, "set_checker", e, X, agent="user").get("checker") == "validator"
     _delivered(e, X, HOLDER)
     started, _ = _dispatch_validate(e, AgentRegistry(path=str(tmp_path / "agents.json")), {
         "verdict": "PASS", "failed_criteria": [], "per_criterion": []})
-    assert f"validate:{X}" in started, started
+    assert (f"validate:{X}" in started) == chosen, started
 
 
 # ── outside the scope: nothing changes ────────────────────────────────────────
@@ -428,7 +422,8 @@ DIRS, TASK = ("root.stream.a", "root.stream.b", "root.stream.c"), "root.stream.a
 
 def _stream(tmp_path, scoped: bool = True, storage=None):
     """The dev graph's shape: the author's root → the stream node Y, its Del moved to the person by a re-ASSIGN → three
-    directions held by `engineering`, tasks under the first two — and, where `scoped`, the scope set at Y from his page."""
+    directions held by `engineering`, tasks under the first two — and, where `scoped`, `engineering` working in its
+    chat (`_in_its_chat`)."""
     e = make_engine(validate_signals=True, state_timeout=0, **({"storage": storage} if storage else {}))
     e.start()
     e.project_name = "p"
@@ -443,8 +438,7 @@ def _stream(tmp_path, scoped: bool = True, storage=None):
     assert not T.reassign(e, Y, "user", agent=AUTHOR).get("error")
     e.wait_idle()
     if scoped:
-        out = _call(PAGE, "set_mode", e, "solo", perform="in_chat", node=Y, workdir=str(tmp_path))
-        assert not out.get("refused"), out
+        _in_its_chat(e, tmp_path)
     ensure_dispatcher(e).stop()
     return e
 
@@ -452,16 +446,6 @@ def _stream(tmp_path, scoped: bool = True, storage=None):
 def _top(e, n):
     at = e.scope_at(n)
     return at and at.get("top")
-
-
-def test_the_scope_sits_at_the_node_he_holds_and_a_direction_is_refused_by_its_del(tmp_path):
-    """§6.1: a name of his is `user`, by record (`PERSONS_NAMES`) — his page owns `engineering` too, so the page's names
-    cannot tell him from his stream. A direction held by `engineering` is no node of his to scope."""
-    e = _stream(tmp_path, scoped=False)
-    out = _call(PAGE, "set_mode", e, "solo", perform="in_chat", node=DIRS[0], workdir=str(tmp_path))
-    assert out.get("refused") and "name of the person's" in out["error"], out
-    assert not _call(PAGE, "set_mode", e, "solo", perform="in_chat", node=Y, workdir=str(tmp_path)).get("refused")
-    assert list(e.mode_scopes()) == [Y]
 
 
 def test_each_seam_he_issues_under_the_node_is_a_top_and_his_node_has_none(tmp_path):
@@ -483,12 +467,13 @@ def test_the_holder_of_each_top_is_its_del(tmp_path):
     assert str(e.graph.get_task(TaskId(f"{DIRS[2]}.t")).assignee) == HOLDER
 
 
-def test_setting_the_scope_changes_no_packet(tmp_path):
-    """Setting it is no revision of anyone's contract (§6.1 point 3): no criterion is installed, no version issued."""
+def test_the_name_taken_in_a_chat_changes_no_packet(tmp_path):
+    """Its record is no revision of anyone's contract (§6.1 point 3): no criterion is installed, no version issued."""
     e = _stream(tmp_path, scoped=False)
     packets = {str(t.id): (t.spec, len(e.audit_log(t.id))) for t in e.all_tasks()}
-    assert not _call(PAGE, "set_mode", e, "solo", perform="in_chat", node=Y, workdir=str(tmp_path)).get("refused")
+    e.performs_in_chat(HOLDER)
     assert {str(t.id): (t.spec, len(e.audit_log(t.id))) for t in e.all_tasks()} == packets
+    assert [_top(e, d) for d in DIRS] == list(DIRS)
 
 
 def test_his_pass_at_a_direction_is_his_page_or_his_words(tmp_path):
@@ -593,16 +578,13 @@ def test_a_reassign_that_makes_a_top_installs_the_criterion_as_the_other_doors_d
     assert _top(e, n) == n and INTENT in [c.name for c in e.graph.get_task(TaskId(n)).spec.criteria]
 
 
-def test_a_top_under_an_in_chat_scope_is_not_given_to_a_registered_machine(tmp_path):
-    """`in_chat` performs in a chat; a machine executes by dispatch: a top issued or re-issued to one is refused, naming
-    both lifts — a name that works in a chat, or the scope dropped."""
+def test_a_seam_issued_to_a_registered_machine_is_no_top(tmp_path):
+    """`in_chat` performs in a chat; a machine executes by dispatch, and takes no name in one (`signin.take`): a seam he
+    issues to it is his seam, held by no chat."""
     e = _stream(tmp_path)
     assert not TL.register_agent(e, "p-exec", "llm-executor", workdir=str(tmp_path)).get("refused")
-    out = _his(e, "root.stream.m", "p-exec")
-    assert isinstance(out, dict) and out.get("error") and "chat" in out["error"] and "drop" in out["error"], out
-    _his(e, "root.stream.mine", "user")
-    out = _call(PAGE, "reassign", e, "root.stream.mine", "p-exec", agent="user")
-    assert out.get("error") and "chat" in out["error"], out
+    _his(e, "root.stream.m", "p-exec")
+    assert e.issued_by_the_person(TaskId("root.stream.m")) and not e.scope_at("root.stream.m")
 
 
 def test_a_server_start_leaves_a_scoped_project_running_beside_a_registered_executor(tmp_path, monkeypatch):
@@ -689,39 +671,11 @@ def test_his_stream_level_criterion_reaches_a_direction_from_his_page(tmp_path):
     assert not [s for s in _page(e, "next_steps")["steps"] if s.get("task_id") == Y and "first" in str(s)]
 
 
-# ── setting the scope from his page ───────────────────────────────────────────
+# ── a scope an earlier build recorded ─────────────────────────────────────────
 
-def test_a_scope_is_refused_while_a_seam_it_would_make_a_top_is_held_by_a_machine(tmp_path):
-    """`in_chat` performs in a chat; a machine executes by dispatch: a seam he already issued under Y to a registered
-    machine would be a top no chat performs, so the scope is refused, naming it and the ways out."""
+def test_a_scope_an_earlier_build_recorded_reads_its_holders_as_working_in_a_chat(tmp_path):
+    """A graph scoped before the button was retired keeps its tops: the scope said its seams' holders work in a chat."""
     e = _stream(tmp_path, scoped=False)
-    for n, k in (("p-exec-1", "llm-executor"), ("p-val", "llm-validator")):
-        assert not TL.register_agent(e, n, k, workdir=str(tmp_path)).get("refused")
-    _his(e, "root.stream.m", "p-exec-1")
-    assert e.graph.get_task(TaskId("root.stream.m")) is not None
-    out = _page(e, "set_mode", mode="solo", perform="in_chat", node=Y)
-    assert out.get("refused") and "root.stream.m" in out["error"] and "chat" in out["error"], out
-    assert not e.mode_scopes()
-
-
-def test_a_scope_set_from_his_page_staffs_its_validator_at_the_projects_repository(tmp_path):
-    """The page sends `{mode, perform, node}`, no workdir: where the project's roles record its repository, the
-    validator is registered there, as `set_mode(workdir=)` would."""
-    e = _stream(tmp_path, scoped=False)
-    assert not TL.register_agent(e, "p-exec-1", "llm-executor", workdir=str(tmp_path)).get("refused")
-    out = _page(e, "set_mode", mode="solo", perform="in_chat", node=Y)
-    _took(out)
-    assert list(e.mode_scopes()) == [Y] and out["validator"]["workdir"], out
-
-
-def test_a_scope_with_no_repository_recorded_is_refused_in_his_words(tmp_path):
-    """No role records where the work is: the page cannot attach a repository, so the refusal tells him his agent
-    attaches it from its console — and the way it names is one that console has."""
-    e = _stream(tmp_path, scoped=False)
-    out = _page(e, "set_mode", mode="solo", perform="in_chat", node=Y)
-    assert out.get("refused") and "no repository" in out["error"] and "your agent" in out["error"], out
-    probe = _call(ISSUER, "set_mode", e, "solo", perform="in_chat", workdir=str(tmp_path))
-    assert probe.get("refused"), probe      # …a mode from an agent's console is no way out where the project has work
-    _took(_call(ISSUER, "register_agent", e, "p-val", "llm-validator", workdir=str(tmp_path)))
-    _took(_page(e, "set_mode", mode="solo", perform="in_chat", node=Y))
-    assert list(e.mode_scopes()) == [Y]
+    e._storage.store_setting(MODE_SCOPES, json.dumps({Y: {"node": Y, "mode": "solo", "perform": "in_chat",
+                                                          "by": "user", "at": "2026-11-20T17:00:00"}}))
+    assert [_top(e, d) for d in DIRS] == list(DIRS) and HOLDER in in_chat_names(e.graph)

@@ -50,7 +50,7 @@ from gfso.decompose import NoPlan, decompose_into, artifact as _artifact, planni
 from gfso.engine.events import emit_cb
 from gfso.engine.findings import record_round
 from gfso.engine.moves import DOOR_KEYS, READS, SIGNERS, door_holder, door_role, role_holder, signer_arg, signer_due
-from gfso.engine.validation import _l0_holes, _l2_undischarged, whole_waits_for_its_parts
+from gfso.engine.validation import _l0_holes, _l2_undischarged, his_seam, whole_waits_for_its_parts
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS
 from gfso.core.graph.model import (MAX_ITERATIONS_CEILING, bounds_refusal, project_deadline_s, project_now,
                                    project_state_bound, witnessed_count)
@@ -2039,7 +2039,7 @@ def _the_persons_move(engine: Engine, tid, sig: str) -> Optional[dict]:
     the root is ESCALATED, their decision (§12.5); elsewhere its packet is asked by the engine (`_the_persons_packet`).
     A reassign is theirs in every state: it re-issues the root with its packet unchanged, which that gate never sees.
     None: the move goes on."""
-    if sig not in PERSONS_MOVES or not engine.issued_by_the_person(tid) or (
+    if sig not in PERSONS_MOVES or not engine.guards_his_word(tid) or (
             sig == Signal.ASSIGN.name and engine.graph.get_state(tid) != State.ESCALATED):
         return None
     if (p := CALLER.get()) is not None and p.a_page:
@@ -3200,6 +3200,14 @@ def _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, n
             if v is not None}
 
 
+#: what `set_mode(node=…)` answers since the scope was retired: the level a seam is held at is its executor's own act
+_NOTHING_AT_A_NODE = {"refused": True, "error": "nothing is set at a node: a seam the person issues to a name that works "
+                                                "in a chat is held solo there by that name's own act — its connection "
+                                                "taking it (`act_as('<name>')`) — and its verdict and contract are his "
+                                                "wherever he issues it. Who checks it is his choice: "
+                                                "`set_checker('<seam>', …)`"}
+
+
 def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int] = None,
              agent: Optional[str] = None, user_said: str = "", perform: Optional[str] = None,
              system_model: Optional[str] = None, planner_model: Optional[str] = None, l2_gate: Optional[bool] = None,
@@ -3258,19 +3266,15 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
     registered there (`register_agent`, on `system_model`), so the setup of a small task is this one call; refused,
     the mode leaves none registered.
 
-    `node` — a node the person holds (its Del a name of his): the mode of the work he issues below it (§10.4: autonomy is
-    per task and role). Each node he issues there to another is a top, its Del working it as a person's solo agent works
-    his own project; the node itself and the rest of the project keep reading as they did, and no packet changes. Only
-    `solo` performed `in_chat`, in a project with no mode, and only from his page; with no `mode`, the scope is dropped.
+    `node` — refused, kept so an older page is told why: a seam the person issues to a name that works in a chat is held
+    solo there by that name's own act (`act_as`), with nothing set at a node (§10.4: autonomy per task and role).
 
     Without `mode`, only the settings named change — who holds what stays as recorded (a switch turned mid-run)."""
     try:
         m = None if mode is None else Mode(str(mode).strip().lower())
     except ValueError:
         return {"refused": True, "error": f"mode must be one of solo | semi | auto, got {mode!r}"}
-    # …a mode scoped to a node is answered whole by its own door; a project's, refused where it is not the person's
-    if no := (_scoped(engine, str(node), m, perform, str(user_said).strip(), workdir, system_model)
-              if node is not None else _not_the_persons(engine, m, user_said)):
+    if no := (_NOTHING_AT_A_NODE if node is not None else _not_the_persons(engine, m, user_said)):
         return no
     # …at any time, before the go too: the default stands for the person against the agent whose work it reads, and
     # only their words turn it (critic over de23af3)
@@ -3328,54 +3332,15 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
             **({} if out.get("refused") else _short_supplied(engine))}
 
 
-def _scoped(engine: Engine, node: str, m: Optional[Mode], perform: Optional[str], said: str, workdir, model) -> dict:
-    """The mode scope at `node`, a node the person holds, set — or, with no mode, dropped — by his page alone: who holds
-    the work he issues below it is his choice as its issuer (§10.1), and a stream's own console that set it would choose
-    its own autonomy. No packet changes: a top's criterion read against his words comes only with his own act on that
-    top (`_his_intent`). Its validator is registered first where the project has none (`_with_its_validator`), at
-    `workdir` or, the page sending none, at the repository the project's roles record."""
-    p, t = CALLER.get(), engine.graph.get_task(TaskId(node))
-    if t is None:
-        return {"refused": True, "error": f"task {node} not found"}
-    if p is None or not p.a_page:
-        return {"refused": True, "error": f"the mode of the work under '{node}' is the person's choice, made on his "
-                                          f"page (`gfso ui`), never by an agent's connection: tell them what you would "
-                                          f"change and why"}
-    if m is None:
-        return {"scopes": engine.drop_mode_scope(t.id, AgentId(p.name))}
-    if (m, perform) != (Mode.SOLO, "in_chat"):
-        return {"refused": True, "error": "a mode scope is `solo` performed `in_chat`: each top's holder works it as the "
-                                          "person's own agent works his project"}
-
-    def held() -> dict:
-        """The scope recorded, its validator found — or the refusal."""
-        if not (staff := mode_staffing(engine, m.value, perform))["ready"]:
-            return {"refused": True, "error": staff["missing"]}
-        try:
-            rec = engine.set_mode_scope(t.id, AgentId(p.name), said)
-        except ValueError as e:
-            return {"refused": True, "error": str(e)}
-        return {"scope": rec, "holds": f"each node {node}'s holder issues to another below it is a top: its Del holds "
-                                       f"every node under it and works it in its chat; the top itself is the "
-                                       f"person's — its contract changes and it closes on his words"}
-    roles = [c for c in _roster(engine).list().values() if c.get("project") == engine.project_name]
-    base = workdir or next((c["workdir"] for c in roles if c.get("workdir")), None)
-    if base is None and not _validators_of(engine, _roster(engine)):
-        return {"refused": True, "error": f"this project has no repository recorded yet for the system to check the work "
-                                          f"under '{node}' against: your agent attaches it from its console — "
-                                          f"`register_agent(\"{engine.project_name or DEFAULT_PROJECT}-val\", "
-                                          f"\"llm-validator\", workdir=<the repository>)` — and the scope is set here "
-                                          f"then"}
-    return _with_its_validator(engine, base, model, held)
-
-
-def _his_intent(engine: Engine, criteria: list, rec: Optional[dict]) -> list:
-    """`criteria` as the person's act on a top of the mode scope `rec` installs them — its first ASSIGN or a revision he
-    makes: with `answers_the_persons_words` where `intent_check` holds there and they do not carry it. The counterpart of
-    his go on his own root; never written by a move of the system's, nor mapped: CHECK-1 flags it uncovered at the
-    revision (§12.10), and the top's holder maps it by its own re-admission. While `intent_check` holds, a revision of
-    his that leaves it out gets it back: it is his by default, and the page's switch turns it off."""
-    if rec is None or not engine.intent_check(rec) or any(c.get("name") == INTENT for c in criteria):
+def _his_intent(engine: Engine, criteria: list, seam: bool) -> list:
+    """`criteria` as the person's act on a seam he issues to another (`seam`, `persons_node`) installs them — its first
+    ASSIGN or a revision he makes: with `answers_the_persons_words` where `intent_check` holds there and they do not
+    carry it (his 11-19 «по умолчанию»). The counterpart of his go on his own root; never written by a move of the
+    system's, nor mapped: CHECK-1 flags it uncovered at the revision (§12.10), and the seam's holder maps it by its own
+    re-admission. While `intent_check` holds, a revision of his that leaves it out gets it back: it is his by default,
+    and the page's switch turns it off. A call no door served is the system's own, never his act."""
+    if not seam or CALLER.get() is None or not engine.intent_check(seam=True) or any(
+            c.get("name") == INTENT for c in criteria):
         return criteria
     return [*criteria, json.loads(json.dumps(INTENT_CRITERION))]
 
@@ -3406,13 +3371,14 @@ def _his_criteria_mapped(engine: Engine, parent_id, children, mappings) -> list:
 
 def _with_his_intent(fn, *, issued: bool):
     """`fn`, a verb that issues children (`issued`: `parent_id`/`children`), revises a node's criteria or re-issues it to
-    another (`assignee`), with the criterion his act installs on each top it makes or revises (`_his_intent`). His act alone: a top's issuer is him,
-    and every issuer move there is his words or his page (`_the_persons_move`, `Engine._the_persons_packet`)."""
+    another (`assignee`), with the criterion his act installs on each seam he issues to another (`_his_intent`). His act
+    alone: a seam's issuer is him, and every issuer move there is his words or his page (`_the_persons_move`,
+    `Engine._the_persons_packet`)."""
     sig = inspect.signature(fn)
 
-    def spec(e, s, rec):
+    def spec(e, s, seam):
         """`s` with its criteria as his act installs them, where it names criteria."""
-        return {**s, "criteria": _his_intent(e, list(s["criteria"]), rec)} if isinstance(s, dict) and "criteria" in s \
+        return {**s, "criteria": _his_intent(e, list(s["criteria"]), seam)} if isinstance(s, dict) and "criteria" in s \
             else s
 
     @functools.wraps(fn)
@@ -3420,26 +3386,27 @@ def _with_his_intent(fn, *, issued: bool):
         at = sig.bind(*a, **kw).arguments
         e = at["engine"]
         if issued and at.get("parent_id"):
-            top = lambda held: e.would_be_a_top(at["parent_id"], held)
+            p = e.graph.get_task(TaskId(str(at["parent_id"])))
+            seam = lambda held: p is not None and his_seam(p.assignee, held)
             if "children" in at:
-                at["children"] = [{**c, "spec": spec(e, c["spec"], top(c.get("assignee")))}
+                at["children"] = [{**c, "spec": spec(e, c["spec"], seam(c.get("assignee")))}
                                   if isinstance(c, dict) and "spec" in c else c
                                   for c in _his_criteria_mapped(e, at["parent_id"], at["children"], at.get("mappings"))]
             else:
-                at["spec"] = spec(e, at.get("spec"), top(at.get("assignee")))
+                at["spec"] = spec(e, at.get("spec"), seam(at.get("assignee")))
         elif "assignee" in at and not issued:
-            # …a re-ASSIGN making a node of his a top: the criterion comes with his act, as one version before it — a
-            # version moving Del alone carries no criteria — and only where the re-issue itself will stand
+            # …a re-ASSIGN making a node a seam of his: the criterion comes with his act, as one version before it — a
+            # version moving Del alone carries no criteria
             t = e.graph.get_task(TaskId(str(at["task_id"])))
-            rec = None if t is None or e.scope_at(t.id) or e.top_refusal(t.parent_id, at["assignee"]) else \
-                e.would_be_a_top(t.parent_id, at["assignee"])
-            if rec and (now := _his_intent(e, its_criteria(t), rec)) != its_criteria(t):
+            seam = t is not None and not e.issued_by_the_person(t.id) and his_seam(e.graph.issuer_of(t.id), at["assignee"])
+            if seam and (now := _his_intent(e, its_criteria(t), True)) != its_criteria(t):
                 _tools.edit_criteria(e, str(t.id), now, agent=str(e.graph.issuer_of(t.id)))
-        elif not issued and (rec := e.scope_at(at["task_id"])) and rec["top"] == str(at["task_id"]):
+        elif not issued and e.graph.get_parent(TaskId(str(at["task_id"]))) is not None \
+                and e.mode() is None and e.issued_by_the_person(at["task_id"]):
             if "criteria" in at:
-                at["criteria"] = _his_intent(e, list(at["criteria"] or ()), rec)
+                at["criteria"] = _his_intent(e, list(at["criteria"] or ()), True)
             else:
-                at["spec"] = spec(e, at.get("spec"), rec)
+                at["spec"] = spec(e, at.get("spec"), True)
         return fn(**at)
     return _call
 
@@ -3844,6 +3811,8 @@ def _signed(name: str, fn):
                 f"signed by its credential, never typed: take it on this connection (`act_as('{stranger}')`, a console "
                 f"of its own), sign in on the page (`gfso ui`) to sign as any name you own, or launch with that name's "
                 f"token (`gfso agent {stranger}`, then GFSO_TOKEN=<token>)")
+        if p.via.startswith("as:") and isinstance(e := ba.arguments.get("engine"), Engine):
+            e.performs_in_chat(p.name)        # …a name its connection took moves here: it works in that chat
         holder = _holder_of(ba.arguments.get("engine"), name, ba.arguments) if p.a_page else None
         signer = named[0] if named else holder if holder in p.signs_as else p.name
         # …into a signer the verb requires; one it defaults reads the caller (`_agent_id`), and its omission keeps its

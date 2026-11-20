@@ -501,6 +501,8 @@ def observes_by_itself(graph: Graph, task) -> bool:
 
 def owed_observer(graph: Graph, task) -> Optional[str]:
     """Why the instrument observes this node whatever its issuer chooses — None where who checks is his choice."""
+    if (scoped := scope_at(graph, task)) is not None and str(scoped[1].id) == str(task.id):
+        return None               # …a top's check is its issuer's choice, his own reading by default (`set_checker`)
     if graph.is_public(task):
         return "it is a seam: its result crosses into another scope (§10.3)"
     if _validate_internal():
@@ -1319,16 +1321,13 @@ def project_mode(graph: Graph) -> Optional[dict]:
     return json.loads(raw) if raw else None
 
 
-#: the settings key of the mode scopes, {the node he holds: record} (`Engine.set_mode_scope`)
+#: the settings key of the scopes an earlier build recorded at a node he held (`set_mode(node=)`, retired): the holders
+#: of the seams below one read as names working in a chat (`in_chat_names`)
 MODE_SCOPES = "mode_scopes"
+#: the settings key of the names that perform in a chat here, {name: {since}} (`Engine.performs_in_chat`)
+IN_CHAT = "in_chat"
 #: the settings key under which a node's recorded words are kept, + its id (`Engine.hear`)
 HEARD_ON = "heard_on:"
-
-
-def mode_scopes(graph: Graph) -> dict:
-    """{Y's id: {node, mode, perform, by, at}} — the mode the person set at a node Y he holds, for the work he issues
-    below it (§10.4)."""
-    return json.loads(graph._storage.get_setting(MODE_SCOPES) or "{}")
 
 
 def his_seam(issuer, held) -> bool:
@@ -1337,32 +1336,58 @@ def his_seam(issuer, held) -> bool:
     return str(issuer or "") in PERSONS_NAMES and bool(held) and str(held) not in PERSONS_NAMES
 
 
-def _under_a_scope(graph: Graph, task) -> Optional[tuple]:
-    """(record, top) where `task` lies at or under a scope's node Y — top the nearest node at or above `task` below Y
-    that he issues to another (`his_seam`), None at Y and at his own nodes above every such seam — or None elsewhere."""
-    scopes, top, t = mode_scopes(graph), None, task
-    while scopes and t is not None:
-        if (rec := scopes.get(str(t.id))) is not None:
-            return rec, top
-        if top is None and his_seam(graph.issuer_of(t.id), t.assignee):
-            top = t
-        t = graph.get_parent(t.id)
-    return None
+def in_chat_names(graph: Graph) -> dict:
+    """{name: {since}} of the names that perform in a chat in this project — each recorded by its own connection taking
+    it (`act_as`), the executor's own fact (§10.4: autonomy per task and role), never set for it by another; with the
+    holders of the seams under a scope an earlier build recorded, which said as much of them."""
+    names = json.loads(graph._storage.get_setting(IN_CHAT) or "{}")
+    for y, rec in json.loads(graph._storage.get_setting(MODE_SCOPES) or "{}").items():
+        todo = list(graph.get_children(TaskId(y)))
+        while todo:
+            t = todo.pop()
+            if his_seam(graph.issuer_of(t.id), t.assignee):
+                names.setdefault(str(t.assignee), {"since": rec.get("at")})
+            else:
+                todo += graph.get_children(t.id)
+    return names
+
+
+def _scope_of(graph: Graph, top, names: dict) -> dict:
+    """The record a top is held under: solo, performed in its holder's chat, from the node above it, his."""
+    y = graph.get_parent(top.id)
+    return {"node": str((y or top).id), "mode": Mode.SOLO.value, "perform": "in_chat", "by": str(top.assignee),
+            "at": names[str(top.assignee)].get("since")}
 
 
 def scope_at(graph: Graph, task) -> Optional[tuple]:
-    """(record, top) of the mode scope `task` lies in, or None: "autonomy is a per-task, per-role property, not a global
-    mode" (§10.4). His one act at Y sets the executor's level at each seam he issues below it, so each is a top held as
-    its own project would be under that mode; Y itself, and his nodes above every seam, are his own work, under none.
-    A top under another is impossible: below a top every node is issued by its holder (`del_by_mode`)."""
-    at = _under_a_scope(graph, task)
-    return at if at is not None and at[1] is not None else None
+    """(record, top) of the mode `task` lies under as a seam's holder works it, or None: "autonomy is a per-task, per-role
+    property, not a global mode" (§10.4). A seam the person issues to a name that performs in a chat (`in_chat_names`)
+    is a top held as his own solo agent holds his project — the level the executor's own fact sets, with no act of
+    anyone else's; his nodes above every seam are his own work, under none. A project's mode answers it whole where one
+    is set. A top under another is impossible: below a top every node is issued by its holder (`del_by_mode`)."""
+    if task is None or project_mode(graph) is not None or not (names := in_chat_names(graph)):
+        return None
+    t = task
+    while t is not None and not his_seam(graph.issuer_of(t.id), t.assignee):
+        t = graph.get_parent(t.id)
+    return (_scope_of(graph, t, names), t) if t is not None and str(t.assignee) in names else None
 
 
 def would_be_a_top(graph: Graph, parent, held) -> Optional[dict]:
-    """The scope record a node issued under `parent` to `held` would be a top of — or None."""
-    at = _under_a_scope(graph, parent)
-    return at[0] if at is not None and at[1] is None and his_seam(parent.assignee, held) else None
+    """The record a node issued under `parent` to `held` would be a top under — or None."""
+    if parent is None or project_mode(graph) is not None or scope_at(graph, parent) is not None or not (
+            his_seam(parent.assignee, held) and str(held) in (names := in_chat_names(graph))):
+        return None
+    return {"node": str(parent.id), "mode": Mode.SOLO.value, "perform": "in_chat", "by": str(held),
+            "at": names[str(held)].get("since")}
+
+
+def mode_scopes(graph: Graph) -> dict:
+    """{the node above a top: its record} over the live tops of this project (`scope_at`)."""
+    if project_mode(graph) is not None or not (names := in_chat_names(graph)):
+        return {}
+    return {(r := _scope_of(graph, t, names))["node"]: r for t in graph.all_tasks()
+            if t.state not in TERMINAL_STATES and str(t.assignee) in names and his_seam(graph.issuer_of(t.id), t.assignee)}
 
 
 def mode_at(graph: Graph, task) -> Optional[tuple]:
@@ -1380,10 +1405,11 @@ def mode_at(graph: Graph, task) -> Optional[tuple]:
 
 
 def outside_the_scopes(graph: Graph, task) -> bool:
-    """Does `task` lie in a project of scopes alone, under none of them? There the system starts and binds nothing, as
-    in a project with no mode: the scope's validator is the project's, and read project-wide it reached every other
-    stream — validating their deliveries unasked, binding their verdicts, stopping their graph at a restart."""
-    return project_mode(graph) is None and bool(mode_scopes(graph)) and mode_at(graph, task) is None
+    """Does `task` lie in a project with no mode where a name works in a chat (`in_chat_names`), under no top of one?
+    There the system starts and binds nothing, as in a project with no mode: a validator a top's issuer chose is the
+    project's, and read project-wide it reached every other stream — validating their deliveries unasked, binding
+    their verdicts, stopping their graph at a restart."""
+    return project_mode(graph) is None and bool(in_chat_names(graph)) and mode_at(graph, task) is None
 
 
 def heard_on(graph: Graph, node) -> list[dict]:
@@ -1399,15 +1425,17 @@ def goal_top(graph: Graph, task) -> bool:
 
 
 def persons_node(graph: Graph, task) -> bool:
-    """Is `task` where the person's word stands — the root of his project under solo or semi, or a mode scope's top,
-    whose issuer he is either way? His go, his packet and his verdict are his there (§10.1, §10.2); every node below is
-    issued by the holder, Del(parent), so a go, a revision or a signature there is the holder's own, and his words there
-    would sign a role he does not hold. His later asks are revisions of this node's criteria."""
+    """Is `task` where the person's word stands — the root of his project under solo or semi, or, in a project with no
+    mode, a seam he issues to another (`his_seam`), whoever holds it and however it is worked? His go, his packet and
+    his verdict are his there (§10.1, §10.2), and a connection signing as his name is his agent, not him: his words or
+    his page make his move. Every node below is issued by the holder, Del(parent), so a go, a revision or a signature
+    there is the holder's own, and his words there would sign a role he does not hold. His later asks are revisions of
+    this node's criteria. Under a mode its record answers who holds each node, his root's seam the one his word keeps."""
     if task is None:
         return False
-    if (scoped := scope_at(graph, task)) is not None:
-        return str(scoped[1].id) == str(task.id)
-    return graph.get_parent(task.id) is None and mode_kind(graph) in (Mode.SOLO, Mode.SEMI)
+    if (kind := mode_kind(graph)) is None:
+        return his_seam(graph.issuer_of(task.id), task.assignee)
+    return graph.get_parent(task.id) is None and kind in (Mode.SOLO, Mode.SEMI)
 
 
 def pause_record(graph: Graph) -> Optional[dict]:

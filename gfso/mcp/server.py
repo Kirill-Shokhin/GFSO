@@ -566,19 +566,22 @@ def _act_as(resolve, _Ctx):
             lease = req.headers.get(LEASE_HEADER) if req is not None else None
             p = CALLER.get()
             # …its own holding the name's token mends (a claim, under `--protected` since): that call reaches `take`
-            if p is not None and not p.signs_as and not (token and signin.holds(lease) == name):
+            # …and a bridge that signs nothing yet (under `--protected`) asks `take`, which wants the name's token
+            if p is not None and not p.signs_as and not (p.via == signin.BARE.via or token and signin.holds(lease) == name):
                 return {"refused": True, "error": f"this connection signs as no one: {p.lift}"}
             if p is not None and p.signs_as and p.via != STANDING.via and not p.via.startswith("as:"):
                 return {"refused": True, "error": f"this connection signs as `{p.name}` by its {p.how}: a console "
                         f"launched with a credential keeps it; take `{name}` in a console launched without one"}
             try:
-                issued = _issued_by_the_person(resolve(project or None, ctx, create=False), name)
+                engine = resolve(project or None, ctx, create=False)
             except Exception:           # …no project here: the names issued to him alone
-                issued = False
+                engine = None
             try:
-                CALLER.set(signin.take(lease, name, token, issued))
+                CALLER.set(signin.take(lease, name, token, engine is not None and _issued_by_the_person(engine, name)))
             except ValueError as ex:
                 return {"refused": True, "error": str(ex)}
+            if engine is not None:      # …the name performs in this chat: its own fact, where it took it
+                engine.performs_in_chat(name)
         return signin.whoami()
     act_as.__annotations__ = {"name": str, "token": str, "project": str, "ctx": _Ctx, "return": dict}
     return act_as
@@ -728,7 +731,7 @@ def _principal_of(ctx):
         req = ctx.request_context.request
     except (ValueError, LookupError, AttributeError):        # stdio, or no request: one process, one credential
         req = None
-    return signin.principal_of(req) if req is not None else signin.local_principal()
+    return signin.principal_of(req) if req is not None else signin.local_principal(mcp=True)
 
 
 #: the sessions whose client has been said in the server's log, held weakly: an entry dies with its session

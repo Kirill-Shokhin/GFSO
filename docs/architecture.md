@@ -930,6 +930,39 @@ encoding is where they show, or are engine gaps.)*
    appended to its finding's `rulings` (kind, by, why, at, the criterion's text), never rewritten, and the finding's
    standing is read off its latest deciding ruling (`gfso/engine/findings.py`). Each ruling is also a `ruling` line of
    the feed, so the person's page shows it (`Engine._ruled`).
+19. **The person's name is signed from his page or his own agent's MCP connection — a reading of §10.1–10.2,
+   declared.** §10.1: Del names the role's holder; §10.2: the signature is the issuer's. The canon says nothing of
+   transports, and the local person and his user-agents share the name `user` (PERSON_NAME (M)). A door therefore
+   decides who may sign that name, and a door that let any process sign it would let a console nobody opened as his
+   agent sign his role. `signin.principal_of` resolves a call with no credential as follows. A page is `PAGE`. A
+   bridge's connection at `/mcp` is the name its lease took (`held`), or `STANDING` where it took none. Anything else
+   is `BARE`: a script, curl, and the CLI's HTTP path, a console's lease included, since the CLI is no MCP door.
+   `BARE` reads and signs nothing. Its refusal names the page, the MCP bridge and `gfso agent <name>`. It still
+   sends the server's own life, which signs no name in any graph: `/api/lease`, `/api/shutdown`, `/api/wait`,
+   `/api/witness` (`server._CONSOLES_OWN`). `local_principal(mcp=)` gives the same answer with no server between: a
+   stdio server is an MCP client's (`STANDING`), and the CLI's in-process path (`driver._locally`) is `BARE`, because
+   which door serves a shell depends only on whether a server happens to be up. The OS user stays the local boundary.
+   Any process of his can open a bridge, as SECURITY.md says, and `--protected` closes that: there a bridge is no
+   agent of his by itself (`BARE_PROTECTED`), it takes a stream's name by its token, and `user` signs from his
+   signed-in page alone.
+20. **A seam he issues keeps his word; a name taken in a chat holds its seams solo — §10.1–10.4, CLOSED (the mode
+   scope retired).** In a project with no mode, `persons_node(t)` holds at every node whose issuer is a
+   `PERSONS_NAMES` party and whose Del is not (`his_seam`), with no scope set. Every issuer move there that comes
+   through a door is his: from an agent's connection with his words (`user_said`), from his page as it is
+   (`Engine.guards_his_word`, read by `_the_persons_packet` and the door's `_the_persons_move`). A call that no door
+   served is the system's own and keeps the earlier rule. The criterion `answers_the_persons_words` comes with his
+   act of issuing such a seam, at its first ASSIGN or a re-ASSIGN that makes it one, and never with a system move
+   (`tools_llm._his_intent`). It is on by default, and `set_mode(intent_check=False)` turns it off. §10.4 makes
+   autonomy per task and role. The level a seam is held at is its executor's own fact: `act_as(<name>)` over MCP
+   records that the name performs in a chat (`Engine.performs_in_chat`, the `in_chat` setting; also at the first
+   move of a connection that took it). Each seam he issues to such a name is a top
+   (`validation.scope_at`), held solo `in_chat` as the scope held it, the record derived and never stored. A
+   project's mode answers alone where one is set, and is refused over a standing top. `set_mode(node=…)` is refused
+   with that reason, and the page dropped its switch. A scope an earlier build stored reads its seams' holders as
+   working in a chat (`in_chat_names`). Who checks a top is its issuer's choice (§10.2: the check is anyone's, the
+   signature his): his own reading by default, since a seam's check must be not its executor's (§10.3) and he is
+   not its executor, and the validator observing each delivery where he chose it (`set_checker`). A top therefore
+   owes no observer of its own (`owed_observer`), and a top staffs no validator (`validator_staffed`).
 
 **Two boundaries, delineated rather than patched.**
 

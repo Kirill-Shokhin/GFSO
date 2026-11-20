@@ -275,11 +275,12 @@ def _print_verb_help(name: str, fn) -> None:
     print(f"gfso run {name} " + " ".join(f"<{p}>" for p in _params(fn)) + " [project=<name>]\n")
     print(textwrap.dedent(fn.__doc__ or "(no description)").strip())
     if (who := [p for p in _params(fn) if p in _WHO_PARAMS]):
-        me = signin.local_principal().name
-        print(f"\nYOUR ID AT THIS DOOR IS `{me}`: your token's name (`GFSO_TOKEN`, from `gfso agent <name>`), "
-              f"else the\nstanding agent — the name `auto_decompose` writes into every node it builds for "
-              f"you, so a node\nreported as `\"mine\": true` has Del=`{me}`. A move is signed by that name; "
-              f"a signer argument\nnaming another is refused — a name is signed by its credential, never typed.")
+        me = (p := signin.local_principal()).name
+        print(f"\nNO ID AT THIS DOOR: {p.lift}. Without one this door reads, and signs nothing." if not p.signs_as else
+              f"\nYOUR ID AT THIS DOOR IS `{me}`: your token's name (`GFSO_TOKEN`, from `gfso agent <name>`), "
+              f"or the name\nyour console's gfso connection took — the name `auto_decompose` writes into every node "
+              f"it builds for\nyou, so a node reported as `\"mine\": true` has Del=`{me}`. A move is signed by that "
+              f"name; a signer\nargument naming another is refused — a name is signed by its credential, never typed.")
     if name in _HELP_EXAMPLES:
         print("\n" + _HELP_EXAMPLES[name])
 

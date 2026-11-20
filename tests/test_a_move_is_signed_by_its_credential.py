@@ -41,14 +41,22 @@ def _signed(e, task, sig):
     return [(str(a.source), a.via, a.rejected) for a in e.audit_log(TaskId(task)) if a.signal == sig]
 
 
-def test_a_local_client_with_no_credential_is_the_standing_agent_and_types_no_other(door):
+def test_a_local_client_with_no_credential_reads_and_the_standing_agent_types_no_other(door):
+    """A local client with no credential and no bridge reads and signs nothing; the standing agent — the person's own
+    MCP connection, `config.STANDING` — signs as his name and types no other."""
     e, app = door
     c = _client(app)
-    assert c.get("/api/whoami").json() == {"name": "user", "kind": "agent", "how": "default", "signs_as": ["user"]}
-    assert c.post("/api/run/create_task", json={"task_id": "n", "spec": SPEC}).status_code == 200
-    out = c.post("/api/run/signal", json={"task_id": "n", "signal": "ACCEPT", "source": "dev"}).json()
-    assert out.get("refused") and "signs only as user" in out["error"] and "gfso agent dev" in out["error"], out
-    assert c.post("/api/run/signal", json={"task_id": "n", "signal": "ACCEPT"}).json()["accepted"]
+    assert c.get("/api/whoami").json()["kind"] == "none"
+    out = c.post("/api/run/create_task", json={"task_id": "n", "spec": SPEC}).json()
+    assert out.get("refused") and "gfso agent" in out["error"], out
+    token = config.CALLER.set(config.STANDING)
+    try:
+        assert not T.TOOLS["create_task"](e, "n", SPEC).get("refused")
+        out = T.TOOLS["signal"](e, "n", "ACCEPT", source="dev")
+        assert out.get("refused") and "signs only as user" in out["error"] and "gfso agent dev" in out["error"], out
+        assert T.TOOLS["signal"](e, "n", "ACCEPT")["accepted"]
+    finally:
+        config.CALLER.reset(token)
     e.wait_idle()
     assert _signed(e, "n", Signal.ACCEPT) == [("user", "default", False)]
 
