@@ -135,6 +135,8 @@ def root_issuer_key(task_id) -> str:
 PAUSE_KEY = "paused"
 #: The tech reports filed in the project — about the system, not the task (`Engine.tech_report`).
 TECH_KEY = "tech_reports"
+#: Where a node's deadline moves on the wall are recorded: each a stop's held time, at its lift (`Engine.deadline_moves`).
+DEADLINE_MOVES = "deadline_moves:"
 #: The writes a console's witness saw in the project's repository while no node of it was at work there (`Engine.witnessed`):
 #: work past the system, the project's own record — not the system's defect.
 WITNESS_KEY = "witnessed"

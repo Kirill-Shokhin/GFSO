@@ -889,9 +889,19 @@ encoding is where they show, or are engine gaps.)*
    no states of the contract: in them no party's move is made. So every bound is written and read on `project_now` —
    the wall less the time the project did not run (a tick under a stop, a gap between ticks over 120 s, the gap since
    the last beat at an engine's start; `gfso/core/graph/model.py`) — which moves every bound of the project by one amount
-   and keeps every order between them (child inside parent, Dep, CHECK-3). Outside, every time reads on the wall. Two
-   consequences are named: a project nobody loads keeps its bounds still, a person's included; an account-limit window is
-   not yet left off (no server-wide fact for it).
+   and keeps every order between them (child inside parent, Dep, CHECK-3). Outside, every time reads on the wall. The
+   system stops a project by itself only where its own roles carry the work (`Engine.system_carries_work`): an account
+   at its limit or refusing authentication and an execution place down lift by themselves once the cause is gone; the
+   stop a server's start makes lifts only by a person's Start, as his own stop does. A project nobody loads keeps its
+   bounds still, a person's included (named). **The shift is on the record, not a revision.** At every lift of a stop
+   that held time, each live node with a deadline gets a record of how its deadline moved on the wall — before, after,
+   how long the stop held, who stopped and who started (`Engine.deadline_moves`, served on the node as
+   `deadline_moves`, and a `clock` line of the feed) — since Thm 11 asks every decision a record and the log's packet
+   did not move. A re-ASSIGN carrying the new date is refused as the carrier: no packet field changed (the deadline is
+   the same instant on the project's clock), and a revision enters OFFERED (§12.3), so it would re-offer every consented
+   node, re-present every delivery at the cost of a re-consent and a re-delivery (§12.10), and make the person's issuer
+   moves on his own nodes; the record stands beside the log, as a finding's ruling does (corner 18), and the version
+   and its consent stand.
 17. **No re-issue out of ESCALATED is counted, the AUTO root included (CLOSED).** §12.15: "ESCALATED's re-ASSIGN
    unmakes no settlement and is not counted". The machine re-issuing the AUTO root once had a count of its own; it is
    gone. Every re-issue is a new version that ends by its deadline and the per-state bounds (Φ2), below the root inside

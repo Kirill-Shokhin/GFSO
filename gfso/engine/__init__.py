@@ -22,7 +22,7 @@ from gfso.core.types import (
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
                                    start_waits,
-                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, root_of, root_issuer_key,
+                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
 from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair
@@ -799,7 +799,34 @@ class Engine:
             self._storage.store_setting(PAUSE_KEY, "")
         if was:
             self.emit_info("pause", f"STARTED again by {by}{_via_said()} (stopped since {was.get('at')})")
+            self._record_the_held_time(was, by)
         return was
+
+    def _record_the_held_time(self, was: dict, by: str) -> None:
+        """THE TIME A STOP HELD, ON EVERY DEADLINE IT MOVES (Thm 11: every decision has a record). Left off the project's
+        clocks, it moves each live deadline that much later on the wall, and the log's packet stood still: a node's own
+        record says so — the deadline as it read before and after, how long the stop held, who stopped and who started.
+        No revision: no packet field moved (the deadline is the same instant on the project's clock), and a re-ASSIGN
+        would re-offer every consented node (Inv-1), re-present every delivery (§12.10), and make a person's issuer
+        move on his own nodes — so the shift is recorded beside the log, as a finding's ruling is (architecture, corner
+        18), and the version and its consent stand."""
+        if was.get("off_s") is None or (held := clock_off_s(self._graph) - float(was["off_s"])) < 1:
+            return
+        rec = {"held_s": round(held, 1), "stopped_by": was.get("by"), "why": was.get("why") or "",
+               "since": was.get("at"), "started_by": str(by), "at": datetime.now().isoformat(timespec="seconds"),
+               "log_at": len(self._audit)}
+        for t in self._graph.active_tasks():
+            if t.deadline is not None:
+                now = on_the_wall(self._graph, t.deadline)
+                self._appended(f"{DEADLINE_MOVES}{t.id}", {
+                    "was": (t.deadline + timedelta(seconds=float(was["off_s"]))).isoformat(), "now": now.isoformat(), **rec})
+                self.emit_info("clock", f"{t.id}: its deadline reads {held / 60:.0f} min later, {now:%Y-%m-%d %H:%M} — "
+                                        f"the stop by {was.get('by')} since {was.get('at')} held the project's time; "
+                                        f"its contract and consent stand")
+
+    def deadline_moves(self, task_id) -> list[dict]:
+        """How the node's deadline moved on the wall, oldest first (`_record_the_held_time`)."""
+        return self._records(f"{DEADLINE_MOVES}{task_id}")
 
     def stop_for_the_limit(self, role: str, lifts_at: Optional[float]) -> dict:
         """THE ACCOUNT'S LIMIT IS A STOP IN SUBSTANCE: while it refuses every call nobody can move, so no bound may run
@@ -910,6 +937,7 @@ class Engine:
             + ([] if not was.get("until") else ["a credential was set"] if moved else
                ["the time to ask the account again came"] if was.get("account") is not None else
                ["the account's limit lifted"])) + f" (stopped since {was.get('at')})")
+        self._record_the_held_time(was, "system")
 
     def tech_report(self, text: str, role: str, actor: str, task_id=None) -> dict:
         """A report about the SYSTEM, not the task — a check contradicting its contract, a tool that cannot run, an answer

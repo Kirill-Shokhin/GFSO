@@ -219,6 +219,8 @@ def task_out(t, engine: Engine, plan: bool = True) -> Optional[dict]:
         "done_reason": t.done_reason.name if t.done_reason else None,
         "iteration": t.iteration, "max_iterations": t.max_iterations, "reopens": t.reopens,
         "deadline": wall(t.deadline),
+        # …and every move of it on the wall a stop's held time made, which no packet version carries
+        **({"deadline_moves": moves} if (moves := engine.deadline_moves(t.id)) else {}),
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "state_entered_at": wall(t.state_entered_at),
         "was_challenged": t.was_challenged,
