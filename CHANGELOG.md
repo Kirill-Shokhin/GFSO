@@ -14,15 +14,16 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 
 ### Changed
 - The person's name `user` is signed from his page or from his own agent's MCP connection — a bridge carrying its lease,
-  or a stdio server — that has taken no stream's name. A local client with no credential and no bridge (a script, curl,
-  `gfso run` with a server up or not) reads and signs nothing; its move is refused naming the page, the MCP bridge and
-  `gfso agent <name>`. It still sends the server's own life (a lease's beat, a stop, a wait, a witness). Under
-  `--protected` a bridge signs nothing until it takes a stream's name by its token.
+  or a stdio server — that has taken no stream's name, under `--protected` too. A local client with no credential, no
+  bridge and no page's headers (a script, curl, `gfso run` with a server up or not) reads and signs nothing — a filter
+  against an agent's casual call, not a barrier; its move is refused naming the page, the MCP bridge and
+  `gfso agent <name>`. It still sends the server's own life (a lease's beat, a stop, a wait), and its witness is
+  answered with no record.
 - In a project with no mode, every seam the person issues to another name keeps his word, with no scope set: an issuer
   move there from an agent's connection carries his words (`user_said`), from his page none; a call no door served keeps
   the earlier rule. His issue of such a seam installs `answers_the_persons_words` by default (`set_mode(intent_check=False)`
   turns it off).
-- A seam's holder working in its chat holds it solo by its own act: `act_as(<name>)` records that the name performs in a
+- A seam's holder working in its chat holds it solo by its own act: a move under its name over MCP (taken by `act_as`, or launched with its token) records that it performs in a
   chat, and each seam the person issues to it is a top as the mode scope made it. `set_mode(node=…)` is refused with
   that reason, the page's switch is gone, and a scope stored earlier reads its holders as working in a chat. Who checks
   a top is its issuer's choice: his own reading by default, the validator where he chose it (`set_checker`).

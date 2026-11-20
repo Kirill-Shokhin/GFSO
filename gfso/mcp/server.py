@@ -580,8 +580,6 @@ def _act_as(resolve, _Ctx):
                 CALLER.set(signin.take(lease, name, token, engine is not None and _issued_by_the_person(engine, name)))
             except ValueError as ex:
                 return {"refused": True, "error": str(ex)}
-            if engine is not None:      # …the name performs in this chat: its own fact, where it took it
-                engine.performs_in_chat(name)
         return signin.whoami()
     act_as.__annotations__ = {"name": str, "token": str, "project": str, "ctx": _Ctx, "return": dict}
     return act_as

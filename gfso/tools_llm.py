@@ -3811,10 +3811,10 @@ def _signed(name: str, fn):
                 f"signed by its credential, never typed: take it on this connection (`act_as('{stranger}')`, a console "
                 f"of its own), sign in on the page (`gfso ui`) to sign as any name you own, or launch with that name's "
                 f"token (`gfso agent {stranger}`, then GFSO_TOKEN=<token>)")
-        if p.via.startswith("as:") and isinstance(e := ba.arguments.get("engine"), Engine):
-            e.performs_in_chat(p.name)        # …a name its connection took moves here: it works in that chat
         holder = _holder_of(ba.arguments.get("engine"), name, ba.arguments) if p.a_page else None
         signer = named[0] if named else holder if holder in p.signs_as else p.name
+        if client_kind() is not None and isinstance(e := ba.arguments.get("engine"), Engine):
+            e.performs_in_chat(signer)        # …a stream's name moving over MCP — taken or launched with — works in a chat
         # …into a signer the verb requires; one it defaults reads the caller (`_agent_id`), and its omission keeps its
         # meaning (a root created naming no issuer is self-assigned)
         a, at = list(a), list(sig.parameters)

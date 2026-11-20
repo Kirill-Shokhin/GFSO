@@ -60,17 +60,6 @@ BARE = Principal(STANDING.name, (), "bare", "no credential", LOCAL_PERSON,
                  "a move signs as someone, and this call carries no credential: as the person, on his page (`gfso ui`) "
                  "or through his agent's gfso MCP connection; as a stream, with its token (`gfso agent <name>`, then "
                  "GFSO_TOKEN=<token>)")
-#: …under `--protected`, where a bridge is no agent of his by itself: his page, or a name's token
-BARE_PROTECTED = Principal(BARE.name, (), BARE.via, BARE.how, LOCAL_PERSON,
-                           "a move signs as someone, and this call carries no credential: as the person, on his "
-                           "signed-in page (`gfso ui`); as a stream, with its token (`gfso agent <name>`, then "
-                           "`act_as('<name>', token=…)` or GFSO_TOKEN=<token>)")
-
-
-def _bare() -> Principal:
-    return BARE_PROTECTED if protected() else BARE
-
-
 #: where an MCP client's bridge reaches the server: the one door a lease that took no name signs as the person at
 MCP_PATH = "/mcp"
 
@@ -371,7 +360,7 @@ def principal_of(conn) -> Principal:
         return _refused(_SIGN_IN) if page_auth() == "key" else PAGE
     lease = h.get(LEASE_HEADER)
     at_mcp = any(str(conn.scope.get(k) or "").startswith(MCP_PATH) for k in ("root_path", "path"))
-    return held(lease) or (STANDING if lease and at_mcp and not protected() else _bare())
+    return held(lease) or (STANDING if lease and at_mcp else BARE)
 
 
 #: the server's live bridge leases, raw (`/api/lease`), handed down by the server that holds them; None, or None from
@@ -395,13 +384,17 @@ def held(lease: str | None) -> Principal | None:
     name, person, via, since, lost = row
     if lost:
         return _refused(f"this connection took `{name}` at {_when(since)}, and another connection took it at "
-                        f"{_when(lost)} while this one was silent: restart this console's gfso connection (`/mcp`)")
+                        f"{_when(lost)} while this one was silent. Restarting this console's gfso connection (`/mcp`) "
+                        f"makes it the person's own agent again, signing as `user`: take `{name}` again there "
+                        f"(`act_as('{name}')`) before any move of the stream's")
     if via == "claim" and protected():
         return _refused(f"under --protected a name is taken with its own credential: `act_as('{name}', token=…)`, "
                         f"the token `gfso agent {name}` prints")
     if (kind := systems_name(name)) or (via != "claim" and not _held("SELECT 1 FROM tokens WHERE id = ?", via)):
         what = f"now the system's ({kind})" if kind else "no longer issued: its token was revoked"
-        return _refused(f"`{name}` is {what}: this connection signs as nothing until it is restarted")
+        return _refused(f"`{name}` is {what}: this connection signs as nothing. Restarting its gfso connection (`/mcp`) "
+                        f"makes it the person's own agent again, signing as `user`, until it takes a name of its own "
+                        f"(`act_as`)")
     return Principal(name, (name,), f"as:{_hash(lease)[:12]}", f"acting as {name} since {_when(since)}", person)
 
 
@@ -443,7 +436,8 @@ def take(lease: str | None, name: str, token: str = "", issued: bool = False) ->
         if (mine := db.execute("SELECT name FROM holds WHERE lease = ?", (h,)).fetchone()) is not None:
             if mine[0] != name:
                 raise ValueError(f"this connection acts as `{mine[0]}`: one connection holds one name for its life. "
-                                 f"Take `{name}` in a console of its own, or restart this one's gfso connection (`/mcp`)")
+                                 f"Take `{name}` in a console of its own, or restart this one's gfso connection (`/mcp`): "
+                                 f"it is then the person's own agent, signing as `user`, until it takes `{name}`")
             if token:
                 db.execute("UPDATE holds SET via = ? WHERE lease = ?", (via, h))   # …a claim, now with its token
         seen = LIVE_LEASES() if LIVE_LEASES is not None else None
@@ -468,7 +462,7 @@ def local_principal(mcp: bool = False) -> Principal:
     if (refused := launch_refusal()) is not None:
         return _refused(refused)
     raw = launch_token()
-    return by_token(raw) if raw else held(console_lease()) or (STANDING if mcp and not protected() else _bare())
+    return by_token(raw) if raw else held(console_lease()) or (STANDING if mcp else BARE)
 
 
 def launch_refusal() -> str | None:

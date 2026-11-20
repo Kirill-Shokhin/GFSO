@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from starlette.testclient import TestClient
@@ -19,6 +20,7 @@ import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso import config, driver, signin
 from gfso.adapters.llm.stub import StubLLM
+from gfso.api import server as S
 from gfso.api.server import create_app
 from gfso.config import CALLER, LEASE_HEADER, Principal
 from gfso.core.protocol.invariants import INTENT
@@ -79,6 +81,42 @@ def test_a_call_with_no_credential_and_no_bridge_reads_and_its_move_is_refused_n
 def test_the_servers_life_is_still_a_consoles_own_with_no_credential(door):
     """A bridge's heartbeat signs no name: it goes before the bridge has recorded its console."""
     assert _client(door[1]).post("/api/lease", json={"id": "x"}).json()["ok"]
+
+
+def _conn(path, **headers):
+    """A connection to this server from the person's own process at loopback, asking `path`."""
+    return SimpleNamespace(headers=headers, cookies={}, client=("127.0.0.1", 50000),
+                           scope={"path": path, "server": ("127.0.0.1", 8000)})
+
+
+def test_under_protected_his_bridge_and_his_stdio_server_are_still_his_agent(monkeypatch):
+    """`--protected` guards his page by its sign-in; his agent's connections are his agent there too (the author:
+    «управление юзерагентами»), a stream signing as its name once it took it with its token."""
+    monkeypatch.setenv("GFSO_PAGE_AUTH", "key")
+    monkeypatch.delenv(config.TOKEN_ENV, raising=False)
+    monkeypatch.setattr(signin, "console_lease", lambda: None)
+    lease = {"host": "127.0.0.1:8000", LEASE_HEADER: uuid.uuid4().hex}
+    assert signin.principal_of(_conn("/mcp", **lease)) is config.STANDING
+    assert signin.local_principal(mcp=True) is config.STANDING
+    assert not signin.principal_of(_conn("/api/run/signal", **lease)).signs_as
+    assert not signin.principal_of(_conn("/mcp", host="127.0.0.1:8000", origin=LOOPBACK)).signs_as, "the page signs in"
+
+
+def test_a_lost_holding_says_a_restart_makes_the_connection_his_agent_again():
+    """A restarted bridge is a new lease: the person's own agent, signing as `user`, until it takes its name again."""
+    lease = uuid.uuid4().hex
+    with signin._db() as db:
+        db.execute("INSERT INTO holds VALUES (?, ?, ?, ?, ?, ?)", (signin._hash(lease), "eng-lost", "local", "claim",
+                                                                   1.0, 2.0))
+    lift = signin.held(lease).lift
+    assert "`user`" in lift and "act_as('eng-lost')" in lift, lift
+
+
+def test_a_call_that_signs_nothing_writes_no_witness(door, monkeypatch):
+    seen = []
+    monkeypatch.setattr(S.past, "witness", lambda *a, **k: seen.append(a) or {"say": "recorded"})
+    out = _client(door[1]).post("/api/witness", json={"repository": "x", "tool": "Write", "paths": ["f"]})
+    assert out.status_code == 200 and out.json() == {} and not seen, out.text
 
 
 def test_the_cli_with_no_server_reads_and_signs_nothing(door, monkeypatch):

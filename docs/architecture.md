@@ -938,13 +938,14 @@ encoding is where they show, or are engine gaps.)*
    bridge's connection at `/mcp` is the name its lease took (`held`), or `STANDING` where it took none. Anything else
    is `BARE`: a script, curl, and the CLI's HTTP path, a console's lease included, since the CLI is no MCP door.
    `BARE` reads and signs nothing. Its refusal names the page, the MCP bridge and `gfso agent <name>`. It still
-   sends the server's own life, which signs no name in any graph: `/api/lease`, `/api/shutdown`, `/api/wait`,
-   `/api/witness` (`server._CONSOLES_OWN`). `local_principal(mcp=)` gives the same answer with no server between: a
+   sends the server's own life, which signs no name in any graph: `/api/lease`, `/api/shutdown`, `/api/wait`, and
+   `/api/witness`, answered {} with no record written. `BARE` is a filter against an agent's casual call, not a
+   barrier: the same process with one browser header is `PAGE` under `local-peer`. `local_principal(mcp=)` gives the same answer with no server between: a
    stdio server is an MCP client's (`STANDING`), and the CLI's in-process path (`driver._locally`) is `BARE`, because
    which door serves a shell depends only on whether a server happens to be up. The OS user stays the local boundary.
-   Any process of his can open a bridge, as SECURITY.md says, and `--protected` closes that: there a bridge is no
-   agent of his by itself (`BARE_PROTECTED`), it takes a stream's name by its token, and `user` signs from his
-   signed-in page alone.
+   Any process of his can open a bridge, as SECURITY.md says. `--protected` guards the page by its sign-in and asks a
+   stream's token at `act_as`, while a bridge with its lease and a stdio server stay his agent (`STANDING`) there
+   too: his agents are how he works.
 20. **A seam he issues keeps his word; a name taken in a chat holds its seams solo — §10.1–10.4, CLOSED (the mode
    scope retired).** In a project with no mode, `persons_node(t)` holds at every node whose issuer is a
    `PERSONS_NAMES` party and whose Del is not (`his_seam`), with no scope set. Every issuer move there that comes
@@ -953,9 +954,9 @@ encoding is where they show, or are engine gaps.)*
    served is the system's own and keeps the earlier rule. The criterion `answers_the_persons_words` comes with his
    act of issuing such a seam, at its first ASSIGN or a re-ASSIGN that makes it one, and never with a system move
    (`tools_llm._his_intent`). It is on by default, and `set_mode(intent_check=False)` turns it off. §10.4 makes
-   autonomy per task and role. The level a seam is held at is its executor's own fact: `act_as(<name>)` over MCP
-   records that the name performs in a chat (`Engine.performs_in_chat`, the `in_chat` setting; also at the first
-   move of a connection that took it). Each seam he issues to such a name is a top
+   autonomy per task and role. The level a seam is held at is its executor's own fact: a move signed under a stream's
+   name over MCP, taken by `act_as` or launched with its token, records that the name performs in a chat
+   (`Engine.performs_in_chat`, the `in_chat` setting), at one carrier, the door's signing (`tools_llm._signed`). Each seam he issues to such a name is a top
    (`validation.scope_at`), held solo `in_chat` as the scope held it, the record derived and never stored. A
    project's mode answers alone where one is set, and is refused over a standing top. `set_mode(node=…)` is refused
    with that reason, and the page dropped its switch. A scope an earlier build stored reads its seams' holders as

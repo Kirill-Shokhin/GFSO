@@ -82,8 +82,11 @@ no forwarding header taken for the client, so the OS is always asked of the real
   name at a time, and for one lease grace after a server start every holding counts as live. A name the system's roles hold (an
   executor's, a validator's) is neither issued nor taken;
 - your own agent signs as `user` over an MCP connection that took no stream's name (a bridge carrying its lease, a
-  stdio server); a local client with no credential and no bridge (a script, curl, `gfso run`) reads and signs nothing.
-  Locally, any process of yours can open a bridge and be your agent; `--protected` closes it;
+  stdio server), under `--protected` too. Locally any process of yours can open a bridge and be your agent: nothing
+  closes that, since your OS user is you here. A local client with no credential, no bridge and no page's headers (a
+  script, curl, `gfso run`) is not taken for your agent and signs nothing. That keeps an agent's casual call off your
+  name; it is no barrier, since one browser header (`Origin`, `Sec-Fetch-Site`) makes the same process your page by
+  default;
 - a browser page of another site, a call that names a front's host, a server bound past loopback, and any call carrying
   a `Forwarded`, `X-Forwarded-*` or `Tailscale-*` header move nothing with no credential: a front's every client
   arrives from this machine, so loopback says nothing there.
@@ -92,8 +95,8 @@ What the default holds off: a web page of another site, and any move by another 
 every device the server is reachable from does; `--protected` closes reading too). What it does not: any
 process of your own OS user, your own agents included — locally you and they are one user, and a click on your page is
 your act whichever process made it. `--protected` adds that a process of yours must also hold a page session to move as
-you from a browser, and that a bridge signs nothing until it takes a stream's name by its token; it can still read
-gfso's state, or issue itself a token at your shell.
+you from a browser, and that a console takes a stream's name only with its token; your agent's bridge still signs as
+`user`, and a process of yours can still read gfso's state, or issue itself a token at your shell.
 What the signing protects is attribution: a name an agent saw and typed, or a stale field, signs nothing by itself;
 signing as another name takes its issuance, a step the log records beside the name (`via`: `session`, `local-peer`, the
 token's id, `default`, `as:` a digest of the connection that took the name). Sessions and tokens are kept hashed,
