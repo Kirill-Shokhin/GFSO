@@ -10,7 +10,7 @@ import gfso.engine.loop as L
 import gfso.tools as T
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.core.types import AgentId, Mode, TaskId
-from gfso.core.graph.model import CLOCK_BEAT_KEY, keep_off
+from gfso.core.graph.model import CLOCK_BEAT_KEY, clock_off_s, keep_off
 from tests.support import criterion, make_engine
 
 
@@ -88,6 +88,33 @@ def test_a_server_down_left_off_at_the_engines_start_is_on_each_deadlines_record
         assert m["stopped_by"] == ("the-user" if stopped else "the server was down"), m
         assert stopped or any("the server was down" in x["message"] for x in again.pipeline_log(about="n: "))
         again.stop()
+
+
+def test_a_graph_people_hold_runs_on_absolute_time_through_a_server_down_and_a_stop(monkeypatch):
+    """The author, 2026-11-15: «там очевидно и часы вести не для кого». No mode, the node held by a person: an hour of
+    the server down and half an hour of a person's stop leave nothing off its clocks and record nothing (§12.2)."""
+    shift = {"s": 0.0}
+    monkeypatch.setattr(L, "time", type("T", (), {"time": staticmethod(lambda: time.time() + shift["s"])}))
+    kept = MemoryStorage()
+    e = make_engine(storage=kept, validate_signals=True, state_timeout=0, check_interval=0.05)
+    e.start()
+    T.create_task(e, "n", {"description": "x", "criteria": [criterion("a", "A")]}, "w")
+    e.wait_idle()
+    e.stop()
+    kept.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
+    again = make_engine(storage=kept, validate_signals=True, state_timeout=0, check_interval=0.05)
+    assert not again.system_carries_work()
+    again.start()
+    was = T.get_task(again, "n")["deadline"]
+    again.pause("the-user", "")
+    shift["s"] = 1800.0                                  # half an hour under the stop, between two of its ticks
+    time.sleep(0.3)
+    again.resume("the-user")
+    time.sleep(0.2)
+    got = T.get_task(again, "n")
+    again.stop()
+    assert clock_off_s(again.graph) < 1 and got["deadline"] == was, (clock_off_s(again.graph), was, got["deadline"])
+    assert again.deadline_moves("n") == [], again.deadline_moves("n")
 
 
 def test_a_host_asleep_between_two_ticks_is_on_each_deadlines_record(monkeypatch):

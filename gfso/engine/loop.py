@@ -21,7 +21,7 @@ from gfso.core.protocol.invariants import content_words, is_pure_assent
 from gfso.core.protocol.procedure import admission_defects, criterionless
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.graph import Graph
-from gfso.core.graph.model import (NO_TICK_S, clock_off_s, dep_scope, keep_off, kept_off, non_leaf_ids, project_now,
+from gfso.core.graph.model import (NO_TICK_S, clock_off_s, dep_scope, keep_off, kept_off, non_leaf_ids, project_now, time_holds,
                                    project_state_bound, standing_split)
 from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation
 from gfso.core.handlers import run_all_checks, recommend
@@ -641,8 +641,9 @@ def timeout_monitor(
         # …the beat kept at every tick, with what the tick leaves off (`keep_off`): pending between ticks is read by
         # `clock_off_s` by this same rule, so the clock is the same whether a reader comes before or after a tick
         stopped, before = pause_record(graph), kept_off(graph)
-        keep_off(graph, wall - last if stopped or wall - last > NO_TICK_S else 0.0, beat=wall)
-        if held is not None and not stopped and wall - last > NO_TICK_S:   # …under a stop, the stop's lift records it
+        holds = (stopped or wall - last > NO_TICK_S) and time_holds(graph)    # …read once a pass, only where asked
+        keep_off(graph, wall - last if holds else 0.0, beat=wall)
+        if held is not None and holds and not stopped:    # …under a stop, the stop's lift records it
             held(last, before)
         if stopped:
             if lift is not None:

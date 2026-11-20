@@ -187,8 +187,17 @@ def clock_off_s(graph: "Graph") -> float:
     if beat := graph.setting(CLOCK_BEAT_KEY):
         gap = time.time() - float(beat)
         stopped = bool(json.loads(graph.setting(PAUSE_KEY) or "null"))
-        pending = gap if stopped or gap > NO_TICK_S else 0.0
+        pending = gap if (stopped or gap > NO_TICK_S) and time_holds(graph) else 0.0
     return kept_off(graph) + max(0.0, pending)
+
+
+def time_holds(graph: "Graph") -> bool:
+    """Does wall time nobody ran this project in stay off its clocks — a stop, a server down, a host asleep? Only where
+    the system carries its work (`Graph.carries_work`): a bound spent there was spent by nobody, while on a graph people
+    hold their deadlines run on the wall as the canon's never-suspended deadline does (§12.2; the author, 2026-11-15:
+    «там очевидно и часы вести не для кого»). Read at the moment a gap is left off, so a project changing hands
+    mid-stop holds from the tick it carries work and not before. A graph no engine runs: yes, as it always was."""
+    return graph.carries_work is None or bool(graph.carries_work())
 
 
 def keep_off(graph: "Graph", seconds: float, beat: Optional[float] = None) -> None:
@@ -203,11 +212,12 @@ def keep_off(graph: "Graph", seconds: float, beat: Optional[float] = None) -> No
 
 def leave_off_the_gap(graph: "Graph") -> float:
     """At an engine's start, before anything reads a bound: the wall time since the project's last beat is left off its
-    clocks, and the beat is kept at once, so a death in the next seconds counts nothing twice. Returns the gap's start
-    and the off kept before it — None where no beat was ever kept."""
+    clocks where time holds (`time_holds`), and the beat is kept at once, so a death in the next seconds counts nothing
+    twice. Returns the gap's start and the off kept before it — None where nothing was left off."""
     now, was, before = time.time(), graph.setting(CLOCK_BEAT_KEY), kept_off(graph)
-    keep_off(graph, now - float(was) if was else 0.0, beat=now)
-    return (float(was), before) if was else None
+    held = bool(was) and time_holds(graph)
+    keep_off(graph, now - float(was) if held else 0.0, beat=now)
+    return (float(was), before) if held else None
 
 
 def project_now(graph: Optional["Graph"]) -> datetime:
@@ -370,6 +380,9 @@ class Graph:
         # WHO OF THE NON-HUMAN PARTICIPANTS IS WHAT, {id: kind} — published by the dispatcher (`Workforce.publish_roster`);
         # None before it first does, so no party reads as a person by absence from a roster nobody wrote
         self.roster: Optional[dict] = None
+        # DO THE SYSTEM'S ROLES CARRY THIS PROJECT'S WORK — handed by its engine (`Engine.system_carries_work`), the one
+        # reading `time_holds` asks; None on a graph no engine runs
+        self.carries_work = None
 
     def setting(self, key: str) -> Optional[str]:
         """A setting of this graph's project as stored, or None — the user's choices for it (`set_mode`)."""

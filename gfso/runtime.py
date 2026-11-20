@@ -55,14 +55,15 @@ def data_dir():
 
 def build_engine_from_env(*, validate_signals: bool = True, default_storage: str = "sqlite",
                           default_llm: str = "none", seed: bool = False,
-                          db_path: str | None = None) -> Engine:
+                          db_path: str | None = None, start: bool = True) -> Engine:
     """The ONE Engine factory for every entry point. Reads the environment:
     `GFSO_STORAGE` (sqlite|memory, default `default_storage`) · `GFSO_DB_PATH` (sqlite path) ·
     `GFSO_LLM` (llm|stub|none, default `default_llm`; `llm` = the real provider via `llm_factory`,
     `GFSO_MODEL` selects its model). Headless entry points (MCP, CLI) take the defaults (sqlite,
     no llm, no seed); `gfso serve` passes default_storage='memory', default_llm='stub'; seeding is opt-in (`--seed`).
     `db_path` overrides the sqlite file (the ProjectRegistry's per-project isolation).
-    Returns a STARTED engine."""
+    Returns a STARTED engine — unless `start=False` (a seeded one starts to seed): its opener starts it once it has
+    published who works there, which the start's gap reads (`time_holds`)."""
     if _config.storage_kind(default_storage) == "sqlite":
         storage = SqliteStorage(str(db_path or _config.db_path()))
     else:
@@ -77,7 +78,8 @@ def build_engine_from_env(*, validate_signals: bool = True, default_storage: str
         llm = None
 
     engine = Engine(storage, HumanAgent(), llm=llm, validate_signals=validate_signals)
-    engine.start()
+    if start or seed:
+        engine.start()
     if not engine.graph.setting(PROJECT_ID):         # …once, at the record's first opening since ids exist
         engine.graph.store_setting(PROJECT_ID, uuid.uuid4().hex)
     if seed and not engine.all_tasks():
@@ -153,7 +155,7 @@ class ProjectRegistry:
                 if name != "default":
                     kw["db_path"] = os.path.join(self._dir, f"{name}.db")
                     kw["seed"] = False
-                self._engines[name] = build_engine_from_env(**kw)
+                self._engines[name] = build_engine_from_env(**kw, start=False)
                 self._engines[name].project_name = name    # per-project instruments key off it
                 self._engines[name]._project_name = name    # (the older spelling, still read downstream)
                 # LEFT: import cycle gfso.runtime ↔ gfso.delegate (delegate → gfso.tools_llm → gfso.runtime), so the
@@ -165,6 +167,8 @@ class ProjectRegistry:
                     publish_the_workforce(self._engines[name], default_agents().list())
                 except Exception as ex:
                     print(f"gfso: the roster could not be read for project {name!r} ({ex})", file=sys.stderr, flush=True)
+                # …started once the roster is known: whether the gap since its last beat holds reads who works here
+                self._engines[name].start()
                 if name in self._held:       # …before its dispatcher: a project that stood is opened stopped, once —
                     self._held.discard(name)  # one deleted and made again after the start runs
                     try:

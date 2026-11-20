@@ -14,7 +14,7 @@ import time
 import gfso.engine.loop as L
 import gfso.tools as T
 import gfso.tools_llm as TL
-from gfso.core.types import TaskId
+from gfso.core.types import AgentId, Mode, TaskId
 from gfso.delegate import Dispatcher
 from gfso.inflight import _inflight
 from gfso.packets import _executor_packet, file_tech_reports
@@ -26,6 +26,12 @@ from tests.support import criterion, make_engine
 from tests.test_a_cut_call_does_not_spend_the_nodes_retry import _an_offer
 from tests.test_delegate import _agents
 from tests.test_ports_runtime import _await_state, _mk
+
+
+def _carried(e):
+    """The system carries the work — the only project whose stops and gaps hold its time (`time_holds`)."""
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
+    return e
 
 
 def test_a_stopped_project_starts_no_session_and_a_running_one_still_lands(tmp_path):
@@ -56,6 +62,7 @@ def test_a_stop_leaves_its_time_off_the_clocks_so_no_bound_runs_out_in_it():
     e = make_engine(llm=None, validate_signals=True, check_interval=0.1, state_timeout=1.5)
     e.start()
     _mk(e)
+    _carried(e)
     e.pause("the-user", "")
     time.sleep(2.5)
     e.resume("the-user")
@@ -72,7 +79,7 @@ def test_time_no_engine_ticked_over_a_project_is_left_off_its_clocks_once():
     for stopped in (False, True):
         gone = MemoryStorage()
         gone.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
-        e = make_engine(storage=gone, llm=None, check_interval=0.1)
+        e = _carried(make_engine(storage=gone, llm=None, check_interval=0.1))
         if stopped:
             e.pause("the-user", "")
         e.start()
@@ -104,7 +111,7 @@ def test_a_host_asleep_around_a_stop_or_a_start_is_off_once(monkeypatch):
     shift = {"s": 0.0}
     monkeypatch.setattr(L, "time", type("T", (), {"time": staticmethod(lambda: time.time() + shift["s"])}))
     for before, after in (("stopped", "start"), ("running", "stop")):
-        e = make_engine(llm=None)
+        e = _carried(make_engine(llm=None))
         gate, halt = _Gate(), threading.Event()
         if before == "stopped":
             e.pause("u", "")
@@ -173,7 +180,7 @@ def test_outside_a_deadline_reads_as_the_walls_and_a_typed_one_is_put_on_the_pro
 def test_a_bound_read_between_two_ticks_already_sees_the_sleep_off():
     """Right after a wake, before the next tick, a delivery read its deadline against the whole sleep and escalated the
     node (critic over the clock, r3): the time pending since the last beat is off by the same rule, for every reader."""
-    e = make_engine(llm=None)                       # not started: no monitor ticks over it
+    e = _carried(make_engine(llm=None))             # not started: no monitor ticks over it
     e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
     assert abs(clock_off_s(e.graph) - 3600) < 2
     e.pause("the-user", "")

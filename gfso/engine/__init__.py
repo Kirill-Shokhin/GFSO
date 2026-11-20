@@ -22,7 +22,7 @@ from gfso.core.types import (
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
                                    start_waits,
-                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, root_of, root_issuer_key,
+                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, NO_TICK_S, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, leave_off_the_gap, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
 from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair
@@ -216,6 +216,7 @@ class Engine:
         self.joins = Joins(self._graph)          # where each passed result stands (`mark_joining`)
         self.workforce = Workforce(self._graph, lambda: self.project_name)   # who works here (published)
         self.parking = Parking(self._graph, self.accepted_moves)   # what waits on an undecided park
+        self._graph.carries_work = self.system_carries_work         # whether a stop or a gap holds its time (`time_holds`)
 
     # === Lifecycle ===
 
@@ -808,19 +809,20 @@ class Engine:
 
     def _record_the_gap(self, cause: str, since: float, before: float, by: str) -> None:
         """A gap nobody ran the project in, left off its clocks — a server down, a host asleep — recorded on the deadlines
-        it moves as a stop's held time is (`_record_the_held_time`), `cause` in the stop's place."""
+        it moves as a stop's held time is (`_record_the_held_time`), `cause` in the stop's place. A gap under NO_TICK_S
+        (an ordinary restart's seconds) is left off and not recorded: no more than the lag of a tick."""
         self._record_the_held_time({"by": cause, "at": datetime.fromtimestamp(since).isoformat(timespec="seconds"),
-                                    "off_s": before, "gap": True}, by)
+                                    "off_s": before, "gap": True}, by, least=NO_TICK_S)
 
-    def _record_the_held_time(self, was: dict, by: str) -> None:
-        """THE TIME A STOP HELD, ON EVERY DEADLINE IT MOVES (Thm 11: every decision has a record). Left off the project's
-        clocks, it moves each live deadline that much later on the wall, and the log's packet stood still: a node's own
-        record says so — the deadline as it read before and after, how long the stop held, who stopped and who started.
-        No revision: no packet field moved (the deadline is the same instant on the project's clock), and a re-ASSIGN
-        would re-offer every consented node (Inv-1), re-present every delivery (§12.10), and make a person's issuer
-        move on his own nodes — so the shift is recorded beside the log, as a finding's ruling is (architecture, corner
-        18), and the version and its consent stand."""
-        if was.get("off_s") is None or (held := clock_off_s(self._graph) - float(was["off_s"])) < 1:
+    def _record_the_held_time(self, was: dict, by: str, least: float = 1.0) -> None:
+        """THE RECORD OF THE DECLARED DEPARTURE, ON EVERY DEADLINE IT MOVES. Where the system carries the work, the time
+        a stop held is left off the project's clocks (`time_holds`) — a decision the canon does not make, its deadline
+        "never suspended" (§12.2), declared as the product's (architecture, corner 16) — so each live deadline reads that
+        much later on the wall, and Thm 11 asks that decision a record: the node's own says the deadline as it read before
+        and after, how long the time held, who or what stopped it and what started it again. Beside the log, as a
+        finding's ruling is (corner 18), not a revision: a re-ASSIGN would re-offer every consented node (Inv-1),
+        re-present every delivery (§12.10) and make a person's issuer move on his own nodes."""
+        if was.get("off_s") is None or (held := clock_off_s(self._graph) - float(was["off_s"])) < least:
             return
         rec = {"held_s": round(held, 1), "stopped_by": was.get("by"), "why": was.get("why") or "",
                "since": was.get("at"), "started_by": str(by), "at": datetime.now().isoformat(timespec="seconds"),
