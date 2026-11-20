@@ -168,6 +168,9 @@ const ACT = {
         if (where) setTimeout(() => document.querySelector(`${where === 'goal' ? '#goal-panel' : '.cp-row'} input[data-action="intent"]`)?.focus(), 300); },
     'plan-toggle': () => togglePlan(),
     'resolve-report': d => resolveReport(d.id),
+    // …the mode on the work below a node of his, set or dropped from his page; redrawn from the answer either way
+    'set-scope': async d => { await act(post('/api/run/set_mode', d.on === '1' ? {mode: 'solo', perform: 'in_chat', node: d.id} : {mode: null, node: d.id}),
+        {what: 'The mode below this node', ok: null}); await S.reload(); point('select', d.id); },
     // …who checks a part, its issuer's choice: redrawn from the server's answer either way — the browser ticks the box first,
     // and a refusal left it ticked over an engine holding it off (critic)
     'set-checker': async d => { await act(post('/api/run/set_checker', {task_id: d.id, checker: d.on === '1' ? 'validator' : 'self'}), {what: 'Who checks this part', ok: null}); await S.reload(); point('select', d.id); },

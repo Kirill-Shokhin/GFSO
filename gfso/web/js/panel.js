@@ -246,7 +246,7 @@ const signed = pairs => [...pairs.reduce((g, [n, b]) => g.set(n, [...(g.get(n) |
 // user's agent or a person, whose model the system is not told — is signed by who delivered it, and says so.
 const deliveredBy = (run, id) => { const by = (run?.rounds[id] || []).map(r => r.by).filter(Boolean).at(-1);
     // …where the person's agent performs what the person holds (in_chat), their chat IS where it ran: «no session» read as a lack
-    const chat = S.graph.mode?.perform === 'in_chat' && personHolds(taskOf(id));
+    const sc = nodeOf(id).scope, chat = sc ? (S.graph.scopes || {})[sc]?.perform === 'in_chat' : S.graph.mode?.perform === 'in_chat' && personHolds(taskOf(id));
     return by && !run.work.byNode[id]?.exec ? [prop('Executed by', `<b>${esc(agentName(by))}</b> <span class="wk-none">${chat
         ? 'in their own chat — its model is not reported here' : 'no session booked to this node — its model is not reported here'}</span>`)] : []; };
 // who ran it, one grid row per role: «Executed by · haiku 5.5 ×12»
@@ -275,7 +275,23 @@ function checkSetting({d, acts}) {
         // …a seam no validator observes needs a verdict not its executor's (engineering 6bb0819): said too
         : on || who === 'independent' ? `<div class="pn-note check-skip">${esc(on ? PANEL.checkedAlways : PANEL.checkedApart)}</div>` : '';
 }
-const PARTS = [head, verdict, dispute, facets, criteria, checkSetting, actions];   // the prose chips above the list, always on screen
+// A MODE ON THE WORK BELOW A NODE OF HIS (§10.4: autonomy per task and role; engineering b443174): at a node the person
+// holds his page sets «solo, in my chat» for every seam he issues beneath it; each such seam is a TOP, held by its Del as
+// his solo agent holds his project, his word standing there. The engine admits it only from his page, at a node whose Del
+// is his (`user`), in a project with no mode — the box is offered there alone; the engine's refusal says the rest
+const nodeOf = id => (S.graph.nodes || []).find(n => n.id === id) || {};
+function modeScope({d}) {
+    const sc = S.graph.scopes || {}, here = sc[d.id], n = nodeOf(d.id);
+    // …and one scope per project: a second node of his reads where it stands, no box the engine refuses (critic)
+    const at = Object.keys(sc)[0], may = d.assignee === 'user' && signsAs().includes('user') && !S.graph.mode?.mode && (!at || here);
+    const box = may ? `<div class="pn-note"><label class="act-check"><input type="checkbox"${data({action: 'set-scope', id: d.id, on: here ? '0' : '1'})}${here ? ' checked' : ''}> ${esc(PANEL.scopeBox)}</label></div>`
+        : here ? `<div class="pn-note check-skip">${esc(PANEL.scopeSet)}</div>`
+        : at && d.assignee === 'user' && signsAs().includes('user') ? `<div class="pn-note check-skip">${esc(PANEL.scopeElsewhere(nameOf(taskOf(at)) || at))}</div>` : '';
+    // …a top says so to anyone: who holds it and that its verdict is the person's
+    const top = n.mode_top === d.id && n.scope ? `<div class="pn-note check-skip">${esc(PANEL.scopeTop(agentName(d.assignee || ''), nameOf(taskOf(n.scope)) || n.scope))}</div>` : '';
+    return box + top;
+}
+const PARTS = [head, verdict, dispute, facets, criteria, checkSetting, modeScope, actions];   // the prose chips above the list, always on screen
 
 let panelRead = 0, opening = Promise.resolve();
 export const panelOpened = () => opening;
