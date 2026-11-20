@@ -176,7 +176,8 @@ is the hole-hunt for content that is missing altogether. They answer different q
 ## 4. Execute, and deliver evidence rather than intent
 
 Work the frontier: `next_steps(root)` returns every actionable node at once, ordered, marking which
-are yours and which the graph is waiting on someone else for. An empty list is not a dead graph: what
+are yours and which the graph is waiting on someone else for. Work in hand comes with its directive and
+criteria; an offer (an `accept` step) is named with its holder, and `get_task` holds its contract. An empty list is not a dead graph: what
 is being validated or worked on comes back under `in_flight`, what a node waits on and what would open it
 under `waiting`, and `stuck` means what it says — nothing is running and nothing is takeable. Loop it
 until it reports complete — "done" is the root at `DONE/PASS` in the graph, never a summary in a chat

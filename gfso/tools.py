@@ -3164,8 +3164,35 @@ def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[st
     but hands-off. complete=True only at the root's DONE/PASS. Returns {complete, steps, waiting}.
     `actor=<name>` asks as someone else — for a person driving their own graph from the CLI. Answers at once: the one
     wait on a run is the server's (`POST /api/wait`), never a verb's, for a call held for minutes holds its client's
-    turn."""
-    return _mark_mine(engine, engine.next_steps(TaskId(root_id) if root_id else None), actor)
+    turn. An offer (an OFFERED node awaiting ACCEPT) is named with its holder, not spelled out: `get_task` holds its
+    contract."""
+    out = _mark_mine(engine, engine.next_steps(TaskId(root_id) if root_id else None), actor)
+    steps = out.get("steps") or []
+    if any(_is_offer(s) for s in steps):
+        out["steps"] = [_named_offer(engine, s) if _is_offer(s) else s for s in steps]
+        out["offers"] = ("an `accept` step is an offer: named with its holder (`performed_by`), not spelled out — "
+                         "`get_task(<task_id>)` holds its contract")
+    return out
+
+
+def _is_offer(s: dict) -> bool:
+    """A step that only asks its holder's consent to an OFFERED node, with no plan hole to say over it."""
+    return s.get("action") == Action.ACCEPT and s.get("state") == "OFFERED" and not s.get("unmet_checks")
+
+
+def _named_offer(engine: Engine, s: dict) -> dict:
+    """An offer as the frontier carries it: what, whose, and to its holder how to take it. Spelled out, 243 offers made
+    one frontier 271,290 characters, past what a client reads (2026-11-20)."""
+    t = engine.graph.get_task(TaskId(s["task_id"]))
+    hands = s.get("mine") and engine.hands_of(s.get("assignee"))
+    how = (f"NOT YOURS — {s.get('performed_by')}'s to take." if not s.get("mine") else
+           f"ACCEPT it (consent is yours); then {hands} performs it in a clean session — do not build it yourself. "
+           f"`get_task` holds its contract." if hands else
+           "TAKE it when you start its work: signal ACCEPT (or CHALLENGE if its spec is wrong). `get_task` holds its "
+           "contract.")
+    keep = ("task_id", "name", "state", "action", "assignee", "performed_by", "signed_by", "mine", "role", "optional")
+    return {**{k: s[k] for k in keep if k in s}, "directive": how,
+            **({"deadline": t.deadline.isoformat()} if t is not None and t.deadline and not t.deadline_supplied else {})}
 
 
 def tech_report(engine: Engine, text: str, task_id: Optional[str] = None, actor: Optional[str] = None) -> dict:
