@@ -3168,14 +3168,14 @@ def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[st
     contract."""
     out = _mark_mine(engine, engine.next_steps(TaskId(root_id) if root_id else None), actor)
     steps = out.get("steps") or []
-    if any(_is_offer(s) for s in steps):
-        out["steps"] = [_named_offer(engine, s) if _is_offer(s) else s for s in steps]
+    if any(is_offer(s) for s in steps):
+        out["steps"] = [_named_offer(engine, s) if is_offer(s) else s for s in steps]
         out["offers"] = ("an `accept` step is an offer: named with its holder (`performed_by`), not spelled out — "
                          "`get_task(<task_id>)` holds its contract")
     return out
 
 
-def _is_offer(s: dict) -> bool:
+def is_offer(s: dict) -> bool:
     """A step that only asks its holder's consent to an OFFERED node, with no plan hole to say over it."""
     return s.get("action") == Action.ACCEPT and s.get("state") == "OFFERED" and not s.get("unmet_checks")
 

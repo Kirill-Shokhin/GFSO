@@ -384,7 +384,8 @@ def _bind(engine_or_registry, fn):
         if multi and not engine_or_registry.exists(engine.project_name):
             return out             # …a refused call unmade the project it made (`kept_if_done`): its engine is closed, no news to read
         # …and the news read off the loop too: it reads the frontier under the storage's lock, as a verb does
-        return await anyio.to_thread.run_sync(contextvars.copy_context().run, _with_news, ctx, fn.__name__, out, engine)
+        out = await anyio.to_thread.run_sync(contextvars.copy_context().run, _with_news, ctx, fn.__name__, out, engine)
+        return _frontier_for_an_agent(out) if fn.__name__ == "next_steps" else out
 
     wrapper.__signature__ = sig.replace(parameters=params,
                                         return_annotation=_with_refusal(hints.get("return", sig.return_annotation)))
@@ -415,6 +416,31 @@ def _with_news(ctx, name: str, out, engine):
         return out
     T.said_a_plan(engine.project_name, seen)       # …a plan said once is no news again: the run's own news comes next
     return out if name == "next_steps" else {**out, "news": why}
+
+
+def _frontier_for_an_agent(out):
+    """The frontier as an agent's client can read it: each offer by id and name under its holder, and a reason several waits
+    share said once under `why`. Each offer a step and each reason in every wait, the development graph's frontier was
+    145,696 characters, past a tool result (2026-11-20); the page reads the whole frontier at its own door."""
+    if not isinstance(out, dict):
+        return out
+    offers, steps = {}, []
+    for s in out.get("steps") or ():
+        if _T.is_offer(s):
+            offers.setdefault(s.get("performed_by") or "", {})[s["task_id"]] = s.get("name")
+        else:
+            steps.append(s)
+    if offers:
+        out = {**out, "steps": steps, "offers": offers,
+               "offers_are": "an offer is its holder's to take (ACCEPT when its work starts, or CHALLENGE); "
+                             "`get_task(<id>)` holds its contract"}
+    whys = [w.get("why") for w in out.get("waiting") or ()]
+    shared = sorted({y for y in whys if y and whys.count(y) > 1}, key=whys.index)
+    if shared:
+        keys = {y: f"why-{i}" for i, y in enumerate(shared, 1)}
+        out = {**out, "why": {k: y for y, k in keys.items()},
+               "waiting": [{**w, "why": keys[w["why"]]} if w.get("why") in keys else w for w in out["waiting"]]}
+    return out
 
 
 async def _with_progress(ctx, label: str, call):

@@ -155,7 +155,8 @@ stops with that cause.
 2. **Drive by the frontier.** `next_steps(root)` names what is actionable; `complete=true` only at the root's
    PASS; between, the run is waited on as your instructions say. Each step tells you the
    node, the action, and whether it is YOURS (`mine`). Foreign steps (mine=false) are visible so you
-   know what the graph waits on — hands off; surface them to the user if they block you.
+   know what the graph waits on — hands off; surface them to the user if they block you. Offers are not steps:
+   `offers` lists each by holder, id and name, and `get_task(<id>)` holds its contract when you take it.
 3. **Execute your leaves for real** (the work itself, in the workspace). Then, BEFORE you signal, self-check
    by RUNNING: for each criterion a tiny check that exercises your work, and read what it printed. A signal is a
    claim about the world, so make it from the OBSERVED result; a self-pass the root later fails drops q_D. If a check
