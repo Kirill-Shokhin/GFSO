@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from typing import NamedTuple, Optional
 
+from gfso.config import agent_id
 from gfso.core.protocol.validation import SIGNAL_ROLES, Role
 from gfso.core.types import AgentId, TaskId
+from gfso.engine.validation import users_criteria
 
 #: the executor's signals, read off the one table of who sends what (§11.2) — a hand copy was the second list (D-F18)
 EXECUTOR_SIGNALS = frozenset(s.name for s, r in SIGNAL_ROLES.items() if r is Role.EXECUTOR)
@@ -30,6 +32,8 @@ DOOR_KEYS = {
     "set_checker": ("task_id", "issuer"),
     "review_decomposition": ("task_id", "split"),
     "add_dependency": ("to_id", "issuer"), "remove_dependency": ("to_id", "issuer"),
+    # a ruling on what the node's PASS waits on is its verdict's, the issuer's (§10.2) — the user's where its criteria are
+    "rule_unrun_finding": ("task_id", "issuer"), "return_finding": ("task_id", "issuer"),
     # the roster names no node: under AUTO re-staffing the validator is a move on the work, below it is free
     "register_agent": (None, None), "unregister_agent": (None, None),
 }
@@ -103,6 +107,8 @@ def door_holder(engine, verb: str, node, signal: Optional[str] = None) -> Option
         return None                              # stating the goal is the customer's one act
     if DOOR_KEYS[verb][0] is None and engine.nothing_left():
         return None                              # the roster outlives a goal that ended: its roles are anyone's to free
+    if _the_users_ruling(engine, verb, node):
+        return None                              # …a finding ruled out of his goal is his move under any mode
     role = door_role(engine, verb, node, signal)
     return engine.mode_holder(node, role, ruling=verb == "signal" and str(signal or "").upper() in RULINGS)
 
@@ -122,4 +128,18 @@ def role_holder(engine, verb: str, node, signal: Optional[str] = None) -> Option
     t = engine.graph.get_task(TaskId(node)) if engine is not None and node else None
     if t is None or (role := door_role(engine, verb, node, signal)) is None:
         return None
+    if _the_users_ruling(engine, verb, node):
+        return str(agent_id())
     return str(engine.graph.issuer_of(t.id) if role == "issuer" else t.assignee or "") or None
+
+
+#: the rulings on a node's findings — what its PASS waits on (`findings`)
+FINDING_RULINGS = frozenset({"rule_unrun_finding", "return_finding"})
+
+
+def _the_users_ruling(engine, verb: str, node) -> bool:
+    """Is `verb` a ruling on findings of a node whose criteria are the user's (`users_criteria`: an AUTO root, a part of
+    the plan he handed in)? There the system's issuer does not rule (`issuer.moves_for`): the user, the standing agent,
+    signs it."""
+    t = engine.graph.get_task(TaskId(node)) if verb in FINDING_RULINGS and node else None
+    return t is not None and users_criteria(engine.graph, t)

@@ -100,6 +100,7 @@ def test_a_validator_that_actually_validates_still_closes_it() -> None:
     is one they already meet; what is refused is a signature standing on nothing.
     """
     e = _roster(_internal_child(), "val-1")
+    e.workforce.publish_roster({"alice": "llm-executor", "val-1": "llm-validator"})   # signs where its issuer is a machine
     T.record_verdict(e, "k", "PASS", reviewer="val-1",
                      observed={"c": {"note": "ran the check for c; it printed OK",
                                      "ran": ["check c"]}})

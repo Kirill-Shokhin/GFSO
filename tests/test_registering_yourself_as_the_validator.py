@@ -90,6 +90,7 @@ def test_an_instrument_opens_the_seam_ON_THE_VERDICT_IT_PRODUCED():
     """
     e = _engine()
     e._graph.authorized_validators = {"val-1"}
+    e.workforce.publish_roster({"exec-1": "llm-executor", "val-1": "llm-validator"})   # its issuer a machine (§10.2)
     _leaf(e, "leaf", assignee="exec-1")
 
     assert T.signal(e, "leaf", "PASS", "val-1")["accepted"] is False, "a bare signature closed it"

@@ -1583,7 +1583,9 @@ def signer_refusal(graph: Graph, task_id, signal: Signal, source) -> Optional[st
     System signals carry NO sender (§12.2: the timeout "is not a P2P signal (no agent sends it) but a system mechanism
     enforcing finiteness"), so a SOURCED one is an agent impersonating the clock. An issuer signal is the issuer's —
     the parent's Del, or for a root the goal's issuer (`Graph.issuer_of`) — save that a registered llm-validator, the
-    issuer's AUTHORIZED INSTRUMENT for role V, signs PASS/FAIL on any node (Thm 11 still records the true actor)."""
+    issuer's AUTHORIZED INSTRUMENT for role V, signs PASS/FAIL where the issuer is a machine (`party_kind`: machine or
+    legacy), Thm 11 still recording the true actor. The signature is the issuer's (§10.2): for a person's or a holder's
+    node the instrument's check is recorded and they sign it."""
     role = required_role(signal)
     if role == Role.SYSTEM:
         return (f"{signal.name} is a SYSTEM trigger, not a P2P signal (§12.2): no agent sends it — it is emitted by the "
@@ -1595,9 +1597,12 @@ def signer_refusal(graph: Graph, task_id, signal: Signal, source) -> Optional[st
         return f"non-system signal {signal.name} requires source (sender agent_id)"
     if role == Role.ISSUER:
         issuer = graph.issuer_of(task_id)
-        if issuer and source != issuer and not (signal in (Signal.PASS, Signal.FAIL)
-                                                and str(source) in graph.authorized_validators):
-            return f"{source} is not issuer for {task_id} (issuer={issuer})"
+        instrument = signal in (Signal.PASS, Signal.FAIL) and str(source) in graph.authorized_validators
+        if issuer and source != issuer and not (
+                instrument and party_kind(graph, str(issuer), graph.roster) in ("machine", "legacy")):
+            return (f"{source} is not issuer for {task_id} (issuer={issuer})"
+                    + (f": a validator's check is recorded, and the verdict is {issuer}'s to sign (§10.2)"
+                       if instrument else ""))
     elif role == Role.EXECUTOR and task.assignee and source != task.assignee:
         return f"{source} is not executor for {task_id} (executor={task.assignee})"
     return None

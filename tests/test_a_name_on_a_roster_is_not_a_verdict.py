@@ -63,6 +63,7 @@ def test_an_instrument_that_actually_validated_still_closes_it():
     in the product records its verdict and then signs it, so the requirement is one it already met.
     Without this test the rule above would also be satisfied by a gate that admits nobody."""
     e = _a_delivered_root()
+    e.workforce.publish_roster({"me": "llm-executor", "ghost-val": "llm-validator"})   # where its issuer is a machine
     e.record_exec_verdict("root", "PASS", [], "ghost-val",
                           per_criterion=[{"criterion": "c", "verdict": "pass",
                                           "evidence": "ran it", "behaviours": ["b"],

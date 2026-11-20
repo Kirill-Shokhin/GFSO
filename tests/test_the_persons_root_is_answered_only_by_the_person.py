@@ -69,6 +69,27 @@ def test_an_issuer_move_on_the_root_without_the_persons_words_is_refused_and_wri
     assert e.graph.get_state(ROOT) == before and len(e.audit_log(ROOT)) == log, "a refused move writes nothing"
 
 
+@pytest.mark.parametrize("mode", [Mode.SOLO, Mode.SEMI])
+def test_a_reassign_of_the_root_at_work_without_the_persons_words_is_refused_and_writes_nothing(no_model, mode):
+    """A reassign is a re-ASSIGN of the root, an issuer's move (§11.2, §11.3) and so the person's in every state, not only
+    once ESCALATED: unasked, the agent re-issued his goal at work, voiding the consent it stood on (EXECUTING to OFFERED)."""
+    e = _root_in(mode, State.EXECUTING)
+    log = len(e.audit_log(ROOT))
+    out = TL.TOOLS["reassign"](e, "root", "user", reason="other")
+    e.wait_idle()
+    assert TL.is_refusal(out) and "person" in out["error"] and "user_said" in out["error"], out
+    assert e.graph.get_state(ROOT) == State.EXECUTING and len(e.audit_log(ROOT)) == log, "a refused move writes nothing"
+
+
+def test_a_reassign_of_the_root_at_work_with_the_persons_words_is_taken(no_model):
+    e = _root_in(Mode.SOLO, State.EXECUTING)
+    said = _feed(e)
+    out = TL.TOOLS["reassign"](e, "root", "user", reason="other", user_said=WORDS)
+    e.wait_idle()
+    assert not TL.is_refusal(out) and e.graph.get_state(ROOT) == State.OFFERED, out
+    assert any(WORDS in m for m in said), said
+
+
 @pytest.mark.parametrize("state,move", MOVES, ids=IDS)
 def test_the_same_move_with_the_persons_words_is_taken_and_heard_on_the_feed(no_model, state, move):
     e = _root_in(Mode.SOLO, state)

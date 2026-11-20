@@ -226,6 +226,7 @@ def test_a_verdict_is_the_systems_signature_where_it_signs_and_the_parties_where
     e = _engine(Mode.AUTO)
     _goal(e)
     e._graph.authorized_validators.add("val")
+    e.workforce.publish_roster({"exec-1": "llm-executor", "exec-2": "llm-executor", "val": "llm-validator"})
     T.signal(e, "kid", "ACCEPT", "exec-2")
     T.signal(e, "kid", "DELIVER", "exec-2", result="r")
     e.wait_idle()

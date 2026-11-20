@@ -1997,9 +1997,11 @@ def _nothing_committed(engine: Engine, tid, place, commit: str, left: list, noth
             f"`nothing_to_commit=true`. No validator was started")
 
 
+#: a re-ASSIGN that hands the node to an executor (`reassign`): its packet unchanged, so no packet gate asks for it
+REASSIGN = "REASSIGN"
 #: the issuer's moves on a node (§11.2) — its verdict, its answer to a dispute or a block, its cancel, its re-issue
 PERSONS_MOVES = (Verdict.PASS.value, Verdict.FAIL.value, Signal.ACCEPT_CHALLENGE.name, Signal.REJECT_CHALLENGE.name,
-                 Signal.RESOLVE_BLOCK.name, Signal.CANCEL.name, Signal.ASSIGN.name)
+                 Signal.RESOLVE_BLOCK.name, Signal.CANCEL.name, Signal.ASSIGN.name, REASSIGN)
 
 
 def _the_persons_move(engine: Engine, tid, sig: str) -> Optional[dict]:
@@ -2008,6 +2010,7 @@ def _the_persons_move(engine: Engine, tid, sig: str) -> Optional[dict]:
     (ii)). A client signing the root itself was stopped as self-approval (s21); one that put "which line ending?" to
     them by a CHALLENGE answered it with REJECT_CHALLENGE in their name (critic, in-process). A re-ASSIGN is theirs once
     the root is ESCALATED, their decision (§12.5); elsewhere its packet is asked by the engine (`_the_persons_packet`).
+    A reassign is theirs in every state: it re-issues the root with its packet unchanged, which that gate never sees.
     None: the move goes on."""
     if sig not in PERSONS_MOVES or not engine.issued_by_the_person(tid) or (
             sig == Signal.ASSIGN.name and engine.graph.get_state(tid) != State.ESCALATED):
@@ -3474,12 +3477,12 @@ def metrics(engine: Engine) -> dict:
             "means": {**out["means"], **{k: DIAGNOSTIC_MEANS[k] for k in ("past_the_system", "witnessed")}}}
 
 
-def _with_the_persons_words(fn):
+def _with_the_persons_words(fn, move: str = Signal.ASSIGN.name):
     """`fn` taking `user_said` — the person's own words on this act — carried to the engine's one door every act that
     installs a packet passes — a re-ASSIGN, an ACCEPT_CHALLENGE (`engine.PERSONS_WORDS`, read by
     `Engine._the_persons_packet`): under `solo` and `semi` a root's criteria change only on them, recorded on the
     feed for the person to see. The same door asks for them where the move on its node is the person's
-    (`_the_persons_move`): a signal by its name, a revision as the re-ASSIGN it is."""
+    (`_the_persons_move`): a signal by its name, any other act as `move`."""
     sig = inspect.signature(fn)
     own = "user_said" in sig.parameters
 
@@ -3488,7 +3491,7 @@ def _with_the_persons_words(fn):
         token = PERSONS_WORDS.set(str(user_said or ""))
         try:
             if "task_id" in (got := sig.bind_partial(*a, **kw).arguments) and (no := _the_persons_move(
-                    got["engine"], TaskId(str(got["task_id"])), str(got.get("signal", Signal.ASSIGN.name)).strip().upper())):
+                    got["engine"], TaskId(str(got["task_id"])), str(got.get("signal", move)).strip().upper())):
                 return no
             return fn(*a, **({"user_said": user_said} if own else {}), **kw)
         finally:
@@ -3506,7 +3509,8 @@ _RAW_TOOLS = {
     "create_task": create_task,
     "auto_decompose": _with_the_persons_words(_tracked("auto_decompose", auto_decompose)),
     **{n: _with_the_persons_words(_tools.TOOLS[n]) for n in ("revise", "edit_criteria", "edit_scope",
-                                                              "edit_accepted_risks", "reassign")},
+                                                              "edit_accepted_risks")},
+    "reassign": _with_the_persons_words(_tools.TOOLS["reassign"], REASSIGN),
     "plan": plan, "refine_plan": refine_plan,         # a plan with no project, written in its own thread (`_once`)
     "review_decomposition": _tracked("review_decomposition", review_decomposition),   # L2, §9.1
     "validate_result": _tracked("validate_result", validate_result),                  # §10.1

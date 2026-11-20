@@ -535,6 +535,7 @@ def test_auto_validate_reuses_fresh_recorded_verdict(tmp_path):
     assert e.graph.get_state(TaskId("n1")).name == "VALIDATING"
     instrument_passes(e, TaskId("n1"))                                   # fresh manual verdict
     e._graph.authorized_validators = {"val-1"}      # the dispatcher syncs this each pass
+    e.workforce.publish_roster({"exec-1": "llm-executor", "val-1": "llm-validator"})   # …its issuer a machine
     unused = _AgentLLM("never popped")
     assert _auto_validate(e, TaskId("n1"), agents, _llm=unused) == "pass"
     assert unused.packets == []                       # verdict reused, no validator spawned
@@ -1276,6 +1277,7 @@ def test_a_self_report_is_not_a_recorded_verdict_the_instrument_may_skip(tmp_pat
     T.signal(e, "kid", "DELIVER", "exec-1", result="did it", self_validation="PASS")
 
     e._graph.authorized_validators = {"val-1"}      # what the dispatcher publishes each round
+    e.workforce.publish_roster({"exec-1": "llm-executor", "val-1": "llm-validator"})   # …its issuer a machine
     validated = []
 
     def _ran(engine, agents_, task_id, *a, **k):
