@@ -25,7 +25,7 @@ from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import (PAUSE_KEY, hands_of, party_kind, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_deadline_s, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+from gfso.core.graph.model import (PAUSE_KEY, hands_of, party_kind, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer, logged_criteria, parent_waits)
 from gfso.engine.audit import VERSION_INSTALLING
 
@@ -1559,14 +1559,13 @@ def redelivery_refusal(graph: Graph, task, audit) -> Optional[str]:
 
 def no_live_deadline(graph: Graph, task, parent_id=None) -> Optional[str]:
     """Why a version typing no deadline would enter OFFERED without a live one, or None (§2.5, §12.16): it keeps a spent
-    one, its parent leaves no time inside its own for a default, or the default is switched off
-    (`GFSO_DEFAULT_DEADLINE_S=0`): a packet with no deadline does not conform (§12.16), so the issuer types one."""
+    one, or its parent leaves no time inside its own for a default: a packet with no deadline does not conform
+    (§12.16), so the issuer types one. A default is always written where there is time for it (`project_deadline_s`)."""
     dl, _ = version_deadline(graph, None, task, parent_id)
     if dl is not None and dl > project_now(graph):
         return None
     return ((f"it would keep {on_the_wall(graph, dl):%Y-%m-%d %H:%M}, already passed" if dl is not None else
-             "its parent leaves no time inside its own for a default" if project_deadline_s(graph) else
-             "this installation writes no default deadline (deadline_s / GFSO_DEFAULT_DEADLINE_S = 0)")
+             "its parent leaves no time inside its own for a default")
             + " — a task is given out with a live deadline, and where none is written for it the issuer "
               "types one (§2.5, §12.16); give one")
 

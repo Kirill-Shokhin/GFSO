@@ -96,6 +96,27 @@ def test_a_line_not_marked_unrun_asks_nobody(tmp_path):
     e.stop()
 
 
+def test_a_retirement_after_a_return_lands_and_each_ruling_reaches_the_feed():
+    """The standing is the latest ruling's: retired, returned, not run again, the issuer's second retirement is a new
+    ruling and takes the finding off — read as "ever returned", it answered `retire` and left it demanded. Each ruling,
+    on no signal, is a line of the feed the person's page reads."""
+    e, said = _standing(), []
+    e.on_info(lambda source, message: said.append((source, message)))
+    unrun = {"id": FID, "command": CMD, "ran": False, "expect": WHY}
+    _refused(e, unrun)
+    assert T.rule_unrun_finding(e, str(KID), [FID], "retire", "its cd fails on any delivery")["ruled"] == "retire"
+    assert T.return_finding(e, str(KID), FID, "the person wants it run")["returned"] == FID
+    assert FID in str(e.regression_probes(KID))
+    _refused(e, unrun)
+    assert T.rule_unrun_finding(e, str(KID), [FID], "retire", "still a removed round")["ruled"] == "retire"
+    assert FID not in str(e.regression_probes(KID)) and not e.unrun_findings(KID)
+    assert [r["kind"] for r in e.finding_rulings(KID, FID)] == ["not_reproduced", "returned", "not_reproduced"]
+    lines = [m for s, m in said if s == "ruling"]
+    assert len(lines) == 3 and all(str(KID) in m and FID in m for m in lines), said
+    assert "returned" in lines[1] and "the person wants it run" in lines[1] and "still a removed round" in lines[2]
+    e.stop()
+
+
 def test_the_user_rules_it_by_a_verb_where_the_run_stopped_for_them():
     """At an AUTO root or in the user's own plan the stop names the user's move (§12.16 (ii)): the verb rules it."""
     e = _standing()

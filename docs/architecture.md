@@ -511,7 +511,8 @@ project's own setting on `set_mode`.
   ESCALATED). The per-state bounds are protocol parameters — defaults in `config._STATE_BOUND_DEFAULTS`,
   each overridable by `GFSO_BOUND_<STATE>`, `0` removing one. Every entry into OFFERED carries a live deadline: `GFSO_DEFAULT_DEADLINE_S` (24 h)
   is written into a packet the issuer left undated, inside the parent's own deadline and marked
-  `deadline_supplied` (`0` writes none, and a packet left undated is then refused: §12.16), so CHECK-3 does not read the engine's default as the issuer's ordering claim.
+  `deadline_supplied` (`0` or below reads as unset, and a project's `deadline_s` must be above 0: a plan file types no
+  deadline, so writing none refused every part of it, §12.16), so CHECK-3 does not read the engine's default as the issuer's ordering claim.
   `GFSO_STATE_TIMEOUT` remains as the opt-in age clock over ALL states (0 = off); the clock-binding
   question stays OPEN (a real deployment should anchor to real UTC dates or stronger — tamper-resistant
   time is an implementor's open end). A bound already passed fires ON ENTRY, so a state entered after
@@ -895,6 +896,14 @@ encoding is where they show, or are engine gaps.)*
    unmakes no settlement and is not counted". The machine re-issuing the AUTO root once had a count of its own; it is
    gone. Every re-issue is a new version that ends by its deadline and the per-state bounds (Φ2), below the root inside
    the parent's deadline, and what the re-issues spend is bounded by the account's limit.
+18. **A ruling on a finding is recorded in the findings ledger, not on the log — a reading of §11.1, declared.**
+   §11.1: "every signal and every protocol act is appended to it". A ruling on a finding (`rule_unrun_finding`,
+   `return_finding`, a validator's not-reproduced mark) is neither: it is none of the twelve signals (§11.2) and
+   neither an admission nor a root creation (§11.5): it is an act of the implementation.
+   Thm 11 asks every decision a record with its author and timestamp, and the findings ledger gives it: each ruling is
+   appended to its finding's `rulings` (kind, by, why, at, the criterion's text), never rewritten, and the finding's
+   standing is read off its latest deciding ruling (`gfso/engine/findings.py`). Each ruling is also a `ruling` line of
+   the feed, so the person's page shows it (`Engine._ruled`).
 
 **Two boundaries, delineated rather than patched.**
 

@@ -50,6 +50,19 @@ def test_the_door_takes_them_and_refuses_a_deadline_in_the_past(e, monkeypatch):
     monkeypatch.setattr(TL, "mode_staffing", lambda *a: {"ready": True, "executors": ["exec-1", "exec-2"],
                                                           "dispatch": False})
     assert TL.set_mode(e, "auto", deadline_s=-1)["refused"]
-    got = TL.set_mode(e, "auto", system_model="claude-haiku-4-5", l2_gate=False, deadline_s=0)
-    assert got["settings"] == {"system_model": "claude-haiku-4-5", "l2_gate": "0", "deadline_s": 0.0}
-    assert project_deadline_s(e.graph) == 0 and not l2_gate_on(e.graph)
+    # …nor none at all: a plan file types no deadline, so under 0 every go of a plan was refused (§12.16)
+    no = TL.set_mode(e, "auto", deadline_s=0)
+    assert no.get("refused") and "§12.16" in no["error"] and project_deadline_s(e.graph) > 0, no
+    got = TL.set_mode(e, "auto", system_model="claude-haiku-4-5", l2_gate=False, deadline_s=60)
+    assert got["settings"] == {"system_model": "claude-haiku-4-5", "l2_gate": "0", "deadline_s": 60.0}
+    assert project_deadline_s(e.graph) == 60 and not l2_gate_on(e.graph)
+
+
+@pytest.mark.parametrize("server, stored", [("0", None), ("-5", None), ("86400", "0")])
+def test_no_reading_writes_no_deadline(e, monkeypatch, server, stored):
+    """A server's 0 or below, or a 0 a project stored before the door refused one, reads as the server's default: a
+    deadline nobody typed is always written (§12.16), and the plan's parts type none."""
+    monkeypatch.setenv("GFSO_DEFAULT_DEADLINE_S", server)
+    if stored is not None:
+        e.graph.store_setting("deadline_s", stored)
+    assert project_deadline_s(e.graph) == 86_400

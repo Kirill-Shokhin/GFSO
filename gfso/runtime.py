@@ -5,6 +5,7 @@ browser client of the HTTP mirror). Keeping the factory here means the mirrors d
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -19,7 +20,7 @@ from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.adapters.storage.sqlite import SqliteStorage, live_nodes, peek_project, settings_of
-from gfso.core.types import PROJECT_ID
+from gfso.core.types import PROJECT_ID, Mode
 from gfso.demo import seed_demo
 from gfso import config as _config
 from gfso.config import (data_dir as _config_data_dir, active_project,
@@ -231,9 +232,14 @@ class ProjectRegistry:
             raise ValueError(f"{name!r} is the ACTIVE project — switch away first (use_project)")
         # …nor while its work stands: work ends by CANCEL → CONFIRM_CANCEL (§12.6), and a stop ends none of it
         if live := live_nodes(self._file(name)):
+            # …by the route the project's mode admits: under AUTO the customer's CANCEL is the system's lock (`_mode_lock`)
+            auto = json.loads((settings_of(self._file(name)) or {}).get("mode") or "{}").get("mode") == Mode.AUTO.value
             raise ValueError(f"{name!r} has work issued and not ended ({', '.join(live[:5])}"
-                             f"{', …' if len(live) > 5 else ''}) — CANCEL its root and let the cancel settle "
-                             f"(a stopped project is started for it), then delete it")
+                             f"{', …' if len(live) > 5 else ''}) — "
+                             + ("it runs in AUTO, where the system holds every move on its work: the person changes "
+                                "its mode from their page (solo or semi), then the root's issuer may " if auto else "")
+                             + "CANCEL its root and let the cancel settle (a stopped project is started for it), "
+                               "then delete it")
         self.unmake(name)
         drop_execution(name)       # …its engine loaded or not: a new project of the name inherits no volume
         bases = [c.get("workdir") for c in AgentRegistry().list().values() if c.get("project") == name]

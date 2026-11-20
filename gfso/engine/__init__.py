@@ -1554,7 +1554,15 @@ class Engine:
         plan = {"": task.spec.criteria, **self.parts_procedure(task_id)}
         marks = ([] if ends_none or str(validator_id) == str(task.assignee) else
                  _findings_not_reproduced(per_criterion, self._stored_regression(task_id), plan, dirs))
-        record_not_reproduced(self._storage, task, marks, str(validator_id), datetime.now().isoformat(timespec="seconds"), found)
+        self._ruled(task_id, record_not_reproduced(self._storage, task, marks, str(validator_id),
+                                                   datetime.now().isoformat(timespec="seconds"), found))
+
+    def _ruled(self, task_id: TaskId, written: list) -> None:
+        """Each ruling just written on the node's findings, on the feed the person's page reads. A ruling is no signal
+        and no protocol act (§11.2, §11.5): its record is the findings ledger, appended (Thm 11); the line shows it."""
+        for criterion, fid, r in written:
+            self.emit_info("ruling", f"{task_id}: finding {fid} ({criterion}) {r['kind'].replace('_', ' ')} by "
+                                     f"{r.get('by')}" + (f": {r['why']}" if r.get("why") else ""))
 
     def findings_not_reproduced(self, task_id: TaskId) -> list[dict]:
         """The findings an independent validator re-ran and did not reproduce, standing no longer (`findings.not_reproduced`)."""
@@ -1568,8 +1576,10 @@ class Engine:
 
     def return_finding(self, task_id: TaskId, finding: str, by: str, why: str) -> bool:
         """A person gives back a finding a validator did not reproduce: demanded again (`findings.return_finding`)."""
-        t = self._graph.get_task(task_id)
-        return t is not None and _return_finding(self._storage, t, finding, by, why)
+        if (t := self._graph.get_task(task_id)) is None or not (written := _return_finding(self._storage, t, finding, by, why)):
+            return False
+        self._ruled(task_id, written)
+        return True
 
     def unrun_findings(self, task_id: TaskId) -> list[dict]:
         """The standing findings the refused report on the delivery in VALIDATING could not run (`findings.unrun`)."""
@@ -1591,13 +1601,11 @@ class Engine:
         if not why:
             return "a ruling says why"
         t = self._graph.get_task(task_id)
-        if not retire:
-            keep_unrun(self._storage, t, named, by, why)
-        else:
-            record_not_reproduced(self._storage, t, [(rows[i]["criterion"], i, {
+        self._ruled(task_id, keep_unrun(self._storage, t, named, by, why) if not retire else record_not_reproduced(
+            self._storage, t, [(rows[i]["criterion"], i, {
                 "why": f"not run by its validator ({rows[i]['why']}); ruled out by {by}: {why}",
                 "printed": f"not run: {rows[i]['why']}"}) for i in named], by,
-                datetime.now().isoformat(timespec="seconds"), {})
+            datetime.now().isoformat(timespec="seconds"), {}, ruled=True))
         return ""
 
     def _refiled_rulings(self, task_id: TaskId, per_criterion: list, dirs) -> dict:

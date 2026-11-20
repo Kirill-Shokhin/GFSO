@@ -3178,8 +3178,9 @@ def _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, n
     if max_iterations is not None and (isinstance(max_iterations, bool) or not isinstance(max_iterations, int)
                                        or not 1 <= max_iterations <= MAX_ITERATIONS_CEILING):
         return f"max_iterations is a count of rework rounds, 1 to {MAX_ITERATIONS_CEILING}, got {max_iterations!r}"
-    if deadline_s is not None and float(deadline_s) < 0:
-        return f"deadline_s is seconds ahead, 0 or more, got {deadline_s!r}"
+    if deadline_s is not None and float(deadline_s) <= 0:
+        return (f"deadline_s is seconds ahead, more than 0, got {deadline_s!r}: a packet with no deadline does not "
+                f"conform (§12.16), and a plan's parts type none, so 0 would leave every one of them refused")
     if network is not None and network != "declared":
         network = {"mode": network} if isinstance(network, str) else network
         try:
@@ -3236,7 +3237,7 @@ def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int]
     — the model that AUTHORS the plan (`auto_decompose`, `plan`, `refine_plan`), when it is to be another than the
     system's: a stronger author once, the system's roles after it; `l2_gate` — whether the plan's
     Level-2 review gates execution (off: the plan was verified where it was authored); `deadline_s` — how far ahead a
-    deadline nobody typed is written (0 = none); `bounds` — each waiting state's own bound here, `{STATE: seconds}` over
+    deadline nobody typed is written; `bounds` — each waiting state's own bound here, `{STATE: seconds}` over
     OFFERED, CHALLENGED, BLOCKED, VALIDATING, ESCALATED, CANCELLING (a person who signs answers in days, a run's
     validator in minutes), replacing the project's previous `bounds` whole, `{}` = the defaults — days to months where
     a person owns the wait (you under solo, or over what you hold under semi), the server's where the system does; OFFERED, CHALLENGED and

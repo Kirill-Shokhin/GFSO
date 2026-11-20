@@ -492,11 +492,14 @@ def default_deadline_s() -> float:
 
     §2.5: every entry into OFFERED carries a deadline that lies ahead of it, and "the canon requires
     the packet to carry a deadline, not the issuer to type one": an implementation may write a
-    default, logged as supplied. 0 = write none: every packet then has its deadline typed, one typing none refused (§12.16)."""
+    default, logged as supplied. A value of 0 or below reads as unset, as an unreadable one does: writing none left a plan
+    file's parts — which type no deadline — refused at every go, and no move of the issuer lifted it (§12.16). Floored
+    here, not refused: it is read on every issue, where raising would stop every project of the server."""
     try:
-        return float(os.environ.get("GFSO_DEFAULT_DEADLINE_S", 86_400.0))
+        v = float(os.environ.get("GFSO_DEFAULT_DEADLINE_S", 86_400.0))
     except ValueError:
         return 86_400.0
+    return v if v > 0 else 86_400.0
 
 
 def validation_batch() -> int:

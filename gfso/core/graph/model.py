@@ -279,14 +279,13 @@ def project_deadline_s(graph: "Graph", assignee=None, issuer=None) -> float:
     """How far ahead a deadline nobody typed is written in this project for a node between `assignee` and `issuer`: its
     own setting, else a person's scale where any wait inside the contract falls on a person (`waits_on_a_person`: the
     consent and the handshake on the assignee, the answers, the verdict and the decision on the issuer — OFFERED,
-    CHALLENGED and BLOCKED end at the deadline too, §12.2), else the server's, whose 0 writes none. The deadline is the
+    CHALLENGED and BLOCKED end at the deadline too, §12.2), else the server's — always some time ahead: a project's 0,
+    stored before the door refused one (`tools_llm._settings_given`), reads as unset. The deadline is the
     contract's; the system's session is cut by its own bound (`sessions._session_cap`), never by choosing it shorter."""
-    v = graph.setting("deadline_s")
-    if v is not None:
+    if (v := graph.setting("deadline_s")) is not None and float(v) > 0:
         return float(v)
-    server = default_deadline_s()
     person = waits_on_a_person(graph, assignee) or waits_on_a_person(graph, issuer)
-    return PERSON_DEADLINE_S if server and person else server
+    return PERSON_DEADLINE_S if person else default_deadline_s()
 
 
 def project_bounds(graph: Optional["Graph"]) -> dict:

@@ -281,11 +281,13 @@ def _rulings_of(p: dict) -> list[dict]:
     return p.get(RULINGS) or [{"kind": k, **p[k]} for k in (NOT_REPRODUCED, RETURNED, KEPT_UNRUN) if p.get(k)]
 
 
-def _rule(p: dict, kind: str, **record) -> None:
-    """Append a ruling to the finding — the fields of an older ledger moved into the list, nothing dropped."""
-    p[RULINGS] = _rulings_of(p) + [{"kind": kind, **record}]
+def _rule(p: dict, kind: str, criterion: str, **record) -> tuple:
+    """Append a ruling to the finding — the fields of an older ledger moved into the list, nothing dropped — and return
+    (criterion, finding id, the ruling): what the engine puts on the feed (`Engine._ruled`)."""
+    p[RULINGS] = _rulings_of(p) + [r := {"kind": kind, **record}]
     for k in (NOT_REPRODUCED, RETURNED, KEPT_UNRUN):
         p.pop(k, None)
+    return criterion, p.get("id"), r
 
 
 def _latest(p: dict, *kinds: str) -> Optional[dict]:
@@ -293,9 +295,14 @@ def _latest(p: dict, *kinds: str) -> Optional[dict]:
     return next((r for r in reversed(_rulings_of(p)) if r["kind"] in kinds), None)
 
 
+def _decided(p: dict) -> Optional[dict]:
+    """The finding's latest word on whether it is demanded — its standing, read off that alone, never off an older one."""
+    return _latest(p, NOT_REPRODUCED, REPRODUCED, RETURNED)
+
+
 def _not_reproduced_now(p: dict) -> Optional[dict]:
     """The ruling that took the finding off, where its latest word on that is one: a return or a reproduction answers it."""
-    r = _latest(p, NOT_REPRODUCED, REPRODUCED, RETURNED)
+    r = _decided(p)
     return r if r and r["kind"] == NOT_REPRODUCED else None
 
 
@@ -319,10 +326,12 @@ def finding_rulings(storage, task, finding: str) -> list[dict]:
             if p.get("id") == finding for r in _rulings_of(p)]
 
 
-def record_not_reproduced(storage, task, marks: Iterable[tuple], by: str, at: str, found: dict) -> None:
+def record_not_reproduced(storage, task, marks: Iterable[tuple], by: str, at: str, found: dict,
+                          ruled: bool = False) -> list[tuple]:
     """The ledger with each of `marks` (`procedure.findings_not_reproduced`) written on its finding — unless the same report
-    filed it again, or a person returned it — and the mark gone from each finding `found` filed: reproduced, it stands."""
-    stored = ledger_read(storage, task.id, REGRESSION, {}) or {}
+    filed it again, or a person's return is its latest word and no issuer's ruling (`ruled`) answers it — and the mark
+    gone from each finding `found` filed: reproduced, it stands. Returns the rulings written (`_rule`)."""
+    stored, out = ledger_read(storage, task.id, REGRESSION, {}) or {}, []
     # …by its id or a citation of it: a re-run under other words is that finding (`merge_regression`), not filed anew
     again = {(k, str(x).split("#")[-1]) for k, ps in found.items() for p in ps for x in (p.get("id"), p.get("cited")) if x}
     said = {(k, i): m for k, i, m in marks}
@@ -330,13 +339,15 @@ def record_not_reproduced(storage, task, marks: Iterable[tuple], by: str, at: st
         for p in ps:
             if (k, str(p.get("id")).split("#")[-1]) in again:
                 if _not_reproduced_now(p):
-                    _rule(p, REPRODUCED, by=by, at=at, why="filed again")
-            elif (k, p.get("id")) in said and not _latest(p, RETURNED):
+                    out.append(_rule(p, REPRODUCED, criterion=k, by=by, at=at, why="filed again"))
+            elif (k, p.get("id")) in said and (ruled or (_decided(p) or {}).get("kind") != RETURNED):
                 now = _criterion_now(k, task)
                 if not ((r := _not_reproduced_now(p)) and r.get("text") == now):
-                    _rule(p, NOT_REPRODUCED, **{**said[(k, p.get("id"))], "by": by, "at": at, "text": now})
+                    out.append(_rule(p, NOT_REPRODUCED, criterion=k,
+                                     **{**said[(k, p.get("id"))], "by": by, "at": at, "text": now}))
     if said or again:
         ledger_write(storage, task.id, REGRESSION, stored)
+    return out
 
 
 def unrun(storage, entries: list, task, report: Optional[dict]) -> list[dict]:
@@ -363,30 +374,29 @@ def unrun(storage, entries: list, task, report: Optional[dict]) -> list[dict]:
 KEPT_UNRUN = "kept_unrun"
 
 
-def keep_unrun(storage, task, ids: Iterable[str], by: str, why: str) -> None:
+def keep_unrun(storage, task, ids: Iterable[str], by: str, why: str) -> list[tuple]:
     """The issuer's word on findings a validator could not run: they stay demanded, and are not asked of him again while
-    their criterion reads as now."""
+    their criterion reads as now. Returns the rulings written (`_rule`)."""
     stored, ids = ledger_read(storage, task.id, REGRESSION, {}) or {}, set(ids)
-    for k, ps in stored.items():
-        for p in ps:
-            if p.get("id") in ids:
-                _rule(p, KEPT_UNRUN, by=by, why=why, at=_now(), text=_criterion_now(k, task))
+    out = [_rule(p, KEPT_UNRUN, k, by=by, why=why, at=_now(), text=_criterion_now(k, task))
+           for k, ps in stored.items() for p in ps if p.get("id") in ids]
     ledger_write(storage, task.id, REGRESSION, stored)
+    return out
 
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def return_finding(storage, task, finding: str, by: str, why: str) -> bool:
-    """A person's word: this finding is demanded again, and no validator's run takes it off."""
+def return_finding(storage, task, finding: str, by: str, why: str) -> list[tuple]:
+    """A person's word: this finding is demanded again, and no validator's run takes it off — only its issuer's ruling
+    answers it (`record_not_reproduced`). Returns the rulings written (`_rule`), none where it stood demanded."""
     stored = ledger_read(storage, task.id, REGRESSION, {}) or {}
-    hit = [p for ps in stored.values() for p in ps if p.get("id") == finding and _not_reproduced_now(p)]
-    for p in hit:
-        _rule(p, RETURNED, by=by, why=why, at=_now())
-    if hit:
+    out = [_rule(p, RETURNED, k, by=by, why=why, at=_now())
+           for k, ps in stored.items() for p in ps if p.get("id") == finding and _not_reproduced_now(p)]
+    if out:
         ledger_write(storage, task.id, REGRESSION, stored)
-    return bool(hit)
+    return out
 
 
 def ruling_defect(storage, entries: list, task, ids: Iterable[str]) -> Optional[str]:

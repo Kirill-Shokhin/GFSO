@@ -70,9 +70,8 @@ def _session_cap(engine, tasks) -> int | None:
     if not deadlines:
         return None
     left = (min(deadlines) - project_now(engine.graph)).total_seconds()
-    own = engine.graph.setting("deadline_s")
-    own = float(own) if own is not None else default_deadline_s()
-    return int(min(left, own) if own else left)
+    own = float(engine.graph.setting("deadline_s") or 0)
+    return int(min(left, own if own > 0 else default_deadline_s()))
 
 
 #: The shortest session worth spawning: one with less left before its deadline is killed before it can report — floored
