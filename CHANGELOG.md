@@ -17,8 +17,8 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   or a stdio server — that has taken no stream's name, under `--protected` too. A local client with no credential, no
   bridge and no page's headers (a script, curl, `gfso run` with a server up or not) reads and signs nothing — a filter
   against an agent's casual call, not a barrier; its move is refused naming the page, the MCP bridge and
-  `gfso agent <name>`. It still sends the server's own life (a lease's beat, a stop, a wait), and its witness is
-  answered with no record.
+  `gfso agent <name>`. It still sends the server's own life (a lease's beat, a stop, a wait), and its witness of work
+  past the system is recorded with no actor (`unsigned`), never as the person.
 - In a project with no mode, every seam the person issues to another name keeps his word, with no scope set: an issuer
   move there from an agent's connection carries his words (`user_said`), from his page none; a call no door served keeps
   the earlier rule. His issue of such a seam installs `answers_the_persons_words` by default (`set_mode(intent_check=False)`

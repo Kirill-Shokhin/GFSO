@@ -68,6 +68,22 @@ def test_a_write_with_no_node_at_work_is_recorded_and_said_and_one_under_a_node_
     assert seen["count"] == 1 and "a.txt" in seen["last"][0]["text"], seen
 
 
+def test_a_witness_a_call_signed_by_no_one_sent_is_recorded_with_no_actor(repo):
+    """The hook of a console whose connection took no name calls `/api/witness`, no MCP door: it signs nothing
+    (`signin.BARE`), and its witness is still what catches work past the system — recorded, under no name, never the
+    person's, for a witness moves nothing. Through the server's own route."""
+    e = _in_chat(repo)
+    _commit(repo, "a.txt", "a")
+    _deliver(e)
+    (repo / "a.txt").write_text("b")
+    c = TestClient(create_app(e), base_url="http://127.0.0.1:8000")
+    c.cookies.clear()                                    # …no session, no page's headers: a bare call
+    assert c.get("/api/whoami").json()["kind"] == "none"
+    out = c.post("/api/witness", json={"repository": str(repo), "tool": "Write", "paths": ["a.txt"]}).json()
+    assert "say" in out, out
+    assert [r["actor"] for r in e.witnessed_writes()] == [P.UNSIGNED]
+
+
 def test_a_witnessed_write_is_news_an_open_page_hears(repo):
     """An open page re-reads the count on the engine's news, never by polling: a recorded write is a `witnessed` line,
     and a write under a node at work is none. CONTROL: `Engine.witnessed` without its line — red."""

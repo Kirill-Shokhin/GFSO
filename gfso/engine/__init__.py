@@ -602,7 +602,8 @@ class Engine:
         return _mode_scopes(self._graph)
 
     def performs_in_chat(self, name) -> None:
-        """Record that `name` performs in a chat here — its own connection took it (`act_as`), the executor's own fact:
+        """Record that `name` performs in a chat here — a move signed under it over MCP (`tools_llm._signed`), taken by
+        `act_as` or launched with its token, the executor's own fact:
         each seam the person issues to it is then a top it holds as his solo agent holds his project (`scope_at`). Kept
         once, with its time; never for a name of his, nor for a role of the system's (`take` refuses one)."""
         if not name or str(name) in PERSONS_NAMES or str(name) in _in_chat_names(self._graph):

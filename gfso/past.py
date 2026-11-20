@@ -85,6 +85,9 @@ _PEEKED: dict = {}
 #: a commit → its change (`_changes`): what a commit changes is its id's to keep
 _CHANGES: dict = {}
 WORK = frozenset(s.name for s in WORK_STATES)
+#: the actor of a witness a call signed by no one sent (`signin.BARE`, a console's hook with no name taken): it is
+#: recorded, moving nothing, and never under the person's name
+UNSIGNED = "unsigned"
 SAY = ("GFSO: {repo} changed in {tool}, while you hold no node at work in it; the system recorded it as work past the "
        "system (project {project}). Take the node this work is for (ACCEPT it), or stop.")
 
@@ -429,5 +432,5 @@ def witness(engine, repository_path: str, tool: str = "", paths=(), key: str = "
         paths = [str(p) for p in paths or ()]
         engine.witnessed(f"{repository_path} changed in {tool or 'a tool call'} with no node of its signer at work "
                          f"there: {len(paths)} path(s): " + ", ".join(paths[:10]) + (" …" if len(paths) > 10 else ""),
-                         caller_id(), key)
+                         caller_id() if p is None or p.signs_as else UNSIGNED, key)
     return {"say": SAY.format(repo=repository_path, tool=tool or "a tool call", project=engine.project_name)}

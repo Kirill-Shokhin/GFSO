@@ -20,7 +20,6 @@ import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso import config, driver, signin
 from gfso.adapters.llm.stub import StubLLM
-from gfso.api import server as S
 from gfso.api.server import create_app
 from gfso.config import CALLER, LEASE_HEADER, Principal
 from gfso.core.protocol.invariants import INTENT
@@ -110,13 +109,6 @@ def test_a_lost_holding_says_a_restart_makes_the_connection_his_agent_again():
                                                                    1.0, 2.0))
     lift = signin.held(lease).lift
     assert "`user`" in lift and "act_as('eng-lost')" in lift, lift
-
-
-def test_a_call_that_signs_nothing_writes_no_witness(door, monkeypatch):
-    seen = []
-    monkeypatch.setattr(S.past, "witness", lambda *a, **k: seen.append(a) or {"say": "recorded"})
-    out = _client(door[1]).post("/api/witness", json={"repository": "x", "tool": "Write", "paths": ["f"]})
-    assert out.status_code == 200 and out.json() == {} and not seen, out.text
 
 
 def test_the_cli_with_no_server_reads_and_signs_nothing(door, monkeypatch):

@@ -209,10 +209,9 @@ def _mount_witness(app, _e, _req_project) -> None:
     @app.post("/api/witness")
     def witnessed(body: dict = Body(default={})):
         """A write a console's hook saw in its repository (`past.witness`): {} where a node of the project is at work
-        there, else recorded and the line for the agent (`say`). Signed by the call's credential: a call that signs
-        nothing (`signin.BARE`) writes no record, and is answered {}."""
-        if (p := _config.CALLER.get()) is not None and not p.signs_as:
-            return {}
+        there, else recorded and the line for the agent (`say`). Signed by the call's credential: one that signs
+        nothing (`signin.BARE`, the hook of a console whose connection took no name) is recorded with no actor
+        (`past.UNSIGNED`), never as the person — a witness moves nothing, and it is what catches work past the system."""
         body = dict(body or {})
         if (_in_body := body.pop("project", None)):
             _req_project.set(_in_body)
@@ -1275,7 +1274,7 @@ _OPEN_SENDS = frozenset({"/api/run/{tool}", "/api/admission", "/api/verdicts", "
 #: only by a call some name signs: what was opened is the graph (critic, 2026-11-16)
 _OWN_READS = frozenset({"/api/credentials"})
 #: …and what a process of the person's own sends with no credential that signs no name in any graph — a bridge's
-#: heartbeat, a stop of the server, a console's wait and its hook's witness, answered with no record (`signin.BARE`):
+#: heartbeat, a stop of the server, a console's wait and its hook's witness, recorded with no actor (`signin.BARE`):
 #: the server's life, no move
 _CONSOLES_OWN = frozenset({"/api/lease", "/api/lease/{lease_id}", "/api/shutdown", "/api/wait", "/api/witness"})
 

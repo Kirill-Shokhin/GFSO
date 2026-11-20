@@ -939,7 +939,8 @@ encoding is where they show, or are engine gaps.)*
    is `BARE`: a script, curl, and the CLI's HTTP path, a console's lease included, since the CLI is no MCP door.
    `BARE` reads and signs nothing. Its refusal names the page, the MCP bridge and `gfso agent <name>`. It still
    sends the server's own life, which signs no name in any graph: `/api/lease`, `/api/shutdown`, `/api/wait`, and
-   `/api/witness`, answered {} with no record written. `BARE` is a filter against an agent's casual call, not a
+   `/api/witness`, its record kept with no actor (`past.UNSIGNED`), never `user`: a witness moves nothing, and the
+   hook of a console whose connection took no name is what catches work past the system on the solo `in_chat` path. `BARE` is a filter against an agent's casual call, not a
    barrier: the same process with one browser header is `PAGE` under `local-peer`. `local_principal(mcp=)` gives the same answer with no server between: a
    stdio server is an MCP client's (`STANDING`), and the CLI's in-process path (`driver._locally`) is `BARE`, because
    which door serves a shell depends only on whether a server happens to be up. The OS user stays the local boundary.
