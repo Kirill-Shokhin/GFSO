@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from gfso.core.types import Task, CheckResult, Predictability, DepEdge, State, register_of
+from gfso.core.protocol.invariants import INTENT
 from gfso.core.protocol.procedure import (LEAVES_THE_WORKDIR, admission_defects, criterionless, degenerate_procedures, reads_an_unpinned_set,
                                           unread_inputs)
 
@@ -223,7 +224,9 @@ def check_non_redundancy(task: Task, children: list[Task]) -> CheckResult:
     if not task.criterion_mappings:
         return CheckResult("CHECK-1b:no_orphan", True, "no mappings declared", skipped=True)
 
-    mapped_children = {m.child_id for m in task.criterion_mappings}
+    # …by a criterion of its own: the go maps the root's intent criterion to every part (`with_the_intent`), so that
+    # mapping says nothing a part does, and a child it alone maps is an orphan
+    mapped_children = {m.child_id for m in task.criterion_mappings if m.criterion_name != INTENT}
     # …over the children a re-admission can still drop: one whose verdict is settled is not re-checked (§11.5) — no act
     # of the decomposer drops it, so a criterion removed from it left a flag only a false mapping could lift
     redundant = [c.id for c in children if c.id not in mapped_children and c.state != State.DONE]
@@ -541,13 +544,7 @@ def check_risk_nodes(task: Task, children: list[Task]) -> CheckResult:
     covered = {r for c in children for r in c.spec.covers_risks} | accepted
     uncovered = [n for n in register_of(task).components if n not in covered]
 
-    if not covered:
-        return CheckResult(
-            "CHECK-5:risk_nodes", True,
-            f"skipped: no child records which risk component it covers and no ACCEPTED_RISKS entry names one, so this cannot be decided "
-            f"for any of {', '.join(register_of(task).components)} — declare `covers_risks` on the "
-            f"mitigating child (§9.4/STD-3). It is not read off the descriptions: a name occurring "
-            f"in a node's text is not a claim that the node covers the risk", skipped=True)
+    # none covered is every component uncovered (§9.5 ∀K): ⊥ is not met, never a skipped pass (§2.3)
     if uncovered:
         return CheckResult("CHECK-5:risk_nodes", False,
                            f"uncovered risk components: {', '.join(uncovered)} — no child records "

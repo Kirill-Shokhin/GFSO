@@ -183,17 +183,14 @@ def test_an_untyped_chain_on_a_standing_producer_is_ordered_whichever_way_it_is_
     e.stop()
 
 
-@pytest.mark.parametrize("dated", [True, False])
-def test_a_typed_crossing_is_refused_where_any_order_fits(dated, monkeypatch):
+def test_a_typed_crossing_is_refused_where_any_order_fits():
     """§11.5 gates a crossing "where some such choice orders every edge" — inside a minute of room as much as inside
-    two hours (critic over F3, A3), and under a parent with no deadline at all, where every order fits (A4)."""
-    if not dated:
-        monkeypatch.setenv("GFSO_DEFAULT_DEADLINE_S", "0")
+    two hours (critic over F3, A3). A parent with no deadline at all (A4) no longer exists: it does not conform (§12.16)."""
     e = make_engine()
     e.start()
     T.create_task(e, "root", {"description": "goal", "criteria": [criterion("a", "A"), criterion("b", "B")],
-                              "accepted_risks": _RISK}, assignee="me", **({"deadline": _in(1)} if dated else {}))
-    due = e.graph.get_task(TaskId("root")).deadline or datetime.now() + timedelta(days=3)
+                              "accepted_risks": _RISK}, assignee="me", deadline=_in(1))
+    due = e.graph.get_task(TaskId("root")).deadline
     T.decompose(e, "root", [_kid("root.p", "a b", (due - timedelta(minutes=1)).isoformat())], accepted_risks=REGISTER)
     with pytest.raises(ValueError, match="CHECK-3"):
         T.decompose(e, "root", [_kid("root.c", "b", (due - timedelta(minutes=3)).isoformat(), depends_on="root.p")], accepted_risks=REGISTER)

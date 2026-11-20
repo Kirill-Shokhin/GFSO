@@ -479,7 +479,8 @@ def _mount_project_delete(server, reg) -> None:
         """Delete a NAMED project irreversibly (its graph, audit log and DB file). Refused for
         `default`, for the server's active project and for YOUR SESSION's current project —
         switch away first (`use_project`): deleting the ground you stand on is the misclick
-        this refusal exists for.
+        this refusal exists for. Refused too while any node is issued and not ended, stopped or not: CANCEL its
+        root and let the cancel settle first (§12.6).
 
         Takes `project=` like every other verb; `name=` is the older spelling and still works."""
         name = name or project

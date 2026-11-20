@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from gfso.api.server import create_app, _start_reaper
 from gfso.mcp.server import create_server, _bind
 from gfso.runtime import ProjectRegistry
-from gfso.core.types import AgentId, Mode
+from gfso.core.types import AgentId, Mode, State, TaskId
 from gfso.delegate import _DISPATCHERS
 from gfso import tools as T, tools_llm as TL
 from gfso.config import CALLER, STANDING
@@ -190,6 +190,12 @@ def test_delete_project_full_cycle(monkeypatch, tmp_path):
     with pytest.raises(ValueError):
         reg.delete("victim")                               # ACTIVE — the misclick guard
     reg.use("default")
+    with pytest.raises(ValueError, match="CANCEL"):
+        reg.delete("victim")                               # its work is issued and not ended (§12.6)
+    v = reg.engine("victim")
+    t = v.graph.get_task(TaskId("t1"))
+    t.state = State.ABANDONED
+    v._graph.save_task(t)
     events = []
     reg._on_create = events.append
     out = reg.delete("victim")

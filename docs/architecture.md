@@ -511,7 +511,7 @@ project's own setting on `set_mode`.
   ESCALATED). The per-state bounds are protocol parameters — defaults in `config._STATE_BOUND_DEFAULTS`,
   each overridable by `GFSO_BOUND_<STATE>`, `0` removing one. Every entry into OFFERED carries a live deadline: `GFSO_DEFAULT_DEADLINE_S` (24 h)
   is written into a packet the issuer left undated, inside the parent's own deadline and marked
-  `deadline_supplied`, so CHECK-3 does not read the engine's default as the issuer's ordering claim.
+  `deadline_supplied` (`0` writes none, and a packet left undated is then refused: §12.16), so CHECK-3 does not read the engine's default as the issuer's ordering claim.
   `GFSO_STATE_TIMEOUT` remains as the opt-in age clock over ALL states (0 = off); the clock-binding
   question stays OPEN (a real deployment should anchor to real UTC dates or stronger — tamper-resistant
   time is an implementor's open end). A bound already passed fires ON ENTRY, so a state entered after

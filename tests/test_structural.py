@@ -174,14 +174,14 @@ def test_a_component_named_in_a_child_s_prose_is_not_a_coverage_claim():
     assert not result.passed, "a word in a description is not a claim that the node covers the risk"
     assert "drought" in result.details
 
-def test_a_component_nothing_records_is_undecided_not_green():
-    """Nothing in this product declares coverage yet, and a check that answered `passed` over an
-    empty record would be exactly the vacuous green this codebase keeps finding in itself. ⊥ is
-    reported as the skip it is, with the field to fill named (§2.3)."""
-    t = _task("t", risk_components=["drought"])
+def test_a_component_nothing_records_is_not_met():
+    """§9.5 quantifies over every component: with no record for any of them none is covered, and ⊥ is not met (§2.3) —
+    the same refusal as one uncovered beside a covered one, naming every component and the field to fill. It was a
+    skipped pass, so declaring one mitigation refused a split that declaring none admitted."""
+    t = _task("t", risk_components=["drought", "flood"])
     result = check_risk_nodes(t, [_task("c1", desc="handle drought mitigation")])
-    assert result.skipped, "nothing was decided here"
-    assert "covers_risks" in result.details and "drought" in result.details
+    assert not result.passed and not result.skipped, result
+    assert "uncovered risk components: drought, flood" in result.details and "covers_risks" in result.details
 
 def test_risk_nodes_no_components():
     t = _task("t")
@@ -232,6 +232,15 @@ def test_non_redundancy_fail_superfluous_child():
     result = check_non_redundancy(parent, [c1, c2])
     assert not result.passed
     assert "c2" in result.details
+
+def test_a_child_mapped_by_the_intent_criterion_alone_is_an_orphan():
+    """The go maps the root's intent criterion to every part (`with_the_intent`), so a mapping to it says nothing about
+    what the part does: a child it alone maps addresses no criterion of the split (§9.5, FM-1.e)."""
+    from gfso.core.protocol.invariants import INTENT
+    parent = _task("p", criteria=["perf", INTENT], mappings=[
+        CriterionMapping("perf", TaskId("c1")), CriterionMapping(INTENT, TaskId("c1")), CriterionMapping(INTENT, TaskId("c2"))])
+    result = check_non_redundancy(parent, [_task("c1", desc="perf work"), _task("c2", desc="unrelated extra")])
+    assert not result.passed and "c2" in result.details and "c1" not in result.details
 
 def test_non_redundancy_leaf_skipped():
     assert check_non_redundancy(_task("p", criteria=["x"]), []).skipped

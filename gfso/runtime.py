@@ -18,7 +18,7 @@ from gfso.core.graph.model import root_of
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm.stub import StubLLM
 from gfso.adapters.storage.memory import MemoryStorage
-from gfso.adapters.storage.sqlite import SqliteStorage, peek_project, settings_of
+from gfso.adapters.storage.sqlite import SqliteStorage, live_nodes, peek_project, settings_of
 from gfso.core.types import PROJECT_ID
 from gfso.demo import seed_demo
 from gfso import config as _config
@@ -220,8 +220,8 @@ class ProjectRegistry:
         connection (Windows holds the file lock until then — observed live), remove `<name>.db`
         (+wal/shm). Refused: `default` (the env-configured engine owns no per-project file) and the
         ACTIVE project (switch away first — deleting the ground you stand on is the misclick this
-        refusal exists for). A registry operation, not a graph signal: a project's log dies with
-        the project by definition (cross-project provenance was never representable)."""
+        refusal exists for), and a project with work issued and not ended (`live_nodes`). A registry operation, not a
+        graph signal: a project whose work has ended takes its log with it."""
         if not self._NAME_RE.match(name):
             raise ValueError(f"bad project name {name!r} (allowed: [A-Za-z0-9_-], ≤64)")
         name = self._spelled(name)
@@ -229,6 +229,11 @@ class ProjectRegistry:
             raise ValueError("the default project cannot be deleted")
         if name == self._active:
             raise ValueError(f"{name!r} is the ACTIVE project — switch away first (use_project)")
+        # …nor while its work stands: work ends by CANCEL → CONFIRM_CANCEL (§12.6), and a stop ends none of it
+        if live := live_nodes(self._file(name)):
+            raise ValueError(f"{name!r} has work issued and not ended ({', '.join(live[:5])}"
+                             f"{', …' if len(live) > 5 else ''}) — CANCEL its root and let the cancel settle "
+                             f"(a stopped project is started for it), then delete it")
         self.unmake(name)
         drop_execution(name)       # …its engine loaded or not: a new project of the name inherits no volume
         bases = [c.get("workdir") for c in AgentRegistry().list().values() if c.get("project") == name]

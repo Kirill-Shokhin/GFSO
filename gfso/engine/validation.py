@@ -1460,14 +1460,15 @@ def redelivery_refusal(graph: Graph, task, audit) -> Optional[str]:
 
 def no_live_deadline(graph: Graph, task, parent_id=None) -> Optional[str]:
     """Why a version typing no deadline would enter OFFERED without a live one, or None (§2.5, §12.16): it keeps a spent
-    one, or its parent leaves no time inside its own for a default. With the default switched off
-    (`GFSO_DEFAULT_DEADLINE_S=0`) a packet without one is the installation's choice; only a spent kept one is refused."""
+    one, its parent leaves no time inside its own for a default, or the default is switched off
+    (`GFSO_DEFAULT_DEADLINE_S=0`): a packet with no deadline does not conform (§12.16), so the issuer types one."""
     dl, _ = version_deadline(graph, None, task, parent_id)
-    if dl is not None and dl > project_now(graph) or dl is None and not project_deadline_s(graph):
+    if dl is not None and dl > project_now(graph):
         return None
     return ((f"it would keep {on_the_wall(graph, dl):%Y-%m-%d %H:%M}, already passed" if dl is not None else
-             "its parent leaves no time inside its own for a default")
-            + " — a task is given out with a live deadline, and under a parent whose deadline has passed the issuer "
+             "its parent leaves no time inside its own for a default" if project_deadline_s(graph) else
+             "this installation writes no default deadline (deadline_s / GFSO_DEFAULT_DEADLINE_S = 0)")
+            + " — a task is given out with a live deadline, and where none is written for it the issuer "
               "types one (§2.5, §12.16); give one")
 
 

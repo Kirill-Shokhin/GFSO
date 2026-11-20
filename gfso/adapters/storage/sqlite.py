@@ -95,6 +95,19 @@ def settings_of(db_path: str) -> Optional[dict]:
         return None
 
 
+def live_nodes(db_path: str) -> list[str]:
+    """A project's nodes issued and not terminal, as its file records them — the work a deletion would end with no
+    cancel (§12.6); [] where no file stands or none reads."""
+    if not os.path.exists(db_path):
+        return []
+    try:
+        with _looked_at(db_path) as c:
+            return [r[0] for r in _all(c, "SELECT id, state FROM tasks ORDER BY created_at")
+                    if state_named(r[1]) not in TERMINAL_STATES | {State.IDLE}]
+    except sqlite3.Error:
+        return []
+
+
 def peek_work(db_path: str, keys: tuple = ()) -> Optional[dict]:
     """A project's work as its file records it, read without opening it as a store (`peek_project` says why):
     {"taken": {node: holder} of its nodes in a work state, "log": [(node, signal, old state, new state, commit,

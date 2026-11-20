@@ -35,12 +35,13 @@ from .validation import pause_record, validate_signal, ValidationError
 log = logging.getLogger(__name__)
 
 
-def _payload_fields(sd: SignalData) -> dict:
-    """SignalData payload carried onto the audit entry (who/why, Thm 11)."""
+def _payload_fields(sd: SignalData, installed=None) -> dict:
+    """SignalData payload carried onto the audit entry (who/why, Thm 11). `installed`: the node after an
+    admitted signal, whose packet fields are what the version put in force (a signal's `None` means keep)."""
     return dict(
         source=sd.source, reason=sd.reason, justification=sd.justification,
         result=sd.result, failed_criteria=sd.failed_criteria, action=sd.action,
-        in_flight=sd.in_flight, spec=_spec_json(sd),
+        in_flight=sd.in_flight, spec=_spec_json(sd, installed),
         revision_reason=sd.revision_reason.name if sd.revision_reason is not None else None,
         retire_findings=tuple(sd.retire_findings), artifact=sd.artifact, commit=sd.commit,
         repository=sd.repository, build=sd.build, by_system=(system := sd.by_system and required_role(sd.signal) == Role.ISSUER),
@@ -48,7 +49,7 @@ def _payload_fields(sd: SignalData) -> dict:
     )
 
 
-def _spec_json(sd: SignalData) -> Optional[str]:
+def _spec_json(sd: SignalData, installed=None) -> Optional[str]:
     """The contract a version-installing signal puts in force, serialized onto its log row (Inv-1/Inv-7) —
     an ASSIGN's, and an ACCEPT_CHALLENGE's new spec, the one act that rewrites criteria in place: its
     version reached the node and never the log, so what a dispute replaced could not be read back.
@@ -61,8 +62,13 @@ def _spec_json(sd: SignalData) -> Optional[str]:
     sp = sd.new_spec if sd.signal == Signal.ACCEPT_CHALLENGE else sd.spec
     if sd.signal not in VERSION_INSTALLING or sp is None:
         return None
+    # …AND THE REST OF THE PACKET (§11.3): a re-ASSIGN moving only Del, the deadline or the bound is a version too
+    p = installed or sd
     try:
         return json.dumps({
+            "assignee": str(p.assignee) if p.assignee else None,
+            "deadline": p.deadline.isoformat() if p.deadline else None,
+            "deadline_supplied": bool(p.deadline_supplied), "max_iterations": p.max_iterations,
             "name": sp.name, "description": sp.description,
             # …WITH THE PROCEDURE EACH CRITERION PINS. The log is what `claim_drift` reads to say
             # how a claim moved between authoring and closing; a version stored without its
@@ -343,7 +349,7 @@ def process_signal(
         timestamp=datetime.now(), task_id=task_id,
         signal=signal_data.signal, old_state=state,
         new_state=new_state, effects=effect_names,
-        **_payload_fields(signal_data),
+        **_payload_fields(signal_data, graph.get_task(task_id) if signal_data.signal in VERSION_INSTALLING else None),
     ))
     # THE OBSERVATION PANEL MUST SHOW THE HUMAN'S OWN WORK. `gfso log` and the UI panel read the
     # pipeline log, which only ever carried AI-side progress (decomposer, L2 checker, validator), so

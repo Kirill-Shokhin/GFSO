@@ -492,7 +492,7 @@ def default_deadline_s() -> float:
 
     §2.5: every entry into OFFERED carries a deadline that lies ahead of it, and "the canon requires
     the packet to carry a deadline, not the issuer to type one": an implementation may write a
-    default, logged as supplied. 0 = write none (the pre-v4.1 behaviour)."""
+    default, logged as supplied. 0 = write none: every packet then has its deadline typed, one typing none refused (§12.16)."""
     try:
         return float(os.environ.get("GFSO_DEFAULT_DEADLINE_S", 86_400.0))
     except ValueError:
