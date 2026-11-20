@@ -462,7 +462,7 @@ def split_owed(graph: Graph, task) -> Optional[dict]:
     nobody's move, where it had been delivered and validated (critic, 2026-09-28)."""
     fit = session_fit(graph, task.id) if task is not None else None
     if (not fit or fit.get("fits") is not False or graph.get_active_children(task.id)
-            or project_mode(graph) is None):
+            or mode_at(graph, task) is None):
         return None
     after, waits = fit.get("after") or {}, split_waits_on(graph, task)
     return {"kind": "split_owed", "fails": [],
@@ -487,8 +487,16 @@ def observed_here(graph: Graph, task) -> bool:
     is no longer a direct contact-check (§3.7). Inside a scope, no: the scope's validation at its top runs
     every criterion inside it, and a validation per piece bought only a wait for each (a 2.6-minute task
     took 39 to 70). `GFSO_VALIDATE_INTERNAL=1` observes every delivery, for measurement. Elsewhere its issuer
-    may have chosen the validator (`validator_chosen`)."""
+    may have chosen the validator (`validator_chosen`). Outside every mode scope it reads as with no scope: what the
+    stream asks is taken there, though nothing starts by itself (`observes_by_itself`)."""
     return owed_observer(graph, task) is not None or validator_chosen(graph, task)
+
+
+def observes_by_itself(graph: Graph, task) -> bool:
+    """Does the instrument observe this delivery without being asked — the dispatcher's validation, the checker read
+    "validator"? Where `observed_here`, except outside every mode scope of a project with no mode of its own
+    (`outside_the_scopes`): what can be asked there stays askable, and nothing of the scope's starts."""
+    return not outside_the_scopes(graph, task) and observed_here(graph, task)
 
 
 def owed_observer(graph: Graph, task) -> Optional[str]:
@@ -520,13 +528,12 @@ def held_in_chat(graph: Graph, task) -> bool:
     That agent is one scope whatever the size: no session of the system carries it, so no κ of one cuts it, and below
     the root's seam its nodes self-verify (§10.3), the root's validation running their pinned checks over the result
     (`parts_procedure`). Read as a scope of sessions, every part of a solo chat's plan was observed apart — a seam at
-    every node where the canon has one at the root (the author, 2026-11-20: «У соло все задачи кроме корня без шва»)."""
-    if ((project_mode(graph) or {}).get("perform")) != "in_chat":
+    every node where the canon has one at the root (the author, 2026-11-20: «У соло все задачи кроме корня без шва»).
+    Under a mode scoped to a subtree its top stands for the root (`mode_at`)."""
+    at = mode_at(graph, task)
+    if at is None or at[0].get("perform") != "in_chat" or at[1] is None:
         return False
-    root = task
-    while (p := graph.get_parent(root.id)) is not None:
-        root = p
-    return str(task.assignee or "") == str(root.assignee or "")
+    return str(task.assignee or "") == str(at[1].assignee or "")
 
 
 def observation_binds(graph: Graph, task) -> bool:
@@ -537,7 +544,8 @@ def observation_binds(graph: Graph, task) -> bool:
     lifts of his own (repair and re-deliver, or revise his own procedure), so the divergence binds: the
     holder does not sign past the system's check. At a seam his only lift would be a revision the executor
     must re-consent to, so binding would leave him none: there the signature reads the latest appointed
-    record, and an earlier divergence stands on the ledger as a logged disagreement."""
+    record, and an earlier divergence stands on the ledger as a logged disagreement. Outside every mode scope it binds
+    as with no scope: nothing starts there by itself, so every observation there was asked by its stream."""
     return str(graph.issuer_of(task.id) or "") == str(task.assignee or "")
 
 
@@ -602,7 +610,7 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
                                f"observation (`record_verdict('{task.id}', 'PASS', …)`) — it stands beside the "
                                f"earlier one as a logged disagreement — then sign. Another run of the instrument "
                                f"does not undo a refutation")}
-    must = project_mode(graph) is not None and observed_here(graph, task)
+    must = mode_at(graph, task) is not None and observed_here(graph, task)
     if must and not st["pass"]:
         return {"kind": "unobserved", "fails": [],
                 "why": ("no appointed observer has observed this delivery — "
@@ -1309,6 +1317,97 @@ def project_mode(graph: Graph) -> Optional[dict]:
     """The project's mode as set — {mode, boundary, by} — or None."""
     raw = graph._storage.get_setting("mode")
     return json.loads(raw) if raw else None
+
+
+#: the settings key of the mode scopes, {the node he holds: record} (`Engine.set_mode_scope`)
+MODE_SCOPES = "mode_scopes"
+#: the settings key under which a node's recorded words are kept, + its id (`Engine.hear`)
+HEARD_ON = "heard_on:"
+
+
+def mode_scopes(graph: Graph) -> dict:
+    """{Y's id: {node, mode, perform, by, at}} — the mode the person set at a node Y he holds, for the work he issues
+    below it (§10.4)."""
+    return json.loads(graph._storage.get_setting(MODE_SCOPES) or "{}")
+
+
+def his_seam(issuer, held) -> bool:
+    """Is a node issued by the person to another — issuer a name of his (`PERSONS_NAMES`), Del named and none of his?
+    (A Del left unnamed defaults to its caller, his name under his node.)"""
+    return str(issuer or "") in PERSONS_NAMES and bool(held) and str(held) not in PERSONS_NAMES
+
+
+def _under_a_scope(graph: Graph, task) -> Optional[tuple]:
+    """(record, top) where `task` lies at or under a scope's node Y — top the nearest node at or above `task` below Y
+    that he issues to another (`his_seam`), None at Y and at his own nodes above every such seam — or None elsewhere."""
+    scopes, top, t = mode_scopes(graph), None, task
+    while scopes and t is not None:
+        if (rec := scopes.get(str(t.id))) is not None:
+            return rec, top
+        if top is None and his_seam(graph.issuer_of(t.id), t.assignee):
+            top = t
+        t = graph.get_parent(t.id)
+    return None
+
+
+def scope_at(graph: Graph, task) -> Optional[tuple]:
+    """(record, top) of the mode scope `task` lies in, or None: "autonomy is a per-task, per-role property, not a global
+    mode" (§10.4). His one act at Y sets the executor's level at each seam he issues below it, so each is a top held as
+    its own project would be under that mode; Y itself, and his nodes above every seam, are his own work, under none.
+    A top under another is impossible: below a top every node is issued by its holder (`del_by_mode`)."""
+    at = _under_a_scope(graph, task)
+    return at if at is not None and at[1] is not None else None
+
+
+def would_be_a_top(graph: Graph, parent, held) -> Optional[dict]:
+    """The scope record a node issued under `parent` to `held` would be a top of — or None."""
+    at = _under_a_scope(graph, parent)
+    return at[0] if at is not None and at[1] is None and his_seam(parent.assignee, held) else None
+
+
+def mode_at(graph: Graph, task) -> Optional[tuple]:
+    """(record, top) of the mode `task` lies under — its scope's, else the project's over the graph's root (None where no
+    node stands yet) — or None under neither. THE reading of who holds a node: every rule that read the project's mode
+    alone read the author's stream as holding nothing, or every other stream as held by it."""
+    if task is not None and (scoped := scope_at(graph, task)) is not None:
+        return scoped
+    if (rec := project_mode(graph)) is None:
+        return None
+    top = task
+    while top is not None and (p := graph.get_parent(top.id)) is not None:
+        top = p
+    return rec, top
+
+
+def outside_the_scopes(graph: Graph, task) -> bool:
+    """Does `task` lie in a project of scopes alone, under none of them? There the system starts and binds nothing, as
+    in a project with no mode: the scope's validator is the project's, and read project-wide it reached every other
+    stream — validating their deliveries unasked, binding their verdicts, stopping their graph at a restart."""
+    return project_mode(graph) is None and bool(mode_scopes(graph)) and mode_at(graph, task) is None
+
+
+def heard_on(graph: Graph, node) -> list[dict]:
+    """[{act, said}] recorded over `node` (`Engine.hear`), oldest first."""
+    return json.loads(graph._storage.get_setting(f"{HEARD_ON}{node}") or "[]")
+
+
+def goal_top(graph: Graph, task) -> bool:
+    """Is `task` the top of a goal's contract — a graph root (or one not made yet), or the top of a mode scope? Its
+    issuer formed its packet (§10.1) where the work below is its Del's own: every node under it is issued by its holder."""
+    return task is None or graph.get_parent(task.id) is None or (
+        (scoped := scope_at(graph, task)) is not None and str(scoped[1].id) == str(task.id))
+
+
+def persons_node(graph: Graph, task) -> bool:
+    """Is `task` where the person's word stands — the root of his project under solo or semi, or a mode scope's top,
+    whose issuer he is either way? His go, his packet and his verdict are his there (§10.1, §10.2); every node below is
+    issued by the holder, Del(parent), so a go, a revision or a signature there is the holder's own, and his words there
+    would sign a role he does not hold. His later asks are revisions of this node's criteria."""
+    if task is None:
+        return False
+    if (scoped := scope_at(graph, task)) is not None:
+        return str(scoped[1].id) == str(task.id)
+    return graph.get_parent(task.id) is None and mode_kind(graph) in (Mode.SOLO, Mode.SEMI)
 
 
 def pause_record(graph: Graph) -> Optional[dict]:

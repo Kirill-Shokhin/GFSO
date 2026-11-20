@@ -283,7 +283,11 @@ def held_contract(d: dict, node) -> dict:
         return d
     # …ALL of them: CHECK-1 reads every criterion of the node (§9.5), so one left out of the names a mapping may target
     # was a hole no repair round could close (critic r5)
-    return {**d, "root_criteria": [{"name": c.name, "description": c.description} for c in node.spec.criteria]}
+    # …with their checks: issued, a contract pins what decides it, and the plan's own reading of one with none refused
+    # every split a holder built from a plan file onto a contract it was given
+    return {**d, "root_criteria": [{"name": c.name, "description": c.description,
+                                    **({"check": [p.to_dict() for p in c.check]} if c.check else {})}
+                                   for c in node.spec.criteria]}
 
 
 def refined_root_spec(existing: Spec, request: str, criteria: tuple, accepted_risks: tuple,

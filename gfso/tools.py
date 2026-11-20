@@ -1366,6 +1366,8 @@ def graph_read(engine: Engine) -> dict:
               # …and who checks its deliveries where the validator does (a seam, or its issuer's choice), as the page
               # draws its box; absent, its holder self-verifies
               **({"checker": c} if (c := engine.checker(t.id, staffed)) != "self" else {}),
+              # …and the mode scope it lies in, by the node he set it at, with the top it lies under (§10.4)
+              **({"scope": s["node"], "mode_top": s["top"]} if (s := engine.scope_at(t.id)) else {}),
               "parent_id": str(t.parent_id) if t.parent_id else None} for t in tasks]
     edges = [{"source": str(t.parent_id), "target": str(t.id), "type": "parent-child"}
              for t in tasks if t.parent_id]
@@ -1380,7 +1382,8 @@ def graph_read(engine: Engine) -> dict:
     # …and where the accepted result lies, once it has landed: said only in a line of the log, a person who opened the
     # page on a closed goal could not tell where the work was
     landed = engine.graph.setting("landed")
-    return {"nodes": nodes, "edges": edges, "mode": _mode_read(engine), "heard": heard(engine), "parties": _parties(engine, tasks), "landed": json.loads(landed) if landed else None,
+    return {"nodes": nodes, "edges": edges, "mode": _mode_read(engine), "scopes": engine.mode_scopes(),
+            "heard": heard(engine), "parties": _parties(engine, tasks), "landed": json.loads(landed) if landed else None,
             }
 
 
@@ -1535,6 +1538,10 @@ def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str], 
         return AgentId(asked or _agent_id())
     if not asked or str(asked) == str(want):
         return want
+    if parent_id and (scope := engine.scope_at(parent_id)) is not None:
+        raise ValueError(f"'{parent_id}' lies under {scope['top']}, a top of the mode the person set at {scope['node']} "
+                         f"({scope['mode']}, {scope['perform']}): every node there is its holder's, {want}'s — given to "
+                         f"{asked}, it would be a seam inside solo (§10.3). Leave `assignee` out, or name {want}")
     me = _agent_id()
     parent = engine.graph.get_task(TaskId(parent_id)) if parent_id else None
     system_side = str(want) != me
@@ -2346,7 +2353,7 @@ def reassign(engine: Engine, task_id: str, assignee: str,
     # …AND UNDER A MODE THE NEW DEL IS THE MODE'S TO AGREE WITH: a holder that re-assigns a system node to
     # itself undoes the mode node by node, with the mode record untouched (measured 2026-09-24: a
     # semi-auto holder took three repair nodes back and edited the program itself)
-    if engine.mode() is not None and (t := engine.graph.get_task(TaskId(task_id))) is not None:
+    if (t := engine.graph.get_task(TaskId(task_id))) is not None and engine.mode_at(t.id) is not None:
         del_by_mode(engine, str(t.parent_id) if t.parent_id else None, assignee, str(t.id))
     out = task_out(engine.reassign(TaskId(task_id), AgentId(assignee),
                                     reason=_reason_from(reason)), engine, plan=False)

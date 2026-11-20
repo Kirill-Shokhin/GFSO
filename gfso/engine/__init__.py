@@ -40,7 +40,7 @@ from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_n
                                           claim_digest)
 
 from gfso.config import (
-                         PIPELINE_PAGE, USAGE_PAGE, LIMIT_RETRY_S,
+                         PIPELINE_PAGE, USAGE_PAGE, LIMIT_RETRY_S, PERSONS_NAMES,
                          MODEL_DEFAULT, VERDICT_FIELD_CHARS, agent_id as _config_agent_id, caller_via,
                          state_timeout as _config_state_timeout)
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
@@ -78,7 +78,10 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          observation_standing, record_stands as _record_stands,
                          redelivery_refusal, execution_admitted as _execution_admitted,
                          hole_kind, project_mode as _project_mode, depth_of as _depth_of,
-                         holder_boundary as _holder_boundary, held_plan_node_refusal, hands_of as _hands_of)
+                         holder_boundary as _holder_boundary, held_plan_node_refusal, hands_of as _hands_of,
+                         HEARD_ON, MODE_SCOPES, mode_scopes as _mode_scopes, mode_at as _mode_at, scope_at as _scope_at,
+                         outside_the_scopes, heard_on as _heard_on, goal_top as _goal_top, persons_node as _persons_node,
+                         observes_by_itself as _observes_by_itself, would_be_a_top as _would_be_a_top)
 from .events import EventBus, PlanWatch, TransitionCallback, ErrorCallback, RejectCallback
 from .loop import _guard_context, event_loop, record_refusal, refresh_checks, timeout_monitor
 
@@ -97,8 +100,6 @@ LIFT_MARGIN_S = 30
 #: words, recorded on the feed for the person to see — a solo agent rewrote an agreed check after the go into one that
 #: held on an empty repository, and nothing said so (critic over f5b1f88). Set by the doors, read before the queue (`_the_persons_packet`).
 PERSONS_WORDS: ContextVar[str] = ContextVar("persons_words", default="")
-#: the settings key under which a goal's recorded words are kept, + its root id (`Engine.hear`)
-HEARD_ON = "heard_on:"
 #: the acts whose recorded words are the person's own (`Engine.hear`) — the plan agreed at the go is the agent's text
 PERSONS_ACTS = ("request", "go", "revise", "verdict", "answer")
 #: what of a stop's record the system lifts it by: a time, an execution place, a credential store's stamp
@@ -561,15 +562,75 @@ class Engine:
                         **({"settings": s} if (s := self.settings()) else {}),
                         "intent_check": self.intent_check(rec)}
 
-    def intent_check(self, rec: Optional[dict] = None) -> bool:
+    def intent_check(self, rec: Optional[dict] = None, node=None) -> bool:
         """Does a go on a goal's root add `answers_the_persons_words` (`set_mode(intent_check=)`)? Unset: where the person
         holds the root's work — solo or semi, performed in their chat — where nothing but the person's reading stands
         between their words and the written criteria (the author, 2026-11-19: «галочкой в ui и по умолчанию»). The value
-        in force, set or not: the page shows it as it acts."""
+        in force, set or not: the page shows it as it acts. On `node`, the mode it lies under (`mode_at`): a scope's ask
+        is the person's as his root is."""
         if v := self._storage.get_setting("intent_check"):
             return v == "1"
-        rec = rec if rec is not None else _project_mode(self._graph)
-        return self.mode_kind() in (Mode.SOLO, Mode.SEMI) and (rec or {}).get("perform") == "in_chat"
+        rec = rec if rec is not None else self.mode_at(node)
+        return (rec or {}).get("mode") in (Mode.SOLO, Mode.SEMI) and (rec or {}).get("perform") == "in_chat"
+
+    def mode_at(self, node=None) -> Optional[dict]:
+        """The record of the mode `node` lies under — its scope's, else the project's (`validation.mode_at`); with no
+        node standing, the project's."""
+        t = self._graph.get_task(TaskId(str(node))) if node is not None else None
+        if t is None:
+            return _project_mode(self._graph)
+        at = _mode_at(self._graph, t)
+        return at[0] if at else None
+
+    def scope_at(self, node) -> Optional[dict]:
+        """The record of the mode scope `node` lies in, with its `top` and that top's `holder`, Del(top) — or None
+        (`validation.scope_at`)."""
+        t = self._graph.get_task(TaskId(str(node)))
+        at = _scope_at(self._graph, t) if t is not None else None
+        return at and {**at[0], "top": str(at[1].id), "holder": str(at[1].assignee)}
+
+    def mode_scopes(self) -> dict:
+        """{Y's id: record} of the mode scope the person set (`validation.mode_scopes`)."""
+        return _mode_scopes(self._graph)
+
+    def set_mode_scope(self, node: TaskId, author: AgentId, said: str = "") -> dict:
+        """Record the person's mode at `node`, a node he holds: every node he issues below it to another is a top, held
+        and performed by its Del as his own solo agent holds his project, in its chat (§10.4: autonomy per task and role).
+        No packet changes. Slice 1: one scope record, solo performed in_chat, in a project with no mode."""
+        t = self._graph.get_task(node)
+        if t is None:
+            raise ValueError(f"task {node} not found")
+        refusal = (f"{node}'s Del must be a name of the person's ({', '.join(sorted(PERSONS_NAMES))}), not "
+                   f"{t.assignee}: the scope is set at the node he holds, its tops the seams he issues below it"
+                   if str(t.assignee or "") not in PERSONS_NAMES else
+                   f"this project has a mode ({self.mode()['mode']}): a scope beside it would answer who holds a node "
+                   f"twice" if self.mode() is not None else
+                   f"a mode is already scoped here ({', '.join(self.mode_scopes())}): one scope record per project"
+                   if self.mode_scopes() else None)
+        if refusal:
+            raise ValueError(refusal)
+        rec = {"node": str(node), "mode": Mode.SOLO.value, "perform": "in_chat", "by": str(author),
+               "at": datetime.now().isoformat(), **({"user_said": said} if said else {})}
+        self._storage.store_setting(MODE_SCOPES, json.dumps({str(node): rec}))
+        self.emit_info("mode", f"mode solo, in_chat, scoped to the seams {node}'s holder issues, set by {author}")
+        return rec
+
+    def would_be_a_top(self, parent_id, held) -> Optional[dict]:
+        """The scope record a node issued under `parent_id` to `held` would be a top of (`validation.would_be_a_top`)."""
+        p = self._graph.get_task(TaskId(str(parent_id))) if parent_id else None
+        return _would_be_a_top(self._graph, p, held) if p is not None else None
+
+    def drop_mode_scope(self, node: TaskId, author: AgentId) -> dict:
+        """The scope at `node` dropped: its nodes keep their Del (Inv-1), and are read as the project's again."""
+        left = {k: v for k, v in self.mode_scopes().items() if k != str(node)}
+        self._storage.store_setting(MODE_SCOPES, json.dumps(left))
+        self.emit_info("mode", f"the mode scoped to {node} dropped by {author}")
+        return left
+
+    def goal_top(self, node) -> bool:
+        """Is `node` the top of a goal's contract — a root, one not made yet, or a mode scope's top (`validation.goal_top`)?"""
+        return _goal_top(self._graph, self._graph.get_task(TaskId(str(node))))
+
 
     def settings(self) -> dict:
         """What the project sets for itself (`set_mode`'s settings) as it stands; unset ones are the server's."""
@@ -598,6 +659,9 @@ class Engine:
                 f"a boundary is the depth down to which the user-agent holds the tree in SEMI-AUTO, "
                 f"at least 1 (the root); SOLO holds everything and AUTO nothing, so {mode.value} takes "
                 f"none")
+        if scopes := self.mode_scopes():
+            raise ValueError(f"a mode is scoped to {', '.join(scopes)} here: a project mode beside it would answer who "
+                             f"holds a node twice — the scope is dropped first, from the person's page")
         # numbered and stamped: a mode switched and switched back leaves a DIFFERENT record, so a reader
         # comparing records (an experiment's validity check, an audit) sees that it moved at all
         rec = {"mode": mode.value, "boundary": boundary, "by": str(author),
@@ -629,15 +693,20 @@ class Engine:
 
     def heard_on(self, root_id) -> list[dict]:
         """[{act, said}] recorded over the goal `root_id` (`hear`), oldest first."""
-        return json.loads(self._storage.get_setting(f"{HEARD_ON}{root_id}") or "[]")
+        return _heard_on(self._graph, root_id)
 
     def persons_words(self, task) -> Optional[list[str]]:
         """What a FAIL of `answers_the_persons_words` on `task` may quote, one utterance each: the goal as given — its
         description — and the person's own words recorded over it (`heard_on`, PERSONS_ACTS). The plan is the agent's
-        text, agreed but not said: a quote of it ("format gfso plan 1") cites nobody. None: `task` has no such criterion."""
+        text, agreed but not said: a quote of it ("format gfso plan 1") cites nobody. At a mode scope's top, his words over
+        the node he holds and above it too: his stream-level asks. None: `task` has no such criterion."""
         if all(c.name != INTENT for c in task.spec.criteria):
             return None
-        return [task.spec.description, *(h["said"] for h in self.heard_on(task.id) if h["act"] in PERSONS_ACTS)]
+        s = self.scope_at(task.id) or {}
+        over, t = [task], self._graph.get_task(TaskId(s["node"])) if s.get("top") == str(task.id) else None
+        while t is not None:
+            over, t = [*over, t], self._graph.get_parent(t.id)
+        return [task.spec.description, *(h["said"] for n in over for h in self.heard_on(n.id) if h["act"] in PERSONS_ACTS)]
 
     def set_settings(self, settings: dict, author: AgentId, said: str = "") -> dict:
         """Change only what the project sets for itself (`set_mode`'s settings), leaving who holds what as recorded — a
@@ -837,10 +906,9 @@ class Engine:
     def issued_by_the_person(self, task_id) -> bool:
         """Is `task_id`'s issuer the person — a root under `solo` or `semi`, the goal's issuer outside the graph (§10.1)?
         Then every issuer move on it is signed by them (§10.2): its verdict, its packet, its answer to a dispute or a
-        block, its cancel, its re-issue once ESCALATED — never by the agent that executes it and holds their connection."""
-        tid = TaskId(str(task_id))
-        return (self.mode_kind() in (Mode.SOLO, Mode.SEMI) and self._graph.get_task(tid) is not None
-                and self._graph.get_parent(tid) is None)
+        block, its cancel, its re-issue once ESCALATED — never by the agent that executes it and holds their connection.
+        A mode scope's top so too (`validation.persons_node`)."""
+        return _persons_node(self._graph, self._graph.get_task(TaskId(str(task_id))))
 
     def persons_answer(self, task_id) -> str:
         """Where `task_id`'s issuer moves are the person's (`issued_by_the_person`), what a step offering one says first:
@@ -2484,7 +2552,7 @@ class Engine:
         if not moved:
             return
         if not (said := PERSONS_WORDS.get().strip()):
-            raise ValueError(f"{old.id}'s {', '.join(moved)} are what the person agreed: under {self.mode_kind().value} "
+            raise ValueError(f"{old.id}'s {', '.join(moved)} are what the person agreed: under {self.mode_at(old.id)['mode']} "
                              f"they change only on the person's own words — show them the change, and pass their words "
                              f"agreeing as `user_said`, recorded on the project's feed")
         self.emit_info("revise", f"{old.id}'s {', '.join(moved)} changed on the person's words: «{said[:300]}»")
@@ -3101,16 +3169,19 @@ class Engine:
     def system_starts_sessions(self) -> bool:
         """Does the system start sessions of its own here (`mode_starts_sessions`), or hold a live node — what a server's
         start stops until the person's Start. A SOLO performed in the chat starts none: after a restart it runs on, its
-        user-agent's next move meeting no stop the system made for nothing."""
-        return mode_starts_sessions(_project_mode(self._graph)) or self._machine_holds_a_live_node()
+        user-agent's next move meeting no stop the system made for nothing; nor does a scope of it (`mode_scopes`)."""
+        return (any(mode_starts_sessions(r) for r in (_project_mode(self._graph), *self.mode_scopes().values()))
+                or self._machine_holds_a_live_node())
 
     def _machine_holds_a_live_node(self) -> bool:
         """A live node held or issued by a machine, or one on the standing agent's name with no mode where the system
         has hands here (an executor or an instrument of this project, whose sessions would start unattended). The
         person's own moves are never the system's (§10.1), so where none, nothing of the system's runs, and a graph
         people hold read «Stopped» after every restart (the author's root, re-offered to his page's name, 2026-11-20;
-        «перезапуск ничего ломать не может»)."""
-        roster, hands = self.workforce.roster(), self.workforce.executor_pool() or self.workforce.has_an_instrument()
+        «перезапуск ничего ломать не может»). In a project of mode scopes alone the instrument is the scopes' and is no
+        hands here: it starts only on a delivery inside one, which a solo in_chat scope's holder makes."""
+        instrument = self.workforce.has_an_instrument() and (self.mode() is not None or not self.mode_scopes())
+        roster, hands = self.workforce.roster(), self.workforce.executor_pool() or instrument
         def _moved(p) -> bool:
             k = party_kind(self._graph, str(p), roster)
             return k == "machine" or k == "person" and str(p) == str(_config_agent_id()) and bool(hands)
@@ -3185,7 +3256,8 @@ class Engine:
         the graph (and, in its first spelling, into the delegation layer the layer gate forbids it).
         """
         task = self._graph.get_task(task_id)
-        return task is not None and self.workforce.has_an_instrument() and self.issuer_kind(task_id) == "machine"
+        return (task is not None and self.workforce.has_an_instrument() and not outside_the_scopes(self._graph, task)
+                and self.issuer_kind(task_id) == "machine")
 
 
     def record_session_fit(self, task_id: TaskId, volume: str, fits: Optional[bool],
@@ -3255,7 +3327,7 @@ class Engine:
         if str(author) != str(self._graph.issuer_of(task_id)):
             raise ValueError(f"'{author}' is not the issuer of {task_id}: who checks it is its issuer's choice — "
                              f"'{self._graph.issuer_of(task_id)}' (§10.2)")
-        if self.mode() is None:
+        if _mode_at(self._graph, t) is None:
             raise ValueError(f"who checks {task_id} is chosen under a mode: with none set, no PASS waits for a "
                              f"validator's record (`set_mode`)")
         if (why := _owed_observer(self._graph, t)) is not None:
@@ -3263,10 +3335,8 @@ class Engine:
         held = [i for i in self.validators_chosen() if i != str(task_id)] + ([str(task_id)] if checker == "validator"
                                                                              else [])
         self._storage.store_setting(VALIDATOR_CHOSEN, json.dumps(held))
-        root = t
-        while (p := self._graph.get_parent(root.id)) is not None:
-            root = p
-        self.hear(root.id, "checker", said, node=str(task_id), checker=checker)
+        # …heard over the top of the mode it lies under — its scope's, in a shared graph — where his words are read
+        self.hear(_mode_at(self._graph, t)[1].id, "checker", said, node=str(task_id), checker=checker)
         return held
 
     def validators_chosen(self) -> list:
@@ -3274,14 +3344,14 @@ class Engine:
         return json.loads(self._storage.get_setting(VALIDATOR_CHOSEN) or "[]")
 
     def validator_staffed(self) -> bool:
-        """Is there a validator to observe this project's deliveries — a mode staffs one, or one is registered?"""
-        return self.mode() is not None or self.workforce.has_an_instrument()
+        """Is there a validator to observe this project's deliveries — a mode or a scope staffs one, or one is registered?"""
+        return self.mode() is not None or bool(self.mode_scopes()) or self.workforce.has_an_instrument()
 
     def checker_choosable(self, task_id: TaskId) -> bool:
-        """Is who checks this node its issuer's to choose — a mode set, so a chosen validator's record gates the PASS
+        """Is who checks this node its issuer's to choose — a mode over it, so a chosen validator's record gates the PASS
         (`validation.observation_blocker`), and nothing owing the instrument there (`set_checker`)?"""
         t = self._graph.get_task(task_id)
-        return t is not None and self.mode() is not None and _owed_observer(self._graph, t) is None
+        return t is not None and _mode_at(self._graph, t) is not None and _owed_observer(self._graph, t) is None
 
     def checker(self, task_id: TaskId, staffed: Optional[bool] = None) -> str:
         """Who checks this node's deliveries, read off the gates its PASS meets: "validator" where a staffed one observes
@@ -3290,13 +3360,23 @@ class Engine:
         t = self._graph.get_task(task_id)
         if t is None:
             return "self"
-        return ("validator" if (self.validator_staffed() if staffed is None else staffed) and self.observed_here(task_id)
+        return ("validator" if (self.validator_staffed() if staffed is None else staffed) and self.observes_by_itself(task_id)
                 else "independent" if self._graph.is_public(t) else "self")
 
     def observed_here(self, task_id: TaskId) -> bool:
         """Does the instrument observe this node's deliveries (`validation.observed_here`)?"""
         t = self._graph.get_task(task_id)
         return t is not None and _observed_here(self._graph, t)
+
+    def outside_the_scopes(self, task_id: TaskId) -> bool:
+        """Does this node lie outside every mode scope of a project with none (`validation.outside_the_scopes`)?"""
+        t = self._graph.get_task(task_id)
+        return t is not None and outside_the_scopes(self._graph, t)
+
+    def observes_by_itself(self, task_id: TaskId) -> bool:
+        """Does the instrument observe this node's deliveries unasked (`validation.observes_by_itself`)?"""
+        t = self._graph.get_task(task_id)
+        return t is not None and _observes_by_itself(self._graph, t)
 
     def scope_top(self, task_id: TaskId) -> Optional[Task]:
         """The top of the one-session scope this node lies in, or None (`validation.scope_top`)."""
@@ -3351,8 +3431,11 @@ class Engine:
         The user-agent holds depths above the boundary, and only under a parent it holds itself: the
         held part is a connected top of the tree. Everything else goes to an executor from this
         project's pool that is NOT the parent's Del, so every system node is a seam (§10.3) — an
-        executor under itself would self-verify with no validator in between."""
+        executor under itself would self-verify with no validator in between. Inside a mode scope's top, its holder,
+        Del(top) as the top's ASSIGN installed it: the standing agent read there sent every node of the stream elsewhere."""
         parent = self._graph.get_task(parent_id) if parent_id else None
+        if parent is not None and (scoped := _scope_at(self._graph, parent)) is not None:
+            return AgentId(scoped[1].assignee)
         return self.del_at(0 if parent is None else self.depth_of(parent.id) + 1,
                            parent.assignee if parent is not None else None)
 

@@ -1712,7 +1712,7 @@ def _childrens_executor(engine: Engine, root_id: str, assignee: str, executor: O
         # the lift is the caller's own call without the name (§12.16 (ii)); naming `set_mode` as the way
         # out handed it the user's choice — measured, a semi holder read it, asked to switch, and stopped
         raise ValueError(
-            f"this project runs in {engine.mode()['mode']}: the children of '{root_id}' are held "
+            f"this project runs in {(engine.mode_at(root_id) or {}).get('mode')}: the children of '{root_id}' are held "
             f"by {'the system' if str(kid) != _agent_id() else 'you'}, so they cannot go to "
             f"{executor}. Call it again without `executor` — the mode assigns them.")
     return executor or str(kid)
@@ -1762,7 +1762,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     `solo` and `semi` the go is the person's: `user_said`, their own words agreeing to the plan they were shown."""
     if (yours := _a_new_roots_go(engine, root_id, request, plan, spec, model, user_said)) is not None:
         return yours
-    request, spec = (_the_go(engine, plan, request, spec) if plan is not None
+    request, spec = (_the_go(engine, plan, request, spec, root_id) if plan is not None
                      else (request, _no_deferral_nobody_makes(spec, open_plan or engine.mode_kind() != Mode.AUTO)))
     given, model = request, model or engine.planner_model()
     _cb = emit_cb(engine, "decompose", _progress)
@@ -1782,20 +1782,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     if executor:
         _cb(f"{root_id}: the children are delegated to {executor}; the root stays with "
             f"{assignee or _agent_id()}, who issues them.")
-    # UNDER A MODE the mode decides both answers, and a name that contradicts it is refused
-    # (`del_by_mode`): the knob is the user's choice of who holds what, not a default a habitual
-    # argument re-decides. The root keeps its creator as the goal's issuer (`Graph.issuer_of`).
-    if engine.mode() is not None:
-        _root = engine.graph.get_task(TaskId(root_id))
-        if _root is None:
-            _want = engine.del_at(0, None)
-            assignee = str(_tools.del_by_mode(engine, None, assignee)) if assignee else str(_want)
-            engine.record_root_issuer(TaskId(root_id), AgentId(_agent_id()))
-        else:
-            assignee = str(_root.assignee)
-        executor = _childrens_executor(engine, root_id, assignee, executor,
-                                       engine.del_at(engine.depth_of(TaskId(root_id)) + 1 if _root else 1,
-                                                     AgentId(assignee)))
+    assignee, executor, author = _held_as_the_mode_says(engine, root_id, assignee, executor, author)
     if fresh := engine.graph.get_task(TaskId(root_id)) is None:
         # the place is read for the plan's author; a plan handed in (`spec`) has none
         found = "" if spec is not None else _work_place_documents(engine, request, model)
@@ -1872,6 +1859,33 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     return {**out, **_heard_at_the_go(engine, given, user_said, res.root_id, fresh)}
 
 
+def _held_as_the_mode_says(engine: Engine, root_id: str, assignee: Optional[str], executor: Optional[str],
+                           author: Optional[str]) -> tuple:
+    """(the root's Del, its children's, the split's author) as the mode over `root_id` decides them — as given with none.
+
+    UNDER A MODE the mode decides both answers, and a name that contradicts it is refused (`del_by_mode`): the knob is
+    the user's choice of who holds what, not a default a habitual argument re-decides. The root keeps its creator as the
+    goal's issuer (`Graph.issuer_of`). In a mode scope the node stands, its children are the scope's holder's, and every
+    go there is the holder's own split: at the scope's top it maps onto the contract its issuer formed and re-authors
+    none (`held_contract`) — that contract is the person's, and moves only by his revision (§10.1)."""
+    if (scope := engine.scope_at(root_id)) is not None:
+        assignee = str(engine.graph.get_task(TaskId(root_id)).assignee)
+        return (assignee, _childrens_executor(engine, root_id, assignee, executor, scope["holder"]),
+                author or scope["holder"])
+    if engine.mode() is None:
+        return assignee, executor, author
+    _root = engine.graph.get_task(TaskId(root_id))
+    if _root is None:
+        _want = engine.del_at(0, None)
+        assignee = str(_tools.del_by_mode(engine, None, assignee)) if assignee else str(_want)
+        engine.record_root_issuer(TaskId(root_id), AgentId(_agent_id()))
+    else:
+        assignee = str(_root.assignee)
+    return assignee, _childrens_executor(engine, root_id, assignee, executor,
+                                         engine.del_at(engine.depth_of(TaskId(root_id)) + 1 if _root else 1,
+                                                       AgentId(assignee))), author
+
+
 def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id, user_said: str) -> dict:
     """What the go on a plan file adds once built: the gate off under it where the system's own review ran over it
     (never for the project's other goals: one go turned it off for every goal of a shared graph); the person's words,
@@ -1898,28 +1912,33 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
     # the system's instructions to the agent, not the agreement
     engine.hear(root_id, "plan", "\n".join(x for x in _planning.text_of(plan).splitlines()
                                            if not x.lstrip().startswith("#")))
-    if holds_its_work(engine):
+    if holds_its_work(engine, root_id):
         # …THE PERSON'S READING IS THIS PLAN'S OWN READING: its decomposer is their own agent, they read it and gave the go in
         # their words; the Level-2 gate stands for the system's own plans, and held the parts on an unannounced review
         # by the system's model (critic over 354554c)
         engine.reviewed_in_its_file(root_id)
         engine.emit_info("go", f"{root_id}: the plan's review is the person's own, given with the go")
         place = _delegation().validator_workdir(engine, _delegation().default_agents(), TaskId(str(root_id)))
-        theirs = on_their_branch(engine, place) if place else ""
+        theirs = on_their_branch(engine, place) if place and switches_branches(engine, root_id) else ""
         if place and W.is_repo_top(place):
             engine.graph.store_setting(f"{CHAT_START}{root_id}", json.dumps({
                 "branch": W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip(),
                 "head": W.git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()}))
         parts = [str(c.id) for c in engine.graph.get_active_children(TaskId(str(root_id)))]
         out["say"] = (theirs + ". " if theirs else "") + (
-            f"The checks the person agreed are the contract now, fixed in the graph before the work. Do the work "
-            f"yourself on the branch `{work_branch(engine)}` and commit; "
+            (f"The split maps onto {root_id}'s contract as its issuer, the person, set it — none of it re-authored; "
+             f"it changes only by his revision from his page. Do the work " if maps_onto_its_contract(engine, root_id)
+             else "The checks the person agreed are the contract now, fixed in the graph before the work. Do the work ")
+            + (f"yourself on the branch `{work_branch(engine)}` and commit; " if switches_branches(engine, root_id) else
+               "yourself where you work, and commit there — the checkout is shared, so no branch is switched; ")
             + (f"take each part ({', '.join(parts)}) in turn — ACCEPT it, do it, DELIVER it with your self-check, and "
                f"PASS it yourself: below the root it is yours (`validate_result` has it checked when you want, "
                f"`set_checker` gives it to the validator on the person's words, you signing either way) — and DELIVER `{root_id}` once every part "
                f"has passed" if parts else f"DELIVER `{root_id}`")
-            + f" (`signal`, your self-check in `result`); a validator other than you observes `{root_id}` against its "
-              f"checks and the parts' own, by itself.")
+            + f" (`signal`, your self-check in `result`)"
+            + (f"; a validator other than you observes `{root_id}` against its checks and the parts' own, by itself."
+               if engine.observes_by_itself(TaskId(str(root_id))) else
+               f"; `{root_id}` is yours to PASS too, the validator observing the scope's top above it."))
         # …and the move itself, as every move's reply carries it: the go's alone had none, and a fresh client asked
         # `next_step` before its DELIVER to learn it (s23g4)
         out.update(_tools.next_for(engine, _agent_id()))
@@ -1935,7 +1954,7 @@ def _a_new_roots_go(engine: Engine, root_id: str, request: str, plan, spec, mode
     whether they are theirs, nothing here can tell. None: the go goes on."""
     if engine.graph.get_task(TaskId(root_id)) is not None:
         return None
-    if plan is None and spec is None and model is None and holds_its_work(engine) and str(request or "").strip():
+    if plan is None and spec is None and model is None and holds_its_work(engine, root_id) and str(request or "").strip():
         engine.hear(root_id, "request", request)
         return yours_to_write(engine, request)
     if engine.mode_kind() in (Mode.SOLO, Mode.SEMI) and not str(user_said).strip():
@@ -1949,6 +1968,13 @@ def work_branch(engine: Engine) -> str:
     """The branch of the person's repository the work performed in their own chat goes on (`in_chat`): the system's, by
     name, so their checked-out branches stay theirs; what its root's PASS accepts is named `accepted_branch` there."""
     return f"gfso/{component(engine.project_name or DEFAULT_PROJECT)}/work"
+
+
+def switches_branches(engine: Engine, node) -> bool:
+    """Does a chat performing `node` switch the person's checkout to the work's branch and back? Not in a mode scope:
+    its checkout is shared with the other streams' holders, so a switch would move their work under them — the holder
+    commits where it works, and its ask's PASS lands nothing (slice 1's boundary)."""
+    return engine.scope_at(node) is None
 
 
 def on_their_branch(engine: Engine, place) -> str:
@@ -1987,13 +2013,14 @@ def _nothing_committed(engine: Engine, tid, place, commit: str, left: list, noth
     if not commit or commit != _started_from(engine, tid):
         return None
     there = W.git(place, "rev-parse", "--verify", "-q", f"refs/heads/{work_branch(engine)}^{{commit}}").stdout.strip()
-    if there and there != commit:
+    if there and there != commit and switches_branches(engine, tid):
         return f"NOT delivered — {not_the_work(engine, place, commit)} No validator was started"
     if not left or nothing_to_commit:
         return None
     return (f"NOT delivered — nothing is committed since the work started ({commit[:12]}), and these stand uncommitted: "
-            f"{', '.join(left[:10])}{', …' if len(left) > 10 else ''}. If they are your work, commit them on "
-            f"`{work_branch(engine)}` and DELIVER again; if none of the work is in them, DELIVER with "
+            f"{', '.join(left[:10])}{', …' if len(left) > 10 else ''}. If they are your work, commit them "
+            + (f"on `{work_branch(engine)}`" if switches_branches(engine, tid) else "where you work") +
+            f" and DELIVER again; if none of the work is in them, DELIVER with "
             f"`nothing_to_commit=true`. No validator was started")
 
 
@@ -2035,7 +2062,7 @@ def back_to_their_branch(engine: Engine, tid) -> str:
     """What a chat hears at its root's PASS where the person's repository was left on the work's branch: switch it back."""
     start = json.loads(engine.graph.setting(f"{CHAT_START}{tid}") or "{}")
     place = _delegation().validator_workdir(engine, _delegation().default_agents(), tid)
-    if not (place and W.is_repo_top(place)):
+    if not (place and W.is_repo_top(place) and switches_branches(engine, tid)):
         return ""
     on = W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
     if on != work_branch(engine) or not (was := start.get("branch")) or was == on:
@@ -2061,8 +2088,10 @@ def not_the_work(engine: Engine, place, commit: str) -> str:
 
 def _heard_at_the_go(engine: Engine, goal: str, user_said: str, root_id, fresh: bool) -> dict:
     """Every go's words kept over its root (`Engine.hear`) — a second go's too (critic over 677b376) — and, at a new
-    root's go, what the person must hear (`recorded_at_the_go`)."""
-    engine.hear(root_id, "go", user_said)
+    root's go, what the person must hear (`recorded_at_the_go`). None in a mode scope: a go there is its holder's own
+    split, and words heard with it would be quoted as the person's (`persons_words`)."""
+    if engine.scope_at(root_id) is None:
+        engine.hear(root_id, "go", user_said)
     return recorded_at_the_go(engine, goal, user_said, root_id) if fresh else {}
 
 
@@ -2200,7 +2229,7 @@ def plans_of(project) -> dict:
 
 def plan(engine: Engine, request: str = "", model: Optional[str] = None, executor: Optional[str] = None,
          depth: int = 1, review_model: Optional[str] = None, writing: Optional[str] = None,
-         plan: Optional[str] = None) -> dict:
+         plan: Optional[str] = None, root_id: str = ROOT_ID) -> dict:
     """Author a plan for `request` WITHOUT a project: the plan file (`.gfso`) — the goal, the split with its criteria,
     pinned checks, mappings, dependencies and register, the Level-2 review over it — for the customer to read whole.
     Nothing executes and no project is made. Answers at once: `{writing}` while it is written (about 3–8 minutes on a small
@@ -2209,22 +2238,26 @@ def plan(engine: Engine, request: str = "", model: Optional[str] = None, executo
     `auto_decompose(plan=<path>)`, which builds the project from the file as it stands. `executor` names the registered
     executor whose session the fit of each part is judged against. `plan` hands in a file written elsewhere — the one a
     chat holding its own work filled with the person — to be shown before the go, as a file the system writes is:
-    no model is called."""
+    no model is called. `root_id`: the node the go will build under — in a mode scope, the node the person asks on."""
     if writing:
         return _by_handle(writing, engine.project_name)
     if plan is not None:
-        return handed_in(engine, plan)
+        return handed_in(engine, plan, root_id)
     if not str(request or "").strip():
         return {"refused": True, "error": "plan needs the request, or `writing=<handle>` to read one being written"}
-    # …the person's request as they asked it, quotable whatever the plan's `goal` comes to say: the file is the agent's
-    engine.hear(ROOT_ID, "request", request)
-    if model is None and holds_its_work(engine):
-        return yours_to_write(engine, request)
+    # …the person's request as they asked it, quotable whatever the plan's `goal` comes to say: the file is the agent's —
+    # never in a mode scope, where the request is its holder's, not the person's
+    if engine.scope_at(root_id) is None:
+        engine.hear(root_id, "request", request)
+    if model is None and holds_its_work(engine, root_id):
+        return yours_to_write(engine, request, root_id)
     model = model or engine.planner_model()
     # …the fit judged against WHO WILL DO the parts (§3.7: a leaf is within its holder's κ) — under a mode, the executor
     # the go hands the root's children to, as `auto_decompose` defaults it. Unnamed, the planner judged against an
     # unknown agent, and the user's path (`plan(request)`) got a plan placed for a session it would not run in (critic)
-    if engine.mode() is not None:
+    if (scope := engine.scope_at(root_id)) is not None:
+        executor = _childrens_executor(engine, root_id, scope["holder"], executor, scope["holder"])
+    elif engine.mode() is not None:
         try:
             root = engine.del_at(0, None)
             kid = engine.del_at(1, root)
@@ -2252,12 +2285,12 @@ def plan(engine: Engine, request: str = "", model: Optional[str] = None, executo
                                     execution=execution_of(engine), ledger=engine.record_llm_usage)
         except NoPlan as no:
             return {"error": _no_plan(no, "plan")}
-        return _shown(engine, _plan_written(text), _artifact.parse(text)["spec"])
+        return _shown(engine, _plan_written(text), _artifact.parse(text)["spec"], root_id)
     return _once(("plan", engine.project_name, request, model, executor, depth, review_model or engine.system_model()),
                  write, engine)
 
 
-def handed_in(engine: Engine, plan: str) -> dict:
+def handed_in(engine: Engine, plan: str, root_id: str = ROOT_ID) -> dict:
     """A plan file handed in before the go (`plan(plan=)`): kept as the project's written plan, so its page shows it as it
     shows one the system wrote (`written_plan`: its parts, what the go would refuse), and told on its feed — the file a
     solo chat filled reached the system only at its go, and the person's page showed nothing before (ui). No model."""
@@ -2266,22 +2299,25 @@ def handed_in(engine: Engine, plan: str) -> dict:
         p = _artifact.parse(text)
     except ValueError as e:
         return {"refused": True, "error": f"the plan file does not read: {e}"}
-    refused = _decompose.go_refusals(with_the_intent(engine, p["spec"]), p["goal"])
+    refused = [*((off,) if (off := off_its_contract(engine, p["spec"], root_id)) else ()),
+               *_decompose.go_refusals(with_the_intent(engine, p["spec"], root_id), p["goal"])]
     out = {"path": str(_planning.kept(text)), "chars": len(text), "parts": [s["id"] for s in p["spec"].get("subtasks") or ()],
            "refused_by_the_go": refused,
            "say": ("The go refuses this file as it stands: repair the points of refused_by_the_go in it and hand it in "
                    "again." if refused else
                    "It is on the person's page now. Show them its criteria and checks too; their own words agreeing "
                    "give the go: `auto_decompose(plan=path, user_said=<their words>)`.")}
-    return _shown(engine, out, p["spec"])
+    return _shown(engine, out, p["spec"], root_id)
 
 
-def holds_its_work(engine: Engine) -> bool:
+def holds_its_work(engine: Engine, node=None) -> bool:
     """Does the person's own agent hold and perform this project's work in its chat — `solo`, `in_chat`? Then the plan's
     content is its own, written with the person (§4.5: a split's content is its author's; §11.5: its executor may author
     it in performing it), and the system's planner is not asked: on a fresh solo run it wrote for 10 of 18 minutes,
-    turning 3 asked requirements into 9 criteria and a suite nobody asked for (s20g1)."""
-    return engine.mode_kind() == Mode.SOLO and (engine.mode() or {}).get("perform") == "in_chat"
+    turning 3 asked requirements into 9 criteria and a suite nobody asked for (s20g1). On `node`, the mode it lies under
+    (`mode_at`): a stream holding its scope solo in_chat holds its work so."""
+    rec = engine.mode_at(node) or {}
+    return rec.get("mode") == Mode.SOLO and rec.get("perform") == "in_chat"
 
 
 #: The root criterion the system adds at the go (`with_the_intent`) — its text the system's, never the plan template's,
@@ -2310,9 +2346,10 @@ def with_the_intent(engine: Engine, spec: dict, root_id: str = ROOT_ID) -> dict:
     system's, or — on a root that stands — the root's own where a revision on the person's words installed it (`hear`'s
     `intent`): a second go dropped it, or would reset what they said they meant (critic over deb1158); a text the plan's
     agent wrote while the switch was off does not stand (critic over 677b376). The one reading every root door builds
-    by and the plan's answer says (`added_at_the_go`)."""
+    by and the plan's answer says (`added_at_the_go`). A mode scope's top stands for the root (`goal_top`); below it every
+    node is the holder's own."""
     root = engine.graph.get_task(TaskId(str(root_id)))
-    if not intent_check(engine) or engine.graph.get_parent(TaskId(str(root_id))) is not None:
+    if not engine.intent_check(node=root_id) or not engine.goal_top(root_id):
         return spec
     theirs = {_decompose.criterion_key(h["intent"]) for h in engine.heard_on(root_id) if h.get("intent")}
     mine = next(({"name": c.name, "description": c.description, "check": [p.to_dict() for p in c.check]}
@@ -2325,10 +2362,28 @@ def with_the_intent(engine: Engine, spec: dict, root_id: str = ROOT_ID) -> dict:
                              *({"criterion": INTENT, "child_id": k} for k in kids)]} if kids else {})}
 
 
-def added_at_the_go(engine: Engine, spec: dict) -> list[dict]:
-    """The root criteria the go writes that the plan `spec` does not carry as they are (`with_the_intent`)."""
-    return [c for c in with_the_intent(engine, spec).get("root_criteria") or () if c not in (spec.get("root_criteria") or ())]
+def added_at_the_go(engine: Engine, spec: dict, root_id: str = ROOT_ID) -> list[dict]:
+    """The root criteria the go on `root_id` writes that the plan `spec` does not carry as they are (`with_the_intent`);
+    none at a contract given, which the go maps onto as issued (`maps_onto_its_contract`)."""
+    if maps_onto_its_contract(engine, root_id):
+        return []
+    return [c for c in with_the_intent(engine, spec, root_id).get("root_criteria") or ()
+            if c not in (spec.get("root_criteria") or ())]
 
+
+#: the plan file a scope's holder fills at its top (`yours_to_write`): the contract its issuer set, and the parts to add
+YOURS_ONTO = """format = "gfso-plan/1"
+goal = {goal}
+
+[plan]
+name = ""
+
+# {node}'s contract as its issuer, the person, set it: the split maps onto these criteria and re-authors none — keep
+# them as they stand; they change only by his revision from his page.
+{criteria}
+# Parts ([[plan.subtasks]], with [[plan.mappings]] onto the criteria above and accepted_risks):
+# https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/PLAN_FORMAT.md
+"""
 
 #: the plan file a solo in_chat agent fills with the person: every field left empty is refused by the go's reading (`form`)
 YOURS = """format = "gfso-plan/1"
@@ -2356,10 +2411,54 @@ exact = true
 """
 
 
-def yours_to_write(engine: Engine, request: str) -> dict:
+def maps_onto_its_contract(engine: Engine, node) -> bool:
+    """Does a go on `node` map onto a contract it was given — a mode scope's top, whose packet its issuer, the person,
+    formed (§10.1)? Its holder's split there re-authors none of it (`held_contract`); it moves by his revision alone."""
+    return engine.scope_at(node) is not None and engine.goal_top(node)
+
+
+def its_contract(engine: Engine, node) -> list[dict]:
+    """The root criteria a plan at `node` stands on where a go maps onto its contract — that contract as issued, checks
+    and all, as `held_contract` builds on it; [] elsewhere."""
+    t = engine.graph.get_task(TaskId(str(node))) if maps_onto_its_contract(engine, node) else None
+    return [] if t is None else its_criteria(t)
+
+
+def off_its_contract(engine: Engine, spec: dict, node) -> Optional[str]:
+    """Why a plan at `node` cannot go as it stands where a go maps onto its contract — its root criteria other than that
+    contract, which the go would map onto in their place: checked against one contract and gone on another — or None."""
+    if not maps_onto_its_contract(engine, node):
+        return None
+    key = lambda cs: sorted((str(c.get("name")), _decompose.criterion_key(c)) for c in cs)
+    if key(spec.get("root_criteria") or ()) == key(its_contract(engine, node)):
+        return None
+    return (f"{node}'s criteria are its issuer's contract — the person's — and a split at it maps onto them as issued: "
+            f"the file's root criteria must be exactly them (`plan(request, root_id='{node}')` hands them); they change "
+            f"only by the person's revision from his page")
+
+
+def _criteria_text(crits: list[dict]) -> str:
+    """Root criteria as a plan file writes them."""
+    q = lambda v: json.dumps(str(v or ""), ensure_ascii=False)
+    return "\n".join(f"[[plan.root_criteria]]\nname = {q(c['name'])}\ndescription = {q(c['description'])}\n"
+                     + "".join(f"\n[[plan.root_criteria.check]]\nbehaviour = {q(p.get('behaviour'))}\ncommand = "
+                               f"{q(p.get('command'))}\nexpect = {q(p.get('expect'))}\nexact = "
+                               f"{'true' if p.get('exact') else 'false'}\n" for p in c.get("check") or ())
+                     for c in crits)
+
+
+def yours_to_write(engine: Engine, request: str, node=ROOT_ID) -> dict:
     """The answer of `plan` where the person's own agent holds the work (`holds_its_work`): no model is called — the file
-    to fill with the person, the goal in their words, and how its go goes."""
+    to fill with the person, the goal in their words, and how its go goes. At a contract given (`maps_onto_its_contract`)
+    the file's root criteria ARE that contract, and its holder adds the parts mapped onto them."""
     goal = json.dumps(str(request).strip(), ensure_ascii=False)
+    if crits := its_contract(engine, node):
+        return {"yours": True, "text": YOURS_ONTO.format(goal=goal, node=node, criteria=_criteria_text(crits)),
+                "say": f"No model writes this plan, and its root criteria are {node}'s contract as its issuer, the "
+                       f"person, set it: keep them as they stand, and add the parts that carry them, each mapped onto "
+                       f"them. Hand it in, `plan(plan=<the text>, root_id='{node}')`, and give the go, "
+                       f"`auto_decompose(plan=<its path>, root_id='{node}')`: the split is yours, no words of theirs "
+                       f"owed. A change of those criteria is the person's revision, from his page."}
     return {"yours": True, "text": YOURS.format(goal=goal),
             "say": "No model writes this plan: you hold the work, so its criteria are yours, written with the person. "
                    "Fill `text`: each thing they asked for as a criterion with its check, nothing they did not ask; a "
@@ -2445,11 +2544,14 @@ def reviewed(plan: str) -> bool:
     return _planning.was_reviewed(_planning.text_of(plan))
 
 
-def _the_go(engine: Engine, plan: str, request: str, spec) -> tuple[str, dict]:
-    """The goal and the plan a plan file holds, for the go — refused beside a second plan or another goal."""
+def _the_go(engine: Engine, plan: str, request: str, spec, root_id=ROOT_ID) -> tuple[str, dict]:
+    """The goal and the plan a plan file holds, for the go on `root_id` — refused beside a second plan or another goal,
+    and at a contract given, off it (`off_its_contract`)."""
     if spec is not None:
         raise ValueError("auto_decompose: pass the plan file (`plan`) or a spec (`spec`), not both")
     p = _artifact.parse(text := _planning.text_of(plan))
+    if off := off_its_contract(engine, p["spec"], root_id):
+        raise ValueError(f"auto_decompose: {off}")
     if ((at := _kept.written(engine.project_name)) or {}).get("text") != text:
         _shown(engine, {"path": str(_planning.kept(text))})     # …a go on a text not shown is shown, as it is built
     if (request or "").strip() and request.strip() != p["goal"].strip():
@@ -2530,7 +2632,7 @@ ON_HOST = ("First: this project's work runs on this machine, outside Docker, as 
            "branches. ")
 
 
-def _shown(engine: Engine, out: dict, spec: Optional[dict] = None) -> dict:
+def _shown(engine: Engine, out: dict, spec: Optional[dict] = None, root_id: str = ROOT_ID) -> dict:
     """A plan file written is its project's to show: kept as the one its page shows (`written_plan`), told on its feed,
     and under AUTO its page opened, as the go opens it — the person read a plan only in the client's words, and the go
     under AUTO is the client's too (s17b: the core criterion left the plan unsaid). `spec`: the plan's, the criteria
@@ -2541,7 +2643,7 @@ def _shown(engine: Engine, out: dict, spec: Optional[dict] = None) -> dict:
         _kept.wrote(engine.project_name, path)
         engine.emit_info("plan_written", f"the plan is written: {path}")
         # …said with the plan, before the go: the person agrees to every criterion the go fixes, these too
-        if spec is not None and (added := added_at_the_go(engine, spec)):
+        if spec is not None and (added := added_at_the_go(engine, spec, root_id)):
             out["added_at_the_go"] = added
             out["say"] = out.get("say", "") + (
                 f" The go writes the root criterion `{INTENT}` with the system's text (added_at_the_go), in place of "
@@ -2557,12 +2659,13 @@ def _given_at(engine: Optional[Engine], at: dict) -> Optional[float]:
     """When a go was given on the plan file last written — read off what the go itself records, no flag of its own (ui
     critic: a flag read "not given" on every record written before it, and a re-handed text reset it): the root heard
     this text at a go (`hear(root, "plan", …)`), or the file is older than the root, its go having made it. None: the
-    file awaits its go."""
+    file awaits its go. Heard at any node: in a mode scope the go is given on the person's ask, below the root."""
     root = engine and engine.graph.get_task(TaskId(ROOT_ID))
     if root is None:
         return None
     text = "\n".join(x for x in at["text"].splitlines() if not x.lstrip().startswith("#"))
-    heard = any(h.get("act") == "plan" and str(h.get("said", "")).strip() == text.strip() for h in engine.heard_on(root.id))
+    heard = any(h.get("act") == "plan" and str(h.get("said", "")).strip() == text.strip()
+                for t in engine.all_tasks() for h in engine.heard_on(t.id))
     return at["at"] if heard or at["at"] <= root.created_at.timestamp() else None
 
 
@@ -3102,7 +3205,7 @@ def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int]
              deadline_s: Optional[float] = None, observe: Optional[bool] = None,
              network: Optional[Union[str, dict]] = None, bounds: Optional[dict] = None,
              max_iterations: Optional[int] = None, intent_check: Optional[bool] = None,
-             workdir: Optional[str] = None) -> dict:
+             workdir: Optional[str] = None, node: Optional[str] = None) -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
 
     - `solo` — you (the user-agent) hold and execute every node; the one seam is the root.
@@ -3154,12 +3257,20 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
     registered there (`register_agent`, on `system_model`), so the setup of a small task is this one call; refused,
     the mode leaves none registered.
 
+    `node` — a node the person holds (its Del a name of his): the mode of the work he issues below it (§10.4: autonomy is
+    per task and role). Each node he issues there to another is a top, its Del working it as a person's solo agent works
+    his own project; the node itself and the rest of the project keep reading as they did, and no packet changes. Only
+    `solo` performed `in_chat`, in a project with no mode, and only from his page; with no `mode`, the scope is dropped.
+
     Without `mode`, only the settings named change — who holds what stays as recorded (a switch turned mid-run)."""
     try:
         m = None if mode is None else Mode(str(mode).strip().lower())
     except ValueError:
         return {"refused": True, "error": f"mode must be one of solo | semi | auto, got {mode!r}"}
-    if no := _not_the_persons(engine, m, user_said):
+    # …a mode scoped to a node is answered whole by its own door; a project's, refused where it is not the person's
+    if no := (_scoped(engine, str(node), m, perform, str(user_said).strip(),
+                      lambda held: _with_its_validator(engine, workdir, system_model, held))
+              if node is not None else _not_the_persons(engine, m, user_said)):
         return no
     # …at any time, before the go too: the default stands for the person against the agent whose work it reads, and
     # only their words turn it (critic over de23af3)
@@ -3215,6 +3326,85 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
         engine, {"mode": m.value, **({} if m == Mode.AUTO else {"perform": perform})}, held))
     return {**out, **(_turn_the_way_out(engine) if network is not None and not out.get("refused") else {}),
             **({} if out.get("refused") else _short_supplied(engine))}
+
+
+def _scoped(engine: Engine, node: str, m: Optional[Mode], perform: Optional[str], said: str, staffed) -> dict:
+    """The mode scope at `node`, a node the person holds, set — or, with no mode, dropped — by his page alone: who holds
+    the work he issues below it is his choice as its issuer (§10.1), and a stream's own console that set it would choose
+    its own autonomy. No packet changes: a top's criterion read against his words comes only with his own act on that
+    top (`_his_intent`). `staffed(held)`: `held()` with the scope's validator registered first."""
+    p, t = CALLER.get(), engine.graph.get_task(TaskId(node))
+    if t is None:
+        return {"refused": True, "error": f"task {node} not found"}
+    if p is None or not p.a_page:
+        return {"refused": True, "error": f"the mode of the work under '{node}' is the person's choice, made on his "
+                                          f"page (`gfso ui`), never by an agent's connection: tell them what you would "
+                                          f"change and why"}
+    if m is None:
+        return {"scopes": engine.drop_mode_scope(t.id, AgentId(p.name))}
+    if (m, perform) != (Mode.SOLO, "in_chat"):
+        return {"refused": True, "error": "a mode scope is `solo` performed `in_chat`: each top's holder works it as the "
+                                          "person's own agent works his project"}
+
+    def held() -> dict:
+        """The scope recorded, its validator found — or the refusal."""
+        if not (staff := mode_staffing(engine, m.value, perform))["ready"]:
+            return {"refused": True, "error": staff["missing"]}
+        try:
+            rec = engine.set_mode_scope(t.id, AgentId(p.name), said)
+        except ValueError as e:
+            return {"refused": True, "error": str(e)}
+        return {"scope": rec, "holds": f"each node {node}'s holder issues to another below it is a top: its Del holds "
+                                       f"every node under it and works it in its chat; the top itself is the "
+                                       f"person's — its contract changes and it closes on his words"}
+    return staffed(held)
+
+
+def _his_intent(engine: Engine, criteria: list, rec: Optional[dict]) -> list:
+    """`criteria` as the person's act on a top of the mode scope `rec` installs them — its first ASSIGN or a revision he
+    makes: with `answers_the_persons_words` where `intent_check` holds there and they do not carry it. The counterpart of
+    his go on his own root; never written by a move of the system's, nor mapped: CHECK-1 flags it uncovered at the
+    revision (§12.10), and the top's holder maps it by its own re-admission."""
+    if rec is None or not engine.intent_check(rec) or any(c.get("name") == INTENT for c in criteria):
+        return criteria
+    return [*criteria, json.loads(json.dumps(INTENT_CRITERION))]
+
+
+def _with_his_intent(fn, *, issued: bool):
+    """`fn`, a verb that issues children (`issued`: `parent_id`/`children`) or revises a node's criteria, with the
+    criterion his act installs on each top it makes or revises (`_his_intent`). His act alone: a top's issuer is him,
+    and every issuer move there is his words or his page (`_the_persons_move`, `Engine._the_persons_packet`)."""
+    sig = inspect.signature(fn)
+
+    def spec(e, s, rec):
+        """`s` with its criteria as his act installs them, where it names criteria."""
+        return {**s, "criteria": _his_intent(e, list(s["criteria"]), rec)} if isinstance(s, dict) and "criteria" in s \
+            else s
+
+    @functools.wraps(fn)
+    def _call(*a, **kw):
+        at = sig.bind(*a, **kw).arguments
+        e = at["engine"]
+        if issued and at.get("parent_id"):
+            top = lambda held: e.would_be_a_top(at["parent_id"], held)
+            if "children" in at:
+                at["children"] = [{**c, "spec": spec(e, c["spec"], top(c.get("assignee")))}
+                                  if isinstance(c, dict) and "spec" in c else c for c in at["children"] or ()]
+            else:
+                at["spec"] = spec(e, at.get("spec"), top(at.get("assignee")))
+        elif not issued and (rec := e.scope_at(at["task_id"])) and rec["top"] == str(at["task_id"]):
+            if "criteria" in at:
+                at["criteria"] = _his_intent(e, list(at["criteria"] or ()), rec)
+            else:
+                at["spec"] = spec(e, at.get("spec"), rec)
+        return fn(**at)
+    return _call
+
+
+def its_criteria(t) -> list[dict]:
+    """A node's criteria as a door takes them: each with its checks and the producers it reads."""
+    return [{"name": c.name, "description": c.description, "check": [p.to_dict() for p in c.check],
+             **({"depends_on": list(c.depends_on)} if c.depends_on else {})} for c in t.spec.criteria]
 
 
 def _with_its_validator(engine: Engine, workdir: Optional[str], model: Optional[str], held) -> dict:
@@ -3375,8 +3565,10 @@ def set_checker(engine: Engine, task_id: str, checker: str = "validator", user_s
     """WHO CHECKS a node below the root's seam — `"self"`, you its holder (the default there, §10.3; `validate_result`
     still checks it whenever you call it), or `"validator"`, the project's validator observing each delivery by itself,
     its PASS standing on that record. Either way the signature is yours, its issuer's (§10.2). The person's choice: pass
-    their words asking for it as `user_said`. At a seam the validator always checks — not a choice."""
-    if not str(user_said).strip() and not ((p := CALLER.get()) is not None and p.a_page):
+    their words asking for it as `user_said`. At a seam the validator always checks — not a choice. Below a mode scope's
+    top it is that top's holder's own choice, the inner node's issuer (§10.3): no words of the person's."""
+    inside = (s := engine.scope_at(task_id)) is not None and s["top"] != str(task_id)
+    if not inside and not str(user_said).strip() and not ((p := CALLER.get()) is not None and p.a_page):
         return {"refused": True, "error": "who checks a node is the person's to choose: ask them, and pass their words "
                                           "asking for it as `user_said`"}
     try:
@@ -3419,7 +3611,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
     if sig == "ACCEPT" and (place := in_chat()) and W.is_repo_top(place) and (
             head := W.git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()):
         kw["_recorded"] = (None, head, W.main_worktree(place))
-        if theirs := on_their_branch(engine, place):
+        if switches_branches(engine, tid) and (theirs := on_their_branch(engine, place)):
             said["say"] = theirs
     if (sig == "DELIVER" and (st := engine.graph.get_state(tid)) in (State.EXECUTING, State.REWORKING)
             and (place := in_chat())):
@@ -3435,7 +3627,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
                         "error": f"NOT delivered — the commit at {place} could not be recorded: {ex}"}
             if no := _nothing_committed(engine, tid, place, commit, left, nothing_to_commit):
                 return {"accepted": False, "refused": True, "state": st.name, "error": no}
-            if notice := not_the_work(engine, place, commit):
+            if switches_branches(engine, tid) and (notice := not_the_work(engine, place, commit)):
                 said["notice"] = notice
             if left:
                 said["not_delivered"] = (f"delivered: commit {commit[:12]}; not committed, so no part of it: "
@@ -3506,10 +3698,12 @@ _RAW_TOOLS = {
     **_tools.TOOLS,
     "signal": _with_the_persons_words(signal),                                                                 # a chat's delivery recorded
     "metrics": metrics,                                                               # work past the system counted
-    "create_task": create_task,
+    "create_task": _with_his_intent(create_task, issued=True),
+    "decompose": _with_his_intent(_tools.TOOLS["decompose"], issued=True),
     "auto_decompose": _with_the_persons_words(_tracked("auto_decompose", auto_decompose)),
-    **{n: _with_the_persons_words(_tools.TOOLS[n]) for n in ("revise", "edit_criteria", "edit_scope",
-                                                              "edit_accepted_risks")},
+    **{n: _with_the_persons_words(_with_his_intent(_tools.TOOLS[n], issued=False) if n in ("revise", "edit_criteria")
+                                  else _tools.TOOLS[n])
+       for n in ("revise", "edit_criteria", "edit_scope", "edit_accepted_risks")},
     "reassign": _with_the_persons_words(_tools.TOOLS["reassign"], REASSIGN),
     "plan": plan, "refine_plan": refine_plan,         # a plan with no project, written in its own thread (`_once`)
     "review_decomposition": _tracked("review_decomposition", review_decomposition),   # L2, §9.1

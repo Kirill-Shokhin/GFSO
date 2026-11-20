@@ -1027,7 +1027,11 @@ class Dispatcher:
         not passed. Only the fourth spends money.
         """
         _proj = self._engine.project_name
-        _validator = self._agents.validator_for(s.get("assignee"), project=_proj)
+        # …none outside every mode scope of a project with none (`Engine.observes_by_itself`): the scope's validator is no
+        # other stream's, so their deliveries are dispatched as in a project with no validator — nothing starts, nothing
+        # is published bound, nothing is said
+        _validator = (None if self._engine.outside_the_scopes(TaskId(s["task_id"]))
+                      else self._agents.validator_for(s.get("assignee"), project=_proj))
         # PUBLISHED FOR THE DOORS, the way the roster already is. The doors announce "an independent
         # validator is bound to this node" and could not say WHICH — the layer gate forbids them the
         # registry, and rightly — so five strangers went to the log to discover that the validator

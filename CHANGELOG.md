@@ -13,6 +13,26 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 ## [Unreleased]
 
 ### Added
+- A mode holds on the work the person issues below a node he holds (§10.4: autonomy is per task and role, not a global
+  mode): `set_mode("solo", perform="in_chat", node=Y)`, Y's Del a name of his (`user`), set or dropped (`mode=None` with
+  the node) only from his signed-in page, in a project with no mode — one scope record per project, and a project mode
+  is refused while it stands. Every node he issues below Y to another is a mode top X, held by its Del as a person's solo
+  agent holds his own project; Y itself, his own work, lies under no mode, and a direction he issues later is a top from
+  its ASSIGN. Setting the scope changes no packet. Inside a top, every node issued goes to its holder (a third party is
+  refused as a seam inside solo) and self-verifies below the seam, who checks it being the holder's own choice, no words
+  of the person's. At X the person's word stands, as at the root of his own solo project (§10.1, §10.2): every issuer
+  move there — its packet, its verdict, its re-issue — carries his words or comes from his page;
+  `answers_the_persons_words` comes, by default, only with his own act on X — its first ASSIGN or a revision he makes —
+  and is mapped by X's holder, CHECK-1 flagging it until then; what it is read against is X's packet and his words over
+  Y and above it. X is observed by the scope's validator. A go anywhere in a top is the holder's own split — no words,
+  nothing heard as the person's — and at X maps onto the contract as issued, its checks included: `plan(request,
+  root_id=X)` hands a file whose root criteria are X's contract, a file off it is refused at the plan and at the go, and
+  the go says it maps onto that contract, never that the file's checks were fixed. Below X, `plan(request, root_id=)`
+  hands the holder the file to fill; no branch of the shared checkout is switched, nor named to commit on. Outside the
+  tops every reading is as with no scope — who observes a node, what `validate_result` takes, which observation binds —
+  and only what the system would do by itself with the scope's validator is cut: no delivery there is validated, bound
+  or said to be by itself, and a restart stops nothing on its account. The graph read serves `scopes` and each node's
+  `scope` and `mode_top`.
 - A console already running takes a stream's name without a relaunch: `act_as(name)` over its own gfso connection, for
   a name the person opened (a node he assigned to it, a root he made for it) or issued. The connection — its bridge's
   lease, now sent with every call (`X-GFSO-Lease`) — signs as that name alone until it ends: `/clear` and a server
