@@ -4,13 +4,14 @@
 import {$, esc, coded, data, tally, daily, phone} from './dom.js';
 import {H, QUALITY, GRADES, doing, hover, PLAN} from './hints.js';
 import {post, GOAL, PROJECT, FOCUS} from './api.js';
-import {S, taskOf, asGiven, heard, signsAs, lift, reader, mineNames, mineShown, viaWord, procs, begun, stateWord, issuerIsPerson, partyKind, viewTasks, inView, intentOn} from './state.js';
+import {S, taskOf, asGiven, heard, signsAs, lift, reader, mineNames, mineShown, viaWord, procs, begun, stateWord, issuerIsPerson, partyKind, viewTasks, inView, intentOn, agentName} from './state.js';
 import {label, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow, PROC_KIND} from './run.js';
 import {dur, trim, cap, pct, stamp, clockAt, spoken} from './fmt.js';
 import {rootOf, isRoot, depths} from './tree.js';
 import {askInPage, act, notice} from './overlays.js';
 import {pendingPlan} from './planning.js';
+import {loadReports} from './model.js';
 
 const named = id => taskOf(id).name ? `${taskOf(id).name} (${id})` : id;
 
@@ -200,11 +201,24 @@ function drawReports() {
     if ($('hd-reports').dataset.seen === seen) return;
     $('hd-reports').dataset.seen = seen;
     $('hd-reports').innerHTML = !n ? '' : `<button class="hd-q" data-action="reports">${tally(n, (phone() ? '' : 'tech ') + (n > 1 ? 'reports' : 'report'))}</button>`
-        + H.reports([...said.map(line => ({head: "the system's own records", val: '', link: '', means: line})), ...[...reports].reverse().map(r => ({head: r.role === 'mcp' ? r.actor || 'a client' : r.role || 'the system',   // a role says itself; a client's report says WHO filed it, not the door (the author: «не ясно кто»)
+        + H.reports([...said.map(line => ({head: "the system's own records", val: '', link: '', means: line})), ...[...reports].reverse().map(r => ({
+            // FROM → TO, and why (the text): who filed it — a role says itself, a client's report its filer, not the door (the
+            // author: «не ясно кто») — and whose to resolve, its addressee (engineering d9ea50a: «непонятно от кого кому и зачем»)
+            head: `${r.role === 'mcp' ? r.actor || 'a client' : r.role || 'the system'}${r.addressee ? ` → ${agentName(r.addressee)}` : ''}`,
             val: `<span class="hq-when">${esc(when(r.at))}</span>`,
-            link: r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(nameOf(taskOf(r.node)) || r.node)} →</button>` : '', means: r.text}))]);
+            link: (r.node ? `<button class="pn-link" ${data({action: 'select', id: r.node})}>${esc(nameOf(taskOf(r.node)) || r.node)} →</button>` : '')
+                // …resolved by its addressee or its filer, with how: then it leaves the open count, the log keeps it
+                + (r.id && [r.addressee, r.actor].some(n => n && signsAs().includes(n)) ? `<button class="hq-mode" ${data({action: 'resolve-report', id: r.id})}>resolve…</button>` : ''),
+            means: r.text}))]);
 }
 export const toggleReports = () => $('hd-reports').classList.toggle('open');
+export async function resolveReport(id) {
+    const how = await askInPage(`Resolve this report? It leaves the open count; the log keeps it with how it was resolved. Signed as <b>${esc(S.me?.name || '')}</b>.`,
+        {yes: 'Resolve', field: 'how it was resolved — kept with the report'});
+    if (how === false) return;
+    if (!String(how).trim()) return notice('Say how it was resolved', 'bad');
+    await act(post('/api/run/resolve_report', {report_id: id, how}), {what: 'The report', ok: async () => { $('hd-reports').dataset.seen = ''; await loadReports(); drawReports(); }});
+}
 
 // A goal still open with nothing at work, no call on anyone, and no event for longer than the run folds as idle
 // is STALLED — the one quiet that must not read "leave it" (a json-parser run sat 642h so, under "nothing needs you").

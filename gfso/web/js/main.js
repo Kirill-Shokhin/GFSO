@@ -8,7 +8,7 @@ import {loadCheckMap, terminal, FM} from './vocab.js';
 import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
 import {isHidden} from './fold.js';
 import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
-import {drawHeader, drawQuality, toggleReports, stopRun, startRun, setMode, setIntent} from './header.js';
+import {drawHeader, drawQuality, toggleReports, resolveReport, stopRun, startRun, setMode, setIntent} from './header.js';
 import {refreshProjects, offerNew, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject, listOnly, switchHostRuns, rereadHostRuns} from './projects.js';
 import {selectTask, panelOpened, closeSidebar, resign, openReader, closeReader} from './panel.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
@@ -167,6 +167,7 @@ const ACT = {
         if (pop) document.querySelector('.hd-mode')?.focus();      // the header is redrawn: its old button is gone
         if (where) setTimeout(() => document.querySelector(`${where === 'goal' ? '#goal-panel' : '.cp-row'} input[data-action="intent"]`)?.focus(), 300); },
     'plan-toggle': () => togglePlan(),
+    'resolve-report': d => resolveReport(d.id),
     // …who checks a part, its issuer's choice: redrawn from the server's answer either way — the browser ticks the box first,
     // and a refusal left it ticked over an engine holding it off (critic)
     'set-checker': async d => { await act(post('/api/run/set_checker', {task_id: d.id, checker: d.on === '1' ? 'validator' : 'self'}), {what: 'Who checks this part', ok: null}); await S.reload(); point('select', d.id); },
