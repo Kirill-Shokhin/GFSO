@@ -28,9 +28,9 @@ from tests.test_delegate import _agents, _dispatch_validate
 _RISK = REGISTER
 
 
-def _split(e, executor="user"):
+def _split(e, executor="user", holder=None):
     """`root` over one part `kid` covering its criterion, the split admitted whole with its register (§11.5, §9.2)."""
-    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("g")]})
+    T.create_task(e, "root", {"description": "goal", "criteria": [criterion("g")]}, assignee=holder)
     T.decompose(e, "root", [{"task_id": "kid", "spec": {"description": "part", "criteria": [criterion("k")]},
                              "assignee": executor, "covers": ["g"]}], accepted_risks=_RISK)
 
@@ -238,12 +238,13 @@ def test_where_the_system_signs_a_binding_fail_is_signed_not_left_standing(tmp_p
     e.project_name = "p"
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("p-val", "llm-validator"))
     agents._agents["p-val"]["project"] = "p"
-    _split(e, "exec-2")
+    # …the kid's issuer a machine (`exec-1` holds the root): the system makes none of a person's issuer moves (§10.1)
+    _split(e, "exec-2", holder="exec-1")
     e.wait_idle()
     T.signal(e, "kid", "ACCEPT", "exec-2")
     T.signal(e, "kid", "DELIVER", "exec-2", result="ran `check k`: it printed OK", self_validation="PASS")
     e.wait_idle()
-    e.record_reviewer_verdict(TaskId("kid"), "FAIL", ["k"], reviewer="user", observed={"k": "printed NO"})
+    e.record_reviewer_verdict(TaskId("kid"), "FAIL", ["k"], reviewer="exec-1", observed={"k": "printed NO"})
     started, _ = _dispatch_validate(e, agents, {"verdict": "PASS", "failed_criteria": [], "per_criterion": []})
     assert "fail:kid" in started and not any(s == "validate:kid" for s in started), started
     assert e.graph.get_state(TaskId("kid")).name == "REWORKING"

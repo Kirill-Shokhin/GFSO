@@ -47,12 +47,12 @@ def _engine(storage=None):
     return e
 
 
-def _root(e, extra_criteria=()):
+def _root(e, extra_criteria=(), holder="user"):
     T.create_task(e, "root", {
         "name": "root", "description": "a goal",
         "criteria": [criterion("c1", "the thing"), *extra_criteria],
         "accepted_risks": [{"item": "fixture", "predictability": "extraordinary", "justification": "accepted here", "invalidation_condition": "never", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]},
-        "user")
+        holder)
 
 
 def _split(e, covers: dict, assignee="worker"):
@@ -436,12 +436,15 @@ def test_a_hand_resolved_block_puts_the_executor_back_in_the_queue(tmp_path):
     episode, not on the round.
     """
     e = _engine()
-    _root(e)
+    # …the children's issuer `lead` a registered machine: the sweep resolves a block only for a machine's node, never
+    # a person's (§10.1); the hand half is the same issuer's move sent through the FSM
+    _root(e, holder="lead")
     T.decompose(e, "root", [{"task_id": "prod", "spec": {"description": "producer", "criteria": [criterion("p", "P")]}, "assignee": "exec-1", "covers": ["c1"]},
         {"task_id": "cons", "spec": {"description": "consumer", "criteria": [criterion("c", "C")]}, "assignee": "exec-1", "covers": ["c1"]}], accepted_risks=REGISTER)
 
     agents = AgentRegistry(path=str(tmp_path / "agents.json"))
     agents.register("exec-1", "llm-executor", workdir=str(tmp_path))
+    agents.register("lead", "llm-executor", workdir=str(tmp_path))
     ran: list = []
     d = Dispatcher(e, agents, runner=lambda *a: ran.append(str(a[1])))
     d.dispatch_once()                                   # both children claim their first round
@@ -456,7 +459,7 @@ def test_a_hand_resolved_block_puts_the_executor_back_in_the_queue(tmp_path):
     # The issuer clears it by hand, retracting the edge (`external` — it worked around the blocker).
     # A payload-free RESOLVE_BLOCK instead CONFIRMS the discovered Dep, and then the node waiting for
     # its producer is correct, not a defect — which is why this half uses the retracting form.
-    T.signal(e, "cons", "RESOLVE_BLOCK", "user", external=True)
+    T.signal(e, "cons", "RESOLVE_BLOCK", "lead", external=True)
     e.wait_idle()
     assert e.graph.get_state(TaskId("cons")).name == "EXECUTING"
     assert "cons" in d.dispatch_once()                  # …and the delegate is back in the queue
@@ -469,9 +472,9 @@ def test_a_hand_resolved_block_puts_the_executor_back_in_the_queue(tmp_path):
     # is not the validation — pinned by `test_a_seam_pass_needs_a_verdict_whoever_signs_it`
     # …and the observation names the PINNED run: a criterion now carries the procedure that decides
     # it (A1/§2), so a PASS that skips it is a pass on a probe invented at validation time.
-    T.record_verdict(e, "prod", "PASS", reviewer="user",
+    T.record_verdict(e, "prod", "PASS", reviewer="lead",
                      observed={"p": {"note": "ran it, printed the output", "ran": ["check p"]}})
-    T.signal(e, "prod", "PASS", "user")
+    T.signal(e, "prod", "PASS", "lead")
     e.wait_idle()
     assert e.graph.get_state(TaskId("prod")).name == "DONE"
     started = d.dispatch_once()

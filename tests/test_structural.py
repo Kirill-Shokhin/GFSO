@@ -12,6 +12,7 @@ from gfso.core.handlers.structural import (check_vertical_deadlines,
     run_structural,
 )
 from gfso.core.handlers.constraint import _parse_numeric_bound, check_sufficiency, check_consistency
+from gfso.core.protocol.invariants import INTENT
 from gfso.engine.validation import _EXEC_GATING_CHECKS
 from gfso import tools as T
 from tests.support import DENIAL, criterion, make_engine
@@ -236,7 +237,6 @@ def test_non_redundancy_fail_superfluous_child():
 def test_a_child_mapped_by_the_intent_criterion_alone_is_an_orphan():
     """The go maps the root's intent criterion to every part (`with_the_intent`), so a mapping to it says nothing about
     what the part does: a child it alone maps addresses no criterion of the split (§9.5, FM-1.e)."""
-    from gfso.core.protocol.invariants import INTENT
     parent = _task("p", criteria=["perf", INTENT], mappings=[
         CriterionMapping("perf", TaskId("c1")), CriterionMapping(INTENT, TaskId("c1")), CriterionMapping(INTENT, TaskId("c2"))])
     result = check_non_redundancy(parent, [_task("c1", desc="perf work"), _task("c2", desc="unrelated extra")])

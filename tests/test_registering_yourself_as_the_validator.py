@@ -49,11 +49,11 @@ def _engine():
     return e
 
 
-def _leaf(e, tid="leaf", assignee="user"):
+def _leaf(e, tid="leaf", assignee="user", issuer=""):
     T.create_task(e, tid, {"description": "a leaf that never does the work",
                            "criteria": [criterion("file_exists", "NEVER.txt exists")],
                            "accepted_risks": REGISTER},
-                  assignee=assignee)
+                  assignee=assignee, agent=issuer)
     e.wait_idle()
     T.signal(e, tid, "ACCEPT", assignee)
     T.signal(e, tid, "DELIVER", assignee, result="I claim it is done (nothing was written).")
@@ -90,8 +90,9 @@ def test_an_instrument_opens_the_seam_ON_THE_VERDICT_IT_PRODUCED():
     """
     e = _engine()
     e._graph.authorized_validators = {"val-1"}
-    e.workforce.publish_roster({"exec-1": "llm-executor", "val-1": "llm-validator"})   # its issuer a machine (§10.2)
-    _leaf(e, "leaf", assignee="exec-1")
+    # …its issuer a machine: an instrument's signature is the issuer's only there (§10.2)
+    e.workforce.publish_roster({"boss": "llm-executor", "exec-1": "llm-executor", "val-1": "llm-validator"})
+    _leaf(e, "leaf", assignee="exec-1", issuer="boss")
 
     assert T.signal(e, "leaf", "PASS", "val-1")["accepted"] is False, "a bare signature closed it"
 

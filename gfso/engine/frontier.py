@@ -653,7 +653,7 @@ class NodeSteps:
         # (CLI door, 2026-09-02). The engine knows whose move it is; the step says so, and a door
         # that takes the signer as an argument can copy it.
         return {"complete": False, "task_id": str(t.id), "name": t.spec.name or str(t.id),
-                "state": t.state.name, "action": action, "assignee": t.assignee, "unmet_checks": unmet,
+                "state": t.state.name, "action": action, "assignee": t.assignee, "unmet_checks": unmet, "flags": flags,
                 "signed_by": (str(self.engine.graph.issuer_of(t.id)) if (role := step_role(self.engine, t, action))
                               == "issuer" else str(t.assignee or "")),
                 # …and in which ROLE (§12.13: the state's owner): where one party holds both, the name alone cannot say

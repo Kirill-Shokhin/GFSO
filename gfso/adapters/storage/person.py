@@ -15,8 +15,9 @@ MARK = "person_renamed"
 _WHOLE = (("audit_log", "source", "1"), ("tasks", "assignee", "1"), ("settings", "value", "key LIKE 'issuer:%'"))
 #: the JSON columns a party is written in, under one of `_KEYS` at any depth
 _JSON = (("settings", "key", "value"), ("critiques", "task_id", "critique_json"),
-         ("exec_verdicts", "task_id", "verdict_json"))
-_KEYS = frozenset({"by", "actor", "validator"})
+         ("exec_verdicts", "task_id", "verdict_json"), ("audit_log", "id", "spec_json"))
+#: `assignee`: an ASSIGN logs the whole packet it installs, its holder with it
+_KEYS = frozenset({"by", "actor", "validator", "assignee"})
 
 
 class TwoParties(RuntimeError):

@@ -246,6 +246,8 @@ def test_refine_frozen_terminal_children_surface_as_holes():
         e.send_signal_sync(SignalData(signal=sig, task_id=TaskId("root.a"), source=AgentId("human"),
                                       result="a done" if sig is Signal.DELIVER else None))
     e._graph.authorized_validators = {"vx"}
+    # …and the issuer `human` a machine on the roster: an instrument's signature is the issuer's only there (§10.2)
+    e.workforce.publish_roster({"human": "llm-executor", "vx": "llm-validator"})
     # …and the validator RECORDS before it signs, which is what the real one does
     # (`delegate._validate_with` → `record_exec_verdict` on both its branches). Omitted, this setup
     # reached DONE through a hole closed 2026-09-08: a PASS from a roster id closed an INTERNAL
@@ -285,6 +287,8 @@ def test_refine_on_terminal_target_refused():
     res = decompose_into(_eng(), "task", root_id="root", llm=fake)
     e = res.engine
     e._graph.authorized_validators = {"vx"}
+    # the issuer `human` a machine on the roster: an instrument's signature is the issuer's only there (§10.2)
+    e.workforce.publish_roster({"human": "llm-executor", "vx": "llm-validator"})
 
     def _validated_pass(tid):
         """A seam closes on a RECORD, not on a name. This setup signed as a registered id and

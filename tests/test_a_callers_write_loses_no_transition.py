@@ -21,9 +21,10 @@ def _graph(tmp_path):
     e.record_root_issuer(ROOT, AgentId("user"))
     T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G"), criterion("h", "H")]},
                   assignee="exec-1")
+    # …"a" covers the component `_register` names: a register whose component nothing covers is not admitted (CHECK-5)
     T.decompose(e, "root", [{"task_id": t, "assignee": "exec-2", "covers": [c], "spec": {
-        "description": f"part {t}", "criteria": [criterion(f"{t}k", "K")]}} for t, c in (("a", "g"), ("b", "h"))],
-        accepted_risks=REGISTER)
+        "description": f"part {t}", "criteria": [criterion(f"{t}k", "K")], "covers_risks": r}}
+        for t, c, r in (("a", "g", ["a component"]), ("b", "h", []))], accepted_risks=REGISTER)
     e.wait_idle()
     assert "error" not in (o := T.signal(e, "root", "ACCEPT", "exec-1")), o
     return e

@@ -9,8 +9,11 @@ from __future__ import annotations
 import pytest
 
 import gfso.tools as T
+from gfso import issuer as I
 from gfso.core.types import AgentId, Mode, TaskId
+from gfso.delegate import Dispatcher
 from gfso.engine.validation import party_kind
+from gfso.roster import AgentRegistry
 from tests.support import REGISTER, criterion, make_engine
 
 
@@ -42,9 +45,6 @@ def test_with_no_mode_the_system_makes_none_of_the_persons_issuer_moves(tmp_path
     """§10.1: Del names the role's holder. With no mode the person issues his nodes and the system holds no role there:
     it answers none of his disputes, resolves none of his blocks and signs none of his verdicts — his agent moves only
     when he writes (USING_GFSO). A machine holding a role still moves for it."""
-    from gfso import issuer as I
-    from gfso.delegate import Dispatcher
-    from gfso.roster import AgentRegistry
     agents = AgentRegistry(path=str(tmp_path / "agents.json"))
     agents.register("exec-1", "llm-executor", workdir=str(tmp_path))
     e = make_engine()

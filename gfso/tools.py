@@ -3176,8 +3176,9 @@ def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[st
 
 
 def is_offer(s: dict) -> bool:
-    """A step that only asks its holder's consent to an OFFERED node, with no plan hole to say over it."""
-    return s.get("action") == Action.ACCEPT and s.get("state") == "OFFERED" and not s.get("unmet_checks")
+    """A step that only asks its holder's consent to an OFFERED node, with no plan hole or flag to say over it."""
+    return (s.get("action") == Action.ACCEPT and s.get("state") == "OFFERED" and not s.get("unmet_checks")
+            and not s.get("flags"))
 
 
 def _named_offer(engine: Engine, s: dict) -> dict:

@@ -308,6 +308,17 @@ def _with_refusal(ret):
     return ret if ret in (dict, inspect.Signature.empty) else typing.Union[ret, dict]
 
 
+def _sdk_context():
+    """The SDK's `Context` type, or None where the SDK is absent (direct `_bind` unit use): no session scoping."""
+    try:
+        # LEFT: the MCP SDK is optional AT IMPORT — this module must import without it so
+        # `create_server` can raise its readable RuntimeError (and the HTTP door degrade).
+        from mcp.server.fastmcp import Context
+        return Context
+    except ImportError:
+        return None
+
+
 def _bind(engine_or_registry, fn):
     """Wrap a tools.py function (engine, *args) as an MCP tool: drop `engine` from the signature so the
     SDK infers the schema from the remaining typed params; keep the docstring as the description.
@@ -335,15 +346,7 @@ def _bind(engine_or_registry, fn):
         if not p.name.startswith("_")               # underscore params are transport-internal (e.g. _progress)
         and p.name not in pinned                    # actor identity is the door's, not the caller's claim
     ]
-    Context = None
-    if multi or long:
-        try:
-            # LEFT: the MCP SDK is optional AT IMPORT — this module must import without it so
-            # `create_server` can raise its readable RuntimeError (and the HTTP door degrade).
-            from mcp.server.fastmcp import Context as _Ctx
-            Context = _Ctx
-        except ImportError:  # SDK absent (direct _bind unit use) — no session scoping
-            pass
+    Context = _sdk_context() if multi or long else None
     # KEYWORD_ONLY must precede a VAR_KEYWORD (e.g. `**payload`) or the signature is invalid
     var_kw = next((i for i, p in enumerate(params) if p.kind == inspect.Parameter.VAR_KEYWORD), len(params))
     if multi and "project" not in {p.name for p in params}:
