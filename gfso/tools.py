@@ -1533,6 +1533,8 @@ def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str], 
     refusal): the mode is the user's choice of who holds what, and a habitual `assignee=` must not
     quietly re-decide it. A name that agrees — the user-agent where it holds, or another of this
     project's executors where the system holds and it keeps the seam — is kept."""
+    if why := engine.top_refusal(parent_id, asked):
+        raise ValueError(why)
     want = engine.del_for(TaskId(parent_id) if parent_id else None)
     if want is None:
         return AgentId(asked or _agent_id())
@@ -2353,7 +2355,9 @@ def reassign(engine: Engine, task_id: str, assignee: str,
     # …AND UNDER A MODE THE NEW DEL IS THE MODE'S TO AGREE WITH: a holder that re-assigns a system node to
     # itself undoes the mode node by node, with the mode record untouched (measured 2026-09-24: a
     # semi-auto holder took three repair nodes back and edited the program itself)
-    if (t := engine.graph.get_task(TaskId(task_id))) is not None and engine.mode_at(t.id) is not None:
+    # …and a top re-issued to a machine is refused there as at its issue (`Engine.top_refusal`)
+    if (t := engine.graph.get_task(TaskId(task_id))) is not None and (
+            engine.mode_at(t.id) is not None or engine.would_be_a_top(t.parent_id, assignee)):
         del_by_mode(engine, str(t.parent_id) if t.parent_id else None, assignee, str(t.id))
     out = task_out(engine.reassign(TaskId(task_id), AgentId(assignee),
                                     reason=_reason_from(reason)), engine, plan=False)

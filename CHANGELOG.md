@@ -32,7 +32,11 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   tops every reading is as with no scope — who observes a node, what `validate_result` takes, which observation binds —
   and only what the system would do by itself with the scope's validator is cut: no delivery there is validated, bound
   or said to be by itself, and a restart stops nothing on its account. The graph read serves `scopes` and each node's
-  `scope` and `mode_top`.
+  `scope` and `mode_top`. His revisions of Y — from his page, or with his words — are heard on Y, so each top's
+  criterion read against his words quotes them; a re-ASSIGN that makes a node of his a top installs that criterion as
+  his first ASSIGN does; a top is never issued or re-issued to a registered machine, which executes by dispatch where
+  the mode performs in a chat; and with a scope, a node on a name of the person's is his at a server start, whatever
+  executors the project has, so the project runs on.
 - A console already running takes a stream's name without a relaunch: `act_as(name)` over its own gfso connection, for
   a name the person opened (a node he assigned to it, a root he made for it) or issued. The connection — its bridge's
   lease, now sent with every call (`X-GFSO-Lease`) — signs as that name alone until it ends: `/clear` and a server

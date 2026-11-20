@@ -40,7 +40,7 @@ from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_n
                                           claim_digest)
 
 from gfso.config import (
-                         PIPELINE_PAGE, USAGE_PAGE, LIMIT_RETRY_S, PERSONS_NAMES,
+                         PIPELINE_PAGE, USAGE_PAGE, LIMIT_RETRY_S, PERSONS_NAMES, CALLER,
                          MODEL_DEFAULT, VERDICT_FIELD_CHARS, agent_id as _config_agent_id, caller_via,
                          state_timeout as _config_state_timeout)
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
@@ -619,6 +619,17 @@ class Engine:
         """The scope record a node issued under `parent_id` to `held` would be a top of (`validation.would_be_a_top`)."""
         p = self._graph.get_task(TaskId(str(parent_id))) if parent_id else None
         return _would_be_a_top(self._graph, p, held) if p is not None else None
+
+    def top_refusal(self, parent_id, held) -> Optional[str]:
+        """Why a node issued under `parent_id` to `held` — a top of an in_chat scope — cannot be: `held` is a registered
+        machine, which executes by dispatch, while in_chat performs in a chat. None: it may."""
+        rec = self.would_be_a_top(parent_id, held)
+        if rec is None or rec.get("perform") != "in_chat" or not (
+                AgentId(held) in self.workforce.executor_pool() or self.workforce.kind_of(held)):
+            return None
+        return (f"{held} is a registered machine, which executes by dispatch, and a node the person issues under "
+                f"{rec['node']} is a top of its in_chat mode, performed in a chat: issue it to a name that works in a "
+                f"chat, or drop the scope at {rec['node']} first")
 
     def drop_mode_scope(self, node: TaskId, author: AgentId) -> dict:
         """The scope at `node` dropped: its nodes keep their Del (Inv-1), and are read as the project's again."""
@@ -2550,8 +2561,11 @@ class Engine:
     def _the_persons_packet(self, old: Task, new_spec: Optional[Spec], deadline) -> None:
         """A root's packet changed under `solo` or `semi` — its goal's words, criteria, scope, register or deadline: every
         field is the contract (Inv-1) — only on the person's own words (`PERSONS_WORDS`), which go on the feed; refused
-        without them. Asked before the queue of every act that installs a packet."""
-        if not self.issued_by_the_person(old.id):
+        without them. Asked before the queue of every act that installs a packet. At the node a mode scope stands at,
+        his redirections of the stream (his decision of 11-12) are heard there, his words or, from his page, the
+        criteria he wrote: each top's criterion read against his words quotes them (`persons_words`); none is asked."""
+        persons, scope = self.issued_by_the_person(old.id), str(old.id) in self.mode_scopes()
+        if not (persons or scope):
             return
         field = lambda s: (s.description, tuple(s.criteria), tuple(s.scope), tuple(s.accepted_risks))
         moved = [n for n, a, b in zip(("description", "criteria", "scope", "accepted_risks"), field(old.spec),
@@ -2559,7 +2573,13 @@ class Engine:
         moved += ["deadline"] if deadline is not None and deadline != old.deadline else []
         if not moved:
             return
-        if not (said := PERSONS_WORDS.get().strip()):
+        said = PERSONS_WORDS.get().strip()
+        if not persons:
+            page = (p := CALLER.get()) is not None and p.a_page
+            self.hear(old.id, "revise", said or "\n".join(
+                c.description for c in (new_spec or old.spec).criteria if page and c not in old.spec.criteria))
+            return
+        if not said:
             raise ValueError(f"{old.id}'s {', '.join(moved)} are what the person agreed: under {self.mode_at(old.id)['mode']} "
                              f"they change only on the person's own words — show them the change, and pass their words "
                              f"agreeing as `user_said`, recorded on the project's feed")
@@ -3187,12 +3207,16 @@ class Engine:
         person's own moves are never the system's (§10.1), so where none, nothing of the system's runs, and a graph
         people hold read «Stopped» after every restart (the author's root, re-offered to his page's name, 2026-11-20;
         «перезапуск ничего ломать не может»). In a project of mode scopes alone the instrument is the scopes' and is no
-        hands here: it starts only on a delivery inside one, which a solo in_chat scope's holder makes."""
-        instrument = self.workforce.has_an_instrument() and (self.mode() is not None or not self.mode_scopes())
+        hands here: it starts only on a delivery inside one, which a solo in_chat scope's holder makes. With a scope, a
+        node on a name of the person's is his — he set it there, holding the node the scope stands at — never the
+        system's, whatever executors the project has."""
+        scoped = bool(self.mode_scopes())
+        instrument = self.workforce.has_an_instrument() and (self.mode() is not None or not scoped)
         roster, hands = self.workforce.roster(), self.workforce.executor_pool() or instrument
         def _moved(p) -> bool:
             k = party_kind(self._graph, str(p), roster)
-            return k == "machine" or k == "person" and str(p) == str(_config_agent_id()) and bool(hands)
+            return k == "machine" or (k == "person" and str(p) == str(_config_agent_id()) and bool(hands)
+                                      and not (scoped and str(p) in PERSONS_NAMES))
         return any(_moved(t.assignee) or _moved(self._graph.issuer_of(t.id))
                    for t in self.all_tasks() if t.state not in TERMINAL_STATES)
 

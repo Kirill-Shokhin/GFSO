@@ -22,11 +22,13 @@ import pytest
 import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso.adapters.execution import LocalExecution
-from gfso.config import CALLER, Principal
+from gfso.adapters.storage.sqlite import SqliteStorage
+from gfso.config import CALLER, SERVES_ENV, Principal
 from gfso.core.protocol.invariants import INTENT
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.delegate import AgentRegistry, ensure_dispatcher
 from gfso.engine.validation import observation_binds, owed_observer
+from gfso.runtime import ProjectRegistry
 from tests.support import REGISTER, a_repository, criterion, instrument_passes, make_engine
 from tests.test_delegate import _dispatch_validate
 
@@ -424,10 +426,10 @@ def test_outside_the_scope_the_go_and_the_verdict_read_as_with_no_mode(tmp_path)
 DIRS, TASK = ("root.stream.a", "root.stream.b", "root.stream.c"), "root.stream.a.t"
 
 
-def _stream(tmp_path, scoped: bool = True):
+def _stream(tmp_path, scoped: bool = True, storage=None):
     """The dev graph's shape: the author's root → the stream node Y, its Del moved to the person by a re-ASSIGN → three
     directions held by `engineering`, tasks under the first two — and, where `scoped`, the scope set at Y from his page."""
-    e = make_engine(validate_signals=True, state_timeout=0)
+    e = make_engine(validate_signals=True, state_timeout=0, **({"storage": storage} if storage else {}))
     e.start()
     e.project_name = "p"
     T.create_task(e, "root", {"description": "the author's goal", "criteria": [criterion("g")]}, assignee=AUTHOR,
@@ -554,3 +556,65 @@ def test_the_persons_words_at_a_top_are_its_packet_and_what_he_said_over_his_str
     _call(PAGE, "edit_criteria", e, DIRS[2], TL.its_criteria(d), agent="user", user_said=WORDS)
     words = e.persons_words(e.graph.get_task(TaskId(DIRS[2])))
     assert words and {"сначала инженерка", "весь проект", DIRS[2]} <= set(words), words
+
+
+def _his(e, n, held):
+    """A node he issues under Y from his page, to `held`."""
+    return _call(PAGE, "decompose", e, Y, [{"task_id": n, "spec": {"description": n, "criteria": [criterion(n[-1])]},
+                                            "assignee": held, "covers": ["k"]}], accepted_risks=REGISTER, agent="user")
+
+
+def test_his_revision_of_the_node_he_holds_is_heard_there_and_read_at_each_top(tmp_path):
+    """His redirections are revisions of Y's criteria (his decision of 11-12): made from his page, or with his words,
+    they are heard over Y, so the criterion read against his words at a top quotes them (§6.1 point 3)."""
+    e = _stream(tmp_path)
+    _his(e, "root.stream.d", HOLDER)
+    y = e.graph.get_task(TaskId(Y))
+    out = _call(PAGE, "edit_criteria", e, Y, TL.its_criteria(y) + [criterion("first", "сначала инженерка, потом ui")],
+                agent=AUTHOR)
+    assert not out.get("refused"), out
+    assert "сначала инженерка, потом ui" in e.persons_words(e.graph.get_task(TaskId("root.stream.d")))
+    y = e.graph.get_task(TaskId(Y))
+    authors = Principal(AUTHOR, (AUTHOR,), "tok-author", "token")
+    assert not _call(authors, "edit_criteria", e, Y, TL.its_criteria(y) + [criterion("second")], agent=AUTHOR,
+                     user_said="и тесты зелёные").get("refused")
+    assert "и тесты зелёные" in e.persons_words(e.graph.get_task(TaskId("root.stream.d")))
+
+
+def test_a_reassign_that_makes_a_top_installs_the_criterion_as_the_other_doors_do(tmp_path):
+    """Moving a node of his under Y to another makes it a top by his act (a revision he makes, §12.3): the criterion
+    read against his words comes with it, as with a first ASSIGN."""
+    e = _stream(tmp_path)
+    n = "root.stream.mine"
+    _his(e, n, "user")
+    assert INTENT not in [c.name for c in e.graph.get_task(TaskId(n)).spec.criteria] and not e.scope_at(n)
+    out = _call(PAGE, "reassign", e, n, HOLDER, agent="user")
+    assert not (isinstance(out, dict) and (out.get("refused") or out.get("error"))), out
+    assert _top(e, n) == n and INTENT in [c.name for c in e.graph.get_task(TaskId(n)).spec.criteria]
+
+
+def test_a_top_under_an_in_chat_scope_is_not_given_to_a_registered_machine(tmp_path):
+    """`in_chat` performs in a chat; a machine executes by dispatch: a top issued or re-issued to one is refused, naming
+    both lifts — a name that works in a chat, or the scope dropped."""
+    e = _stream(tmp_path)
+    assert not TL.register_agent(e, "p-exec", "llm-executor", workdir=str(tmp_path)).get("refused")
+    out = _his(e, "root.stream.m", "p-exec")
+    assert isinstance(out, dict) and out.get("error") and "chat" in out["error"] and "drop" in out["error"], out
+    _his(e, "root.stream.mine", "user")
+    out = _call(PAGE, "reassign", e, "root.stream.mine", "p-exec", agent="user")
+    assert out.get("error") and "chat" in out["error"], out
+
+
+def test_a_server_start_leaves_a_scoped_project_running_beside_a_registered_executor(tmp_path, monkeypatch):
+    """«перезапуск ничего ломать не может»: with a scope, a live node whose Del or issuer is the person's name is his,
+    never the system's, whatever executors the project has — so Y, held by `user`, does not stop the project."""
+    data = tmp_path / "data"
+    data.mkdir()
+    e = _stream(tmp_path, storage=SqliteStorage(str(data / "p.db")))
+    assert not TL.register_agent(e, "p-exec", "llm-executor", workdir=str(tmp_path)).get("refused")
+    assert e.workforce.executor_pool()
+    e.stop()
+    monkeypatch.setenv("GFSO_DATA_DIR", str(data))
+    monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    monkeypatch.setenv(SERVES_ENV, "1")
+    assert ProjectRegistry().engine("p").paused() is None

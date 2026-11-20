@@ -3365,15 +3365,16 @@ def _his_intent(engine: Engine, criteria: list, rec: Optional[dict]) -> list:
     """`criteria` as the person's act on a top of the mode scope `rec` installs them — its first ASSIGN or a revision he
     makes: with `answers_the_persons_words` where `intent_check` holds there and they do not carry it. The counterpart of
     his go on his own root; never written by a move of the system's, nor mapped: CHECK-1 flags it uncovered at the
-    revision (§12.10), and the top's holder maps it by its own re-admission."""
+    revision (§12.10), and the top's holder maps it by its own re-admission. While `intent_check` holds, a revision of
+    his that leaves it out gets it back: it is his by default, and the page's switch turns it off."""
     if rec is None or not engine.intent_check(rec) or any(c.get("name") == INTENT for c in criteria):
         return criteria
     return [*criteria, json.loads(json.dumps(INTENT_CRITERION))]
 
 
 def _with_his_intent(fn, *, issued: bool):
-    """`fn`, a verb that issues children (`issued`: `parent_id`/`children`) or revises a node's criteria, with the
-    criterion his act installs on each top it makes or revises (`_his_intent`). His act alone: a top's issuer is him,
+    """`fn`, a verb that issues children (`issued`: `parent_id`/`children`), revises a node's criteria or re-issues it to
+    another (`assignee`), with the criterion his act installs on each top it makes or revises (`_his_intent`). His act alone: a top's issuer is him,
     and every issuer move there is his words or his page (`_the_persons_move`, `Engine._the_persons_packet`)."""
     sig = inspect.signature(fn)
 
@@ -3393,6 +3394,14 @@ def _with_his_intent(fn, *, issued: bool):
                                   if isinstance(c, dict) and "spec" in c else c for c in at["children"] or ()]
             else:
                 at["spec"] = spec(e, at.get("spec"), top(at.get("assignee")))
+        elif "assignee" in at and not issued:
+            # …a re-ASSIGN making a node of his a top: the criterion comes with his act, as one version before it — a
+            # version moving Del alone carries no criteria — and only where the re-issue itself will stand
+            t = e.graph.get_task(TaskId(str(at["task_id"])))
+            rec = None if t is None or e.scope_at(t.id) or e.top_refusal(t.parent_id, at["assignee"]) else \
+                e.would_be_a_top(t.parent_id, at["assignee"])
+            if rec and (now := _his_intent(e, its_criteria(t), rec)) != its_criteria(t):
+                _tools.edit_criteria(e, str(t.id), now, agent=str(e.graph.issuer_of(t.id)))
         elif not issued and (rec := e.scope_at(at["task_id"])) and rec["top"] == str(at["task_id"]):
             if "criteria" in at:
                 at["criteria"] = _his_intent(e, list(at["criteria"] or ()), rec)
@@ -3705,7 +3714,7 @@ _RAW_TOOLS = {
     **{n: _with_the_persons_words(_with_his_intent(_tools.TOOLS[n], issued=False) if n in ("revise", "edit_criteria")
                                   else _tools.TOOLS[n])
        for n in ("revise", "edit_criteria", "edit_scope", "edit_accepted_risks")},
-    "reassign": _with_the_persons_words(_tools.TOOLS["reassign"], REASSIGN),
+    "reassign": _with_the_persons_words(_with_his_intent(_tools.TOOLS["reassign"], issued=False), REASSIGN),
     "plan": plan, "refine_plan": refine_plan,         # a plan with no project, written in its own thread (`_once`)
     "review_decomposition": _tracked("review_decomposition", review_decomposition),   # L2, §9.1
     "validate_result": _tracked("validate_result", validate_result),                  # §10.1
