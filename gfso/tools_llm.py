@@ -36,7 +36,7 @@ from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snaps
 from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, committed, left_out,
                                      scratch_of)
 from gfso.issuer import CONTACT_ROUND as _CONTACT
-from gfso.core.types import (BATCH, HOST, LAID, TERMINAL_STATES, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, State, TaskId, Stage,
+from gfso.core.types import (BATCH, HOST, LAID, TERMINAL_STATES, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, Signal, State, TaskId, Stage,
                              Verdict, passed)
 from gfso.core.protocol.invariants import INTENT, RED_SET, criterion_meant, probes_of, red_set, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import (SYSTEMS_ACT, canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
@@ -1997,21 +1997,34 @@ def _nothing_committed(engine: Engine, tid, place, commit: str, left: list, noth
             f"`nothing_to_commit=true`. No validator was started")
 
 
-def _the_persons_verdict(engine: Engine, tid, sig: str) -> Optional[dict]:
-    """Under `solo` and `semi` a root's PASS or FAIL is the person's — the root's issuer is them (§10.1) — so it carries
-    their words after they saw the validator's verdict, recorded on the feed; refused without them. A client signing
-    the root itself was stopped as self-approval (s21). None: the signal goes on."""
-    if sig not in (Verdict.PASS.value, Verdict.FAIL.value) or engine.mode_kind() not in (Mode.SOLO, Mode.SEMI) \
-            or engine.graph.get_parent(tid) is not None or engine.graph.get_task(tid) is None:
+#: the issuer's moves on a node (§11.2) — its verdict, its answer to a dispute or a block, its cancel, its re-issue
+PERSONS_MOVES = (Verdict.PASS.value, Verdict.FAIL.value, Signal.ACCEPT_CHALLENGE.name, Signal.REJECT_CHALLENGE.name,
+                 Signal.RESOLVE_BLOCK.name, Signal.CANCEL.name, Signal.ASSIGN.name)
+
+
+def _the_persons_move(engine: Engine, tid, sig: str) -> Optional[dict]:
+    """An issuer's move on a node whose issuer is the person (`Engine.issued_by_the_person`) is theirs (§10.2), so from
+    an agent's connection it carries their words, recorded on the feed; refused without them, nothing written (§12.16
+    (ii)). A client signing the root itself was stopped as self-approval (s21); one that put "which line ending?" to
+    them by a CHALLENGE answered it with REJECT_CHALLENGE in their name (critic, in-process). A re-ASSIGN is theirs once
+    the root is ESCALATED, their decision (§12.5); elsewhere its packet is asked by the engine (`_the_persons_packet`).
+    None: the move goes on."""
+    if sig not in PERSONS_MOVES or not engine.issued_by_the_person(tid) or (
+            sig == Signal.ASSIGN.name and engine.graph.get_state(tid) != State.ESCALATED):
         return None
     if (p := CALLER.get()) is not None and p.a_page:
-        return None                     # …the person's own page signing: the move itself is their word
+        return None                     # …the person's own page making it: the move itself is their word
+    verdict = sig in (Verdict.PASS.value, Verdict.FAIL.value)
     if not (said := PERSONS_WORDS.get().strip()):
         return {"accepted": False, "refused": True,
                 "error": f"{tid}'s {sig} is the person's: show them the validator's verdict on each criterion "
-                         f"(`get_verdict('{tid}')`), ask them, and sign with their own words as `user_said`"}
-    engine.emit_info("verdict", f"{tid}: {sig} on the person's words: «{said[:300]}»")
-    engine.hear(tid, "verdict", said)
+                         f"(`get_verdict('{tid}')`), ask them, and sign with their own words as `user_said`" if verdict
+                         else f"{tid}'s {sig} is the person's — its issuer is them (§10.1), and you would be answering "
+                              f"for them: show them the question, ask them, and send their own words as `user_said`, "
+                              f"or they make it on their page. Nothing was written"}
+    act = "verdict" if verdict else "answer"
+    engine.emit_info(act, f"{tid}: {sig} on the person's words: «{said[:300]}»")
+    engine.hear(tid, act, said)
     return None
 
 
@@ -3434,8 +3447,6 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
             keep = past.delivered(engine, rec[2], task_id, rec[1])      # …its range read while git still holds it
         except OSError:
             pass                                                        # …a measure's record, never the delivery's refusal
-    if no := _the_persons_verdict(engine, tid, sig):
-        return no
     out = _tools.signal(engine, task_id, signal, source, **kw)
     if out.get("accepted") and sig == Verdict.PASS.value and (back := back_to_their_branch(engine, tid)):
         said["say"] = back
@@ -3467,7 +3478,8 @@ def _with_the_persons_words(fn):
     """`fn` taking `user_said` — the person's own words on this act — carried to the engine's one door every act that
     installs a packet passes — a re-ASSIGN, an ACCEPT_CHALLENGE (`engine.PERSONS_WORDS`, read by
     `Engine._the_persons_packet`): under `solo` and `semi` a root's criteria change only on them, recorded on the
-    feed for the person to see."""
+    feed for the person to see. The same door asks for them where the move on its node is the person's
+    (`_the_persons_move`): a signal by its name, a revision as the re-ASSIGN it is."""
     sig = inspect.signature(fn)
     own = "user_said" in sig.parameters
 
@@ -3475,6 +3487,9 @@ def _with_the_persons_words(fn):
     def _call(*a, user_said: str = "", **kw):
         token = PERSONS_WORDS.set(str(user_said or ""))
         try:
+            if "task_id" in (got := sig.bind_partial(*a, **kw).arguments) and (no := _the_persons_move(
+                    got["engine"], TaskId(str(got["task_id"])), str(got.get("signal", Signal.ASSIGN.name)).strip().upper())):
+                return no
             return fn(*a, **({"user_said": user_said} if own else {}), **kw)
         finally:
             PERSONS_WORDS.reset(token)
@@ -3491,7 +3506,7 @@ _RAW_TOOLS = {
     "create_task": create_task,
     "auto_decompose": _with_the_persons_words(_tracked("auto_decompose", auto_decompose)),
     **{n: _with_the_persons_words(_tools.TOOLS[n]) for n in ("revise", "edit_criteria", "edit_scope",
-                                                              "edit_accepted_risks")},
+                                                              "edit_accepted_risks", "reassign")},
     "plan": plan, "refine_plan": refine_plan,         # a plan with no project, written in its own thread (`_once`)
     "review_decomposition": _tracked("review_decomposition", review_decomposition),   # L2, §9.1
     "validate_result": _tracked("validate_result", validate_result),                  # §10.1

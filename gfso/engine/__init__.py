@@ -100,7 +100,7 @@ PERSONS_WORDS: ContextVar[str] = ContextVar("persons_words", default="")
 #: the settings key under which a goal's recorded words are kept, + its root id (`Engine.hear`)
 HEARD_ON = "heard_on:"
 #: the acts whose recorded words are the person's own (`Engine.hear`) — the plan agreed at the go is the agent's text
-PERSONS_ACTS = ("request", "go", "revise", "verdict")
+PERSONS_ACTS = ("request", "go", "revise", "verdict", "answer")
 #: what of a stop's record the system lifts it by: a time, an execution place, a credential store's stamp
 LIFTS = ("until", "place", "account")
 #: How long what the place probe said stands for R′'s gate (`place_down`): each asking is a container of its own.
@@ -834,14 +834,30 @@ class Engine:
         (`verdicts.outside_of_this_delivery`); [] with no verdict on it yet."""
         return outside_of_this_delivery(self._storage, TaskId(str(task_id)), self.current_exec_verdict(TaskId(str(task_id))))
 
+    def issued_by_the_person(self, task_id) -> bool:
+        """Is `task_id`'s issuer the person — a root under `solo` or `semi`, the goal's issuer outside the graph (§10.1)?
+        Then every issuer move on it is signed by them (§10.2): its verdict, its packet, its answer to a dispute or a
+        block, its cancel, its re-issue once ESCALATED — never by the agent that executes it and holds their connection."""
+        tid = TaskId(str(task_id))
+        return (self.mode_kind() in (Mode.SOLO, Mode.SEMI) and self._graph.get_task(tid) is not None
+                and self._graph.get_parent(tid) is None)
+
+    def persons_answer(self, task_id) -> str:
+        """Where `task_id`'s issuer moves are the person's (`issued_by_the_person`), what a step offering one says first:
+        told "This is YOURS … REJECT_CHALLENGE", their agent answered the question it had put to them, in their name
+        (critic, in-process). "" elsewhere."""
+        return (f"This is the person's to answer, not yours — the issuer of '{task_id}' is them (§10.1): show them the "
+                f"question, and send the move they choose with their own words as `user_said`, or they make it on their "
+                f"page" if self.issued_by_the_person(task_id) else "")
+
     def persons_verdict(self, task_id, lines: bool = True) -> str:
         """Where signing `task_id` is the person's — a root under `solo` or `semi`, its issuer being them (§10.1) — what
         their agent is told wherever it reads the sign-off owed: show them the validator's verdict on each criterion with
         its notes, ask, and sign with their words. "" elsewhere. One owner: a client read "you sign" on every text but
         the feed, signed the root itself, and was stopped as self-approval (s22)."""
-        t = self._graph.get_task(TaskId(str(task_id)))
-        if t is None or self._graph.get_parent(t.id) is not None or self.mode_kind() not in (Mode.SOLO, Mode.SEMI):
+        if not self.issued_by_the_person(task_id):
             return ""
+        t = self._graph.get_task(TaskId(str(task_id)))
         rec = self.current_exec_verdict(t.id) or {}
         # …WHOLE, the reading against their own words first, and only the count bounded, said where it bites: cut at 200
         # characters a line, the person heard "PASS" over the validator's own caveat on what that PASS rests on, and the
@@ -2454,7 +2470,7 @@ class Engine:
         """A root's packet changed under `solo` or `semi` — its goal's words, criteria, scope, register or deadline: every
         field is the contract (Inv-1) — only on the person's own words (`PERSONS_WORDS`), which go on the feed; refused
         without them. Asked before the queue of every act that installs a packet."""
-        if self._graph.get_parent(old.id) is not None or self.mode_kind() not in (Mode.SOLO, Mode.SEMI):
+        if not self.issued_by_the_person(old.id):
             return
         field = lambda s: (s.description, tuple(s.criteria), tuple(s.scope), tuple(s.accepted_risks))
         moved = [n for n, a, b in zip(("description", "criteria", "scope", "accepted_risks"), field(old.spec),
@@ -3851,7 +3867,8 @@ class Engine:
                                              f"is wrong"),
                            Move("signal", n, f"or close it (`signal('{n}', 'CANCEL')`, which cascades the live "
                                              f"subtree)", Signal.CANCEL.name),
-                           sep="; ", lead="the ISSUER decides, and has three moves: ")
+                           sep="; ", lead=(f"{theirs}; the three moves: " if (theirs := self.persons_answer(n))
+                                           else "the ISSUER decides, and has three moves: "))
                 + ". Silence closes it too, by the state's own timeout — it never drifts to PASS.")
 
     def why_escalated(self, task_id) -> str:

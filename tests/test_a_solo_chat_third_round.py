@@ -65,10 +65,10 @@ def test_the_persons_own_page_signs_the_root_with_no_words(no_model):
     _gone(e, _filled(TL.plan(e, ASKED)["text"]))
     token = CALLER.set(Principal("user", ("user",), "session", "a page", "local"))
     try:
-        assert TL._the_persons_verdict(e, TaskId("root"), "PASS") is None
+        assert TL._the_persons_move(e, TaskId("root"), "PASS") is None
     finally:
         CALLER.reset(token)
-    assert TL._the_persons_verdict(e, TaskId("root"), "PASS")["refused"], "an agent's connection still needs their words"
+    assert TL._the_persons_move(e, TaskId("root"), "PASS")["refused"], "an agent's connection still needs their words"
 
 
 def test_the_gos_own_say_survives_the_door():

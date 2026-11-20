@@ -378,7 +378,8 @@ def test_the_hands_work_again_after_the_holder_rejects_their_dispute(tmp_path):
     assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
     _pass(e, d, 20)
     assert _state(e) == State.CHALLENGED
-    assert TL.TOOLS["signal"](e, "root", "REJECT_CHALLENGE", "user", justification="g is met as written").get(
+    assert TL.TOOLS["signal"](e, "root", "REJECT_CHALLENGE", "user", justification="g is met as written",
+                              user_said="g верен, делай как написано").get(
         "accepted")
     _pass(e, d, 20)
     assert len(llm.calls) == 2 and _state(e) in (State.VALIDATING, State.DONE), (len(llm.calls), _state(e))

@@ -250,7 +250,8 @@ def test_a_project_the_system_performs_is_read_in_the_repository_its_role_names(
 
 
 def _cancelled(e):
-    assert TL.TOOLS["signal"](e, "root", "CANCEL", "user", reason="dropped")["accepted"]
+    assert TL.TOOLS["signal"](e, "root", "CANCEL", "user", reason="dropped",
+                              user_said="не нужно, отмени")["accepted"]         # …a solo root's cancel is the person's
     assert TL.TOOLS["signal"](e, "root", "CONFIRM_CANCEL", "user", in_flight="nothing")["accepted"]
     assert e.graph.get_task("root").state.name == "ABANDONED"
     time.sleep(1.1)              # …the cancel's second is the node's

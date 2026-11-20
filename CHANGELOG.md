@@ -128,6 +128,12 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   never by a `[review]` line in the file; any other file is gated as any split.
 
 ### Fixed
+- Under `solo` and `semi` every issuer move on the root is the person's (§10.1, §10.2, §11.2): ACCEPT_CHALLENGE,
+  REJECT_CHALLENGE, RESOLVE_BLOCK, CANCEL and the re-issue of an ESCALATED root (`revise`, `reassign`), as PASS and
+  FAIL already were. From an agent's connection each carries their words (`user_said`), heard on the feed and kept
+  with the goal's words; refused otherwise, nothing written; from their page it needs none. The step offering such a
+  move says it is the person's to answer: their agent, told "This is YOURS", answered the question its own CHALLENGE
+  had put to them, in their name.
 - `next_step` and `next_steps` asked under a node walk only its subtree: on a graph carrying several streams the walk
   covered every node, and the holder of one was handed another's verdict to sign.
 - The reply to a signal names the signer's own next step first; another party's is named only when none is theirs.

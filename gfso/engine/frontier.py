@@ -405,8 +405,10 @@ class NodeSteps:
             cand = (5, t, Action.RESOLVE,
                     f"'{t.id}' ({nm}) is BLOCKED"
                     + (f" on {', '.join(_bl)}" if _bl else "")
-                    + ". It is YOURS to move (Inv-8: BLOCKED's owner is the issuer). If the "
-                      "blocker is genuinely gone: RESOLVE_BLOCK. If you worked around it: "
+                    + (f". {theirs} (Inv-8: BLOCKED's owner is the issuer). If the "
+                       if (theirs := self.engine.persons_answer(t.id)) else
+                       ". It is YOURS to move (Inv-8: BLOCKED's owner is the issuer). If the ")
+                    + "blocker is genuinely gone: RESOLVE_BLOCK. If you worked around it: "
                       "RESOLVE_BLOCK(external=true). If the edge was misattributed: RESOLVE_BLOCK "
                       "with a corrected `blocker_task_ids`. If the contract no longer needs that "
                       "input: `remove_dependency` and then revise it. If the goal is off: CANCEL. "
@@ -434,9 +436,14 @@ class NodeSteps:
                           f"with why the goal asks for it."
                           if (_theirs := [i for i in _asked if i not in self.engine.plans_own_findings(t.id)]) else "")
                        if (_asked := self.engine.users_dispute(t.id)) and not self.engine.paused() else
-                       f"This is YOURS and nothing moves until you close it: ACCEPT_CHALLENGE with the new spec if "
-                       f"the dispute is right (the node returns to OFFERED and its executor consents afresh), or "
-                       f"REJECT_CHALLENGE with the justification if the contract stands."))
+                       # …AND WHERE THE ISSUER IS THE PERSON, THE ANSWER IS THEIRS: told "This is YOURS", their agent
+                       # answered the question it had put to them by its own CHALLENGE, in their name (critic, in-process)
+                       (f"{theirs}; nothing moves until it is closed: ACCEPT_CHALLENGE with the new spec if they find "
+                        f"the dispute right, or REJECT_CHALLENGE with their reason if the contract stands."
+                        if (theirs := self.engine.persons_answer(t.id)) else
+                        f"This is YOURS and nothing moves until you close it: ACCEPT_CHALLENGE with the new spec if "
+                        f"the dispute is right (the node returns to OFFERED and its executor consents afresh), or "
+                        f"REJECT_CHALLENGE with the justification if the contract stands.")))
         elif t.state == State.EXECUTING and kids and all(_passed(k) for k in kids):
             cand = self._aggregate_or_repair(t, nm, crits)
         elif t.state == State.CANCELLING:
