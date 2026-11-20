@@ -432,3 +432,17 @@ def test_a_file_written_over_keeps_its_mode(tmp_path):
     assert p.stat().st_mode & 0o777 == 0o600 and p.read_text() == '{"A": "1"}'
     _config.write_atomic(fresh := tmp_path / "new.json", "x", 0o600)
     assert fresh.stat().st_mode & 0o777 == 0o600
+
+
+def test_setup_says_it_starts_no_docker_where_no_window_may_open(monkeypatch, capsys):
+    """With no windows allowed `app` runs nothing, yet setup printed «starting Docker Desktop», and a fresh client told the
+    person a start was tried and failed (s24g1)."""
+    ran = []
+    monkeypatch.setenv("GFSO_NO_WINDOWS", "1")
+    monkeypatch.setattr(D.sys, "platform", "win32")
+    monkeypatch.setattr(D.shutil, "which", lambda name: "docker")
+    monkeypatch.setattr(D.children, "run", lambda argv, **kw: ran.append(argv))
+    monkeypatch.setattr(D, "docker_state", lambda: (False, "its daemon does not answer"))
+    assert D.start_docker(5) is False and ran == []
+    out = capsys.readouterr().out
+    assert "starting" not in out and "not started from here" in out, out

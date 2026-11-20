@@ -31,7 +31,7 @@ from gfso import __version__
 from gfso import serverctl, updates
 from gfso.serverctl import port_state
 from gfso.adapters import children
-from gfso.adapters.children import app, console, open_outside
+from gfso.adapters.children import app, console, open_outside, windows_allowed
 from gfso.adapters.execution import AGENT_DOCKERFILE, docker_server
 from gfso.adapters.llm import credentials, headless, registry
 from gfso import config as _config
@@ -515,6 +515,11 @@ def start_docker(wait_s: int = STEP_WAIT_S) -> bool:
     exe = shutil.which("docker")
     if exe is None or sys.platform not in ("win32", "darwin"):
         return False
+    if not windows_allowed():
+        # …said as so: told «starting», a fresh client told the person a start was tried and failed (s24g1)
+        print("Docker: its daemon does not answer; Docker Desktop is not started from here (no windows on this machine)",
+              flush=True)
+        return docker_state()[0]
     print(f"Docker: its daemon does not answer; starting Docker Desktop (up to {wait_s} s)…", flush=True)
     try:
         app([exe, "desktop", "start", "--timeout", str(wait_s)], wait_s + 30)
