@@ -267,14 +267,10 @@ const dispute = ({d}) => { const w = WHY[d.state], c = w && [...(d.audit || [])]
 // author, 11-20: «решает кто будет валидировать; если сам то сам и ставит подпись»). The engine says who checks now
 // (`checker`, on the graph read only where it is the validator) and offers the choice only where one exists — a part the
 // person's chat holds below the root; a seam owes the validator, no box there (critic)
-const checkerOf = id => (S.graph.nodes || []).find(n => n.id === id)?.checker || 'self';   // validator · independent · person · self
+const checkerOf = id => (S.graph.nodes || []).find(n => n.id === id)?.checker || 'self';   // validator · independent · self
 function checkSetting({d, acts}) {
     if (!d.parent_id) return '';
-    const who = checkerOf(d.id), on = who === 'validator';
-    // …the person named as its checker (engineering, set_checker «person»): said to anyone, and no two-way box that would
-    // silently replace that choice with the validator or the holder (engineering's warning)
-    if (who === 'person') return `<div class="pn-note check-skip">${esc(PANEL.checkedByPerson)}</div>`;
-    const may = owns(acts?.moves?.set_checker);
+    const who = checkerOf(d.id), on = who === 'validator', may = owns(acts?.moves?.set_checker);
     return may ? `<div class="pn-note"><label class="act-check"><input type="checkbox"${data({action: 'set-checker', id: d.id, on: on ? '0' : '1'})}${on ? ' checked' : ''}> ${esc(PANEL.checkAlways)}</label></div>`
         // …a seam no validator observes needs a verdict not its executor's (engineering 6bb0819): said too
         : on || who === 'independent' ? `<div class="pn-note check-skip">${esc(on ? PANEL.checkedAlways : PANEL.checkedApart)}</div>` : '';

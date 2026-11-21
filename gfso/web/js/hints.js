@@ -346,7 +346,6 @@ export const PANEL = {
     checkAlways: "Checked by the validator (otherwise by you); you sign either way",
     checkedAlways: "Checked by the validator; its issuer signs",
     checkedApart: "Needs a verdict not its executor's; its issuer signs",
-    checkedByPerson: "Checked by the person themself — their look or hand on this delivery; its issuer signs on that record",
     scopeTop: (who, at) => `Held solo, in ${who}'s own chat (handed out from ${at}); its verdict is the person's`,
     signYours: (v, n) => `The validator observed this delivery: ${v}, each criterion under Verdict${n ? `, and ${n} thing${n > 1 ? 's' : ''} it saw outside the criteria` : ''}. The verdict is yours — sign it below`,
     outside: 'Seen outside the criteria — no criterion failed on it; yours to weigh',
