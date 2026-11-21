@@ -255,6 +255,29 @@ class _ProjectSettings:
             c.executemany("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", change(get).items())
 
 
+class _Critiques:
+    """The records kept per key beside the graph (checks' critiques, admissions, replacements, choices) — one table,
+    its own concern: read whole, by key, or every key under a prefix."""
+
+    def store_critique(self, task_id: TaskId, critique_json: str) -> None:
+        with self._write() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO critiques (task_id, critique_json) VALUES (?, ?)",
+                (task_id, critique_json),
+            )
+
+    def get_critique(self, task_id: TaskId) -> Optional[str]:
+        with self._read() as c:
+            row = c.execute("SELECT critique_json FROM critiques WHERE task_id = ?", (task_id,)).fetchone()
+        return row["critique_json"] if row else None
+
+    def critiques_under(self, prefix: str) -> dict:
+        with self._read() as c:
+            rows = c.execute("SELECT task_id, critique_json FROM critiques WHERE substr(task_id, 1, ?) = ?",
+                             (len(prefix), prefix)).fetchall()
+        return {r["task_id"]: r["critique_json"] for r in rows}
+
+
 #: a Dep record's columns, in `DepEdge`'s field order
 _EDGE_FIELDS = ("from_id", "to_id", "discovered", "glue", "provisional", "closed", "declared_first", "refuted", "removed")
 _INSERT_EDGE = f"INSERT INTO dep_edges ({', '.join(_EDGE_FIELDS)}) VALUES ({', '.join('?' * len(_EDGE_FIELDS))})"
@@ -304,7 +327,7 @@ def _seams_to_edges(conn, spec_of, spec_json, maps_of, maps_json) -> None:
     conn.commit()
 
 
-class SqliteStorage(_ProjectSettings, StoragePort):
+class SqliteStorage(_ProjectSettings, _Critiques, StoragePort):
     def __init__(self, db_path: str = "data/gfso.db"):
         self._db_path = db_path
         if db_path != ":memory:":
@@ -836,24 +859,6 @@ class SqliteStorage(_ProjectSettings, StoragePort):
         rows = self._kept.get("edges", lambda: self._conn.execute("SELECT * FROM dep_edges ORDER BY id").fetchall())
         return [DepEdge(TaskId(r["from_id"]), TaskId(r["to_id"]), bool(r["discovered"]), r["glue"] or "",
                         *(bool(r[k]) for k in _EDGE_FIELDS[4:])) for r in rows]
-
-    def store_critique(self, task_id: TaskId, critique_json: str) -> None:
-        with self._write() as c:
-            c.execute(
-                "INSERT OR REPLACE INTO critiques (task_id, critique_json) VALUES (?, ?)",
-                (task_id, critique_json),
-            )
-
-    def get_critique(self, task_id: TaskId) -> Optional[str]:
-        with self._read() as c:
-            row = c.execute("SELECT critique_json FROM critiques WHERE task_id = ?", (task_id,)).fetchone()
-        return row["critique_json"] if row else None
-
-    def critiques_under(self, prefix: str) -> dict:
-        with self._read() as c:
-            rows = c.execute("SELECT task_id, critique_json FROM critiques WHERE substr(task_id, 1, ?) = ?",
-                             (len(prefix), prefix)).fetchall()
-        return {r["task_id"]: r["critique_json"] for r in rows}
 
     def store_deliver_result(self, task_id: TaskId, result: str) -> None:
         with self._write() as c:
