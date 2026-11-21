@@ -178,19 +178,22 @@ def test_an_observation_owed_holds_no_issuer_whoever_it_is(tmp_path):
 
 
 def test_a_console_with_no_gfso_connection_is_said_not_held(tmp_path, monkeypatch):
-    """A call with no credential and no live bridge's lease (`signin.BARE`) reads as `user` and signs nothing: no move
-    of its frontier could be made from it. Through the route: an untaken bridge's live lease is the person's agent,
-    held; a lease no bridge beats is none. CONTROL: BARE not read as unsigned — the console is held as `user`; every
-    lease read as live — red."""
+    """A call that signs nothing (`signin.BARE`: no credential, or a gfso connection that has taken no name) reads as
+    `user` and no move of its frontier could be made from it. Through the route: a bridge logged in as him
+    (`act_as('user')`) is held, one that took no name is not. CONTROL: BARE not read as unsigned — the console is held
+    as `user`."""
     e = _solo_root()
-    assert H.decide({}, "p", _asked(e, signin.BARE)) == {"systemMessage": "seam not held: this console has no gfso connection"}
+    out = H.decide({}, "p", _asked(e, signin.BARE))
+    assert "decision" not in out and "act_as('user')" in out["systemMessage"], out
     c = TestClient(create_app(e), base_url="http://127.0.0.1:8000")
     c.cookies.clear()
-    monkeypatch.setattr(signin, "LIVE_LEASES", lambda: ["live-lease"])
-    live = c.get("/api/steps", headers={config.LEASE_HEADER: "live-lease"}).json()
-    assert (live["signer"], live.get("unsigned")) == ("user", None) and live["steps"], live
-    dead = c.get("/api/steps", headers={config.LEASE_HEADER: "gone-lease"}).json()
-    assert dead.get("unsigned") is True, dead
+    monkeypatch.setattr(signin, "LIVE_LEASES", lambda: [])
+    signin.take("his-lease", "user")
+    his = c.get("/api/steps", headers={config.LEASE_HEADER: "his-lease"}).json()
+    assert (his["signer"], his.get("unsigned")) == ("user", None) and his["steps"], his
+    bare = c.get("/api/steps", headers={config.LEASE_HEADER: "untaken-lease"}).json()
+    assert bare.get("unsigned") is True, bare
+    signin.let_go("his-lease")
 
 
 def test_a_wrong_project_or_a_refused_connection_is_said_not_held(tmp_path):

@@ -2,9 +2,9 @@
 
 A move is signed by a name its person owns, resolved here from the call's credential and never typed by the caller
 (docs/notes/SIGN_IN.md): a page session signs as any name the person owns, a token as its one name; with no credential,
-on a server bound to loopback and from a process of its own OS user, a page as the person, an MCP bridge's connection as
-the one name it took (`take`) or, having taken none, as the standing agent — his own agent — and any other client signs
-nothing (`BARE`): it reads. Everything is kept hashed in gfso's state, so it
+on a server bound to loopback and from a process of its own OS user, a page as the person, an MCP connection as the one
+name it took (`take`: its log-in, `user` among them), and any other client — an MCP connection that has taken none
+too — signs nothing (`BARE`): it reads. Everything is kept hashed in gfso's state, so it
 survives a restart; a process of the same OS user can read that state, and SECURITY.md says so.
 """
 from __future__ import annotations
@@ -52,16 +52,21 @@ STRANGER = Principal("", (), "stranger", "not this machine's user", None, _STRAN
 #: the person's own page, admitted as this machine's user with no sign-in: it signs as his person-name — `user`, the
 #: name his user-agents act as — never as an agent-name of his (`LOCAL_PERSON` is the owner, no name in a graph)
 PAGE = Principal(STANDING.name, (STANDING.name,), "local-peer", "local-peer", LOCAL_PERSON)
-#: a process of the person's own with no credential, no page and no bridge — a script, curl, `gfso run` from any shell:
-#: it reads, and signs nothing. Writing as `user` is his page or his own agent's MCP connection (a bridge whose lease
-#: took no stream's name); any other console signs with a name's token. The author, 2026-11-20: «не в любой пустой
-#: консоли можно подписывать от юзера. это как минимум должно быть mcp»
+#: a process of the person's own with no credential, no page and no name taken — a script, curl, `gfso run` from any
+#: shell, an MCP connection that has not logged in: it reads, and signs nothing. The author, 2026-11-20: «только агент
+#: который залогинился под именем user может писать в граф»; 11-21: «взятие имени и есть логининг агента в системе»
 BARE = Principal(STANDING.name, (), "bare", "no credential", LOCAL_PERSON,
                  "a move signs as someone, and this call carries no credential: as the person, on his page (`gfso ui`) "
-                 "or through his agent's gfso MCP connection; as a stream, with its token (`gfso agent <name>`, then "
-                 "GFSO_TOKEN=<token>)")
-#: where an MCP client's bridge reaches the server: the one door a lease that took no name signs as the person at
+                 "or through an MCP connection logged in as him (`act_as('user')`); as a stream, with its token "
+                 "(`gfso agent <name>`, then GFSO_TOKEN=<token>)")
+#: …an MCP connection that has taken no name: it reads, and logs in by taking one (`take`)
+UNTAKEN = Principal(STANDING.name, (), BARE.via, "no name taken", LOCAL_PERSON,
+                    "this gfso connection has taken no name, so it reads and signs nothing: `act_as('user')` logs it in "
+                    "as the person, `act_as('<name>')` as a stream of his")
+#: where an MCP client's bridge reaches the server: the door a lease logs in at
 MCP_PATH = "/mcp"
+#: a stdio server's own lease, its connection's for the life of its process: it logs in by it as a bridge does by its own
+PROCESS_LEASE = "stdio-" + secrets.token_hex(16)
 
 
 
@@ -192,8 +197,8 @@ def rename_the_person() -> dict:
     if _state().exists():
         with _db() as db:
             state = _state_pending(db)
-            if db.execute("SELECT 1 FROM tokens WHERE name = ?", (PERSON,)).fetchone():
-                held.append(f"a token for `{PERSON}`")
+            if db.execute("SELECT 1 FROM tokens WHERE name = ? AND person != ?", (PERSON, LOCAL_PERSON)).fetchone():
+                held.append(f"a token for `{PERSON}`, another person's")   # …his own is his log-in (`issue`)
             if db.execute("SELECT 1 FROM names WHERE name = ? AND person != ?", (PERSON, LOCAL_PERSON)).fetchone():
                 held.append(f"the name `{PERSON}`, another person's")
     if not (graphs or state):
@@ -239,15 +244,17 @@ def own(name: str, person: str = LOCAL_PERSON) -> None:
 
 
 def issue(name: str, person: str = LOCAL_PERSON) -> tuple[str, str]:
-    """A token for `name`, which becomes `person`'s: (its id, the token). Refused for a name no person may own — the
-    system's roles (an executor's, a validator's) and the names nobody owns."""
+    """A token for `name`, which becomes `person`'s: (its id, the token) — his own name's (`PERSON`) too, which a
+    connection logs in by under `--protected`. Refused for a name no person may own — the system's roles (an
+    executor's, a validator's) and the names nobody owns."""
     if not PRINCIPAL_RE.match(name or ""):
         raise ValueError(f"{name!r} is not a name a role can be held by: letters, digits, `.`, `_`, `-`, up to 64")
-    if (why := reserved_refusal(name)):
+    if name != PERSON and (why := reserved_refusal(name)):
         raise ValueError(why)
     if (kind := systems_name(name)):
         raise ValueError(f"{name!r} is the system's ({kind}): a person signs as a name of his own")
-    own(name, person)
+    if name != PERSON:
+        own(name, person)
     raw, tid = "gfso_" + secrets.token_urlsafe(32), "tok-" + secrets.token_hex(4)
     with _db() as db:
         db.execute("INSERT INTO tokens VALUES (?, ?, ?, ?, ?)", (_hash(raw), tid, person, name, time.time()))
@@ -364,7 +371,7 @@ def principal_of(conn) -> Principal:
         return _refused(_SIGN_IN) if page_auth() == "key" else PAGE
     lease = h.get(LEASE_HEADER)
     at_mcp = any(str(conn.scope.get(k) or "").startswith(MCP_PATH) for k in ("root_path", "path"))
-    return held(lease) or (STANDING if lease and at_mcp else BARE)
+    return held(lease) or (UNTAKEN if lease and at_mcp else BARE)
 
 
 #: the server's live bridge leases, raw (`/api/lease`), handed down by the server that holds them; None, or None from
@@ -388,17 +395,15 @@ def held(lease: str | None) -> Principal | None:
     name, person, via, since, lost = row
     if lost:
         return _refused(f"this connection took `{name}` at {_when(since)}, and another connection took it at "
-                        f"{_when(lost)} while this one was silent. Restarting this console's gfso connection (`/mcp`) "
-                        f"makes it the person's own agent again, signing as `user`: take `{name}` again there "
-                        f"(`act_as('{name}')`) before any move of the stream's")
+                        f"{_when(lost)} while this one was silent: log in again (`act_as('{name}')`, or another name), "
+                        f"or out (`act_as('')`)")
     if via == "claim" and protected():
         return _refused(f"under --protected a name is taken with its own credential: `act_as('{name}', token=…)`, "
                         f"the token `gfso agent {name}` prints")
     if (kind := systems_name(name)) or (via != "claim" and not _held("SELECT 1 FROM tokens WHERE id = ?", via)):
         what = f"now the system's ({kind})" if kind else "no longer issued: its token was revoked"
-        return _refused(f"`{name}` is {what}: this connection signs as nothing. Restarting its gfso connection (`/mcp`) "
-                        f"makes it the person's own agent again, signing as `user`, until it takes a name of its own "
-                        f"(`act_as`)")
+        return _refused(f"`{name}` is {what}: this connection signs as nothing. Log it in under a name of yours "
+                        f"(`act_as('user')`, `act_as('<name>')`), or out (`act_as('')`)")
     return Principal(name, (name,), f"as:{_hash(lease)[:12]}", f"acting as {name} since {_when(since)}", person)
 
 
@@ -407,18 +412,26 @@ def holds(lease: str | None) -> str | None:
     return next(iter(_held("SELECT name FROM holds WHERE lease = ?", _hash(lease))), (None,))[0] if lease else None
 
 
+def live_holding(lease: str | None) -> str | None:
+    """The name the connection of `lease` holds still — None where it took none, or another connection took it since
+    (lost): what it owes is that connection's now."""
+    return next(iter(_held("SELECT name FROM holds WHERE lease = ? AND lost IS NULL", _hash(lease))),
+                (None,))[0] if lease else None
+
+
 def take(lease: str | None, name: str, token: str = "", issued: bool = False) -> Principal:
-    """The connection of bridge lease `lease` acts as `name` from now until its bridge ends — the holding kept in the
-    sign-in state, so it outlives a `/clear` and a server restart, and recorded with its person, its credential and its
-    time (Thm 11). Locally by default the person's own connection may take a name he owns or issued (`issued`: a node
-    he assigned to it): his OS user is him already. Under `--protected` the name's own token is required. One connection
-    holds one name for its life, and one name is held by one live connection (§2.6). ValueError says why not."""
+    """The connection of lease `lease` logs in as `name` — the person's own (`PERSON`) or a stream's — from now until
+    its bridge ends or it logs out (`let_go`): the holding kept in the sign-in state, so it outlives a `/clear` and a
+    server restart, and recorded with its person, its credential and its time (Thm 11). Locally by default the person's
+    own connection may take his name, or a name he owns or issued (`issued`: a node he assigned to it): his OS user is
+    him already. Under `--protected` the name's own token is required. Taking another name re-logs the connection in
+    under it; one name is held by one live connection (§2.6). ValueError says why not."""
     if not lease:
         raise ValueError("this connection names no bridge lease: a console takes a name through `gfso connect`")
     if bound_beyond_loopback():
         raise ValueError("past loopback every call carries its own credential: launch the console with the name's "
                          f"token (`gfso agent {name}`, then GFSO_TOKEN=<token>)")
-    if not PRINCIPAL_RE.match(name or "") or (why := reserved_refusal(name)):
+    if not PRINCIPAL_RE.match(name or "") or (name != PERSON and (why := reserved_refusal(name))):
         raise ValueError(why if name and PRINCIPAL_RE.match(name) else f"{name!r} is not a name")
     if (kind := systems_name(name)):
         raise ValueError(f"{name!r} is the system's ({kind}): a person's connection acts as a name of his own")
@@ -429,6 +442,8 @@ def take(lease: str | None, name: str, token: str = "", issued: bool = False) ->
     elif protected():
         raise ValueError(f"under --protected a name is taken with its own credential: `act_as('{name}', token=…)`, "
                          f"the token `gfso agent {name}` prints at your shell")
+    elif name == PERSON:
+        via = "claim"
     elif name in names_of(LOCAL_PERSON) or issued:
         via = "claim"
         own(name)
@@ -437,13 +452,7 @@ def take(lease: str | None, name: str, token: str = "", issued: bool = False) ->
                          f"or issue it (`gfso agent {name}`)")
     h, now = _hash(lease), time.time()
     with _db() as db:
-        if (mine := db.execute("SELECT name FROM holds WHERE lease = ?", (h,)).fetchone()) is not None:
-            if mine[0] != name:
-                raise ValueError(f"this connection acts as `{mine[0]}`: one connection holds one name for its life. "
-                                 f"Take `{name}` in a console of its own, or restart this one's gfso connection (`/mcp`): "
-                                 f"it is then the person's own agent, signing as `user`, until it takes `{name}`")
-            if token:
-                db.execute("UPDATE holds SET via = ? WHERE lease = ?", (via, h))   # …a claim, now with its token
+        mine = db.execute("SELECT name FROM holds WHERE lease = ?", (h,)).fetchone()
         seen = LIVE_LEASES() if LIVE_LEASES is not None else None
         live = None if seen is None else {_hash(x) for x in seen}
         for other, since in db.execute("SELECT lease, since FROM holds WHERE name = ? AND lost IS NULL AND lease != ?",
@@ -455,18 +464,31 @@ def take(lease: str | None, name: str, token: str = "", issued: bool = False) ->
             db.execute("UPDATE holds SET lost = ? WHERE lease = ?", (now, other))
         if mine is None:
             db.execute("INSERT INTO holds VALUES (?, ?, ?, ?, ?, NULL)", (h, name, LOCAL_PERSON, via, now))
+        elif mine[0] != name:           # …a re-log-in under another name: its own time, the old holding ended
+            db.execute("UPDATE holds SET name = ?, via = ?, since = ?, lost = NULL WHERE lease = ?", (name, via, now, h))
+        elif token:
+            db.execute("UPDATE holds SET via = ? WHERE lease = ?", (via, h))   # …a claim, now with its token
     print(f"[gfso] connection as:{h[:12]} acts as `{name}` ({via}), for {LOCAL_PERSON}", flush=True)
     return held(lease)
 
 
+def let_go(lease: str | None) -> None:
+    """The connection of `lease` logs out: the name it took is free, and it reads and signs nothing until it takes one."""
+    if lease:
+        with _db() as db:
+            if db.execute("DELETE FROM holds WHERE lease = ?", (_hash(lease),)).rowcount:
+                print(f"[gfso] connection as:{_hash(lease)[:12]} logged out", flush=True)
+
+
 def local_principal(mcp: bool = False) -> Principal:
     """Who a call with no server between comes from — the CLI's own path, a stdio server (`mcp`): the token in
-    `GFSO_TOKEN`, else the name this console's bridge took; else, over MCP, the standing agent — an MCP client launched
-    it, the person's agent — and from the CLI a reader (`BARE`), as at the server's door: any shell runs it."""
+    `GFSO_TOKEN`, else the name this console's bridge took; else, over MCP, the name the stdio server's own connection
+    took (`PROCESS_LEASE`), none a connection that reads (`UNTAKEN`); and from the CLI a reader (`BARE`), as at the
+    server's door: any shell runs it."""
     if (refused := launch_refusal()) is not None:
         return _refused(refused)
     raw = launch_token()
-    return by_token(raw) if raw else held(console_lease()) or (STANDING if mcp else BARE)
+    return by_token(raw) if raw else held(console_lease()) or (held(PROCESS_LEASE) or UNTAKEN if mcp else BARE)
 
 
 def launch_refusal() -> str | None:

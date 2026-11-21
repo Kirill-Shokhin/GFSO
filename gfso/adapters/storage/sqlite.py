@@ -133,6 +133,20 @@ def peek_work(db_path: str, keys: tuple = ()) -> Optional[dict]:
         return None
 
 
+def holds_a_live_node(db_path: str, name: str) -> Optional[bool]:
+    """Does `name` hold a node not ended in a project's file — read without opening it as a store (`peek_project` says
+    why)? None where the file does not read."""
+    if not os.path.exists(db_path):
+        return False
+    try:
+        with _looked_at(db_path) as c:
+            ended = ", ".join(f"'{s.name}'" for s in TERMINAL_STATES)
+            return c.execute(f"SELECT 1 FROM tasks WHERE assignee = ? AND state NOT IN ({ended}) LIMIT 1",
+                             (name,)).fetchone() is not None
+    except sqlite3.Error:
+        return None
+
+
 class KeptReads:
     """Whole-table reads kept until the next write (`SqliteStorage._write` marks them stale): one question about the
     frontier read the whole task table 690 times and its edges 176 — 24 s on a 400-node graph, the page's and every

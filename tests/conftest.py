@@ -178,6 +178,15 @@ def _the_suites_person(_own_state_home):
     TestClient.__init__ = made
 
 
+@pytest.fixture(autouse=True)
+def _a_log_in_ends_with_its_test():
+    """A connection's log-in (`signin.take`) is the test's own: one live connection holds a name, `user` among them, and
+    a holding an earlier test left would be read as another live console's."""
+    yield
+    with contextlib.suppress(Exception), signin._db() as db:
+        db.execute("DELETE FROM holds")
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _the_suites_peer_is_its_own_user():
     """THE SUITE'S CALLS COME FROM ITS OWN OS USER, as a local client's do: a test client has no socket for the OS to

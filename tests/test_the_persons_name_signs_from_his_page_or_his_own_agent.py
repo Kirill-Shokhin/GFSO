@@ -1,7 +1,7 @@
-"""The person's name signs from two places only: his page, and his own agent — an MCP connection (a bridge carrying its
-lease) that has taken no stream's name. A process of his with no credential and no bridge — a script, curl, `gfso run`
-from any shell, with a server up or not — reads, and its move is refused naming how to sign (the author, 2026-11-20:
-«не в любой пустой консоли можно подписывать от юзера. это как минимум должно быть mcp»).
+"""The person's name signs from two places only: his page, and a connection logged in as him — an MCP connection that
+took his name (`act_as('user')`). Any other call with no credential — a script, curl, `gfso run` from any shell, an MCP
+connection that took no name — reads, and its move is refused naming how to sign (the author, 2026-11-20: «только агент
+который залогинился под именем user может писать в граф»; 2026-11-21: «взятие имени и есть логининг агента в системе»).
 
 His seams keep his word by default: in a project with no mode, a node he issues to another is his to move (§10.1,
 §10.2) — from an agent's connection signing as his name only with his words, from his page as it is — and the criterion
@@ -88,27 +88,35 @@ def _conn(path, **headers):
                            scope={"path": path, "server": ("127.0.0.1", 8000)})
 
 
-def test_under_protected_his_bridge_and_his_stdio_server_are_still_his_agent(monkeypatch):
-    """`--protected` guards his page by its sign-in; his agent's connections are his agent there too (the author:
-    «управление юзерагентами»), a stream signing as its name once it took it with its token."""
-    monkeypatch.setenv("GFSO_PAGE_AUTH", "key")
+def test_an_mcp_connection_that_took_no_name_reads_and_one_logged_in_as_him_signs(monkeypatch):
+    """Every console connects its MCP by itself — a bare agent with access to MCP, not to the system (the author,
+    2026-11-21): a bridge's connection or a stdio server that took no name reads (`UNTAKEN`); logged in as him
+    (`act_as('user')`, `signin.take`) it signs as `user`, his page apart. CONTROL: an untaken MCP connection read as the
+    standing agent — it signs."""
     monkeypatch.delenv(config.TOKEN_ENV, raising=False)
     monkeypatch.setattr(signin, "console_lease", lambda: None)
-    lease = {"host": "127.0.0.1:8000", LEASE_HEADER: uuid.uuid4().hex}
-    assert signin.principal_of(_conn("/mcp", **lease)) is config.STANDING
-    assert signin.local_principal(mcp=True) is config.STANDING
-    assert not signin.principal_of(_conn("/api/run/signal", **lease)).signs_as
+    lease = uuid.uuid4().hex
+    at = {"host": "127.0.0.1:8000", LEASE_HEADER: lease}
+    assert signin.principal_of(_conn("/mcp", **at)) is signin.UNTAKEN
+    assert signin.local_principal(mcp=True) is signin.UNTAKEN
+    monkeypatch.setattr(signin, "LIVE_LEASES", lambda: [])       # …no earlier test's holding of his name is live
+    signin.take(lease, "user")
+    assert signin.principal_of(_conn("/mcp", **at)).signs_as == ("user",)
+    assert signin.principal_of(_conn("/api/run/signal", **at)).signs_as == ("user",), "his hook and shell sign too"
+    signin.let_go(lease)
+    assert not signin.principal_of(_conn("/mcp", **at)).signs_as, "logged out"
+    monkeypatch.setenv("GFSO_PAGE_AUTH", "key")
     assert not signin.principal_of(_conn("/mcp", host="127.0.0.1:8000", origin=LOOPBACK)).signs_as, "the page signs in"
 
 
-def test_a_lost_holding_says_a_restart_makes_the_connection_his_agent_again():
-    """A restarted bridge is a new lease: the person's own agent, signing as `user`, until it takes its name again."""
+def test_a_lost_holding_logs_in_again_by_the_same_door():
+    """A connection whose name another took logs in again, under it or another name, or out — never the person."""
     lease = uuid.uuid4().hex
     with signin._db() as db:
         db.execute("INSERT INTO holds VALUES (?, ?, ?, ?, ?, ?)", (signin._hash(lease), "eng-lost", "local", "claim",
                                                                    1.0, 2.0))
-    lift = signin.held(lease).lift
-    assert "`user`" in lift and "act_as('eng-lost')" in lift, lift
+    p = signin.held(lease)
+    assert not p.signs_as and "act_as('eng-lost')" in p.lift and "act_as('')" in p.lift, p.lift
 
 
 def test_the_cli_with_no_server_reads_and_signs_nothing(door, monkeypatch):
@@ -116,7 +124,7 @@ def test_the_cli_with_no_server_reads_and_signs_nothing(door, monkeypatch):
     monkeypatch.delenv(config.TOKEN_ENV, raising=False)
     monkeypatch.setattr(signin, "console_lease", lambda: None)
     assert signin.local_principal() is signin.BARE
-    assert signin.local_principal(mcp=True) is config.STANDING      # …a stdio server: an MCP client launched it
+    assert signin.local_principal(mcp=True) is signin.UNTAKEN      # …a stdio server that has taken no name
     monkeypatch.setattr(driver, "build_engine_from_env", lambda project=None: e)
     monkeypatch.setattr(driver, "select_project", lambda p: None)
     out = driver._locally(TL.TOOLS["create_task"], None, [], {"task_id": "n", "spec": SPEC})

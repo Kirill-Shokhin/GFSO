@@ -350,6 +350,7 @@ def _by_mcp(e, *args):
     async def go():
         got = []
         async with create_connected_server_and_client_session(create_server(e)._mcp_server) as session:
+            await session.call_tool("act_as", {"name": "user"})      # …the person's agent, logged in as him
             for verb, kw in args:
                 while "writing" in json.loads((r := await session.call_tool(verb, kw)).content[0].text):
                     await anyio.sleep(0.01)

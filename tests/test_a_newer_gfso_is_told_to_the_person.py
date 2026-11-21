@@ -84,6 +84,7 @@ def test_the_user_agents_first_call_of_a_task_carries_it(monkeypatch, tmp_path, 
 
     async def go():
         async with create_connected_server_and_client_session(MS.create_server(ProjectRegistry())._mcp_server) as s:
+            await s.call_tool("act_as", {"name": "user"})      # …the person's agent, logged in as him
             return json.loads((await s.call_tool("use_project", {"project": "p1"})).content[0].text)
     out = anyio.run(go)
     assert out.get("newer_gfso") == published

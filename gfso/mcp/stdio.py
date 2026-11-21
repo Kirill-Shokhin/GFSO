@@ -6,11 +6,13 @@ surfaces stay leaves; the process that serves both is assembled here.
 """
 from __future__ import annotations
 
+import contextlib
 import sys
 import threading
 
 import uvicorn
 
+from gfso import signin
 from gfso.api.server import create_app
 from gfso.config import UVICORN, ui_address, ui_enabled
 from gfso.mcp.server import create_server
@@ -29,6 +31,18 @@ def _serve_ui(registry, host: str, port: int) -> None:  # pragma: no cover
     print(f"[gfso mcp] UI live at http://{host}:{port}", file=sys.stderr)
 
 
+@contextlib.contextmanager
+def recorded(console=None):
+    """This stdio server's connection recorded under its console, as a bridge's is (`signin.record_console`): a
+    `gfso` call from that console's shell, and its Stop hook (`gfso.hold`), sign as the name it took by
+    `signin.PROCESS_LEASE`; gone with the process."""
+    signin.record_console(signin.PROCESS_LEASE, console=console)
+    try:
+        yield
+    finally:
+        signin.forget_console(signin.PROCESS_LEASE)
+
+
 def main() -> None:  # pragma: no cover
     """Serve the MCP surface over stdio against this installation's project registry."""
     registry = ProjectRegistry()
@@ -38,7 +52,8 @@ def main() -> None:  # pragma: no cover
             _serve_ui(registry, *ui_address())
         except Exception as e:
             print(f"[gfso mcp] UI not started ({e}) — MCP tools still work", file=sys.stderr)
-    create_server(registry).run()  # blocks on the stdio MCP loop
+    with recorded():
+        create_server(registry).run()  # blocks on the stdio MCP loop
 
 
 if __name__ == "__main__":  # pragma: no cover

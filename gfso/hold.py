@@ -5,21 +5,22 @@ every live state has an owner with a move (§12.13 Inv-8): the way out is a move
 and a question to the person is a CHALLENGE or a BLOCK on the node. No counter of its own: it lets go only where no move
 is the console's.
 
-Whose moves it reads is the console's signer — the name its connection took, or the person's own (`user`) where it took
-none — through one GET that marks nothing (`GET /api/steps`, `tools_llm.held_steps`), signed as the console's own
+Whose moves it reads is the console's signer — the name its connection took, `user` among them (`act_as`, its log-in)
+— through one GET that marks nothing (`GET /api/steps`, `tools_llm.held_steps`), signed as the console's own
 connection (`signin.credential_header`). The frontier alone decides: a move that is the person's (`persons`, where the
 door would ask his words, `tools.persons_move`), optional or another party's (a customer's in `auto`: the mode gives
 them to the system), the observation of a delivery (the seam's validator's step: once delivered, the holder owes
 nothing), a stopped run, a settled root, a subagent's stop or a driven CLI hold nothing, nor does a
-connection whose taken name was refused or a console with no gfso connection at all; with no server, or no such
+connection whose taken name was refused or a console that signs as no one (no gfso connection, or one that took no
+name); with no server, or no such
 project, it says so and lets the console stop. At or above a fill ceiling (`CEILING`, 75% unless `--ceiling` says
 otherwise, 0 off; the window the statusline's measure, else `--window`, else `CLAUDE_CTX_WINDOW`, never guessed — with
 none it is inert) it lets this one stop through, recording nothing, so a session can close; the next console is held
 again. It signals nothing and writes nothing; a run that fails says nothing. The person installs it, in one place
 (`gfso hold <project> --install`).
 
-A known limit: two consoles of the person's in one place both sign `user`, and both are held on his solo root's
-moves — the frontier names no console, only a signer."""
+One live connection holds a name, his own as any other: of two consoles of his, the one logged in as `user` is held
+on his solo root's moves, the other reads."""
 from __future__ import annotations
 
 import json
@@ -107,13 +108,19 @@ def decide(event: dict, project: str, ask=_ask, ceiling: float = CEILING, window
     if out.get("refused"):
         return {"systemMessage": f"seam not held: this console's gfso connection signs as no one — {out['refused']}"}
     if out.get("unsigned"):
-        return {"systemMessage": "seam not held: this console has no gfso connection"}
-    run = (out.get("run") or {}).get("state")
-    own = [s for s in out.get("steps") or () if s.get("mine") and not s.get("optional") and not s.get("persons")
-           and not str(s.get("directive") or "").startswith(OBSERVE)]
+        return {"systemMessage": "seam not held: this console signs as no one — no gfso connection, or one that has "
+                                 "taken no name (`act_as('user')` logs it in)"}
+    run, own = (out.get("run") or {}).get("state"), own_moves(out)
     if out.get("complete") or run in ("stopping", "stopped") or not own:
         return {}
     return {"decision": "block", "reason": reminder(own, out.get("current"), project)}
+
+
+def own_moves(out: dict) -> list:
+    """The steps of a frontier (`next_steps`) that are its reader's own moves: its own, not optional, not the person's
+    (`persons`), not the system's observation of a delivery — what holds its stop, and its log-out (`act_as('')`)."""
+    return [s for s in out.get("steps") or () if s.get("mine") and not s.get("optional") and not s.get("persons")
+            and not str(s.get("directive") or "").startswith(OBSERVE)]
 
 
 def reminder(own: list, current, project: str) -> str:

@@ -125,11 +125,16 @@ def _drive(path: Path) -> dict:
         T.signal(e, "kid", "DELIVER", "bob", result="built k again")
         e.wait_idle()
         out["second_pass"] = _instrument_pass(e)
-        # …his own agent's connection (a stdio server: an MCP client launched it) — at a seam he issued, on his words
-        anyio.run(MS.create_server(e).call_tool, "signal", {"task_id": "kid", "signal": "PASS", "user_said": "да"})
+        # …his own agent's connection (a stdio server), logged in as him — at a seam he issued, on his words
+        live, signin.LIVE_LEASES = signin.LIVE_LEASES, lambda: []     # …no earlier holding of his name is live
+        stdio = MS.create_server(e)
+        anyio.run(stdio.call_tool, "act_as", {"name": config.PERSON})
+        anyio.run(stdio.call_tool, "signal", {"task_id": "kid", "signal": "PASS", "user_said": "да"})
         e.wait_idle()
         _as(signin.local_principal(mcp=True), lambda: TL.TOOLS["signal"](e, "root", "DELIVER", result="the aggregate"))
         e.wait_idle()
+        signin.let_go(signin.PROCESS_LEASE)
+        signin.LIVE_LEASES = live
         out["states"] = {t: str(e.graph.get_task(TaskId(t)).state) for t in ("root", "kid")}
         out["log"] = [(str(a.task_id), a.signal.name, str(a.source or ""), bool(a.rejected)) for a in e.audit_log()]
         out["issuer"] = str(e.graph.issuer_of(TaskId("root")))
@@ -190,8 +195,8 @@ def test_the_home_is_not_rewritten_where_a_role_or_token_is_named_user(tmp_path,
     _legacy(tmp_path / "old.db", None, monkeypatch)
     signin.ready()
     with signin._db() as db:
-        db.execute("INSERT INTO tokens VALUES ('h', 'tok-1', 'local', 'user', 0)")
-    with pytest.raises(person.TwoParties, match="a token for `user`"):
+        db.execute("INSERT INTO tokens VALUES ('h', 'tok-1', 'another', 'user', 0)")   # …his own is his log-in
+    with pytest.raises(person.TwoParties, match="a token for `user`, another person's"):
         signin.rename_the_person()
     assert _agents(tmp_path / "old.db") > 0, "nothing written"
 
@@ -201,9 +206,14 @@ def test_the_persons_names_are_born_as_no_one_elses(name):
     e = make_engine()
     out = TL.register_agent(e, name, "llm-validator", workdir=".")
     assert out.get("refused") and "reserved" in out["error"], out
-    for born in (signin.issue, signin.own):
+    with pytest.raises(ValueError, match="reserved"):
+        signin.own(name)
+    if name == config.PERSON:       # …his own name's token is his log-in under `--protected` (`act_as('user', token=…)`)
+        assert signin.by_token(signin.issue(name)[1]).signs_as == (name,)
+        assert name not in signin.names_of(config.LOCAL_PERSON)[1:], "his name owned as a stream's"
+    else:
         with pytest.raises(ValueError, match="reserved"):
-            born(name)
+            signin.issue(name)
 
 
 def test_a_node_is_not_assigned_to_the_name_of_before():

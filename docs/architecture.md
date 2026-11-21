@@ -930,23 +930,24 @@ encoding is where they show, or are engine gaps.)*
    appended to its finding's `rulings` (kind, by, why, at, the criterion's text), never rewritten, and the finding's
    standing is read off its latest deciding ruling (`gfso/engine/findings.py`). Each ruling is also a `ruling` line of
    the feed, so the person's page shows it (`Engine._ruled`).
-19. **The person's name is signed from his page or his own agent's MCP connection — a reading of §10.1–10.2,
+19. **The person's name is signed from his page or a connection logged in as him — a reading of §10.1–10.2,
    declared.** §10.1: Del names the role's holder; §10.2: the signature is the issuer's. The canon says nothing of
    transports, and the local person and his user-agents share the name `user` (PERSON_NAME (M)). A door therefore
    decides who may sign that name, and a door that let any process sign it would let a console nobody opened as his
    agent sign his role. `signin.principal_of` resolves a call with no credential as follows. A page is `PAGE`. A
-   bridge's connection at `/mcp` is the name its lease took (`held`), or `STANDING` where it took none. Anything else
-   is `BARE`: a script, curl, and the CLI's HTTP path, a console's lease included, since the CLI is no MCP door.
-   `BARE` reads and signs nothing. Its refusal names the page, the MCP bridge and `gfso agent <name>`. It still
+   connection's lease is the name it took (`held`) — `user` among them: taking a name is a connection's log-in
+   (`take`; `let_go` logs it out, a second `take` re-logs it under another name), and every Claude Code console
+   connects its MCP by itself, so a connection is no agent of his until it logs in. At `/mcp` one that took none is
+   `UNTAKEN`; anything else is `BARE`: a script, curl, and the CLI's HTTP path. Both read and sign nothing, and
+   their refusal names the page, `act_as('user')` and `gfso agent <name>`. It still
    sends the server's own life, which signs no name in any graph: `/api/lease`, `/api/shutdown`, `/api/wait`, and
    `/api/witness`, its record kept with no actor (`past.UNSIGNED`), never `user`: a witness moves nothing, and the
    hook of a console whose connection took no name is what catches work past the system on the solo `in_chat` path. `BARE` is a filter against an agent's casual call, not a
    barrier: the same process with one browser header is `PAGE` under `local-peer`. `local_principal(mcp=)` gives the same answer with no server between: a
-   stdio server is an MCP client's (`STANDING`), and the CLI's in-process path (`driver._locally`) is `BARE`, because
+   stdio server logs in by its own process's lease (`PROCESS_LEASE`, `UNTAKEN` before), and the CLI's in-process path (`driver._locally`) is `BARE`, because
    which door serves a shell depends only on whether a server happens to be up. The OS user stays the local boundary.
-   Any process of his can open a bridge, as SECURITY.md says. `--protected` guards the page by its sign-in and asks a
-   stream's token at `act_as`, while a bridge with its lease and a stdio server stay his agent (`STANDING`) there
-   too: his agents are how he works.
+   Any process of his can open a bridge, as SECURITY.md says. `--protected` guards the page by its sign-in and asks the
+   name's token at `act_as`, his own (`gfso agent user`) as a stream's.
 20. **A seam he issues keeps his word; a name taken in a chat holds its seams solo — §10.1–10.4, CLOSED (the mode
    scope retired).** In a project with no mode, `persons_node(t)` holds at every node whose issuer is a
    `PERSONS_NAMES` party and whose Del is not (`his_seam`), with no scope set. Every issuer move there that comes

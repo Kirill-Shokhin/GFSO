@@ -341,23 +341,28 @@ move names no one, `signs_as` every name it may sign as.
   to this loopback (through Docker's port forwarder) is served nothing without a token, in every mode. A session signs as every name you own; a move that names no
   signer is signed by the holder of the role it needs where that name is yours, else by `user`. Where the page signs
   in, the link an agent hands you opens it unsigned: it reads, and a move asks you to sign in.
-* **Your agent's MCP connection** with no credential, having taken no stream's name, signs as `user`, your name, as your
-  standing agent; the name `auto_decompose` assigns nodes to unless you pass `assignee` — nothing to set up. At a seam
-  you issued to another name, its issuer moves carry your words (`user_said`); your page makes them as it is. A client
-  with no credential that is no MCP connection — a script, curl, `gfso run` from any shell — reads, and signs nothing:
-  a console of a stream's name signs with its token (`gfso agent <name>`, then `GFSO_TOKEN`). `source` on `signal`, `agent` on
+* **Your agent's MCP connection** signs as `user`, your name, once it logs in as you: `act_as('user')` — locally no
+  token, under `--protected` the one `gfso agent user` prints. `user` is the name `auto_decompose` assigns nodes to
+  unless you pass `assignee`. A connection that has taken no name reads and signs nothing: every Claude Code console
+  connects its gfso MCP by itself, and taking a name is its log-in. `act_as('')` logs it out, `act_as('<name>')`
+  re-logs it in under another name; leaving a name is voluntary, as taking it is: where it still owes moves of its own in any project,
+  the reply names them (`advice`) — the next holder of the name picks them up — and your page's feed records that the
+  name was left with them owed. At a seam you issued to another name, its issuer moves carry your words
+  (`user_said`); your page makes them as it is. A client with no credential that is no MCP connection — a script,
+  curl, `gfso run` from any shell — reads, and signs nothing: a console of a stream's name signs with its token
+  (`gfso agent <name>`, then `GFSO_TOKEN`). `source` on `signal`, `agent` on
   the authoring verbs and `reviewer` on `record_verdict` are not in the MCP schema at all.
 * **A console of its own name** (`engineering`, a reviewer's console) takes it while it runs: `act_as("engineering")`
   over its gfso connection, for a name you opened — a node you assigned to it — or issued (`gfso agent <name>`). From
-  then on that connection signs as that name alone, until its gfso connection ends: `/clear` keeps it, a server
-  restart keeps it, and it never goes back to `user` nor takes another name (restart the connection, `/mcp`, for
-  that). One live connection holds a name at a time: a second console asking for it is refused, naming since when it
+  then on that connection signs as that name alone, until its gfso connection ends or it logs out or in under another
+  (`act_as('')`, `act_as('<other>')`): `/clear` keeps it, a server restart keeps it. One live connection holds a name
+  at a time: a second console asking for it is refused, naming since when it
   is held; once the first console's bridge is gone the name passes, and the first, should it come back, signs as no
   one. `act_as()` with no name says who the connection signs as. Under `gfso up --protected` the claim is not enough:
   pass `token=`, the one `gfso agent <name>` prints at your shell. Launching with that token (`GFSO_TOKEN=<token>
   claude`) still works, and is the way past loopback, where every call carries its credential. The console is one
   party: a `gfso` call made in its process tree (`gfso run`, `gfso wait` from its shell) finds its live bridge by the
-  nearest console up the process chain and signs as the same name; a call detached from that tree signs as `user`. `GFSO_AGENT_ID` names nothing now: a console launched with it and no token is
+  nearest console up the process chain and signs as the same name; a call detached from that tree reads. `GFSO_AGENT_ID` names nothing now: a console launched with it and no token is
   refused at connect, told what to do instead.
 * **A signer argument** at the CLI or over HTTP is taken only for a name the credential may sign as, and refused
   otherwise, naming what lifts it. The automatic paths — the dispatcher running an executor, an `llm-validator` role
@@ -549,7 +554,7 @@ Three are for using it; the rest are for running it, and you can ignore them unt
 | `gfso demo [name]` | Run a shipped example; no name lists them. |
 | `gfso credential <provider> […]` | Set, name, choose or order a model provider's credentials (value on stdin, never shown). |
 | `gfso provider-check <spec>` | Whether a model provider can run on gfso, and in which roles. |
-| `gfso run <tool> …` | The same verbs as the MCP tools, headless from a shell — through the running server, so its writes are live in the UI, and straight against the database when none is up. `project=<name>` selects the graph. It signs as `user`, or as the name of the token in `GFSO_TOKEN`. |
+| `gfso run <tool> …` | The same verbs as the MCP tools, headless from a shell — through the running server, so its writes are live in the UI, and straight against the database when none is up. `project=<name>` selects the graph. It signs as the name of the token in `GFSO_TOKEN`, or the name its console's gfso connection took; with neither it reads. |
 | `gfso up [--force]` | Start-or-reconcile the one server: start it if down, restart it if it serves stale code or the wrong switches, do nothing if it is already correct — and leave it alone rather than end someone else's run. `--force` restarts anyway. |
 | `gfso down` | Stop the one server. |
 | `gfso connect` | The MCP stdio door an agent client runs. You do not type this; a client does. |

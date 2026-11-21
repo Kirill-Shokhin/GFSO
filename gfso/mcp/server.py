@@ -27,9 +27,12 @@ except ImportError:  # pragma: no cover
 from gfso import updates
 from gfso.config import (CALLER, CLIENT, CLIENT_HEADER, CLIENT_KINDS, DEFAULT_PROJECT, LEASE_HEADER, PERSONS_NAMES,
                          STANDING, agent_id, caller_id, client_kind, how_it_is_waited, ONE_CALL, ROOT_ID, project_by_env)
+from gfso.core.types import Action
 from gfso.engine import Engine
 from gfso.engine.moves import SIGNERS
 from gfso import signin
+from gfso.adapters.storage.sqlite import holds_a_live_node
+from gfso.hold import own_moves
 from gfso.runtime import ProjectRegistry
 from gfso.mcp import protocol as _PROTOCOL
 from gfso.tools import _agent_id
@@ -548,26 +551,30 @@ def _issued_by_the_person(engine, name: str) -> bool:
                for t in g.all_tasks())
 
 
-def _act_as(resolve, _Ctx):
-    """The door's `act_as` over `resolve` (`_resolver`), its context typed `_Ctx`: a verb of the connection, not of a
-    graph."""
+def _act_as(where, _Ctx):
+    """The door's `act_as` over `where` — a bare Engine or the registry (`_resolver`) —, its context typed `_Ctx`: a
+    verb of the connection, not of a graph."""
+    resolve = _resolver(where)
 
-    def act_as(name: str = "", token: str = "", project: str = "", ctx: _Ctx = None) -> dict:
-        """WHO THIS CONNECTION SIGNS AS, and the door to take a stream's name in a console already running. No `name`:
-        `{name, kind, how, signs_as}` of this connection. With `name` — a stream you opened (a node you assigned to
-        it) or a name issued to you — this connection signs as that name alone from now until its gfso connection
-        ends: `/clear` keeps it, and it never goes back to the person nor takes another. One live connection holds a
-        name at a time. Under `gfso up --protected` pass `token`, the one `gfso agent <name>` prints at your shell."""
-        if name:
+    def act_as(name: Optional[str] = None, token: str = "", project: str = "", ctx: _Ctx = None) -> dict:
+        """WHO THIS CONNECTION SIGNS AS, and its log-in. No `name`: `{name, kind, how, signs_as}` of this connection.
+        A connection that has taken no name reads and signs nothing. `act_as('user')` logs it in as the person;
+        `act_as('<name>')` as a stream you opened (a node you assigned to it) or a name issued to you — taken again,
+        another name re-logs it in under that one; `act_as('')` logs it out. The name holds until its gfso connection
+        ends (`/clear` keeps it); one live connection holds a name at a time. Under `gfso up --protected` pass
+        `token`, the one `gfso agent <name>` prints at your shell (`gfso agent user` for the person's own). Leaving a
+        name is voluntary, as taking it is: where it still owes moves of its own in any project, the reply names them
+        (`advice`) — the next holder of the name picks them up — and the project's feed records it."""
+        if name is not None:
             try:
                 req = ctx.request_context.request
             except (ValueError, LookupError, AttributeError):
                 req = None
-            lease = req.headers.get(LEASE_HEADER) if req is not None else None
+            lease = req.headers.get(LEASE_HEADER) if req is not None else signin.PROCESS_LEASE
             p = CALLER.get()
-            # …its own holding the name's token mends (a claim, under `--protected` since): that call reaches `take`
-            # …and a bridge that signs nothing yet (under `--protected`) asks `take`, which wants the name's token
-            if p is not None and not p.signs_as and not (p.via == signin.BARE.via or token and signin.holds(lease) == name):
+            # …its own holding, refused since (lost, or a claim under `--protected`), logs in again or out: that call
+            # reaches `take`; and a connection that signs nothing yet asks `take`, which says what it wants
+            if p is not None and not p.signs_as and not (p.via == signin.BARE.via or signin.holds(lease) is not None):
                 return {"refused": True, "error": f"this connection signs as no one: {p.lift}"}
             if p is not None and p.signs_as and p.via != STANDING.via and not p.via.startswith("as:"):
                 return {"refused": True, "error": f"this connection signs as `{p.name}` by its {p.how}: a console "
@@ -576,13 +583,71 @@ def _act_as(resolve, _Ctx):
                 engine = resolve(project or None, ctx, create=False)
             except Exception:           # …no project here: the names issued to him alone
                 engine = None
-            try:
-                CALLER.set(signin.take(lease, name, token, engine is not None and _issued_by_the_person(engine, name)))
-            except ValueError as ex:
-                return {"refused": True, "error": str(ex)}
+            held = signin.live_holding(lease)
+            owed = _owed_everywhere(where, held) if held and held != name else ([], [])
+            if not name:
+                signin.let_go(lease)
+                CALLER.set(signin.UNTAKEN)
+            else:
+                try:
+                    CALLER.set(signin.take(lease, name, token,
+                                           engine is not None and _issued_by_the_person(engine, name)))
+                except ValueError as ex:
+                    return {"refused": True, "error": str(ex)}
+            return {**signin.whoami(), **_left_owing(held, *owed)}
         return signin.whoami()
-    act_as.__annotations__ = {"name": str, "token": str, "project": str, "ctx": _Ctx, "return": dict}
+    act_as.__annotations__ = {"name": Optional[str], "token": str, "project": str, "ctx": _Ctx, "return": dict}
     return act_as
+
+
+#: the move a frontier step owes, by its action, as the advice on leaving names it
+_THE_MOVE = {"accept": "ACCEPT", "execute": "DELIVER", "deliver": "DELIVER", "rework": "DELIVER",
+             "revise": "the revision (`revise`)", "validate": "PASS or FAIL", "review": "the plan's check",
+             "resolve": "the ruling", "confirm_cancel": "CONFIRM_CANCEL"}
+
+
+def _owed_everywhere(where, held: str):
+    """([(project, step)] of the moves `held` owes in any project `where` holds — a bare Engine, or a registry —, each
+    project's frontier as `held` reads it (`hold.own_moves`); a stopped run owes none, as at the hook), [projects that
+    could not be read]. A project only on disk is peeked at, and opened only where `held` holds a node not ended
+    there: building an engine starts its dispatcher."""
+    owed, unread = [], []
+    if isinstance(where, Engine):
+        places = [(where.project_name or DEFAULT_PROJECT, where)]
+    else:
+        places = list(zip(sorted(where.names()), where.projects()))
+    for project, x in places:
+        if not isinstance(x, Engine):
+            if (live := holds_a_live_node(str(x), held)) is None:
+                unread.append(project)
+                continue
+            if not live:
+                continue
+            try:
+                x = where.engine(project, create=False)
+            except Exception:
+                unread.append(project)
+                continue
+        if not x.paused():
+            owed += [(project, x, s) for s in own_moves(T.next_steps(x, actor=held))]
+    return owed, unread
+
+
+def _left_owing(held, owed: list, unread: list) -> dict:
+    """What a connection that just left `held` is told, and each owing project's feed records: leaving a name is
+    voluntary, as taking it is (the author, 2026-11-21: «оставил как и в самом заборе имени — добровольность»), and
+    never refused; where the name owed moves of its own in any project (`_owed_everywhere`), the reply names them as
+    they are — the next holder of the name picks them up —, and the system records the fact, no one's words. {} where
+    it owed none."""
+    if not (owed or unread):
+        return {}
+    act = lambda s: _THE_MOVE.get(Action(s["action"]).value, "its move")  # noqa: E731
+    moves = ", ".join(f"{p}/{s.get('task_id')} {act(s)}" for p, _, s in owed[:5]) + (" …" if len(owed) > 5 else "")
+    for x in {id(x): x for _, x, _ in owed}.values():
+        x.emit_info("log-out", f"{held} was left by its connection with {len(owed)} owed move(s): {moves}")
+    return {"advice": (f"`{held}` was left owing {len(owed)} move(s) of its own: {moves}. They stay owed: the next "
+                       f"holder of `{held}` picks them up." if owed else f"`{held}` was left.")
+                      + (f" Not read, so whether it owes there is unknown: {', '.join(unread[:5])}." if unread else "")}
 
 
 def _mount_project_verbs(server, reg) -> None:
@@ -766,7 +831,8 @@ def create_server(engine_or_registry):
     class _Door(FastMCP):
         """Every call is signed by ITS connection's principal: a server serving several consoles signed them all by its
         own environment, so `engineering`'s ACCEPT landed as `agent` and was refused (measured 2026-11-13). The name is
-        its credential's — the token its console was launched with, else the standing agent (`signin.principal_of`)."""
+        its credential's — the token its console was launched with, else the name its connection took, `user` among
+        them; with none it reads (`signin.principal_of`)."""
 
         async def list_tools(self):
             """The listing a client asks for right after `initialize`: where its session is first seen."""
@@ -789,7 +855,7 @@ def create_server(engine_or_registry):
         server.add_tool(_bind(engine_or_registry, fn), name=name, description=(fn.__doc__ or "").strip(),
                         meta=ANSWER_ROOM.get(name))
     server.add_tool(_protocol, name="protocol", description=(_protocol.__doc__ or "").strip())   # the door's own text
-    act_as = _act_as(_resolver(engine_or_registry), Context)
+    act_as = _act_as(engine_or_registry, Context)
     server.add_tool(act_as, name="act_as", description=(act_as.__doc__ or "").strip())
     if hasattr(engine_or_registry, "use"):    # ProjectRegistry → the project verbs
         _mount_project_verbs(server, engine_or_registry)

@@ -44,11 +44,12 @@ _TOKENS: dict = {}
 
 
 def bearer(name) -> dict:
-    """The header a console launched with `name`'s token sends; for the standing agent, the person's own, its bridge's
-    lease alone (a connection with neither reads, and signs nothing)."""
-    if name and name not in _TOKENS:
+    """The header a console launched with `name`'s token sends; `None` the person's own, launched with his (`gfso agent
+    user`) — a bridge's lease alone, having taken no name, reads and signs nothing."""
+    name = name or config.PERSON
+    if name not in _TOKENS:
         _TOKENS[name] = signin.issue(name)[1]
-    return {"Authorization": f"Bearer {_TOKENS[name]}"} if name else {config.LEASE_HEADER: uuid.uuid4().hex}
+    return {"Authorization": f"Bearer {_TOKENS[name]}"}
 
 
 async def _call(url, name, verb, args):

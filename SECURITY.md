@@ -81,10 +81,10 @@ no forwarding header taken for the client, so the OS is always asked of the real
   one in the tree of a connection that took no name reads too, the CLI being no MCP door. One live connection holds a
   name at a time, and for one lease grace after a server start every holding counts as live. A name the system's roles hold (an
   executor's, a validator's) is neither issued nor taken;
-- your own agent signs as `user` over an MCP connection that took no stream's name (a bridge carrying its lease, a
-  stdio server), under `--protected` too. Locally any process of yours can open a bridge and be your agent: nothing
-  closes that, since your OS user is you here. A local client with no credential, no bridge and no page's headers (a
-  script, curl, `gfso run`) is not taken for your agent and signs nothing. That keeps an agent's casual call off your
+- your own agent signs as `user` over an MCP connection logged in as you (`act_as('user')`; under `--protected` with
+  the token `gfso agent user` prints). Locally any process of yours can open a bridge and log it in: nothing closes
+  that, since your OS user is you here. An MCP connection that has taken no name, and a local client with no
+  credential and no page's headers (a script, curl, `gfso run`), are not taken for your agent and sign nothing. That keeps an agent's casual call off your
   name; it is no barrier, since one browser header (`Origin`, `Sec-Fetch-Site`) makes the same process your page by
   default;
 - a browser page of another site, a call that names a front's host, a server bound past loopback, and any call carrying

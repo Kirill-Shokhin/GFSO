@@ -3213,19 +3213,19 @@ def wait_for_the_customer(engine: Engine, root_id: Optional[str] = None, actor: 
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - engine.now())))
 
 
-def held_steps(engine: Engine, bridged: bool = False) -> dict:
+def held_steps(engine: Engine) -> dict:
     """What a console's Stop hook reads (`GET /api/steps`, `gfso.hold`): `next_steps` as its signer's, marking nothing
     — a plan named here stays unsaid, for the wait that wakes on it (`said_a_plan` is a reply's) —, with the signer and
     whether its name works in a chat here (`in_chat`: the record its own move over MCP made, `Engine.performs_in_chat`);
-    a connection whose holding was refused (`signin.held`) reads as no one's, its `refused` saying why, and a call with
-    no credential and no live bridge's lease (`signin.BARE`, not `bridged`) as a console with no gfso connection
-    (`unsigned`): no move of the frontier could sign from it. An untaken bridge's lease reads as the person's agent."""
+    a connection whose holding was refused (`signin.held`) reads as no one's, its `refused` saying why, and a call that
+    signs nothing — no credential, or a connection that has taken no name (`signin.BARE`) — as `unsigned`: no move of
+    the frontier could sign from it."""
     me, p = caller_id(), CALLER.get()
     # …`current`: the node of the signer's latest move the log took — the task it is on, read off the system's record
     on = next((str(a.task_id) for a in reversed(engine.audit_log()) if not a.rejected and str(a.source or "") == me), None)
     return {**next_steps(engine, actor=me), "signer": me, "in_chat": me in engine.in_chat_names(), "current": on,
             **({"refused": p.lift} if p is not None and p.via == signin.REFUSED else
-               {"unsigned": True} if p is not None and p.via == signin.BARE.via and not bridged else {})}
+               {"unsigned": True} if p is not None and p.via == signin.BARE.via else {})}
 
 
 def _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, network, bounds,

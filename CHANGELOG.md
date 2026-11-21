@@ -13,11 +13,12 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 ## [Unreleased]
 
 ### Changed
-- The person's name `user` is signed from his page or from his own agent's MCP connection — a bridge carrying its lease,
-  or a stdio server — that has taken no stream's name, under `--protected` too. A local client with no credential, no
-  bridge and no page's headers (a script, curl, `gfso run` with a server up or not) reads and signs nothing — a filter
-  against an agent's casual call, not a barrier; its move is refused naming the page, the MCP bridge and
-  `gfso agent <name>`. It still sends the server's own life (a lease's beat, a stop, a wait), and its witness of work
+- The person's name `user` is signed from his page or from an MCP connection logged in as him: taking a name is a
+  connection's log-in, `act_as('user')` his own — locally with no token, under `--protected` with the one `gfso agent
+  user` prints. `act_as('')` logs a connection out and `act_as('<name>')` re-logs it in under another name; one live
+  connection holds a name, his own as any other. An MCP connection that has taken no name, and a local client with no
+  credential (a script, curl, `gfso run` with a server up or not), read and sign nothing — a filter against an agent's
+  casual call, not a barrier; its move is refused naming the page, `act_as('user')` and `gfso agent <name>`. It still sends the server's own life (a lease's beat, a stop, a wait), and its witness of work
   past the system is recorded with no actor (`unsigned`), never as the person.
 - In a project with no mode, every seam the person issues to another name keeps his word, with no scope set: an issuer
   move there from an agent's connection carries his words (`user_said`), from his page none; a call no door served keeps
@@ -69,8 +70,12 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   executors the project has, so the project runs on.
 - A console already running takes a stream's name without a relaunch: `act_as(name)` over its own gfso connection, for
   a name the person opened (a node he assigned to it, a root he made for it) or issued. The connection — its bridge's
-  lease, now sent with every call (`X-GFSO-Lease`) — signs as that name alone until it ends: `/clear` and a server
-  restart keep it, and it never returns to the person nor takes a second name. One live connection holds a name
+  lease, now sent with every call (`X-GFSO-Lease`) — signs as that name alone until it ends, logs out (`act_as('')`)
+  or logs in under another (`act_as('<other>')`): `/clear` and a server restart keep it. Leaving a name is voluntary,
+  as taking it is, and never refused: where it still owes moves of its own in any project, the reply names each as it
+  is (ACCEPT, DELIVER …) — the next holder of the name picks them up — and the project's feed records that the name
+  was left by its connection with those moves owed. A project that cannot be read is named as such; a holding another
+  connection took says nothing of the moves, now the new holder's. One live connection holds a name
   (§2.6): a second is refused, naming since when it is held; past a lapsed lease the name passes and the old
   connection signs as no one. The taking is kept in the sign-in state with person, connection digest, credential and
   time, and every move after it records `via=as:<digest>` (Thm 11). Locally by default the claim suffices (the
@@ -111,7 +116,7 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   so a session can close; the window is the statusline's own measure when present and fresh, else `--window <tokens>`,
   else `CLAUDE_CTX_WINDOW` — with none the ceiling is inert, and install says so. A step is the person's (`persons`)
   only where the door asks his words for it, one rule for both (`tools.persons_move`); the observation of a
-  delivery is the system's step, so once delivered the holder owes nothing and is let stop. Two of his consoles in one place both sign `user` and both are held. A step whose work a holder's hands perform (`PERFORMED BY`) is optional on the
+  delivery is the system's step, so once delivered the holder owes nothing and is let stop. One live connection holds `user` as any name: of two of his consoles, the one logged in as him is held, the other reads. A step whose work a holder's hands perform (`PERFORMED BY`) is optional on the
   frontier: it holds no stop and wakes no `gfso wait`; the offer before it stays the holder's move. It reads `GET /api/steps`: the frontier as the call's signer and the run's state, marking nothing. The frontier
   marks each move that is the person's — an issuer move on a node he issued — `persons`.
 
