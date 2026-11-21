@@ -118,7 +118,8 @@ def test_at_the_fill_ceiling_of_a_known_window_a_stop_goes_through_and_below_it_
 
 def test_a_step_its_hands_perform_holds_no_stop_and_wakes_no_wait_its_offer_does(tmp_path):
     """Solo with dispatch: after his ACCEPT the root's work is `exec-1`'s, «do not build it yourself» — no honest move
-    is left in the console, and its wait agrees. The offer before it is his consent, held. CONTROL: the PERFORMED BY
+    is left in the console, and its wait agrees. The offer before it holds nothing either: it binds no one until
+    ACCEPT and abstention discharges it (§12.9). CONTROL: the PERFORMED BY
     step left non-optional — the stop is held with no move to make."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
@@ -126,7 +127,7 @@ def test_a_step_its_hands_perform_holds_no_stop_and_wakes_no_wait_its_offer_does
     e.set_mode(Mode.SOLO, None, "user", hands="exec-1")
     T.create_task(e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
-    assert H.decide({}, "p", _asked(e, STANDING))["decision"] == "block", "the offer is his consent"
+    assert H.decide({}, "p", _asked(e, STANDING)) == {}, "an offer binds no one until ACCEPT; abstention discharges it"
     assert T.signal(e, "root", "ACCEPT", "user")["accepted"]
     e.wait_idle()
     with _as(STANDING):

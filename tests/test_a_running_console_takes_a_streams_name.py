@@ -115,15 +115,17 @@ def test_a_name_owing_a_move_is_left_freely_with_the_moves_named_and_the_fact_re
     records = lambda: [r["message"] for r in e.pipeline_log() if "was left by its connection" in r["message"]]  # noqa
     one = _lease()
     assert go(one, "act_as", name="eng9")["name"] == "eng9"
+    assert go(one, "act_as", name="")["signs_as"] == [], "an offer binds no one until ACCEPT: leaving owes nothing"
+    assert go(one, "act_as", name="eng9")["name"] == "eng9"
+    go(one, "signal", task_id="root.eng9", signal="ACCEPT")      # …taken: its DELIVER is owed now
+    e.wait_idle()
     ask = go(one, "act_as", name="")
-    assert ask["confirm_needed"] and "root.eng9 ACCEPT" in ask["reminder"] and "confirm=true" in ask["reminder"], ask
+    assert ask["confirm_needed"] and "root.eng9 DELIVER" in ask["reminder"] and "confirm=true" in ask["reminder"], ask
     assert ask["signs_as"] == ["eng9"] and not ask.get("refused") and records() == [], "the first call left or logged"
     out = go(one, "act_as", name="", confirm=True)
-    assert out["signs_as"] == [] and "root.eng9 ACCEPT" in out["advice"] and "next holder" in out["advice"], out
-    assert records() == ["eng9 was left by its connection with 1 owed move(s): default/root.eng9 ACCEPT"], records()
+    assert out["signs_as"] == [] and "root.eng9 DELIVER" in out["advice"] and "next holder" in out["advice"], out
+    assert records() == ["eng9 was left by its connection with 1 owed move(s): default/root.eng9 DELIVER"], records()
     assert go(one, "act_as", name="eng9")["name"] == "eng9"
-    go(one, "signal", task_id="root.eng9", signal="ACCEPT")
-    e.wait_idle()
     assert go(one, "act_as", name="ui9")["confirm_needed"]
     out = go(one, "act_as", name="ui9", confirm=True)    # …a log-in under another name leaves it as freely
     assert out["signs_as"] == ["ui9"] and "root.eng9 DELIVER" in out["advice"], out

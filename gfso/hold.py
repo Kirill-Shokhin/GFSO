@@ -118,9 +118,12 @@ def decide(event: dict, project: str, ask=_ask, ceiling: float = CEILING, window
 
 def own_moves(out: dict) -> list:
     """The steps of a frontier (`next_steps`) that are its reader's own moves: its own, not optional, not the person's
-    (`persons`), not the system's observation of a delivery — what holds its stop, and its log-out (`act_as('')`)."""
+    (`persons`), not the system's observation of a delivery, not an offer — what holds its stop, and its log-out
+    (`act_as('')`). An offer binds no one until ACCEPT (Inv-1) and abstention discharges it, the offer lapsing to its
+    issuer (§12.9's named exception): 243 standing offers held a stream's console in a loop (the author, 2026-11-21:
+    «это жду по кругу не должно ходить»)."""
     return [s for s in out.get("steps") or () if s.get("mine") and not s.get("optional") and not s.get("persons")
-            and not str(s.get("directive") or "").startswith(OBSERVE)]
+            and s.get("state") != "OFFERED" and not str(s.get("directive") or "").startswith(OBSERVE)]
 
 
 def reminder(own: list, current, project: str) -> str:
