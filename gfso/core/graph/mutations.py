@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
@@ -23,7 +24,7 @@ def _type_revision(task: Task, effect: MutateGraph, criteria_changed: bool, del_
         task.reassign_reason_typed = True
         if r == RevisionReason.CAPABILITY_MISMATCH:
             task.reassign_capability_mismatch = True
-from .model import Graph, logged_declarations, project_deadline_s, project_now, root_issuer_key
+from .model import Graph, logged_declarations, project_deadline_s, project_now, replaces_key, root_issuer_key
 from gfso.core.types import settled_positive
 from gfso.config import default_deadline_s
 
@@ -511,6 +512,20 @@ def readers_index(graph) -> dict:
                     out.setdefault(p, []).append(t)
         return out
     return graph.kept(("readers_index",), read)
+
+
+def stand_ins_index(graph) -> dict:
+    """{replaced id: [the nodes standing in for it]} — the replacement records (`replaces_key`) read the other way, made
+    once per write of the store: a copy stands wherever its issuer re-issued it (`tools._replaced`), so no walk near the
+    replaced node finds it."""
+    def read():
+        """The index, from one read of the records."""
+        out: dict = {}
+        for k, v in graph._storage.critiques_under(replaces_key("")).items():
+            for d in json.loads(v or "[]"):
+                out.setdefault(str(d), []).append(str(k)[len(replaces_key("")):])
+        return {d: sorted(c) for d, c in out.items()}
+    return graph.kept(("stand_ins_index",), read)
 
 
 #: The finest margin the writer tries before it gives up on an order: one clock tick of the log.

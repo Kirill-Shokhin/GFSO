@@ -71,6 +71,9 @@ class MemoryStorage(StoragePort):
     def get_critique(self, task_id: TaskId) -> Optional[str]:
         return self._critiques.get(task_id)
 
+    def critiques_under(self, prefix: str) -> dict:
+        return {str(k): v for k, v in self._critiques.items() if str(k).startswith(prefix)}
+
     def store_setting(self, key: str, value: str) -> None:
         self._settings[key] = value
 

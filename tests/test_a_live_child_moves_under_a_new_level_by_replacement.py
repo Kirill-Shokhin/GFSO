@@ -432,3 +432,80 @@ def test_a_refused_revision_moves_no_edge_and_issues_no_version(tree, how):
     e.wait_idle()
     assert (e.graph.get_state(bx.id), len(_assigns(e, "root.b.x")), _deps(e, "root.b.x")) == (state, n, edges)
 
+
+# …WHEREVER ITS ISSUER RE-ISSUES IT: a node of one branch moved under another (two directions of one holder), and the
+# subtree of a dropped node rebuilt level by level under the new level (§11.5 "its subtree rebuilt, not resurrected").
+
+def _cancel(e, tid, why="moved"):
+    out = T.signal(e, tid, "CANCEL", str(e.graph.issuer_of(TaskId(tid))), reason=why)
+    e.wait_idle()
+    assert e.graph.get_state(TaskId(tid)) == State.CANCELLING, out
+
+
+def _across(e):
+    """root.b.x, cancelled by its issuer, re-issued under root.k1 — another branch, one level down."""
+    _cancel(e, "root.b.x")
+    out = T.TOOLS["decompose"](e, "root.k1", [{**_kid("root.k1.x", ["k1"], criterion("x", "X")),
+                                               "replaces": ["root.b.x"]}], accepted_risks=_RISK)
+    e.wait_idle()
+    return out
+
+
+def test_a_node_moves_into_another_branch_and_carries_its_work(tree):
+    e = tree
+    _found(e, "root.b.x", "x", "./x f.c; echo $?")
+    out = _across(e)
+    assert isinstance(out, list), out
+    assert e.replaces(TaskId("root.k1.x")) == ["root.b.x"]
+    assert "root.b.x" in {str(t.id) for t in e.carried_work(TaskId("root.k1.x"))}
+    assert [p["command"] for p in e.regression_probes(TaskId("root.k1.x"))["x"]] == ["./x f.c; echo $?"]
+
+
+def test_the_link_back_is_found_wherever_the_copy_lies(tree):
+    e = tree
+    _across(e)
+    assert T.get_task(e, "root.b.x")["replaced_by"] == ["root.k1.x"]
+    assert e.resolved("root.b.x") == "root.k1.x"
+
+
+def test_a_node_moved_into_another_branch_is_not_replaced_again(tree):
+    e = tree
+    _across(e)
+    with pytest.raises(ValueError) as no:
+        T.TOOLS["decompose"](e, "root.k3", [{**_kid("root.k3.x", ["k3"], criterion("x", "X")),
+                                             "replaces": ["root.b.x"]}], accepted_risks=_RISK)
+    assert "replaced already, by root.k1.x:" in str(no.value), no.value
+
+
+def test_the_consumers_in_the_split_it_left_read_the_copy_in_the_other_branch(tree):
+    e = tree
+    _admit(e, "root.b", _kid("root.b.y", ["b"], criterion("y", "Y")))
+    T.TOOLS["add_dependency"](e, "root.b.x", "root.b.y")
+    e.wait_idle()
+    _across(e)
+    assert _deps(e, "root.b.y") == {"root.k1.x"}
+
+
+def test_the_subtree_of_a_dropped_node_is_rebuilt_under_its_copy(tree):
+    """k2 dropped with its part k2.a (§12.6): the copy of k2 under the new level takes a copy of k2.a under itself."""
+    e = tree
+    _admit(e, "root.k2", _kid("root.k2.a", ["k2"], criterion("a", "A")))
+    _found(e, "root.k2.a", "a", "./a f.c; echo $?")
+    _level(e)
+    assert e.graph.get_state(TaskId("root.k2.a")) == State.CANCELLING
+    _copy(e)
+    out = T.TOOLS["decompose"](e, "root.grp.k2", [{**_kid("root.grp.k2.a", ["k2"], criterion("a", "A")),
+                                                   "replaces": ["root.k2.a"]}], accepted_risks=_RISK)
+    e.wait_idle()
+    assert isinstance(out, list), out
+    assert T.get_task(e, "root.k2.a")["replaced_by"] == ["root.grp.k2.a"]
+    assert [p["command"] for p in e.regression_probes(TaskId("root.grp.k2.a"))["a"]] == ["./a f.c; echo $?"]
+
+
+def test_a_live_node_of_another_branch_is_still_moved_only_once_dropped(tree):
+    e = tree
+    with pytest.raises(ValueError) as no:
+        T.TOOLS["decompose"](e, "root.k1", [{**_kid("root.k1.x", ["k1"], criterion("x", "X")),
+                                             "replaces": ["root.b.x"]}], accepted_risks=_RISK)
+    assert "drop it first" in str(no.value), no.value
+

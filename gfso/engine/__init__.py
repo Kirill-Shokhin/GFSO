@@ -26,7 +26,7 @@ from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_chi
                                    non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, keep_the_beat, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
-from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair
+from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair, stand_ins_index
 from gfso.core.handlers.structural import run_structural
 from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_stands_refuted
 from gfso.core.graph.review import finding_keys, progress_baseline
@@ -2176,12 +2176,12 @@ class Engine:
                 if first else None)
 
     def record_replacement(self, task_id: TaskId, dropped: list) -> None:
-        """`task_id` was admitted to stand in for the `dropped` children of the same act (`carried_work`)."""
+        """`task_id` was admitted to stand in for the `dropped` nodes (`carried_work`)."""
         self._storage.store_critique(replaces_key(task_id),
                                      json.dumps(sorted({*self.replaces(task_id), *map(str, dropped)})))
 
     def replaces(self, task_id: TaskId) -> list[str]:
-        """The dropped children this node stands in for."""
+        """The dropped nodes this one stands in for."""
         return json.loads(self._storage.get_critique(replaces_key(task_id)) or "[]")
 
     def resolved(self, ref) -> str:
@@ -2227,11 +2227,8 @@ class Engine:
             self._redeclare(t, now)
 
     def replaced_by(self, task_id: TaskId) -> list[str]:
-        """The nodes standing in for this one — in its own split, or one level down under a sibling (`tools._replaced`)."""
-        t = self._graph.get_task(task_id)
-        near = [k for s in (self._graph.get_children(t.parent_id) if t is not None and t.parent_id else ())
-                for k in (s, *self._graph.get_children(s.id))]
-        return sorted(str(k.id) for k in near if str(task_id) in self.replaces(k.id))
+        """The nodes standing in for this one, wherever its issuer re-issued it (`tools._replaced`)."""
+        return list(stand_ins_index(self._graph).get(str(task_id), ()))
 
     def carried_work(self, task_id: TaskId) -> list[Task]:
         """The work a node carries on from what it replaced (§12.16 (ii): work-keeping): each child it stands in for,

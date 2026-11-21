@@ -173,6 +173,11 @@ class StoragePort(ABC):
         is what the execution gate reads as "not checked" — it is not an empty review."""
         return None
 
+    def critiques_under(self, prefix: str) -> dict:
+        """{key: record} of every record stored under a key `prefix` begins (`replaces:` …), in one read; a store with no
+        such read asks each node's."""
+        return {k: v for t in self.get_all_tasks() if (v := self.get_critique(TaskId(k := f"{prefix}{t.id}")))}
+
     def store_deliver_result(self, task_id: TaskId, result: str) -> None:
         """Persist the node's LAST DELIVER result (the deliverable pointer — the validator's input;
         must survive a server restart). Default no-op."""

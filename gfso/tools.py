@@ -1713,9 +1713,9 @@ def _named_spec(engine: Engine, child: dict) -> Spec:
 
 def _replaced(engine: Engine, parent, children: list[dict], drops) -> dict:
     """{dropped id: the child of this act standing in for it}, as the children's `replaces` name them: a child this act
-    drops, or one a re-admission of this node's own split or of the split above it dropped — the level it moves under
-    being this node. A live child moves only so (§11.5: dropped, and a new node issued; no act moves a parent), and
-    only by its issuer: refused (ValueError) else."""
+    drops, or any node dropped or cancelled already, wherever it stood — another branch's, or one beneath a node
+    dropped with its subtree (§12.6), its subtree rebuilt level by level (§11.5). A live node moves only so (dropped,
+    and a new node issued; no act moves a parent), and only by its issuer: refused (ValueError) else."""
     out = {}
     for c in children:
         for d in map(str, c.get("replaces") or ()):
@@ -1725,11 +1725,9 @@ def _replaced(engine: Engine, parent, children: list[dict], drops) -> dict:
             if k.state == State.DONE:
                 raise ValueError(f"{d} is settled (DONE): a settled part stays where it closed, no act moves it "
                                  f"(§11.5) — and REOPEN is not a way to move it: it would say work is open that is done")
-            if not (d in drops and str(k.parent_id) == str(parent.id) or k.state in (State.CANCELLING, State.ABANDONED)
-                    and str(k.parent_id) in {str(parent.id), str(parent.parent_id)}):
+            if not (d in drops and str(k.parent_id) == str(parent.id) or k.state in (State.CANCELLING, State.ABANDONED)):
                 raise ValueError(f"`replaces` names {d}, {k.state.name} under {k.parent_id}: what a child replaces "
-                                 f"is one this act `drops`, or one a re-admission of {parent.id}'s split or of "
-                                 f"{parent.parent_id or 'the split above'}'s dropped")
+                                 f"is one this act `drops`, or one dropped or cancelled already — drop it first")
             if was := engine.replaced_by(k.id):
                 raise ValueError(f"{d} is replaced already, by {', '.join(was)}: one node stands in for it")
             if (issuer := str(engine.graph.issuer_of(k.id))) != str(parent.assignee):
@@ -1826,13 +1824,23 @@ def _hand_over(engine: Engine, parent, replaced: dict, onto: dict) -> dict:
         out.setdefault(cid, {"replaces": engine.replaces(TaskId(cid))})
         if n := engine.carry_findings(TaskId(cid), TaskId(d), onto.get(cid, {}).get(d, {})):
             engine.emit_info("issuer", f"{cid}: carries {n} finding(s) standing on {d}, which it replaces")
-    up = {d: cid for d, cid in replaced.items() if str(engine.graph.get_task(TaskId(d)).parent_id) != str(parent.id)}
-    if up and (moved := _repointed(engine, engine.graph.get_task(parent.parent_id), up, lambda r: resolved(engine, r))):
-        try:
-            decompose(engine, str(parent.parent_id), moved)
-        except ValueError as e:
-            for cid in up.values():
-                out[cid]["readers_not_moved"] = f"{', '.join(m['task_id'] for m in moved)} still read what it replaces: {e}"
+    # …each split a replaced node left, re-admitted by its holder — the replaced node's issuer, who admits the copy
+    # (`_replaced`); a split closing with it re-admits nothing, its consumers closing too (§12.6)
+    homes: dict = {}
+    for d, cid in replaced.items():
+        if str(home := engine.graph.get_task(TaskId(d)).parent_id) != str(parent.id):
+            homes.setdefault(str(home), {})[d] = cid
+    for home, up in homes.items():
+        h = engine.graph.get_task(TaskId(home))
+        if h is None or h.state in (State.CANCELLING, *TERMINAL_STATES):
+            continue
+        if moved := _repointed(engine, h, up, lambda r: resolved(engine, r)):
+            try:
+                decompose(engine, home, moved)
+            except ValueError as e:
+                for cid in up.values():
+                    out[cid]["readers_not_moved"] = (f"{', '.join(m['task_id'] for m in moved)} still read what it "
+                                                     f"replaces: {e}")
     for d, cid in replaced.items():
         home = engine.graph.get_task(TaskId(d)).parent_id
         if elsewhere := [{"task_id": str(t.id), "reads": r, "issuer": str(engine.graph.issuer_of(t.id))}
@@ -1857,11 +1865,11 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     deps?, replaces?, onto?}]; an omitted assignee = `user` (you execute it yourself; name someone only to really delegate).
     `deps: [{from, glue}]` — the split's declared Dep edges into that child, whole (§15.1): the producers it waits
     for and what of their result it reads; left out, a standing child keeps the edges it has.
-    `replaces: [<id>, …]` — a new child stands in for live children dropped: by this act's `drops`, or by the
-    re-admission of the split above when this node is the new level they move under (a live child moves only so,
-    §11.5; it never changes parent). The copy carries on their committed work and standing findings (under the names
-    `onto: {<replaced id>: {<its criterion>: [<names here>]}}` gives, else their own); the consumers in the replaced
-    one's split are re-admitted onto the copy in the same act, and re-offered; one in another branch is named in the
+    `replaces: [<id>, …]` — a new child stands in for nodes dropped: by this act's `drops`, or dropped or cancelled
+    already anywhere in the graph — another branch's, or beneath a node dropped with its subtree, rebuilt level by level
+    (a live node moves only so, §11.5; it never changes parent). The copy carries on their committed work and standing
+    findings (under the names `onto: {<replaced id>: {<its criterion>: [<names here>]}}` gives, else their own); the
+    consumers in the replaced one's split are re-admitted onto the copy in the same act, and re-offered; one in another branch is named in the
     reply (`readers_elsewhere`, with its issuer, whose revision it is); a child of the act reading a node another
     child replaces reads the copy. Refused for a settled child (it stays where it closed; REOPEN is no way to move it),
     one replaced already, and one this node's holder did not issue. A drop nothing replaces yet names in the reply

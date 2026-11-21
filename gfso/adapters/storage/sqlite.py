@@ -849,6 +849,12 @@ class SqliteStorage(_ProjectSettings, StoragePort):
             row = c.execute("SELECT critique_json FROM critiques WHERE task_id = ?", (task_id,)).fetchone()
         return row["critique_json"] if row else None
 
+    def critiques_under(self, prefix: str) -> dict:
+        with self._read() as c:
+            rows = c.execute("SELECT task_id, critique_json FROM critiques WHERE substr(task_id, 1, ?) = ?",
+                             (len(prefix), prefix)).fetchall()
+        return {r["task_id"]: r["critique_json"] for r in rows}
+
     def store_deliver_result(self, task_id: TaskId, result: str) -> None:
         with self._write() as c:
             c.execute(
