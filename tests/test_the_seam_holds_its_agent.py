@@ -99,6 +99,20 @@ def test_a_console_whose_own_work_runs_in_the_background_is_not_held(tmp_path):
     assert H.decide({}, "p", _asked(e))["decision"] == "block"
 
 
+def test_background_work_asks_a_bound_only_of_a_console_that_owes_a_move_and_never_past_the_ceiling(tmp_path):
+    """The bound on background work is asked where the console's name owes a move — its wait is the one that must end
+    (Inv-5); a console owing nothing stops whatever runs beside it, and at the window's ceiling a stop goes through first,
+    unbounded work or not (the closing ritual takes it from there). CONTROL: the bound asked before the frontier is
+    read — red on the first assert; the ceiling read after the bound — red on the second."""
+    e = _held(tmp_path)
+    agent = [{"id": "a1", "type": "subagent", "status": "running", "description": "a build"}]
+    high = _transcript(tmp_path, 760_000)
+    assert H.decide({**high, "background_tasks": agent}, "p", _asked(e), ceiling=75, window=1_000_000) == {}
+    assert T.signal(e, SEAM, "BLOCK", HOLDER, reason="which line ending does he want?")["accepted"]
+    e.wait_idle()
+    assert _stop(e, background_tasks=agent) == {}, "a console owing no move was asked to bound unrelated work"
+
+
 def _transcript(tmp_path, n):
     tr = tmp_path / f"t{n}.jsonl"
     rec = lambda used, side=False: json.dumps({"type": "assistant", "isSidechain": side, "message": {
