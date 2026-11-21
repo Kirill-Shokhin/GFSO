@@ -277,6 +277,8 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
         return {"error": f"unknown task {task_id} — check the id, or `project=` if you meant "
                          f"another graph (`get_graph` lists what this one holds)"}
     out = {**task_out(t, engine), "checker": engine.checker(t.id)}   # …who checks its deliveries (`set_checker`)
+    if made := engine.checker_choices(t.id):                         # …and who chose it, when, on what words
+        out["checker_chosen"] = made
     if (blocked := _blocked_by(engine, t)):
         out["blocked_by"] = blocked
     # …the validator's findings standing on it — what a ruling (ACCEPT_CHALLENGE `retire_findings`) names by id

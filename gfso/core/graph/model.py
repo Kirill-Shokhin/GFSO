@@ -115,6 +115,12 @@ def goal_deps_key(task_id) -> str:
     return f"goal_deps:{task_id}"
 
 
+def checker_choices_key(task_id) -> str:
+    """Where its issuer's choices of who checks a node are recorded (§10.2: an issuer's decision, Thm 11: each with its
+    record) — author, choice, words or none, time and place in the signal log; the chosen set is their projection."""
+    return f"checker_choices:{task_id}"
+
+
 def replaces_key(task_id) -> str:
     """Where the dropped children a node was admitted to stand in for are recorded — whose work it carries on."""
     return f"replaces:{task_id}"

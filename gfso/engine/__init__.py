@@ -23,7 +23,7 @@ from gfso.core.types import (
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
                                    start_waits,
-                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, root_of, root_issuer_key,
+                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, checker_choices_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, keep_the_beat, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
 from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair, stand_ins_index
@@ -3441,6 +3441,11 @@ class Engine:
         held = [i for i in self.validators_chosen() if i != str(task_id)] + ([str(task_id)] if checker == "validator"
                                                                              else [])
         self._storage.store_setting(VALIDATOR_CHOSEN, json.dumps(held))
+        # …the decision on the log with its record (Thm 11), words or none: the chosen set above is its projection
+        made = json.loads(self._storage.get_critique(checker_choices_key(task_id)) or "[]")
+        made.append({"log_at": len(self._audit), "by": str(author), "checker": checker, "said": str(said or "").strip(),
+                     "at": datetime.now().isoformat()})
+        self._storage.store_critique(checker_choices_key(task_id), json.dumps(made))
         # …heard over the top of the mode it lies under — its scope's, in a shared graph — where his words are read
         self.hear(_mode_at(self._graph, t)[1].id, "checker", said, node=str(task_id), checker=checker)
         return held
@@ -3448,6 +3453,10 @@ class Engine:
     def validators_chosen(self) -> list:
         """The ids of the nodes whose issuer chose the validator to check them (`set_checker`)."""
         return json.loads(self._storage.get_setting(VALIDATOR_CHOSEN) or "[]")
+
+    def checker_choices(self, task_id) -> list:
+        """[{log_at, by, checker, said, at}] its issuer's choices of who checks `task_id`, oldest first (`set_checker`)."""
+        return json.loads(self._storage.get_critique(checker_choices_key(task_id)) or "[]")
 
     def validator_staffed(self) -> bool:
         """Is there a validator to observe this project's deliveries — a mode staffs one, or one is registered?"""
