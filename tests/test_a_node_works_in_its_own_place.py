@@ -910,6 +910,7 @@ def test_a_parents_consent_is_asked_in_its_own_place_not_the_base(tmp_path):
     e.stop()
 
 
+@pytest.mark.real_consent
 def test_a_consent_that_meets_its_place_down_waits_and_is_not_parked(tmp_path, monkeypatch):
     """Its place made first now, a consent meets a place that is down before any model call: the stop a booked call
     makes, waited out, never "signalled nothing twice — PARKED" (critic over the consent's own place)."""

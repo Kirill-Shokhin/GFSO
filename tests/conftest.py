@@ -78,6 +78,7 @@ REAL_LOCAL_AGENTS = _config.local_agents
 from gfso.decompose import kept as _kept_store  # noqa: E402
 from gfso.adapters.llm import chat as _chat  # noqa: E402
 from gfso.delegate import _DISPATCHERS, Dispatcher  # noqa: E402
+import gfso.delegate as _delegate  # noqa: E402
 from gfso.engine import Engine  # noqa: E402
 from gfso import signin  # noqa: E402
 from starlette.testclient import TestClient  # noqa: E402
@@ -349,6 +350,17 @@ def _the_screen_is_the_tests_own(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_consent_round_of_its_own(request, monkeypatch):
+    """A dispatcher a test builds asks a system-held parent for its consent in a thread of its own (`run_consent`), and
+    a real round finds no credential in the suite's home and pauses the project at a moment the scheduler picks: a test
+    driving a second round then started nothing (measured 3 of 96 under -n 16; six tests ran the real round). So a
+    test's dispatcher is answered "not offered" unless the test asks for the real round (`@pytest.mark.real_consent`)
+    or passes a `consent_runner` of its own."""
+    if request.node.get_closest_marker("real_consent") is None:
+        monkeypatch.setattr(_delegate, "run_consent", lambda *a, **k: {"status": "not_offered"})
+
+
+@pytest.fixture(autouse=True)
 def _no_role_outlives_its_test():
     """What a test registers on the suite's roster goes with it. Shared by a worker's session, a validator one test
     registered at `.` stood first for every later test's executor — the next validation's place was the repository
@@ -480,6 +492,8 @@ def pytest_configure(config):
     _NoLiveModel.containers = bool(config.getoption("--live") or config.getoption("--live-group"))
     config.addinivalue_line("markers", "no_model_path: the test drives the path where no model answers "
                                        "(a spawn attempt is expected and fails as a missing CLI does)")
+    config.addinivalue_line("markers", "real_consent: the dispatcher's consent rounds run the real `run_consent` (by default "
+                                       "a test's dispatcher is answered \"not offered\", `_no_consent_round_of_its_own`)")
     config.addinivalue_line("markers", "live: runs real containers (every `test_live_*`, marked here by name, and any "
                                        "other so marked) — not run unless `--live` or `--live-group` is given")
 
