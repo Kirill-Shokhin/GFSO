@@ -264,7 +264,8 @@ def _rework_section(engine, task) -> str:
         rework = (f"\n## REWORKING (iteration {task.iteration})"
                   + (" — the validator FAILED these criteria; fix exactly them.\n" + _why_it_failed(engine, task, own)
                      if own else "\n")
-                  + (_through_parts_text(through) if through else "") + _handover(engine, task)
+                  + (_through_parts_text(through) if through else "") + _issuers_fails(engine, task, False)
+                  + _handover(engine, task)
                   + (_REHANDED if own and engine.rehanded(task.id) else ""))
         # …and, where the same criteria failed every round, the other route (§12.4): the frontier says it at the agent
         # door; a system executor saw only "fix exactly them", and its node was split before it could challenge
@@ -682,6 +683,20 @@ def _persons_words(engine: Engine, task, crits) -> str:
             + "".join(f"### {_HEARD.get(h['act'], h['act'])}\n{h['said']}\n\n" for h in engine.heard_on(task.id)))
 
 
+def _issuers_fails(engine: Engine, task, validating: bool) -> str:
+    """The FAILs its issuer signed on this version of the node, each with the criteria it named and his words
+    (`Engine.issuers_fails`) — for the next check, findings it decides on the delivered tree; for the rework, what the
+    repair answers. "" where there are none."""
+    if not (fails := engine.issuers_fails(task.id)):
+        return ""
+    return (("\n## Its issuer FAILED an earlier delivery of this node — decide each on THIS delivery\n"
+             "Each is a finding about the criteria it names: check what it says against the delivered tree; where it "
+             "still holds, that criterion fails (Inv-2).\n" if validating else
+             "\n## Its issuer FAILED your delivery — what the repair answers, and the next check decides\n")
+            + "".join(f"- by {f['by']} on {', '.join(f['criteria']) or 'its verdict'}: "
+                      f"{f['said'] or '(no words recorded with it)'}\n" for f in fails))
+
+
 def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[str],
                       scratch: Optional[str] = None, criteria=None, carry: Optional[dict] = None,
                       seen: Optional[dict] = None) -> str:
@@ -721,7 +736,8 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
              f"behaviour and probing it is not. This is attempt {int(_gap.get('refusals', 1)) + 1}.\n"
              if _gap else "")
     negl = "\n".join(f"- {n.item}" for n in set_aside_of(task))
-    return (f"# Node under validation: {tid} — {task.spec.name}\n\n{task.spec.description}\n{prior}\n"
+    return (f"# Node under validation: {tid} — {task.spec.name}\n\n{task.spec.description}\n{prior}"
+            f"{_issuers_fails(engine, task, True)}\n"
             + (f"## Contract — the criteria (the ENTIRE obligation; use these EXACT names in your "
                f"report, each criterion in its own `per_criterion` entry; a dependency below is an edge, not a criterion)\n" if len(_crits) == len(task.spec.criteria) else
                f"## Contract — the criteria THIS RUN VALIDATES ({len(_crits)} of "
@@ -755,6 +771,7 @@ def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str],
         gap = (engine.refused_report_for_this_delivery(task.id) or {}).get("defects")
         blocks.append(f"## Node `{tid}` — {task.spec.name}\n\n{task.spec.description}\n"
                       + (f"\nYOUR PREVIOUS REPORT ON THIS DELIVERY WAS REFUSED: {gap}\n" if gap else "")
+                      + _issuers_fails(engine, task, True)
                       + f"\n### Criteria of `{tid}` this run validates — report each with task_id `{tid}`\n"
                       f"{_criteria_text(engine, task, crits, place, workdir, *carry, seen=seen)}\n\n"
                       + _persons_words(engine, task, crits) +

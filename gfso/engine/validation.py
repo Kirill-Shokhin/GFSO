@@ -27,7 +27,7 @@ from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import finding_keys
 from gfso.core.graph.model import (PAUSE_KEY, hands_of, party_kind, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer, logged_criteria, parent_waits)
-from gfso.engine.audit import VERSION_INSTALLING
+from gfso.engine.audit import VERSION_INSTALLING, on_current_version
 
 
 class ValidationError(Exception):
@@ -508,14 +508,52 @@ STAFF_HIS_SEAMS = ("registering the project's validator makes it observe each de
                    "`register_agent(\"<project>-val\", \"llm-validator\", workdir=<the repository>)`")
 
 
+def issued_by(graph: Graph, task) -> Optional[str]:
+    """Who issued `task`'s standing version — the signer of the ASSIGN that installed it, as the log records it (§10.1);
+    the issuer now where the log holds none."""
+    last = next((e for e in reversed(graph.audit.get_entries(task.id)) if e.signal == Signal.ASSIGN and not e.rejected),
+                None) if graph.audit is not None else None
+    return str(last.source) if last is not None and last.source else graph.issuer_of(task.id)
+
+
 def persons_seam(graph: Graph, task) -> bool:
-    """Is `task` a seam the person issues — his name its issuer, another's its Del (`his_seam`) — in a project with no
-    mode, or the root he hands to another under one? There the validator observes every delivery, its FAIL binds his
-    signature and its observation is owed before it (`owed_observer`, `observation_blocker`): his word, the check is
-    mandatory and he may add to it, never remove it. Under a mode the nodes below his root are the mode's, its record
-    answering who holds and who observes each."""
-    return (task is not None and his_seam(graph.issuer_of(task.id), task.assignee)
-            and (project_mode(graph) is None or task.parent_id is None))
+    """Is `task` a seam the person issues — his name the signer of its version, another's its Del (`his_seam`) — at any
+    depth, under any mode? Every seam he issues is his by that act, whatever mode is set after it: the validator observes
+    every delivery, its FAIL binds his signature and its observation is owed before it (`owed_observer`,
+    `observation_blocker`) — his word, «перед тем как принести результат мне»: the check is mandatory and he may add to
+    it, never remove it. A node the system's holder issues below him is the mode's."""
+    return task is not None and his_seam(issued_by(graph, task), task.assignee)
+
+
+class StaleRun(ValueError):
+    """A validator run of an earlier round landing at a seam the person issues (`Engine.record_exec_verdict`)."""
+
+
+def standing_check(graph: Graph, audit, task, tree: Optional[str]) -> Optional[dict]:
+    """The check that decides `tree` at a seam the person issues, or None where none stands — the one owner the DELIVER
+    gate (`unchecked_at_his_seam`), his PASS gate (`observation_standing`, `observation_blocker`) and the frontier read.
+
+    Any FAIL naming the tree under the current packet version decides it, whatever came after — an appointed observer's
+    record (the validator's, or his by hand) or his FAIL signal over a delivery of it: a FAIL forces rework, and its
+    criteria are the union every such FAIL named. Else the last PASS by ledger position — never `log_at`, which two
+    checks with no signal between share — of a validator run of the current generation over a footing that still
+    stands (`record_stands`): a hand PASS of his is no check.
+    A record names the tree its run's claim named when it began (`ValidationClaim.tree`). With no tree (a delivery that
+    recorded none) only records of the current generation naming none are read: nothing else is about that delivery."""
+    if task is None:
+        return None
+    issuer, gen = graph.issuer_of(task.id), generation_of_task(task)
+    mine = [r for r in observations(graph._storage, task.id)
+            if r.get("tree") == tree and (r.get("reopens", 0), r.get("revisions", 0)) == (task.reopens, task.revisions)
+            and recorded_by_an_appointed_observer(r, task, issuer) and (tree is not None or stamped_with(r, gen))]
+    fails = [r for r in mine if str(r.get("verdict")) == Verdict.FAIL] + [
+        {"verdict": Verdict.FAIL, "failed_criteria": f["criteria"], "validator": f["by"], "signal": True}
+        for f in fails_on_this_version(audit, task) if tree is not None and f["tree"] == tree]
+    if fails:
+        return {**fails[-1], "failed_criteria": list(dict.fromkeys(
+            str(c) for r in fails for c in (r.get("failed_criteria") or ["its verdict"])))}
+    return next((r for r in reversed(mine) if str(r.get("verdict")) == Verdict.PASS and not r.get("by_hand")
+                 and record_stands(graph, audit, task, r)), None)
 
 
 def owed_observer(graph: Graph, task) -> Optional[str]:
@@ -592,28 +630,26 @@ def observation_standing(graph: Graph, task, audit, tree: Optional[str] = None) 
     Every record that stands is read (`record_stands`), not the latest (a later record by anyone does not
     unmake an appointed observer's refutation), with the current record included for rows written before
     the ledger existed. Appointed = the instrument, or the node's issuer where he is not its executor
-    (`recorded_by_an_appointed_observer`). At a seam the person issues (`persons_seam`) his hand adds to the validator's
-    check and never stands for it: his FAIL binds, his PASS is no observation and displaces no refutation. There a
-    check names the tree it judged, so of a delivery only the checks of its own tree are read — `tree`, else the one
-    the last DELIVER recorded: a FAIL of the tree before a repair is no verdict on the repair."""
-    issuer, his = graph.issuer_of(task.id), persons_seam(graph, task)
+    (`recorded_by_an_appointed_observer`). At a seam the person issues (`persons_seam`) it is the check standing for
+    the delivered tree (`standing_check`) — `tree`, else the one the last DELIVER recorded — and nothing else: his hand
+    adds a FAIL and never stands for the validator's PASS."""
+    if persons_seam(graph, task):
+        rec = standing_check(graph, audit, task, tree or delivered_tree(audit, task))
+        failed = rec is not None and str(rec.get("verdict")) == Verdict.FAIL
+        return {"pass": rec is not None and not failed, "fails": sorted(rec["failed_criteria"]) if failed else []}
+    issuer = graph.issuer_of(task.id)
     recs = [r for r in observations(graph._storage, task.id) if record_stands(graph, audit, task, r)]
     cur = graph.exec_verdict_record(task.id)
     if record_stands(graph, audit, task, cur):
         recs.append(cur)
-    tree = (tree or delivered_tree(audit, task)) if his else None
-    appointed = [r for r in recs if recorded_by_an_appointed_observer(r, task, issuer)
-                 and (tree is None or r.get("tree") in (None, tree))]
-    # at a seam the issuer's own latest record is his check, and what came before it is a logged disagreement — save at
-    # his own seam, where his hand adds a FAIL and never displaces the validator's
-    mine = [] if his else [i for i, r in enumerate(appointed)
-                           if displaces_a_refutation(graph, task, r.get("validator"), r.get("by_hand"))]
+    appointed = [r for r in recs if recorded_by_an_appointed_observer(r, task, issuer)]
+    # at a seam the issuer's own latest record is his check, and what came before it is a logged disagreement
+    mine = [i for i, r in enumerate(appointed) if displaces_a_refutation(graph, task, r.get("validator"), r.get("by_hand"))]
     if mine:
         appointed = appointed[mine[-1]:]
     fails = sorted({str(c) for r in appointed if str(r.get("verdict")) == Verdict.FAIL
                     for c in (r.get("failed_criteria") or ())})
-    return {"pass": any(str(r.get("verdict")) == Verdict.PASS and not (his and r.get("by_hand")) for r in appointed),
-            "fails": fails}
+    return {"pass": any(str(r.get("verdict")) == Verdict.PASS for r in appointed), "fails": fails}
 
 
 def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
@@ -653,7 +689,7 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
                                f"observation (`record_verdict('{task.id}', 'PASS', …)`) — it stands beside the "
                                f"earlier one as a logged disagreement — then sign. Another run of the instrument "
                                f"does not undo a refutation")}
-    must = (mode_at(graph, task) is not None or his) and observed_here(graph, task)
+    must = his or mode_at(graph, task) is not None and observed_here(graph, task)
     if must and not st["pass"]:
         return {"kind": "unobserved", "fails": [],
                 "why": ("no appointed observer has observed this delivery — "
@@ -1353,35 +1389,53 @@ def _deliver_rules(signal_data: SignalData, graph: Graph, audit) -> None:
         # would let exactly the false close through. A leaf is out of scope by the same reading —
         # its contract belongs to the issuer above, whose CHECK-1 surfaces any hole a rewrite leaves.
         if (refusal := redelivery_refusal(graph, task, audit)
-                or unchecked_at_his_seam(graph, task, signal_data.artifact)) is not None:
+                or unchecked_at_his_seam(graph, task, signal_data.artifact, audit)) is not None:
             raise ValidationError(refusal)
 
 
-def unchecked_at_his_seam(graph: Graph, task, artifact) -> Optional[str]:
-    """Why a DELIVER at a seam the person issues is refused — the validator's latest check of the very tree being handed
-    in failed, or none was made — or None. The check stands before the result is brought to him (his word): a check of
-    the committed tree before the delivery (`validate_result` on the node at work, `Engine.judging_before_delivery`),
-    or the validation of an earlier delivery of the same tree. The lift is the holder's own truthful work: repair what
-    failed, have the repair checked, deliver it (§12.16 (ii): a standing verdict under the current criteria indicts that
-    tree). Under a revision of the criteria every check is of an earlier version and none stands. A delivery that
-    records no tree, and one a registered machine makes, is observed after it lands, its PASS bound as at every seam of
-    his (`observation_blocker`)."""
-    if (task is None or not artifact or not persons_seam(graph, task)
-            or party_kind(graph, str(task.assignee), graph.roster or {}) == "machine"):
+def fails_on_this_version(audit, task) -> list[dict]:
+    """Each FAIL of this packet version on `task`, oldest first — {by, by_system, criteria, said, tree}: who signed it,
+    what it names and the words recorded with it, and the tree of the delivery it answers (the DELIVER before it in the
+    log; None where that recorded none). A revision installs a new version and starts afresh."""
+    out, last = [], None
+    for e in on_current_version(audit.get_entries(task.id)) if audit is not None else ():
+        if e.signal == Signal.DELIVER:
+            last = e.artifact
+        elif e.signal == Signal.FAIL:
+            out.append({"by": str(e.source or ""), "by_system": bool(e.by_system), "criteria": list(e.failed_criteria),
+                        "said": str(e.reason or e.justification or "").strip(), "tree": last})
+    return out
+
+
+def unchecked_at_his_seam(graph: Graph, task, artifact, audit=None) -> Optional[str]:
+    """Why a DELIVER at a seam the person issues is refused — the check standing for the very tree handed in
+    (`standing_check`) is a FAIL, or none stands — or None. The check stands before the result is brought to him (his
+    word): a check of the committed tree before the delivery (`validate_result` on the node at work,
+    `Engine.judging_before_delivery`), or the validation of an earlier delivery of the same tree. A FAIL, his or the
+    validator's, sends the holder to rework, and handing in the tree it failed is none, whatever a later check of that
+    tree says. The lift is the holder's own truthful work: repair what failed, have the repair checked, deliver it
+    (§12.16 (ii): a standing verdict under the current criteria indicts that tree). Under a revision of the criteria
+    every check and FAIL is of an earlier version and none stands. A delivery that records no tree, and one a registered
+    machine makes, is observed after it lands, its PASS bound as at every seam of his (`observation_blocker`). While a
+    check before the delivery runs, no delivery lands: its validation would read the tree in flight (`Engine.delivered`)
+    and that check would overwrite its record."""
+    if task is None or not persons_seam(graph, task):
         return None
-    issuer = graph.issuer_of(task.id)
-    checks = [r for r in [*observations(graph._storage, task.id), graph.exec_verdict_record(task.id)]
-              if r and r.get("tree") == artifact and not r.get("by_hand")
-              and recorded_by_an_appointed_observer(r, task, issuer)
-              and (r.get("reopens", 0), r.get("revisions", 0)) == (task.reopens, task.revisions)]
-    last = max(checks, key=lambda r: int(r.get("log_at", -1)), default=None)
-    if last is not None and str(last.get("verdict")) == Verdict.PASS:
+    if str(task.id) in graph.judging:
+        return (f"cannot DELIVER {task.id}: a check of its committed tree before the delivery is running now — wait for "
+                f"its verdict (the `validate_result` call returns it), then DELIVER the tree it passed")
+    if not artifact:
+        return None
+    rec = standing_check(graph, audit, task, artifact)
+    failed = rec is not None and str(rec.get("verdict")) == Verdict.FAIL
+    if not failed and (rec is not None or party_kind(graph, str(task.assignee), graph.roster or {}) == "machine"):
         return None
     return (f"cannot DELIVER {task.id}: "
-            + (f"the validator's latest check of this tree failed on {', '.join(last.get('failed_criteria') or ())}"
-               if last is not None else "the validator has not checked this tree")
+            + (f"this tree stands failed on {', '.join(rec['failed_criteria'])} under the current criteria"
+               if failed else "the validator has not checked this tree")
             + f", and {task.id} is {HIS_WORD_ON_THE_SEAM}. "
-            + ("Rework what failed (`get_verdict` reads why), commit it, and " if last is not None else "Commit the work and ")
+            + ("A FAIL is answered by rework: repair what failed (`get_verdict` reads why), commit it, and "
+               if failed else "Commit the work and ")
             + f"have it checked before you deliver it — `validate_result('{task.id}')` judges your committed tree — "
               f"then DELIVER that tree once its check passes; where a criterion is what is wrong, CHALLENGE it")
 

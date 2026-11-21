@@ -621,7 +621,7 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
     vcfg = agents.get(validator_id) or {}
     out = _validate_with(engine, agents, task_id, task, validator_id, vcfg, sign, T,
                       model_override, _llm)
-    if out.get("inflight") or out.get("waiting_on"):
+    if out.get("inflight") or out.get("waiting_on") or out.get("stale"):
         # Neither of these is a failed validation, so neither may cost the node its one
         # no-verdict retry: `inflight` = another validator run (e.g. a manual `validate_result`)
         # already holds this generation; `waiting_on` = the node aggregates children that have
@@ -630,7 +630,7 @@ def _auto_validate(engine, task_id: TaskId, agents: AgentRegistry, _llm=None,
         engine.emit_info(
         "delegate",
         f"{task_id}: validator already in flight — duplicate spawn suppressed"
-        if out.get("inflight") else
+        if out.get("inflight") else f"{task_id}: {out['stale']}" if out.get("stale") else
         f"{task_id}: not validated yet — waiting on {', '.join(out['waiting_on'])}")
         return "rejected"
     verdict = out.get("verdict")

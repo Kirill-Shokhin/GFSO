@@ -381,6 +381,8 @@ class Graph:
         self._storage = storage
         # the signal log, when a host holds one (`Engine` hands it in): consumption is read off it (`is_consumed`)
         self.audit = None
+        # {node: (tree, commit, build)} a check before its delivery is judging now, when a host runs one (`Engine`)
+        self.judging: dict = {}
         # WHO MAY SPEAK AS THE ISSUER'S ROLE-V INSTRUMENT (§10.3): the registered `llm-validator` /
         # `unittest-checker` ids, published downward by the dispatcher each round. Declared here
         # because two validation rules read it — who may sign PASS/FAIL at all, and whether a seam's

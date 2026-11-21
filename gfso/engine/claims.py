@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 from gfso.config import VALIDATION_CLAIM_TTL
 from gfso.core.graph.model import Graph
@@ -23,6 +23,9 @@ class ValidationClaim(NamedTuple):
     and the slow run's PASS then stood over a part fixed after it had read (critic, 2026-09-28)."""
     key: tuple
     log_at: int
+    #: the tree of the delivery it reads, named when it began — its record names it, whatever the place holds when the
+    #: run lands (`Engine.delivered` follows a check before the next delivery)
+    tree: Optional[str] = None
 
 
 class Claims:
@@ -79,7 +82,7 @@ class Claims:
         with self._lock:
             self._val_queued.pop(key, None)
 
-    def begin_validation(self, task_id: TaskId):
+    def begin_validation(self, task_id: TaskId, tree: Optional[str] = None):
         """Claim the in-flight validator slot for the node's CURRENT generation (node, iteration,
         reopens). Returns the claimed key, or None if a run is already in flight — concurrent
         spawns (manual validate_result × the dispatcher's auto-validation, observed live: three
@@ -100,7 +103,7 @@ class Claims:
                 log.warning(f"the validation claim on {task_id} is older than "
                             f"{VALIDATION_CLAIM_TTL:.0f}s with nothing behind it — reclaiming")
             self._val_inflight[key] = self._clock.now()
-            return ValidationClaim(key, len(self._audit))
+            return ValidationClaim(key, len(self._audit), tree)
 
     def end_validation(self, key) -> None:
         """Release the in-flight validator claim taken by `begin_validation`. Idempotent: a key that is

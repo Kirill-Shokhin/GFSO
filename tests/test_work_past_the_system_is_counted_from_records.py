@@ -86,6 +86,16 @@ def _past(e) -> dict:
     return got[0]
 
 
+def _removed(repo, wt, e):
+    """The linked worktree removed once the validator's own run over its delivery is over: that run's copy reads the
+    worktree, and Windows refuses to delete a directory a process stands in (under load it outlived `wait_idle`)."""
+    for _ in range(1000):
+        if not any(e.claims.validation_in_flight(t.id) for t in e.all_tasks()):
+            break
+        time.sleep(0.01)
+    _git(repo, "worktree", "remove", str(wt))
+
+
 def test_a_chats_accept_records_where_and_from_which_head_its_node_is_at_work(repo):
     """The one record both catches read: the ACCEPT of a node its holder performs in the repository's chat carries the
     repository and its HEAD; the node is attached there, taken now. CONTROL: `tools_llm.signal` recording nothing at
@@ -476,7 +486,7 @@ def test_a_node_taken_in_a_worktree_since_removed_still_holds_its_work(repo, tmp
     _deliver(e)
     e.wait_idle()
     _git(repo, "merge", "-q", "--no-edit", "tmp")
-    _git(repo, "worktree", "remove", str(wt))
+    _removed(repo, wt, e)
     _git(repo, "branch", "-q", "-d", "tmp")
     assert {Path(x.repository).resolve() for x in e.audit_log() if x.repository} == {repo.resolve()}
     got = _past(e)
@@ -587,7 +597,7 @@ def test_a_node_whose_rows_name_a_worktree_since_removed_still_holds_its_work(re
         _deliver(e)
     e.wait_idle()
     _git(repo, "merge", "-q", "--no-edit", "tmp")
-    _git(repo, "worktree", "remove", str(wt))
+    _removed(repo, wt, e)
     _git(repo, "branch", "-q", "-d", "tmp")
     got = _past(e)
     assert (got["count"], main in got["commits"], "undecided" in got) == (0, False, False), got

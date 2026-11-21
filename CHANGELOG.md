@@ -21,17 +21,25 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   past the system is recorded with no actor (`unsigned`), never as the person.
 - In a project with no mode, every seam the person issues to another name keeps his word, with no scope set: an issuer
   move there from an agent's connection carries his words (`user_said`), from his page none; a call no door served keeps
-  the earlier rule. His issue of such a seam installs `answers_the_persons_words` by default (`set_mode(intent_check=False)`
-  turns it off).
+  the earlier rule. His issue of a seam to another name, at any depth and under any mode, installs
+  `answers_the_persons_words` by default, and so does a revision he makes of one (`set_mode(intent_check=False)` turns
+  it off).
 - A seam's holder working in its chat holds it solo by its own act: a move under its name over MCP (taken by `act_as`, or launched with its token) records that it performs in a
   chat, and each seam the person issues to it is a top as the mode scope made it. `set_mode(node=…)` is refused with
   that reason, the page's switch is gone, and a scope stored earlier reads its holders as working in a chat.
-- Every seam the person issues, a top or not, is checked by the project's validator against every criterion, his words'
+- Every seam the person issues — any node whose version he signed for another name, at any depth and under any mode,
+  his whatever mode is set after it — is checked by the project's validator against every criterion, his words'
   included, and `set_checker(…, "self")` is refused there. The check comes before the result reaches him: the holder's
-  DELIVER of a tree is refused while the validator's latest check of that tree failed or none was made, naming the
-  failed criteria. `validate_result` on the node at work checks the holder's committed tree, recording the check of
-  that tree and moving no state. Once delivered, his PASS stands on that check, and a record by his own hand does not
-  stand in for it. The system makes none of his moves. With no validator registered, the issue, the delivery and the
+  DELIVER of a tree is refused while no check of it stands or a FAIL does, naming the failed criteria. Any FAIL of that
+  tree under the current criteria, his or the validator's, stands whatever comes after, so a FAIL sends the holder to
+  rework; else the validator's last PASS of the current round stands. A check names the tree its run read when it began,
+  and a run of an earlier round is not recorded there. `validate_result` on the node at work checks the holder's
+  committed tree, moving no state, and no DELIVER lands while it runs; a refused report counts against the tree it was
+  made on. His own FAIL's criteria and words reach the rework and the validator's next check, and the holder's step
+  names the check before the DELIVER. Once delivered, his PASS stands on that check, and a record by his own hand does
+  not stand in for it. The system makes none of his moves. A delivery that records no tree is observed only by a check
+  of its own round naming none, and registering the validator where it records none says so. With no validator
+  registered, the issue, the delivery and the
   refused PASS name its registration.
 
 ### Added

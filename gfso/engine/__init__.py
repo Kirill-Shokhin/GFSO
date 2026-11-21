@@ -83,7 +83,7 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          HEARD_ON, IN_CHAT, in_chat_names as _in_chat_names, mode_scopes as _mode_scopes, mode_at as _mode_at, scope_at as _scope_at,
                          outside_the_scopes, heard_on as _heard_on, goal_top as _goal_top, persons_node as _persons_node,
                          observes_by_itself as _observes_by_itself, would_be_a_top as _would_be_a_top,
-                         persons_seam as _persons_seam, STAFF_HIS_SEAMS)
+                         persons_seam as _persons_seam, STAFF_HIS_SEAMS, fails_on_this_version, StaleRun)
 from .events import EventBus, PlanWatch, TransitionCallback, ErrorCallback, RejectCallback
 from .loop import _guard_context, event_loop, record_refusal, refresh_checks, timeout_monitor
 
@@ -208,6 +208,7 @@ class Engine:
         self._audit = AuditLog(storage)   # persists + hydrates when the storage carries audit methods
         #: {node: (tree, commit, build)} a check before its delivery is judging now (`judging_before_delivery`)
         self._judging: dict = {}
+        self._graph.judging = self._judging   # …and no DELIVER of that node lands meanwhile (`unchecked_at_his_seam`)
         self._graph.audit = self._audit   # R′'s finality reads consumption off the log (`Graph.is_consumed`)
         self._started = False
         self.frontier = Frontier(self)    # what the graph owes next, and to whom (`next_step(s)`)
@@ -576,10 +577,10 @@ class Engine:
         holds the root's work — solo or semi, performed in their chat — where nothing but the person's reading stands
         between their words and the written criteria (the author, 2026-11-19: «галочкой в ui и по умолчанию»). The value
         in force, set or not: the page shows it as it acts. On `node`, the mode it lies under (`mode_at`): a top's ask
-        is the person's as his root is. `seam`: a seam he issues to another in a project with no mode, by default too
-        (`persons_node`) — his act installs it there, the page's switch turns it off; under a mode its record answers."""
+        is the person's as his root is. `seam`: a seam he issues to another (`validation.persons_seam`: at any depth, under
+        any mode), by default too — his act installs it there, the page's switch turns it off."""
         if seam:
-            return self.mode() is None and self._storage.get_setting("intent_check") != "0"
+            return self._storage.get_setting("intent_check") != "0"
         if v := self._storage.get_setting("intent_check"):
             return v == "1"
         rec = rec if rec is not None else self.mode_at(node)
@@ -1341,7 +1342,7 @@ class Engine:
                             model: Optional[str] = None,
                             workdir: Optional[str] = None,
                             by_hand: bool = False, inputs_dirs: tuple = (),
-                            log_at: Optional[int] = None, outside=()) -> dict:
+                            log_at: Optional[int] = None, outside=(), tree=...) -> dict:
         """Store the independent validator's verdict for the node's CURRENT delivery (stamped with the
         node's GENERATION (iteration, reopens, revisions) — a rework, a reopen OR a revision
         invalidates it: the next
@@ -1363,7 +1364,11 @@ class Engine:
         refused to let carry a pass. The demotion is only a guarantee if it reaches the signal.
 
         `outside`: what the report observed that no criterion states ([{what, evidence}]) — kept with the record for the
-        node's issuer (`outside_the_criteria`); nothing here reads it (Inv-2: the verdict reads only the criteria)."""
+        node's issuer (`outside_the_criteria`); nothing here reads it (Inv-2: the verdict reads only the criteria).
+
+        `tree`: the tree the run read — a run hands in the one its claim named when it began (`ValidationClaim.tree`); a
+        hand record, the delivery standing now. At a seam the person issues a run of an earlier round is refused here
+        (`StaleRun`): its tree is no longer the one at work, and stored it stood as a check of whatever is."""
         # THE WORD IS COERCED TO THE ENUM HERE, or refused — never stored as the text that arrived.
         # Typed `str` and compared with `== Verdict.PASS`, a value in any other casing matched
         # NEITHER branch: every check below fell through as a no-op, the string went in verbatim, and
@@ -1372,7 +1377,7 @@ class Engine:
         # the enum and the reply parser does not enforce it, so `"pass"` from a model is an ordinary
         # answer. The human door has always coerced (`tools._self_check_verdict`); the record, which
         # is where EVERY door lands, did not.
-        verdict = decided_verdict(verdict)
+        verdict, tree = decided_verdict(verdict), self._the_runs_tree(task_id, generation, tree)
         task, per_criterion, failed_criteria = self._as_reported(task_id, per_criterion, failed_criteria)
         # A NODE WITH NO CRITERIA HAS NOTHING A VERDICT COULD BE ABOUT, whichever door produced it.
         # V is the conjunction over the node's criteria (§2), and over the empty set that is
@@ -1593,13 +1598,23 @@ class Engine:
                       generation or self._graph.generation_of(task_id), len(self._audit) if log_at is None else log_at,
                       per_criterion=per_criterion, tools_used=tools_used, model=model,
                       workdir=workdir, by_hand=by_hand, validated=self._validated_versions(task_id),
-                      inputs_dirs=inputs_dirs, outside=outside, tree=(self.delivered(task_id) or (None,))[0],
+                      inputs_dirs=inputs_dirs, outside=outside, tree=tree,
                       # …which parts this FAIL did not show holding on the delivered result, read now, while this
                       # round's inputs directories still name what the report ran (`_refuted_coverage_refusal`)
                       parts_not_shown_holding=parts_not_shown_holding(self.parts_procedure(task_id), per_criterion or (),
                                                           inputs_dirs, own=task.spec.criteria)
                       if task is not None and verdict == Verdict.FAIL else {})
         return {"verdict": verdict, "failed_criteria": list(failed_criteria or ())}
+
+    def _the_runs_tree(self, task_id: TaskId, generation: Optional[tuple], tree) -> Optional[str]:
+        """The tree a record names (`record_exec_verdict`): the run's own (`ValidationClaim.tree`), else the delivery
+        standing now — refused with `StaleRun` for a run of an earlier round at a seam the person issues."""
+        if (generation is not None and _persons_seam(self._graph, self._graph.get_task(task_id))
+                and tuple(generation) != tuple(self._graph.generation_of(task_id))):
+            raise StaleRun(f"not recorded on {task_id}: this run validated an earlier round of it "
+                           f"(generation {tuple(generation)}, now {tuple(self._graph.generation_of(task_id))}), and at a "
+                           f"seam the person issued a check stands only for the round it read")
+        return (self.delivered(task_id) or (None,))[0] if tree is ... else tree
 
     def _file_findings(self, task_id: TaskId, task, per_criterion: list, dirs, validator_id, ends_none: bool) -> None:
         """What this report refuted joins the node's findings; what it re-ran as filed and did not reproduce leaves the
@@ -1902,7 +1917,7 @@ class Engine:
         # nobody attempted. It is the same generation rule every other record here carries, and the
         # frontier now reads this one, so a stale count would be advice given to a driver.
         gen = generation_of_task(self._graph.get_task(task_id))
-        _same = stamped_with(prev, gen)
+        _same, tree = self._on_this_delivery(task_id, prev), (self.delivered(task_id) or (None,))[0]
         ledger_write(self._storage, task_id, REJECTED_REPORT,
                      {"defects": defects,
                          "per_criterion": list(per_criterion or ()),
@@ -1912,7 +1927,7 @@ class Engine:
                          # …and WHO validated, so an entry reused later says so on the verdict
                          "validated_by": dict(validated_by or {}),
                          "refusals": (int(prev.get("refusals", 0)) + 1) if _same else 1,
-                         **stamp(gen),
+                         **stamp(gen), **({"tree": tree} if tree else {}),
                          "ts": datetime.now().isoformat(sep=" ", timespec="seconds")})
 
 
@@ -3769,14 +3784,19 @@ class Engine:
 
         One owner for a record three readers need: the frontier's directive, `get_verdict`, and —
         the one that pays for it — the packet handed to the validator on its next attempt. Scoped to the
-        generation, because a refusal from before a rework is about a delivery nobody made.
+        generation, because a refusal from before a rework is about a delivery nobody made, and to the tree it
+        judged (`_on_this_delivery`).
         """
-        rec = self.rejected_report(task_id) or {}
+        rec = self.rejected_report(task_id)
+        return rec if self._on_this_delivery(task_id, rec) else None
+
+    def _on_this_delivery(self, task_id: TaskId, rec: Optional[dict]) -> bool:
+        """Is `rec` about the delivery standing now — its generation, and the tree it judged where it names one? A
+        check before a delivery moves no generation, so a report on one committed tree is no report on its repair
+        (`judging_before_delivery`): a count kept across trees refused every new tree a check (§12.16 (ii))."""
         task = self._graph.get_task(task_id)
-        if not rec or task is None:
-            return None
-        gen = generation_of_task(task)
-        return rec if stamped_with(rec, gen) else None
+        return (bool(rec) and task is not None and stamped_with(rec, generation_of_task(task))
+                and rec.get("tree") in (None, (self.delivered(task_id) or (None,))[0]))
 
     def refusals_on_this_delivery(self, task_id: TaskId) -> int:
         """How many reports on the CURRENT delivery were refused as ⊥ — 0 where none was: a count from before a rework
@@ -3940,6 +3960,14 @@ class Engine:
         so an executor re-ran its packet's own checks, found them green and re-delivered the unchanged file round
         after round (AUTO json_parser, 2026-09-27: the refuting probe `c2ffd553` never reached it)."""
         return self._rework(task_id)[0]
+
+    def issuers_fails(self, task_id: TaskId) -> list[dict]:
+        """The FAILs of this packet version its issuer signed himself, oldest first — {by, criteria, said, tree}
+        (`validation.fails_on_this_version`): a FAIL of his over a delivery the validator passed carries its why in his
+        words alone, so they go to the rework and to the next check, which decides each on the new tree. A FAIL the
+        system made stands on the validator's record, which `rework_findings` reads."""
+        task = self._graph.get_task(task_id)
+        return [f for f in fails_on_this_version(self._audit, task) if not f["by_system"]] if task is not None else []
 
     def rework_settled(self, task_id: TaskId) -> dict:
         """{criterion: the ids of the probes behind the standing FAIL the next PASS no longer runs} — named to the

@@ -50,7 +50,7 @@ from gfso.decompose import NoPlan, decompose_into, artifact as _artifact, planni
 from gfso.engine.events import emit_cb
 from gfso.engine.findings import record_round
 from gfso.engine.moves import DOOR_KEYS, READS, SIGNERS, door_holder, door_role, role_holder, signer_arg, signer_due
-from gfso.engine.validation import _l0_holes, _l2_undischarged, his_seam, whole_waits_for_its_parts
+from gfso.engine.validation import StaleRun, _l0_holes, _l2_undischarged, his_seam, whole_waits_for_its_parts
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS
 from gfso.core.graph.model import (MAX_ITERATIONS_CEILING, bounds_refusal, project_deadline_s, project_now,
                                    project_state_bound, witnessed_count)
@@ -644,10 +644,13 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm,
     if CALLER.get() is not None and (n := engine.refusals_on_this_delivery(TaskId(task_id))) >= 2:
         return {"task_id": task_id, "state": task.state.name, "verdict": None, "refusals_on_this_node": n,
                 "error": f"not validating {task_id} a third time: {n} reports on this delivery could not decide every "
-                         f"criterion, which is about the CONTRACT, not the run. Lifted by a move that is yours: its "
-                         f"issuer revises what it promises (`edit_criteria`) or records the verdict with what they "
-                         f"observed (`record_verdict`), or hands the node on (`reassign`): VALIDATING admits none of its "
-                         f"executor's signals. `get_verdict` shows what the refused reports did check."}, None, None
+                         f"criterion, which is about the CONTRACT, not the run. Lifted by a move that is yours: "
+                         + ("its issuer revises what it promises (`edit_criteria`) or records the verdict with what "
+                            "they observed (`record_verdict`), or hands the node on (`reassign`): VALIDATING admits "
+                            "none of its executor's signals." if task.state == State.VALIDATING else
+                            "its holder CHALLENGEs the criterion no report could decide, and its issuer revises what "
+                            "it promises (`edit_criteria`); a repair of what failed is a new tree, checked afresh.")
+                         + " `get_verdict` shows what the refused reports did check."}, None, None
     deliverable = deliverable or _last_deliver_result(engine, TaskId(task_id))
     if not deliverable:
         return {"error": f"nothing to validate: {task_id} has no recorded DELIVER result — "
@@ -875,7 +878,7 @@ def _ready_to_validate(engine, task_id, deliverable, workdir, validator, model, 
         return {"error": f"validate_result needs a provider that runs agents (tool calling): {model!r} answers "
                          f"one-shots only — `gfso provider-check {model}` names the roles it can hold"}, None
     # the claim names the delivery THIS run reads — the node's generation (§10.3 gate) — and where the log stood
-    inflight_key = engine.claims.begin_validation(TaskId(task_id))
+    inflight_key = engine.claims.begin_validation(TaskId(task_id), (engine.delivered(TaskId(task_id)) or (None,))[0])
     if inflight_key is None:
         # `verdict: None` EXPLICITLY, and said. The reply had no `verdict` key at all, so a caller
         # doing the obvious `.get("verdict")` got exactly the value this verb's own help says must
@@ -991,6 +994,8 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
                 + (f" · report kept: {out.get('report_kept_at')}" if out.get("report_kept_at") else ""))
             return out
         recorded, said = out.pop("verdicts")[task_id], out.pop("reports")[task_id]
+        if recorded.get("stale"):        # …an earlier round's run: no verdict, and no ⊥ of the round at work either
+            return {**out, "verdict": None, "stale": recorded["error"]}
         if recorded["verdict"] is None:
             # HOW MANY TIMES THIS HAS HAPPENED ON THIS DELIVERY: at two, a run asked at a door is refused
             # (`_refuse_validation`)
@@ -1270,10 +1275,12 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
         rec = engine.record_exec_verdict(task.id, verdict, failed,
                                          validator or "validate_result", per_criterion=entries,
                                          tools_used=tools, require_probe=True, generation=claim.key[1:],
-                                         log_at=claim.log_at, model=_model, workdir=workdir,
+                                         log_at=claim.log_at, tree=claim.tree, model=_model, workdir=workdir,
                                          outside=said.get("outside") or (),
                                          inputs_dirs=laid_down_dirs(
                                              engine.validation_procedure(task.id), scratch)) or {}
+    except StaleRun as e:       # …a run of an earlier round decides nothing now, nor counts against the round at work
+        return {"verdict": None, "failed_criteria": [], "error": str(e), "stale": True}
     except ValueError as e:
         kept = _keep_rejected_report(engine.project_name, str(task.id), str(e), text)
         try:
@@ -1564,7 +1571,7 @@ def validate_scope(engine: Engine, top_id: str, workdir: Optional[str], validato
     members = engine.scope_members(TaskId(top_id))
     nodes = [t for t in members if t.state.name == "VALIDATING" and (only is None or str(t.id) in only)]
     ex = validation_execution(engine) if nodes else None    # …before a claim: refused past them, they stood held until a restart
-    keys = [engine.claims.begin_validation(t.id) for t in nodes]
+    keys = [engine.claims.begin_validation(t.id, (engine.delivered(t.id) or (None,))[0]) for t in nodes]
     if not nodes or None in keys:
         for k in keys:
             if k is not None:
@@ -3009,6 +3016,13 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
             f"nothing yet — no executor is registered"
             + (f" in {workdir}" if workdir else "")
             + ". An executor registered there binds to this instrument by workspace, in either order.")
+        # …and the declared boundary of the seams the person issues: a delivery records the tree it hands in only where
+        # its judge's place is a repository's top, and a tree no delivery records no FAIL can refuse handed in again
+        if kind == "llm-validator" and workdir and not W.is_repo_top(workdir):
+            out["seam_boundary"] = (f"{workdir} is not the top of a git repository: a delivery judged there records no "
+                                    f"tree, so a FAIL at a seam the person issues cannot refuse the same work handed in "
+                                    f"again — it is observed after it lands. Register the validator at the "
+                                    f"repository's top for his seams to force rework")
     return out
 
 
@@ -3432,11 +3446,12 @@ def _with_his_intent(fn, *, issued: bool):
             # …a re-ASSIGN making a node a seam of his: the criterion comes with his act, as one version before it — a
             # version moving Del alone carries no criteria
             t = e.graph.get_task(TaskId(str(at["task_id"])))
-            seam = t is not None and not e.issued_by_the_person(t.id) and his_seam(e.graph.issuer_of(t.id), at["assignee"])
+            seam = t is not None and not e.persons_seam(t.id) and his_seam(e.graph.issuer_of(t.id), at["assignee"])
             if seam and (now := _his_intent(e, its_criteria(t), True)) != its_criteria(t):
                 _tools.edit_criteria(e, str(t.id), now, agent=str(e.graph.issuer_of(t.id)))
-        elif not issued and e.graph.get_parent(TaskId(str(at["task_id"]))) is not None \
-                and e.mode() is None and e.issued_by_the_person(at["task_id"]):
+        elif not issued and (t := e.graph.get_task(TaskId(str(at["task_id"])))) is not None and t.parent_id \
+                and his_seam(e.graph.issuer_of(t.id), t.assignee):
+            # …his revision is a version he signs, so it is his seam by `persons_seam`'s own rule; a root's is its go's
             if "criteria" in at:
                 at["criteria"] = _his_intent(e, list(at["criteria"] or ()), True)
             else:

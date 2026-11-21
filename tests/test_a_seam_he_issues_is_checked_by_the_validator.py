@@ -16,11 +16,12 @@ import subprocess
 
 import pytest
 
+import gfso.packets as P
 import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso.config import CALLER, Principal
 from gfso.core.protocol.invariants import INTENT
-from gfso.core.types import TaskId
+from gfso.core.types import AgentId, Mode, TaskId
 from gfso.delegate import Dispatcher, ensure_dispatcher
 from gfso.engine import validation as V
 from gfso.roster import AgentRegistry
@@ -53,17 +54,22 @@ def _call(p, verb, e, *a, **kw):
         return TL.TOOLS[verb](e, *a, **kw)
 
 
-def _issued(tmp_path, staffed: bool = True):
-    """His root and a seam he issues from it to `engineering` from his page — no mode — with, where `staffed`, the
-    project's validator registered; and the answer his issue got."""
+def _issued(tmp_path, staffed: bool = True, mode=None):
+    """His root and a seam he issues from it to `engineering` from his page — under `mode`, none by default — with,
+    where `staffed`, the project's validator registered; and the answer his issue got."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     e.project_name = "p"
+    if mode is not None:      # …a mode's seams below his root are held by a registered executor
+        e.set_mode(mode, None, AgentId("user"))
+        assert not TL.register_agent(e, HOLDER, "llm-executor", workdir=str(tmp_path)).get("refused")
+        ensure_dispatcher(e).stop()
     if staffed:
         assert not TL.register_agent(e, "p-val", "llm-validator", workdir=str(tmp_path)).get("refused")
         ensure_dispatcher(e).stop()
     _call(PAGE, "create_task", e, "root", {"description": "his goal", "criteria": [criterion("g")]}, assignee="user")
-    out = _call(PAGE, "decompose", e, "root", [{"task_id": SEAM, "assignee": HOLDER, "covers": ["g"],
+    covers = [c.name for c in e.graph.get_task(TaskId("root")).spec.criteria]     # …his words' too, under a mode
+    out = _call(PAGE, "decompose", e, "root", [{"task_id": SEAM, "assignee": HOLDER, "covers": covers,
                                                 "spec": {"description": "a direction", "criteria": [criterion("d")]}}],
                 accepted_risks=REGISTER)
     e.wait_idle()
@@ -237,3 +243,217 @@ def test_a_seam_issued_with_no_validator_names_its_registration_at_the_delivery_
     (tmp_path / "s").mkdir()
     staffed, _ = _issued(tmp_path / "s")
     assert "staff" not in _delivers(staffed)
+
+
+# ── 5. a FAIL forces rework: the tree it names is not handed in again, his FAIL included ───────────────────────────
+
+def _passed_then_he_fails(e, validator_fails: bool):
+    _checked(e, "tree-1")
+    assert _delivers(e, "tree-1").get("accepted")
+    _fails(e) if validator_fails else instrument_passes(e, TaskId(SEAM), validator="p-val")
+    assert _call(PAGE, "signal", e, SEAM, "FAIL", "user", failed_criteria=["d"])["state"] == "REWORKING"
+
+
+def test_the_tree_his_own_fail_named_is_not_handed_in_again(tmp_path):
+    """The validator passed the tree, he read it and FAILed it: his FAIL is a verdict on that tree, rework is owed."""
+    e, _ = _issued(tmp_path)
+    _passed_then_he_fails(e, validator_fails=False)
+    again = _delivers(e, "tree-1")
+    assert not again.get("accepted") and "FAIL" in again["error"], again
+    _checked(e, "tree-2")
+    assert _delivers(e, "tree-2").get("accepted")
+
+
+def test_a_fresh_pass_of_the_failed_tree_does_not_lift_the_fail(tmp_path):
+    """Past the validator's FAIL and his, a new passing check of the unchanged tree is no rework."""
+    e, _ = _issued(tmp_path)
+    _passed_then_he_fails(e, validator_fails=True)
+    with contextlib.suppress(ValueError):           # …the record itself refused: the FAIL stands (Inv-2)
+        _checked(e, "tree-1")
+    again = _delivers(e, "tree-1")
+    assert not again.get("accepted") and "FAIL" in again["error"], again
+
+
+def test_the_holders_next_step_at_his_seam_is_the_check_before_the_delivery(tmp_path):
+    e, _ = _issued(tmp_path)
+    _passed_then_he_fails(e, validator_fails=True)
+    with _as(CONSOLE):
+        steps = [s for s in T.next_steps(e)["steps"] if s.get("task_id") == SEAM]
+    assert steps and all("validate_result" in s["directive"] for s in steps), steps
+
+
+# ── 6. a refused report is about the tree it was made on ───────────────────────────────────────────────────────────
+
+def _refused_twice(e, tree):
+    entries = [{"criterion": c.name, "verdict": "pass", "evidence": f"ran the check for `{c.name}`: it holds",
+                "behaviours": [p.behaviour for p in c.check],
+                "probe": [{"behaviour": p.behaviour, "command": p.command, "expect": p.expect} for p in c.check]}
+               for c in e.graph.get_task(TaskId(SEAM)).spec.criteria][:1]
+    with e.judging_before_delivery(SEAM, tree, f"c-{tree}"):
+        for _ in range(2):
+            e.record_rejected_report(TaskId(SEAM), "could not decide d", entries)
+        assert e.refusals_on_this_delivery(TaskId(SEAM)) == 2
+        assert e.reusable_from_refused(TaskId(SEAM)), "the entry is reusable on its own tree"
+
+
+def test_two_refused_reports_on_one_tree_leave_a_repaired_tree_checkable(tmp_path):
+    """§12.16 (ii): the holder lifts the refusal by his own move — a new tree is a new thing to check."""
+    e, _ = _issued(tmp_path)
+    _refused_twice(e, "tree-1")
+    with e.judging_before_delivery(SEAM, "tree-2", "c-tree-2"):
+        assert e.refusals_on_this_delivery(TaskId(SEAM)) == 0
+        with _as(CONSOLE):
+            assert TL._refuse_validation(e, SEAM, "the tree", str(tmp_path), object(), None)[0] is None
+
+
+def test_the_third_run_refused_on_one_tree_names_the_holders_lift_not_validating(tmp_path):
+    e, _ = _issued(tmp_path)
+    _refused_twice(e, "tree-1")
+    with e.judging_before_delivery(SEAM, "tree-1", "c-tree-1"), _as(CONSOLE):
+        stop = TL._refuse_validation(e, SEAM, "the tree", str(tmp_path), object(), None)[0]
+    said = stop and stop["error"]
+    assert said and "VALIDATING" not in said and "changed tree" not in said, stop
+    assert said.index("CHALLENGE") < said.index("a repair of what failed"), said
+
+
+def test_a_check_of_a_new_tree_reuses_nothing_from_a_report_on_another(tmp_path):
+    """A check of tree-2 stands on tree-2 alone: entries of a refused report on tree-1 are not its."""
+    e, _ = _issued(tmp_path)
+    _refused_twice(e, "tree-1")
+    with e.judging_before_delivery(SEAM, "tree-2", "c-tree-2"):
+        crits, kept = TL._left_to_validate(e, e.graph.get_task(TaskId(SEAM)))
+    assert not kept and len(crits) == len(e.graph.get_task(TaskId(SEAM)).spec.criteria)
+
+
+# ── 7. a check stands on the delivery it observed; his FAIL's why reaches the next check; no delivery mid-check ────
+
+def test_a_delivery_recording_no_tree_is_observed_only_by_a_check_made_after_it(tmp_path):
+    """A check of a committed tree before the delivery is no observation of a delivery that recorded no tree."""
+    e, _ = _issued(tmp_path)
+    _checked(e, "tree-X")
+    assert _delivers(e).get("accepted")
+    assert not _call(PAGE, "signal", e, SEAM, "PASS", "user").get("accepted")
+    instrument_passes(e, TaskId(SEAM), validator="p-val")
+    assert _call(PAGE, "signal", e, SEAM, "PASS", "user")["state"] == "DONE"
+
+
+def test_his_fail_and_its_words_reach_the_next_check_and_the_rework(tmp_path):
+    """The validator passed the tree and he FAILed it: why he did is what the repair and its check must decide."""
+    e, _ = _issued(tmp_path)
+    _checked(e, "tree-1")
+    _delivers(e, "tree-1")
+    instrument_passes(e, TaskId(SEAM), validator="p-val")
+    why = "the second page still prints the old totals"
+    assert _call(PAGE, "signal", e, SEAM, "FAIL", "user", failed_criteria=["d"], reason=why)["state"] == "REWORKING"
+    t = e.graph.get_task(TaskId(SEAM))
+    assert why in P._validator_packet(e, t, "the tree", str(tmp_path))
+    assert why in P._rework_section(e, t)
+    with _as(CONSOLE):
+        steps = [s for s in T.next_steps(e)["steps"] if s.get("task_id") == SEAM]
+    assert steps and all(why in s["directive"] for s in steps), steps
+
+
+def test_no_delivery_lands_while_a_check_before_it_runs(tmp_path):
+    e, _ = _issued(tmp_path)
+    _checked(e, "tree-1")
+    with e.judging_before_delivery(SEAM, "tree-2", "c-tree-2"):
+        out = _delivers(e, "tree-1")
+    assert not out.get("accepted") and "running now" in out["error"], out
+    assert _delivers(e, "tree-1").get("accepted")
+
+
+# ── 8. which check stands for a tree: one owner (`validation.standing_check`) ─────────────────────────────────────
+
+def _entries(e):
+    """A passing report's entries over every criterion of the seam, each with its pinned probe and behaviours."""
+    return [{"criterion": c.name, "verdict": "pass", "evidence": f"ran the check for `{c.name}`: it holds",
+             "behaviours": [p.behaviour for p in c.check],
+             "probe": [{"behaviour": p.behaviour, "command": p.command, "expect": p.expect} for p in c.check]}
+            for c in e.graph.get_task(TaskId(SEAM)).spec.criteria]
+
+
+def test_of_two_checks_of_one_tree_with_no_signal_between_the_fail_decides(tmp_path):
+    """Two checks with no signal between them stand at one place in the log: their order is the ledger's."""
+    e, _ = _issued(tmp_path)
+    _checked(e, "tree-1")
+    _checked(e, "tree-1", passes=False)
+    out = _delivers(e, "tree-1")
+    assert not out.get("accepted") and "failed on d" in out["error"], out
+
+
+def test_a_run_of_an_earlier_round_landing_during_a_check_of_another_tree_is_no_check_of_it(tmp_path):
+    e, _ = _issued(tmp_path)
+    _checked(e, "tree-1")
+    _delivers(e, "tree-1")
+    stale = e.graph.generation_of(TaskId(SEAM))
+    _fails(e)
+    assert _call(PAGE, "signal", e, SEAM, "FAIL", "user", failed_criteria=["d"])["state"] == "REWORKING"
+    with e.judging_before_delivery(SEAM, "tree-2", "c-tree-2"), pytest.raises(V.StaleRun):
+        instrument_passes(e, TaskId(SEAM), validator="p-val", generation=stale)
+    out = _delivers(e, "tree-2")
+    assert not out.get("accepted") and "has not checked this tree" in out["error"], out
+
+
+def test_a_check_of_an_earlier_round_does_not_stand_for_the_tree_in_this_one(tmp_path):
+    """A check stands for the round its run was claimed in: past a FAIL, the tree is checked again."""
+    e, _ = _issued(tmp_path)
+    _checked(e, "tree-2")
+    _checked(e, "tree-1")
+    _delivers(e, "tree-1")
+    _fails(e)
+    assert _call(PAGE, "signal", e, SEAM, "FAIL", "user", failed_criteria=["d"])["state"] == "REWORKING"
+    out = _delivers(e, "tree-2")
+    assert not out.get("accepted") and "has not checked this tree" in out["error"], out
+
+
+def test_his_seam_is_his_by_who_issued_it_not_by_who_holds_its_parent_now(tmp_path):
+    e, _ = _issued(tmp_path)
+    e._storage.update_task(TaskId("root"), assignee="someone-else")
+    assert e.persons_seam(SEAM)
+
+
+def test_a_runs_record_names_the_tree_its_claim_named_when_it_began(tmp_path):
+    """The place moved under a run (a check before the next delivery began): its record is of what it read."""
+    e, _ = _issued(tmp_path)
+    _checked(e, "tree-1")
+    _delivers(e, "tree-1")
+    claim = e.claims.begin_validation(TaskId(SEAM), tree="tree-1")
+    with e.judging_before_delivery(SEAM, "tree-2", "c-tree-2"):
+        TL._record_node(e, e.graph.get_task(TaskId(SEAM)), _entries(e), {}, "p-val", object(), claim, None,
+                        str(tmp_path), None)
+    e.claims.end_validation(claim)
+    assert e.current_exec_verdict(TaskId(SEAM))["tree"] == "tree-1"
+
+
+def test_a_mode_set_after_his_seam_was_issued_leaves_it_his(tmp_path):
+    """His seam is his by who issued it, not by the mode now."""
+    e, _ = _issued(tmp_path)
+    e.set_mode(Mode.SEMI, None, AgentId("user"))
+    assert not _delivers(e, "tree-1").get("accepted")
+    _checked(e, "tree-1")
+    assert _delivers(e, "tree-1").get("accepted")
+    _fails(e)
+    assert not _call(PAGE, "signal", e, SEAM, "PASS", "user").get("accepted")
+
+
+def test_under_semi_a_node_he_issues_below_his_root_is_his_seam(tmp_path):
+    """Every seam he issues, at any depth: past the validator's FAIL his own hand does not turn it into a pass."""
+    e, _ = _issued(tmp_path, mode=Mode.SEMI)
+    assert e.persons_seam(SEAM) and e.checker(TaskId(SEAM)) == "validator"
+    assert INTENT in {c.name for c in e.graph.get_task(TaskId(SEAM)).spec.criteria}, "his words, as at every seam of his"
+    assert _delivers(e).get("accepted")
+    _fails(e)
+    with contextlib.suppress(ValueError):
+        instrument_passes(e, TaskId(SEAM), validator="user", by_hand=True)
+    assert not _call(PAGE, "signal", e, SEAM, "PASS", "user").get("accepted")
+    assert _state(e) == "VALIDATING"
+
+
+def test_a_validator_registered_outside_a_repositorys_top_is_told_his_seams_cannot_force_rework(tmp_path):
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.project_name = "p"
+    out = TL.register_agent(e, "p-val", "llm-validator", workdir=str(tmp_path))
+    ensure_dispatcher(e).stop()
+    assert "top of" in str(out.get("seam_boundary")), out
+    repo = a_repository(tmp_path / "repo")
+    assert "seam_boundary" not in TL.register_agent(e, "p-val2", "llm-validator", workdir=str(repo))

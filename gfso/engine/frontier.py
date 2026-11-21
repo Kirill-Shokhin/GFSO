@@ -10,7 +10,7 @@ from typing import Optional
 
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.config import ONE_CALL, agent_id as _config_agent_id, how_it_is_waited
-from gfso.core.graph.model import root_of
+from gfso.core.graph.model import party_kind, root_of
 from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, WORK_STATES, Task, TaskId,
                              Verdict, Wait, settled_positive)
 from .moves import Move
@@ -326,15 +326,9 @@ class NodeSteps:
             # on a node whose reports carried an empty `failed_criteria` (agent door, 2026-09-02).
             # Inv-3 makes a FAIL name its criteria, so a rework with none named is a state to
             # explain, not a verdict to relay.
-            _failed = list((self.engine.current_exec_verdict(t.id) or {}).get("failed_criteria") or ())
+            _failed, head = self._fix_head(t, nm)
             cand = (kids and self._held_reaggregate_step(t, nm, _failed)) or (2, t, Action.FIX,
-                    (f"FIX AND RE-DELIVER '{t.id}' ({nm}): the validator FAILED it on "
-                     f"{', '.join(map(str, _failed))}. Fix exactly that, then DELIVER again."
-                     if _failed else
-                     f"RE-DELIVER '{t.id}' ({nm}): it is in rework, and no current verdict names "
-                     f"a failed criterion — read `get_verdict {t.id}` before changing anything, "
-                     f"because there may be nothing here to fix.")
-                    + f"{self._rework_feedback(t.id)}"
+                    head + self._checked_first(t) + f"{self._rework_feedback(t.id)}"
                     + (f" | {', '.join(_stuck)} has now failed {self.engine.CONTRACT_SUSPECT_ROUNDS} "
                        f"rounds running. If it cannot be met AS WRITTEN, do not deliver against "
                        f"it a fourth time — send "
@@ -352,7 +346,7 @@ class NodeSteps:
                     f"BEFORE you DELIVER, self-check by RUNNING: for each criterion write a tiny check, "
                     f"run it, read the ACTUAL output, and signal from what you OBSERVED — not from "
                     f"'I implemented it' (an optimistic self-pass the root later fails drops q_D). "
-                    f"DELIVER with, per criterion, the check you ran and what it printed.")
+                    f"DELIVER with, per criterion, the check you ran and what it printed." + self._checked_first(t))
         elif t.state == State.OFFERED and kids and work_beneath:
             # a re-authored parent dropped back to OFFERED while work goes on beneath it — re-ACCEPT it BEFORE driving
             # its subtree, so the graph doesn't finish all children while the parent still shows 'accept' (obs: odd
@@ -546,6 +540,28 @@ class NodeSteps:
                 return True
         return False
 
+    def _fix_head(self, t, nm: str) -> tuple[list, str]:
+        """(the criteria the standing FAIL names, the rework step's opening) — the validator's FAIL, else its issuer's own
+        over a delivery the validator passed; with none named, a rework to explain, not a verdict to relay (Inv-3)."""
+        failed = list((self.engine.current_exec_verdict(t.id) or {}).get("failed_criteria") or ())
+        his = list(dict.fromkeys(c for f in self.engine.issuers_fails(t.id) for c in f["criteria"]))
+        if failed or his:
+            return failed or his, (f"FIX AND RE-DELIVER '{t.id}' ({nm}): {'the validator' if failed else 'its issuer'} "
+                                   f"FAILED it on {', '.join(map(str, failed or his))}. Fix exactly that, then DELIVER "
+                                   f"again.")
+        return [], (f"RE-DELIVER '{t.id}' ({nm}): it is in rework, and no current verdict names a failed criterion — "
+                    f"read `get_verdict {t.id}` before changing anything, because there may be nothing here to fix.")
+
+    def _checked_first(self, t) -> str:
+        """The check a DELIVER at a seam the person issued waits for, said in the step that asks for the DELIVER — ""
+        elsewhere, and where a registered machine holds it (observed after it lands, `validation.unchecked_at_his_seam`)."""
+        if not self.engine.persons_seam(t.id) or party_kind(self.engine.graph, str(t.assignee),
+                                                            self.engine.graph.roster or {}) == "machine":
+            return ""
+        return (f" Its DELIVER waits for the validator's check of the tree you hand in: commit the work, have it "
+                f"checked — `validate_result('{t.id}')` judges your committed tree — and DELIVER that tree once its "
+                f"check passes; a tree a FAIL named is not handed in again.")
+
     def _bottom_attempts(self, task) -> int:
         """How many instrument reports on THIS delivery were refused as ⊥, or 0.
 
@@ -598,6 +614,9 @@ class NodeSteps:
                 lines.append(f"\n  - {c}: {_short}")
             else:
                 lines.append(f"\n  - {c}")
+        # …and why its issuer FAILed it, in his words: what the repair answers and the next check decides
+        lines += [f"\n  - {', '.join(f['criteria']) or 'its verdict'}, FAILed by {f['by']}: {f['said']}"
+                  for f in self.engine.issuers_fails(task_id) if f["said"]]
         return " Failed:" + "".join(lines) if lines else ""
 
     def _step_out(self, t: Task, action: str, directive: str) -> dict:
