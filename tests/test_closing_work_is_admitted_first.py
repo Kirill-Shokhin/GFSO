@@ -75,14 +75,18 @@ def test_a_slot_left_free_by_the_last_admitted_closer_reaches_a_waiting_executor
 
 
 def test_the_cap_is_never_exceeded():
-    s, lock, live, peak = Slots(3), threading.Lock(), [0], [0]
+    s, lock, live, peak, full = Slots(3), threading.Lock(), [0], [0], threading.Event()
 
     def run(lane):
         with lane:
             with lock:
                 live[0] += 1
                 peak[0] = max(peak[0], live[0])
-            time.sleep(0.01)
+                if live[0] == 3:
+                    full.set()
+            # …the first in stay until three are in, so the cap is REACHED by construction, not by a 10 ms overlap the
+            # scheduler may not give (122 of 300 calls saw a peak of 2 on Windows); a cap that admits fewer times out
+            full.wait(2)
             with lock:
                 live[0] -= 1
     ths = [threading.Thread(target=run, args=(s.closing if i % 3 else s.opening,), daemon=True) for i in range(30)]
