@@ -346,8 +346,10 @@ move names no one, `signs_as` every name it may sign as.
   unless you pass `assignee`. A connection that has taken no name reads and signs nothing: every Claude Code console
   connects its gfso MCP by itself, and taking a name is its log-in. `act_as('')` logs it out, `act_as('<name>')`
   re-logs it in under another name; leaving a name is voluntary, as taking it is: where it still owes moves of its own in any project,
-  the reply names them (`advice`) — the next holder of the name picks them up — and your page's feed records that the
-  name was left with them owed. At a seam you issued to another name, its issuer moves carry your words
+  the first call leaves nothing and reminds you of them (`confirm_needed`); `confirm=true` leaves, the reply naming
+  them (`advice`) — the next holder of the name picks them up — and your page's feed recording that the name was left
+  with them owed. A part your agent holds itself self-verifies (§10.3): its PASS with no external check on the
+  delivery is reminded the same way — `confirm=true` signs, `validate_result` checks it first. At a seam you issued to another name, its issuer moves carry your words
   (`user_said`); your page makes them as it is. A client with no credential that is no MCP connection — a script,
   curl, `gfso run` from any shell — reads, and signs nothing: a console of a stream's name signs with its token
   (`gfso agent <name>`, then `GFSO_TOKEN`). `source` on `signal`, `agent` on

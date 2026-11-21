@@ -341,9 +341,9 @@ def principal_of(conn) -> Principal:
     """Who a request comes from (its `headers`, `cookies`, `client` and `scope`): its bearer token or its page session
     where either names someone; else, on a server bound to loopback, the OS says whether the connection's other end is a
     process of this server's user (`peer.ours`): if so, asking a loopback name with nothing a front adds, a browser is
-    the person's page (`page_auth`: `local-peer`, or `key`, where it signs in); a bridge's connection at the MCP door the
-    name it took, or, having taken none, the standing agent — the person's own agent; any other client a reader
-    (`BARE`): the CLI's HTTP path and a script are no agent of his. A port forwarder's connection (a container's) is `STRANGER`, the page's shell alone. Every other call — a front's,
+    the person's page (`page_auth`: `local-peer`, or `key`, where it signs in); a connection's lease the name it took
+    (`held`), `user` among them; one that took none at the MCP door `UNTAKEN`, any other client `BARE` — both read
+    only. A port forwarder's connection (a container's) is `STRANGER`, the page's shell alone. Every other call — a front's,
     the LAN's, another account's — is a reader (`_a_reader`): a front's every client arrives from this machine, so
     loopback says nothing there."""
     h = conn.headers
@@ -457,7 +457,9 @@ def take(lease: str | None, name: str, token: str = "", issued: bool = False) ->
         live = None if seen is None else {_hash(x) for x in seen}
         for other, since in db.execute("SELECT lease, since FROM holds WHERE name = ? AND lost IS NULL AND lease != ?",
                                        (name, h)).fetchall():
-            if live is None or other in live:
+            # …a connection recorded under its console is alive while its process is — a bridge's and a stdio
+            # server's alike, whatever the server's own list of leases knows; one unrecorded, by that list
+            if (alive := _recorded_alive(other)) or (alive is None and (live is None or other in live)):
                 raise ValueError(f"`{name}` is held by another connection since {_when(since)} (as:{other[:12]}): Del "
                                  f"names one accountable party (§2.6), so one console holds a name at a time. Work in "
                                  f"that console, or close it: the name frees when its bridge ends")
@@ -553,6 +555,16 @@ def record_console(lease: str, bridge: psutil.Process | None = None, console: ps
             json.dumps({"console": _stamp(console), "bridge": _stamp(bridge), "lease": lease}), encoding="utf-8")
     except (psutil.Error, OSError):
         pass                      # …no console found: its shell signs as it did, by its own credential
+
+
+def _recorded_alive(hashed: str) -> bool | None:
+    """Is the connection whose lease hashes to `hashed` alive by its own process — its console record's bridge
+    (`record_console`)? None where it is recorded under no console."""
+    try:
+        bridge = json.loads((_consoles() / f"{hashed[:16]}.json").read_text(encoding="utf-8"))["bridge"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return _alive(bridge)
 
 
 def forget_console(lease: str) -> None:

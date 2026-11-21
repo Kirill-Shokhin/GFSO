@@ -34,24 +34,24 @@ names; a credential by `gfso credential claude --sign-in`: never ask its value i
 of a repository's top with a commit: only what is committed enters; say so if they name a secret in its history.
 <!-- both -->
 3. **The scheme.** Say "`auto`, every role on `claude-haiku-5-5`: most tested, cheap" and go on; `solo`, `semi`
-or another model if the person asks. Network: `open` (default) if the task installs or fetches; `off`
+or another model if the person asks. Network: `open` (default) if it installs or fetches; `off`
 only the model.
-4. **The calls.** <!-- code -->**`solo`, `perform="in_chat"`** (you do the work), in place of the block and `use_project`: `set_mode("solo", perform="in_chat", workdir=W, project="<project>")`, then `plan(request)`, each `say` the next act: the file filled with them, their words the go, DELIVER, the verdict told them, their words the PASS.<!-- both -->
+4. **The calls.** First `act_as("user")`: until then a connection only reads. <!-- code -->**`solo`, `perform="in_chat"`** (you do the work), in place of the block and `use_project`: `set_mode("solo", perform="in_chat", workdir=W, project="<project>")`, then `plan(request)`, each `say` the next act: the file filled with them, their words the go, DELIVER, the verdict told them, their words the PASS.<!-- both -->
 ```
 use_project("<project>")
 for n in (1, 2): register_agent(f"<project>-exec-{n}", "llm-executor", model="claude-haiku-5-5", workdir=W)
 set_mode("auto", system_model="claude-haiku-5-5", workdir=W) # its validator; `off`: network={"mode": "off"}
-plan(request) # their words, not yours; name the files defining the work
+plan(request) # their words; name the files defining the work
 auto_decompose(plan=path) # the go
 ```
 5. **The plan.** You are its customer, answerable for the result. READ `text` WHOLE, <!-- code -->`path` if none.<!-- chat -->with none, the person opens `path`.<!-- both --> Tell the
-person what its `say` asks. A `refine_plan(plan=path, note)` (`model=` for a stronger author) only for the person's result; the rest goes to them in one line. A refused go names why: that is the note.
+person what its `say` asks. A `refine_plan(plan=path, note)` only for the person's result; the rest goes to them in one line. A refused go names why: that is the note.
 <!-- both -->6. **The go.** Say what its `say` asks. An executor on this machine is the person's choice, made on their page:
 never make it yourself.
 7. **The end.** <!-- code -->`gfso wait project=<project>` in the background exits when the run needs you. <!-- chat -->After the
 go and after `plan`, hand the turn back to the person: read the run when they ask. <!-- both -->A stop or `stuck`
 goes to the person with its `directive`; in `auto` you do not intervene. Report the verdict (`get_verdict("root")`), the link, and the end as its `say` asks.
-Modes, the loop, the workforce, a second goal: `protocol(section)`, read when the person asks for them.
+Modes, the loop, the workforce, a second goal: `protocol(section)`, when the person asks.
 
 <!-- reference -->
 ## The plan file
@@ -59,8 +59,8 @@ Modes, the loop, the workforce, a second goal: `protocol(section)`, read when th
 The plan's format, if the person asks to see the file: https://github.com/Kirill-Shokhin/GFSO/blob/main/docs/PLAN_FORMAT.md. A session that lost its project after a
 reconnect: `use_project` again.
 
-**You sign as `user`, the person's name here: you act for them.** Nodes you create default to Del=`user`
-(= you execute them); your signals are signed as you automatically. Del is load-bearing: a node assigned to someone else only
+**A connection reads until it takes a name: `act_as('user')` writes as the person.** Nodes you create then default
+to Del=`user` (= you execute them). Del is load-bearing: a node assigned to someone else only
 moves on THEIR signals.
 
 ## The three modes

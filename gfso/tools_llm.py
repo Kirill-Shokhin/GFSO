@@ -3665,6 +3665,40 @@ def canon(engine: Engine, section: str = "") -> dict:
     return _canon.read(section)
 
 
+def unchecked_self_pass(engine: Engine, tid, source) -> str:
+    """The reminder before an internal node's own holder signs its PASS — its issuer is its holder, so it
+    self-verifies (§10.3) and no validator is imposed —, where no check but its holder's own stands on the current
+    delivery: an external check is the holder's to ask, never the system's rule (the author, 2026-11-21: «только по
+    явному желанию но с напоминанием своевременно»). "" where an external check stands, or the node is no internal one
+    of `source`'s — a root is a tree's top, and a seam the person issues has its obligatory check."""
+    t = engine.graph.get_task(tid)
+    if t is None or engine.graph.get_parent(tid) is None or t.state != State.VALIDATING or str(t.assignee) != str(source) \
+            or str(engine.graph.issuer_of(tid)) != str(source) or engine.persons_seam(tid) \
+            or engine.issued_by_the_person(tid):
+        return ""
+    if (rec := engine.current_exec_verdict(tid)) and str(rec.get("validator") or "") not in ("", str(source)):
+        return ""
+    return (f"no external check was made of {tid} — sign anyway? Repeat with confirm=true, or call "
+            f"validate_result('{tid}') first")
+
+
+def _reminded_before_a_self_pass(fn):
+    """`fn` (`signal`), where a PASS `unchecked_self_pass` reminds of first is answered with the reminder and
+    `confirm_needed` — no refusal, nothing written — until it is repeated with `confirm=true`. The person's own page is
+    never reminded: his click is his explicit act, and the reminder is for an agent («агент … может получать
+    напоминание»)."""
+    @functools.wraps(fn)
+    def call(engine, task_id, signal, source, **kw):
+        """`fn`, or the reminder it waits behind."""
+        page = (p := CALLER.get()) is not None and p.a_page
+        if (str(signal).strip().upper() == Verdict.PASS.value and not kw.pop("confirm", False) and not page
+                and (why := unchecked_self_pass(engine, TaskId(task_id), source))):
+            return {"accepted": False, "confirm_needed": True, "reminder": why}
+        kw.pop("confirm", None)
+        return fn(engine, task_id, signal, source, **kw)
+    return call
+
+
 @functools.wraps(_tools.signal)
 def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict:
     """`tools.signal`, where a DELIVER whose sender performs the node in its own chat carries the commit that chat's
@@ -3728,9 +3762,11 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
     return {**out, **said} if said and out.get("accepted") else out
 
 
-#: …and `nothing_to_commit`, a chat's own word that none of the work stands uncommitted (`_nothing_committed`)
-signal.__signature__ = (lambda sig: sig.replace(parameters=[*sig.parameters.values(), inspect.Parameter(
-    "nothing_to_commit", inspect.Parameter.KEYWORD_ONLY, default=False, annotation=bool)]))(inspect.signature(_tools.signal))
+#: …and `nothing_to_commit`, a chat's own word that none of the work stands uncommitted (`_nothing_committed`); and
+#: `confirm`, the holder's answer to the reminder before a self-signed PASS (`unchecked_self_pass`)
+signal.__signature__ = (lambda sig: sig.replace(parameters=[*sig.parameters.values(), *(inspect.Parameter(
+    n, inspect.Parameter.KEYWORD_ONLY, default=False, annotation=bool) for n in ("nothing_to_commit", "confirm"))]))(
+    inspect.signature(_tools.signal))
 
 
 @functools.wraps(_tools.metrics)
@@ -3772,7 +3808,7 @@ def _with_the_persons_words(fn, move: str = Signal.ASSIGN.name):
 
 _RAW_TOOLS = {
     **_tools.TOOLS,
-    "signal": _with_the_persons_words(signal),                                                                 # a chat's delivery recorded
+    "signal": _with_the_persons_words(_reminded_before_a_self_pass(signal)),                                                                 # a chat's delivery recorded
     "metrics": metrics,                                                               # work past the system counted
     "create_task": _with_his_intent(create_task, issued=True),
     "decompose": _with_his_intent(_tools.TOOLS["decompose"], issued=True),

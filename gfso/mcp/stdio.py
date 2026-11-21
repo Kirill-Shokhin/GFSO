@@ -35,11 +35,12 @@ def _serve_ui(registry, host: str, port: int) -> None:  # pragma: no cover
 def recorded(console=None):
     """This stdio server's connection recorded under its console, as a bridge's is (`signin.record_console`): a
     `gfso` call from that console's shell, and its Stop hook (`gfso.hold`), sign as the name it took by
-    `signin.PROCESS_LEASE`; gone with the process."""
+    `signin.PROCESS_LEASE`, alive while this process is; the record and the name it took gone with it."""
     signin.record_console(signin.PROCESS_LEASE, console=console)
     try:
         yield
     finally:
+        signin.let_go(signin.PROCESS_LEASE)
         signin.forget_console(signin.PROCESS_LEASE)
 
 

@@ -104,23 +104,28 @@ def test_act_as_user_logs_the_connection_in_as_the_person_and_empty_logs_it_out(
 
 
 def test_a_name_owing_a_move_is_left_freely_with_the_moves_named_and_the_fact_recorded(go):
-    """Leaving a name is voluntary, as taking it is (the author, 2026-11-21): never refused. Where the name owed moves of
-    its own, the reply names them as they are — the next holder picks them up — and the system records the fact on the
-    feed, no one's words; with nothing owed, no record. CONTROL: the advice unsaid, or the record unwritten — red; the
-    move named by its action (`accept`) — red."""
+    """Leaving a name is voluntary, as taking it is (the author, 2026-11-21): never refused. Where the name owes moves of
+    its own, the first call leaves nothing and logs nothing: a reminder naming them, to confirm (`confirm_needed`);
+    confirmed, it leaves, the reply naming them — the next holder picks them up — and the system recording the fact on
+    the feed, no one's words; with nothing owed, it leaves at once, no record. CONTROL: no reminder — the first call
+    leaves; the advice unsaid or the record unwritten — red; the move named by its action (`accept`) — red."""
     e, go = go
     _his_seam(e, "eng9")
     signin.issue("ui9")
     records = lambda: [r["message"] for r in e.pipeline_log() if "was left by its connection" in r["message"]]  # noqa
     one = _lease()
     assert go(one, "act_as", name="eng9")["name"] == "eng9"
-    out = go(one, "act_as", name="")
+    ask = go(one, "act_as", name="")
+    assert ask["confirm_needed"] and "root.eng9 ACCEPT" in ask["reminder"] and "confirm=true" in ask["reminder"], ask
+    assert ask["signs_as"] == ["eng9"] and not ask.get("refused") and records() == [], "the first call left or logged"
+    out = go(one, "act_as", name="", confirm=True)
     assert out["signs_as"] == [] and "root.eng9 ACCEPT" in out["advice"] and "next holder" in out["advice"], out
     assert records() == ["eng9 was left by its connection with 1 owed move(s): default/root.eng9 ACCEPT"], records()
     assert go(one, "act_as", name="eng9")["name"] == "eng9"
     go(one, "signal", task_id="root.eng9", signal="ACCEPT")
     e.wait_idle()
-    out = go(one, "act_as", name="ui9")                  # …a log-in under another name leaves it as freely
+    assert go(one, "act_as", name="ui9")["confirm_needed"]
+    out = go(one, "act_as", name="ui9", confirm=True)    # …a log-in under another name leaves it as freely
     assert out["signs_as"] == ["ui9"] and "root.eng9 DELIVER" in out["advice"], out
     out = go(one, "act_as", name="")                     # …`ui9` owed nothing
     assert out["signs_as"] == [] and "advice" not in out and len(records()) == 2, (out, records())
@@ -148,14 +153,14 @@ def test_a_move_owed_in_any_project_is_read_wherever_the_log_out_is_asked(monkey
                   ("signal", {"task_id": "t", "signal": "ACCEPT", "project": "pp"}))
         reg.engine("pp").wait_idle()
         back = ("act_as", {"name": "engz", "project": "pp"})
-        nope, _, q, _ = anyio.run(session, ("act_as", {"name": "", "project": "nope"}), back,
-                                  ("act_as", {"name": "", "project": "qq"}), back)
-        (bare,) = anyio.run(session, ("act_as", {"name": ""}))        # …a fresh session: no project of its own
+        leave = lambda **a: ("act_as", {"name": "", "confirm": True, **a})      # noqa: E731
+        nope, _, q, _ = anyio.run(session, leave(project="nope"), back, leave(project="qq"), back)
+        (bare,) = anyio.run(session, leave())        # …a fresh session: no project of its own
         for out in (nope, q, bare):
             assert out["signs_as"] == [] and "pp/t DELIVER" in out.get("advice", ""), out
         anyio.run(session, back)
         (tmp_path / "broken.db").write_bytes(b"not a database")
-        (broken,) = anyio.run(session, ("act_as", {"name": ""}))
+        (broken,) = anyio.run(session, leave())
         assert "broken" in broken.get("advice", ""), broken
     finally:
         signin.let_go(signin.PROCESS_LEASE)
@@ -186,10 +191,38 @@ def test_a_stdio_servers_connection_is_recorded_under_its_console_so_its_hook_si
     found (`stdio.recorded`), and sign as the name it took. CONTROL: the stdio server recording nothing — its hook
     reads as no one, never held."""
     monkeypatch.setattr(signin, "LIVE_LEASES", lambda: [])
-    signin.take(signin.PROCESS_LEASE, "user")
     with stdio.recorded(console=psutil.Process()):
+        signin.take(signin.PROCESS_LEASE, "user")
         assert _from_a_child() == signin.PROCESS_LEASE
     assert _from_a_child() == "None", "the record outlived the server"
+    assert signin.holds(signin.PROCESS_LEASE) is None, "its name stayed held past the process"
+
+
+def test_a_recorded_connection_is_alive_while_its_process_is_whatever_the_servers_list_says(monkeypatch):
+    """A stdio server beats no `/api/lease`: its liveness is its process's, as a bridge's record says it (one rule).
+    Alive, its name is not taken by another connection though the server's list knows no lease of it; gone, it is,
+    though no list is known yet. CONTROL: liveness read off the server's list alone — the live holder's name taken;
+    the dead one's refused."""
+    held, other = _lease(), _lease()
+    monkeypatch.setattr(signin, "LIVE_LEASES", lambda: [])          # …the server knows no lease of it
+    signin.record_console(held, console=psutil.Process())           # …recorded under this, a live process
+    try:
+        signin.take(held, "user")
+        with pytest.raises(ValueError, match="held by another connection"):
+            signin.take(other, "user")
+    finally:
+        signin.forget_console(held)
+    gone = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        signin.record_console(held, bridge=psutil.Process(gone.pid), console=psutil.Process())
+    finally:
+        gone.kill()
+        gone.wait()
+    monkeypatch.setattr(signin, "LIVE_LEASES", None)                # …no list known yet: a server just up
+    try:
+        assert signin.take(other, "user").signs_as == ("user",)
+    finally:
+        signin.forget_console(held)
 
 
 def test_a_running_console_takes_the_stream_it_was_assigned_and_keeps_it(go):

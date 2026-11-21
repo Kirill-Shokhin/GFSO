@@ -304,7 +304,9 @@ def test_a_solo_chats_parts_self_verify_and_the_root_alone_is_observed(chat):
     call("signal", "root.a", "DELIVER", "user", result="f.txt written; `cat f.txt` printed v1", self_validation="PASS")
     e.wait_idle()
     assert e.current_exec_verdict(TaskId("root.a")) is None or e.current_exec_verdict(TaskId("root.a"))["validator"] != "p-val"
-    passed = call("signal", "root.a", "PASS", "user")
+    asked = call("signal", "root.a", "PASS", "user")       # …self-verified, reminded: no external check was made
+    assert asked.get("confirm_needed") and not asked.get("accepted"), asked
+    passed = call("signal", "root.a", "PASS", "user", confirm=True)
     assert passed["accepted"], passed
     call("signal", "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
     ended = call("wait", seconds=60)

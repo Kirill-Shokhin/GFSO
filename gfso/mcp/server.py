@@ -556,15 +556,17 @@ def _act_as(where, _Ctx):
     verb of the connection, not of a graph."""
     resolve = _resolver(where)
 
-    def act_as(name: Optional[str] = None, token: str = "", project: str = "", ctx: _Ctx = None) -> dict:
+    def act_as(name: Optional[str] = None, token: str = "", project: str = "", confirm: bool = False,
+               ctx: _Ctx = None) -> dict:
         """WHO THIS CONNECTION SIGNS AS, and its log-in. No `name`: `{name, kind, how, signs_as}` of this connection.
         A connection that has taken no name reads and signs nothing. `act_as('user')` logs it in as the person;
         `act_as('<name>')` as a stream you opened (a node you assigned to it) or a name issued to you — taken again,
         another name re-logs it in under that one; `act_as('')` logs it out. The name holds until its gfso connection
         ends (`/clear` keeps it); one live connection holds a name at a time. Under `gfso up --protected` pass
         `token`, the one `gfso agent <name>` prints at your shell (`gfso agent user` for the person's own). Leaving a
-        name is voluntary, as taking it is: where it still owes moves of its own in any project, the reply names them
-        (`advice`) — the next holder of the name picks them up — and the project's feed records it."""
+        name is voluntary, as taking it is: where it still owes moves of its own in any project, the first call leaves
+        nothing and names them (`reminder`, `confirm_needed`); repeated with `confirm=true` it leaves, the reply naming
+        them (`advice`) — the next holder of the name picks them up — and the project's feed recording it."""
         if name is not None:
             try:
                 req = ctx.request_context.request
@@ -585,6 +587,9 @@ def _act_as(where, _Ctx):
                 engine = None
             held = signin.live_holding(lease)
             owed = _owed_everywhere(where, held) if held and held != name else ([], [])
+            if (owed[0] or owed[1]) and not confirm:     # …a reminder, no refusal: nothing left, nothing logged
+                return {**signin.whoami(), "confirm_needed": True,
+                        "reminder": f"{_owing(held, *owed)} Leave anyway? Repeat with confirm=true."}
             if not name:
                 signin.let_go(lease)
                 CALLER.set(signin.UNTAKEN)
@@ -596,7 +601,8 @@ def _act_as(where, _Ctx):
                     return {"refused": True, "error": str(ex)}
             return {**signin.whoami(), **_left_owing(held, *owed)}
         return signin.whoami()
-    act_as.__annotations__ = {"name": Optional[str], "token": str, "project": str, "ctx": _Ctx, "return": dict}
+    act_as.__annotations__ = {"name": Optional[str], "token": str, "project": str, "confirm": bool, "ctx": _Ctx,
+                              "return": dict}
     return act_as
 
 
@@ -641,13 +647,21 @@ def _left_owing(held, owed: list, unread: list) -> dict:
     it owed none."""
     if not (owed or unread):
         return {}
-    act = lambda s: _THE_MOVE.get(Action(s["action"]).value, "its move")  # noqa: E731
-    moves = ", ".join(f"{p}/{s.get('task_id')} {act(s)}" for p, _, s in owed[:5]) + (" …" if len(owed) > 5 else "")
     for x in {id(x): x for _, x, _ in owed}.values():
-        x.emit_info("log-out", f"{held} was left by its connection with {len(owed)} owed move(s): {moves}")
-    return {"advice": (f"`{held}` was left owing {len(owed)} move(s) of its own: {moves}. They stay owed: the next "
-                       f"holder of `{held}` picks them up." if owed else f"`{held}` was left.")
-                      + (f" Not read, so whether it owes there is unknown: {', '.join(unread[:5])}." if unread else "")}
+        x.emit_info("log-out", f"{held} was left by its connection with {len(owed)} owed move(s): {_moves(owed)}")
+    return {"advice": _owing(held, owed, unread)}
+
+
+def _moves(owed: list) -> str:
+    act = lambda s: _THE_MOVE.get(Action(s["action"]).value, "its move")  # noqa: E731
+    return ", ".join(f"{p}/{s.get('task_id')} {act(s)}" for p, _, s in owed[:5]) + (" …" if len(owed) > 5 else "")
+
+
+def _owing(held, owed: list, unread: list) -> str:
+    """What `held` owes, said to the connection leaving it: the moves as they are, and the projects not read."""
+    return ((f"`{held}` owes {len(owed)} move(s) of its own: {_moves(owed)}. They stay owed: the next holder of "
+             f"`{held}` picks them up." if owed else f"`{held}`:")
+            + (f" Not read, so whether it owes there is unknown: {', '.join(unread[:5])}." if unread else ""))
 
 
 def _mount_project_verbs(server, reg) -> None:
@@ -735,7 +749,7 @@ def _named_under_a_mode(verb: str, engine, kwargs: dict) -> Optional[dict]:
         return None
     return {"refused": True, "error": f"this connection acts as {who!r}, and a project with a mode (solo, semi, auto) "
             f"is held by this server's standing agent {agent_id()!r}: a named connection works in a project without "
-            f"a mode. Use such a project, or connect without a name."}
+            f"a mode. Use such a project, or log this connection in as the person: `act_as('user')`."}
 
 
 #: the client kind a client's own name at `initialize` stands for; a name not here is `chat`: told it holds nothing, a

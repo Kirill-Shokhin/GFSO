@@ -13,6 +13,11 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
 ## [Unreleased]
 
 ### Changed
+- An internal node self-verifies (§10.3), no validator imposed: where its own holder signs its PASS with no external
+  check on the current delivery, the first call writes nothing and returns a reminder with `confirm_needed` — "no
+  external check was made of <id> — sign anyway?" —; repeated with `confirm=true` it signs as before, or
+  `validate_result('<id>')` checks it first. No refusal, nothing logged on the reminder; a seam the person issues keeps
+  its obligatory check.
 - The person's name `user` is signed from his page or from an MCP connection logged in as him: taking a name is a
   connection's log-in, `act_as('user')` his own — locally with no token, under `--protected` with the one `gfso agent
   user` prints. `act_as('')` logs a connection out and `act_as('<name>')` re-logs it in under another name; one live
@@ -72,12 +77,14 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   a name the person opened (a node he assigned to it, a root he made for it) or issued. The connection — its bridge's
   lease, now sent with every call (`X-GFSO-Lease`) — signs as that name alone until it ends, logs out (`act_as('')`)
   or logs in under another (`act_as('<other>')`): `/clear` and a server restart keep it. Leaving a name is voluntary,
-  as taking it is, and never refused: where it still owes moves of its own in any project, the reply names each as it
-  is (ACCEPT, DELIVER …) — the next holder of the name picks them up — and the project's feed records that the name
-  was left by its connection with those moves owed. A project that cannot be read is named as such; a holding another
-  connection took says nothing of the moves, now the new holder's. One live connection holds a name
-  (§2.6): a second is refused, naming since when it is held; past a lapsed lease the name passes and the old
-  connection signs as no one. The taking is kept in the sign-in state with person, connection digest, credential and
+  as taking it is, and never refused: where it still owes moves of its own in any project, the first call leaves
+  nothing and returns a reminder naming each as it is (ACCEPT, DELIVER …) with `confirm_needed`; repeated with
+  `confirm=true` it leaves, the reply naming them — the next holder of the name picks them up — and the project's feed
+  recording that the name was left by its connection with those moves owed. A project that cannot be read is named as
+  such; a holding another connection took says nothing of the moves, now the new holder's. One live connection holds a
+  name (§2.6): a second is refused, naming since when it is held; a connection recorded under its console — a bridge
+  or a stdio server — is alive while its process is, one unrecorded by the server's lease list, and past a lapsed
+  holder the name passes and the old connection signs as no one; a stdio server frees its name as it ends. The taking is kept in the sign-in state with person, connection digest, credential and
   time, and every move after it records `via=as:<digest>` (Thm 11). Locally by default the claim suffices (the
   connection's OS owner is the person); under `--protected` it takes the name's own token; past loopback it is refused
   for the launch token. `act_as()` with no name says who the connection signs as. The lifts that said "launch with
