@@ -96,6 +96,17 @@ def decide(event: dict, project: str, ask=_ask, ceiling: float = CEILING, window
     naming the console's own moves."""
     if event.get("agent_id") or driven_cli():
         return {}
+    # …work in flight is the console's own work, not a stop: its subagents, background commands and monitors run, and
+    # Claude Code wakes the console when one ends (the Stop event's `background_tasks`) — standing is nothing running
+    # (the author, 2026-11-21: «работа агентов и есть твоя работа … стояние это когда ничего реально не запущено»). But
+    # a run can hang and never wake it, so that wait needs a bound as every wait does (Inv-5, §12.12): a monitor (it
+    # expires and wakes) or a scheduled wakeup (`session_crons`); with none the one move asked is to set one.
+    if (tasks := event.get("background_tasks")):
+        if event.get("session_crons") or any(t.get("type") == "monitor" for t in tasks):
+            return {}
+        return {"decision": "block", "reason": (
+            f"{len(tasks)} task(s) of yours run in the background, and nothing bounds the wait on them: a hung one would "
+            "never wake you. Set a fallback wake (ScheduleWakeup of 20–30 min, or a Monitor with a timeout), then stop.")}
     if ceiling and (pct := measured(event, window)) is not None and pct >= ceiling:
         return {}
     try:

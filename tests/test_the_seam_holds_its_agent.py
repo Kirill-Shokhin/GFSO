@@ -82,6 +82,22 @@ def test_its_own_step_holds_every_stop_naming_its_directive_verbatim_and_the_rea
     assert _stop(e, stop_hook_active=True) == {}, "a move did not take the step off"
 
 
+def test_a_console_whose_own_work_runs_in_the_background_is_not_held(tmp_path):
+    """Work in flight — a subagent, a background command, a monitor — is the console's own work: Claude Code names it in
+    the Stop event (`background_tasks`) and wakes the console when it ends, so a stop then is no standing — once the
+    wait has a bound (Inv-5): a monitor, or a scheduled wakeup (`session_crons`); a subagent alone could hang forever,
+    so the one move asked is to set a wake. With nothing in flight the console is held on its moves. CONTROLS:
+    `background_tasks` unread — red; the bound unread — red."""
+    e = _held(tmp_path)
+    agent = [{"id": "a1", "type": "subagent", "status": "running", "description": "a build"}]
+    unbounded = H.decide({"background_tasks": agent}, "p", _asked(e))
+    assert unbounded["decision"] == "block" and "fallback wake" in unbounded["reason"], unbounded
+    assert H.decide({"background_tasks": agent, "session_crons": [{"id": "c1"}]}, "p", _asked(e)) == {}
+    assert H.decide({"background_tasks": [*agent, {"id": "m1", "type": "monitor"}]}, "p", _asked(e)) == {}
+    assert H.decide({"background_tasks": []}, "p", _asked(e))["decision"] == "block"
+    assert H.decide({}, "p", _asked(e))["decision"] == "block"
+
+
 def _transcript(tmp_path, n):
     tr = tmp_path / f"t{n}.jsonl"
     rec = lambda used, side=False: json.dumps({"type": "assistant", "isSidechain": side, "message": {
