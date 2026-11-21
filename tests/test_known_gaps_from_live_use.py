@@ -458,7 +458,11 @@ def test_a_hand_resolved_block_puts_the_executor_back_in_the_queue(tmp_path):
     agents.register("exec-1", "llm-executor", workdir=str(tmp_path))
     agents.register("lead", "llm-executor", workdir=str(tmp_path))
     ran: list = []
-    d = Dispatcher(e, agents, runner=lambda *a: ran.append(str(a[1])))
+    # …and the root's consent stubbed too: `lead` holds a parent, so its consent round runs in a thread of its own, and a
+    # real one finds no credential and pauses the project at a moment the scheduler picks — the last round then started
+    # nothing (measured: 3 of 96 under -n 16, the pause "consent's call: no credential")
+    d = Dispatcher(e, agents, runner=lambda *a: ran.append(str(a[1])),
+                   consent_runner=lambda *a: {"status": "not_offered"})
     d.dispatch_once()                                   # both children claim their first round
     for tid in ("prod", "cons"):                        # …and consent in it: a BLOCK sent before is refused in OFFERED
         round_over(d, tid, lambda tid=tid: tid in ran)
