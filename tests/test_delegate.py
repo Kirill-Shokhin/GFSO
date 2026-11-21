@@ -269,6 +269,43 @@ def test_dispatcher_event_driven_autostarts_on_transition(tmp_path):
         e.stop()
 
 
+def test_a_stop_returns_with_the_loop_ended_and_nothing_started_after_it(tmp_path):
+    """`stop` returns only once the loop's pass in progress ended, and the loop ends then, its wake never lost: a pass
+    held across the stop started what it read after it, and a stop landing between the loop's check and its `clear`
+    left it asleep a whole poll. CONTROL: no join in `stop` — a node delivered after it is validated; no check after
+    the pass — `stop` waits out its bound with the loop alive."""
+    e = _eng()
+    agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
+    validated, clearing = [], threading.Event()
+    d = Dispatcher(e, agents, poll=30, runner=lambda *a: None,
+                   validator_runner=lambda en, t, a, **k: validated.append(str(t)))
+    slow, clear = d.dispatch_once, d._dirty.clear
+
+    def held():                                       # …each pass reads the graph late, as a loaded machine does
+        time.sleep(0.3)
+        return slow()
+
+    def late_clear():                                 # …and each `clear` lands late, a stop free to come before it
+        clearing.set()
+        time.sleep(0.3)
+        clear()
+    d.dispatch_once, d._dirty.clear = held, late_clear
+    d.start()
+    try:
+        clearing.wait(5)
+        t0 = time.monotonic()
+        d.stop()
+        assert time.monotonic() - t0 < 5 and not d._thread.is_alive(), "the loop outlived its stop"
+        _node(e)
+        T.signal(e, "n1", "ACCEPT", "exec-1")
+        T.signal(e, "n1", "DELIVER", "exec-1", result="nail at wall.md", self_validation="flush: met")
+        e.wait_idle()
+        time.sleep(0.5)
+        assert validated == [], validated
+    finally:
+        e.stop()
+
+
 def test_per_executor_validator_override(tmp_path):
     a = _agents(tmp_path, ("val-default", "llm-validator"), ("val-special", "llm-validator"))
     a.register("exec-x", "llm-executor", workdir=str(tmp_path), validator="val-special")

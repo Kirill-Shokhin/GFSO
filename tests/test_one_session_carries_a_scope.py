@@ -133,15 +133,21 @@ def _drive(e, d, until=lambda: False, rounds=200, wait=True, pause=0.03) -> None
     """`rounds` of the dispatcher, or `until` holds. A session is a thread: counted rounds alone ran out while one still
     worked on a loaded machine, and a test asserted over what had not happened yet (shown, 36 of 36 under load). So the
     last rounds wait for it, the wait bounded, unless a test holds its session on purpose. By which threads, not how many:
-    a thread an earlier test left behind ending hid a session still at work."""
-    before, end, done = set(threading.enumerate()), time.monotonic() + 120, 0
+    a thread an earlier test left behind ending hid a session still at work. The bound is on a STILL work, not on all of
+    it: every child process a session runs comes and goes with threads of its own, and a run of ~480 of them outlasted a
+    fixed 120 s on an oversubscribed machine with its work moving all along (its validator inside `git write-tree`)."""
+    # …and a ceiling over the whole, so a session that never stops starting processes fails its test, never hangs it
+    before, end, done, seen = set(threading.enumerate()), time.monotonic() + 120, 0, set()
+    ceiling = time.monotonic() + 900
     while done < rounds:
         d.dispatch_once()
         time.sleep(pause)
         e.wait_idle()
         if until():
             return
-        working = wait and time.monotonic() < end and set(threading.enumerate()) - before
+        if (working := set(threading.enumerate()) - before) != seen:
+            seen, end = working, min(time.monotonic() + 120, ceiling)
+        working = wait and time.monotonic() < end and working
         done = min(done + 1, rounds - 10) if working else done + 1
 
 

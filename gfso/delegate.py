@@ -2111,6 +2111,8 @@ class Dispatcher:
                     self.dispatch_once()
                 except Exception as e:
                     log.warning(f"dispatcher run failed: {e}")
+                if self._stop.is_set():                # a stop landing before `clear` had its wake erased by it
+                    break
                 self._dirty.wait(self._poll)           # woken instantly by a transition, else safety-net poll
         self._thread = threading.Thread(target=_loop, daemon=True)
         self._thread.start()
