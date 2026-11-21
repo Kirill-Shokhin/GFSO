@@ -315,6 +315,16 @@ def launch_client() -> str | None:
     return os.environ.get("GFSO_CLIENT") or None
 
 
+def driven_cli() -> bool:
+    """Is this Claude Code driven by a program (`CLAUDE_CODE_ENTRYPOINT` `sdk*`), not a person's console?"""
+    return os.environ.get("CLAUDE_CODE_ENTRYPOINT", "cli").startswith("sdk")
+
+
+def ctx_window() -> int | None:
+    """The context window a console's fill is read against, as set outside it (`CLAUDE_CTX_WINDOW`); None unset."""
+    return int(os.environ.get("CLAUDE_CTX_WINDOW") or 0) or None
+
+
 def client_kind() -> str | None:
     """The kind of the connection whose call is being served (`CLIENT_KINDS`); None outside an MCP connection."""
     return CLIENT.get()

@@ -289,8 +289,12 @@ def sign_out(session: str) -> None:
         db.execute("DELETE FROM sessions WHERE hash = ?", (_hash(session or ""),))
 
 
+#: the credential of a connection whose holding was refused (`held`): it signs as no one, whatever name it reads as
+REFUSED = "none"
+
+
 def _refused(lift: str) -> Principal:
-    return Principal(agent_id(), (), "none", "not signed in", None, lift)
+    return Principal(agent_id(), (), REFUSED, "not signed in", None, lift)
 
 
 def by_token(raw: str) -> Principal:

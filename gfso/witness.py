@@ -113,17 +113,31 @@ def _drop_stale(d: Path) -> None:
 def install(top: Path, project: str, remove: bool = False) -> str:
     """This hook for `project` written into (or taken out of) the repository's own settings file at `top`, the person's
     own entries kept, the file kept out of git. Run twice, one entry."""
-    path, cmd = top / SETTINGS, f'"{Path(sys.executable).as_posix()}" -m {MARK} {project}'
+    cmd = hook_command(MARK, project)
+    path = write_hooks(top, lambda c: c == cmd, {} if remove else {
+        ev: {"matcher": "*", "hooks": [{"type": "command", "command": cmd}]} for ev in EVENTS})
+    _record(project, str(top), remove)
+    return f"{'removed from' if remove else 'installed in'} {path} for project {project}"
+
+
+def hook_command(module: str, *args: str) -> str:
+    """The command a hook of gfso runs: this machine's interpreter on `module`, with `args`."""
+    return " ".join((f'"{Path(sys.executable).as_posix()}" -m {module}', *args))
+
+
+def write_hooks(top: Path, ours, groups: dict) -> Path:
+    """The repository's own settings file at `top` with every hook whose command `ours` names taken out and `groups`
+    ({event: group}) added, the person's own entries kept, the file kept out of git: its path."""
+    path = top / SETTINGS
     s = json.loads(path.read_text(encoding="utf-8") or "{}") if path.exists() else {}
     hooks = s.setdefault("hooks", {})
     for ev in list(hooks):
-        hooks[ev] = [g for g in ({**g, "hooks": [h for h in g.get("hooks", []) if h.get("command") != cmd]}
+        hooks[ev] = [g for g in ({**g, "hooks": [h for h in g.get("hooks", []) if not ours(h.get("command", ""))]}
                                  for g in hooks[ev]) if g["hooks"]]
         if not hooks[ev]:
             del hooks[ev]
-    if not remove:
-        for ev in EVENTS:
-            hooks.setdefault(ev, []).append({"matcher": "*", "hooks": [{"type": "command", "command": cmd}]})
+    for ev, g in groups.items():
+        hooks.setdefault(ev, []).append(g)
     if not hooks:
         del s["hooks"]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,8 +147,7 @@ def install(top: Path, project: str, remove: bool = False) -> str:
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with open(exclude, "a", encoding="utf-8") as f:
             f.write(f"\n/{SETTINGS.as_posix()}\n")
-    _record(project, str(top), remove)
-    return f"{'removed from' if remove else 'installed in'} {path} for project {project}"
+    return path
 
 
 def installed() -> dict:

@@ -28,7 +28,7 @@ from gfso.adapters.storage import person
 from gfso.adapters.storage.sqlite import settings_of
 from gfso.adapters.llm import credentials, headless, registry
 from gfso.adapters.llm.conformance import assess, report
-from gfso import __version__, serverctl, signin, witness
+from gfso import __version__, hold, serverctl, signin, witness
 from gfso.config import (LOOPBACK, PERSON, UVICORN, admit_host, bind, data_dir, db_path, install_mcp_env,
                          install_serve_env, mark_the_server)
 from gfso.doctor import (BY_HAND, JUST_INSTALLED, claude_cli, console_script, doctor, kept_where, setup, sign_in, sign_in_here,
@@ -337,6 +337,22 @@ def _add_watch_parsers(sub) -> None:
                           "(a linked worktree's own top, where its console starts), kept out of git; a node is at "
                           "work in the repository whichever of its worktrees it was taken in")
     how.add_argument("--remove", action="store_true", help="take it out, your other hooks kept")
+
+    holdp = sub.add_parser("hold", help="A Claude Code Stop hook: while a node the console's taken name holds owes a "
+                                        "move of its own, every stop is turned back naming those moves; stopping is no "
+                                        "move. Installed only when you ask, in this place alone. Without a flag: one "
+                                        "hook run (the Stop on stdin).")
+    holdp.add_argument("project")
+    how = holdp.add_mutually_exclusive_group()
+    how.add_argument("--install", action="store_true", help="write it into .claude/settings.local.json at the top of "
+                                                            "the worktree you run it in, kept out of git")
+    how.add_argument("--remove", action="store_true", help="take it out, your other hooks kept")
+    holdp.add_argument("--ceiling", type=float, default=hold.CEILING,
+                       help=f"let a stop through once the console's window is this full, in percent, so a session can "
+                            f"close (default {hold.CEILING:g}; 0 turns it off)")
+    holdp.add_argument("--window", type=int, default=None,
+                       help="the console's context window in tokens, where the statusline measures none "
+                            "(CLAUDE_CTX_WINDOW after it)")
 
 
 def _add_provider_parser(sub) -> None:
@@ -778,21 +794,22 @@ def _end_with_the_children():
     end_this_process(code)
 
 
-def _witness(args) -> int:
-    """The witness hook run (`gfso.witness`), or written into this repository's own settings file."""
+def _hook(args) -> int:
+    """A console's hook (`gfso.witness`, `gfso.hold`): one run, or written into this repository's own settings file."""
+    mod, more = (hold, {"ceiling": args.ceiling, "window": args.window}) if args.command == "hold" else (witness, {})
     if not (args.install or args.remove):
-        sys.argv[1:] = [args.project]
-        witness.main()
+        sys.argv[1:] = [args.project, *(x for k, v in more.items() if v is not None for x in (f"--{k}", str(v)))]
+        mod.main()
     if (top := witness.git(os.getcwd(), "rev-parse", "--show-toplevel")) is None:
-        print("gfso witness: not in a git repository — run it at the repository it watches", file=sys.stderr)
+        print(f"gfso {args.command}: not in a git repository — run it at the repository it serves", file=sys.stderr)
         return 2
-    print(witness.install(Path(top.strip()), args.project, remove=args.remove))
+    print(mod.install(Path(top.strip()), args.project, remove=args.remove, **more))
     return 0
 
 
 #: the commands that are one function of their arguments, exiting with what it returns
 _EXITS = {"wait": _wait, "ui": _ui, "agent": _agent, "provider-check": _provider_check, "credential": _credential,
-          "export-places": _export_places, "migrate": _migrate, "witness": _witness}
+          "export-places": _export_places, "migrate": _migrate, "witness": _hook, "hold": _hook}
 
 
 if __name__ == "__main__":

@@ -98,6 +98,22 @@ that would establish one (E3) has shown so far, and what not, is in `docs/RESULT
   `POST /api/witness`) and the agent is told to take the node or stop. It never blocks: it exits 0 whatever happens,
   takes no index lock, and is silent on a settled project. Each recorded write is a `witnessed` line on the project's
   live feed, so an open page re-reads the count at once; the count is every write ever recorded, the last hundred kept.
+- `gfso hold <project> --install`: a Claude Code Stop hook the person installs in one place, written into its
+  `.claude/settings.local.json` and kept out of git; `--remove` takes it out. While the frontier gives the console's
+  signer — the name its connection took, or the person's own `user` — a move of its own, every stop is turned back
+  naming those moves in at most 800 characters, ranked off the log: the task it is on — the node of its latest move —
+  with its directive verbatim (the frontier's most urgent where it has made none), each node a FAIL sent back in a
+  line, the rest named in one. Stopping is no move; the way
+  out is one (DELIVER, CHALLENGE, BLOCK …), which takes the step off. A move of the person's, an optional or another
+  party's, a stopped run, a settled root, a subagent's stop, a driven CLI, a connection whose taken name was refused or
+  a console with no gfso connection hold nothing; with no server, or no such project, it says which and lets the
+  console stop. At or above 75% fill of the window (`--ceiling <pct>`, 0 off) a stop goes through, recording nothing,
+  so a session can close; the window is the statusline's own measure when present and fresh, else `--window <tokens>`,
+  else `CLAUDE_CTX_WINDOW` — with none the ceiling is inert, and install says so. A step is the person's (`persons`)
+  only where the door asks his words for it, one rule for both (`tools.persons_move`); the observation of a
+  delivery is the system's step, so once delivered the holder owes nothing and is let stop. Two of his consoles in one place both sign `user` and both are held. A step whose work a holder's hands perform (`PERFORMED BY`) is optional on the
+  frontier: it holds no stop and wakes no `gfso wait`; the offer before it stays the holder's move. It reads `GET /api/steps`: the frontier as the call's signer and the run's state, marking nothing. The frontier
+  marks each move that is the person's — an issuer move on a node he issued — `persons`.
 
 - Where the person holds the root (solo or semi, performed in their chat) the go adds the criterion
   `answers_the_persons_words`: the validator reads the result against the person's own recorded words — the goal as

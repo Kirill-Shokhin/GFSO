@@ -611,11 +611,15 @@ class Engine:
         `act_as` or launched with its token, the executor's own fact:
         each seam the person issues to it is then a top it holds as his solo agent holds his project (`scope_at`). Kept
         once, with its time; never for a name of his, nor for a role of the system's (`take` refuses one)."""
-        if not name or str(name) in PERSONS_NAMES or str(name) in _in_chat_names(self._graph):
+        if not name or str(name) in PERSONS_NAMES or str(name) in self.in_chat_names():
             return
         self._storage.store_setting(IN_CHAT, json.dumps({**json.loads(self._storage.get_setting(IN_CHAT) or "{}"),
                                                          str(name): {"since": datetime.now().isoformat()}}))
         self.emit_info("mode", f"{name} performs in a chat: each seam the person issues to it is held solo there")
+
+    def in_chat_names(self) -> dict:
+        """{name: {since}} of the names that perform in a chat here (`validation.in_chat_names`)."""
+        return _in_chat_names(self._graph)
 
     def would_be_a_top(self, parent_id, held) -> Optional[dict]:
         """The record a node issued under `parent_id` to `held` would be a top under (`validation.would_be_a_top`)."""

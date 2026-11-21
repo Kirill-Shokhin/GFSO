@@ -200,6 +200,19 @@ def _mount_wait(app, _e, _req_project, _scope_name) -> None:
         except TypeError as ex:
             raise HTTPException(422, str(ex))
 
+    @app.get("/api/steps")
+    def held_steps(request: Request):
+        """The frontier as the call's signer reads it, the run's state beside it, marking nothing
+        (`tools_llm.held_steps`): what a console's Stop hook reads (`gfso.hold`). `bridged`: the call carries a live
+        bridge's lease — every lease, while the server is too freshly up to know them (`signin.LIVE_LEASES`)."""
+        lease = request.headers.get(_config.LEASE_HEADER)
+        live = signin.LIVE_LEASES() if lease and signin.LIVE_LEASES is not None else None
+        try:
+            return _naming_the_scope(_tools.held_steps(_e(), bridged=bool(lease) and (live is None or lease in live)),
+                                     _scope_name())
+        except KeyError as ex:
+            raise HTTPException(404, f"no such project {ex.args[0]!r} — `gfso projects` lists them") from None
+
 
 def _mount_witness(app, _e, _req_project) -> None:
     """The console's witness, apart from the verbs: its hook's transport (`gfso.witness`), no agent's move. Its

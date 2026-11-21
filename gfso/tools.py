@@ -2858,6 +2858,24 @@ def _bound_validator_note(engine: Engine, task_id: str) -> str:
                "tree: register your own (`register_agent(<id>, \"llm-validator\", workdir=…)`). "))
 
 
+#: a re-ASSIGN that hands the node to an executor (`reassign`): its packet unchanged, so no packet gate asks for it
+REASSIGN = "REASSIGN"
+#: the issuer's moves on a node (§11.2) — its verdict, its answer to a dispute or a block, its cancel, its re-issue
+PERSONS_MOVES = (Verdict.PASS.value, Verdict.FAIL.value, Signal.ACCEPT_CHALLENGE.name, Signal.REJECT_CHALLENGE.name,
+                 Signal.RESOLVE_BLOCK.name, Signal.CANCEL.name, Signal.ASSIGN.name, REASSIGN)
+#: the signal a frontier step's move is, where it is one: a split is none
+_STEP_SIGNAL = {Action.VALIDATE: Verdict.PASS.value, Action.RESOLVE: Signal.RESOLVE_BLOCK.name,
+                Action.REVISE: Signal.ASSIGN.name}
+
+
+def persons_move(engine: Engine, tid, sig: str) -> bool:
+    """Is `sig` on `tid` the person's own move — an issuer's move (`PERSONS_MOVES`) where his word stands
+    (`Engine.guards_his_word`), a re-ASSIGN once the node is ESCALATED? The door asks his words for it
+    (`tools_llm._the_persons_move`), the frontier marks its step `persons`: one rule."""
+    return sig in PERSONS_MOVES and engine.guards_his_word(tid) and not (
+        sig == Signal.ASSIGN.name and engine.graph.get_state(TaskId(str(tid))) != State.ESCALATED)
+
+
 def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
     """Del is LOAD-BEARING on the frontier, not a label: every step carries `mine` (the calling agent is
     the node's executor), and a FOREIGN executor-step's directive is rewritten to hands-off — the FSM
@@ -2891,6 +2909,10 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
         held = engine.mode_holder(s.get("task_id"), role, ruling=s.get("action") == Action.RESOLVE)
         s["performed_by"] = by = held or str(owner or "")
         s["mine"] = by == me or not by
+        # …AND A MOVE THAT IS THE PERSON'S, where the door would ask his words for it (`persons_move`): a wait on him,
+        # never a console's own move — the hold lets the console stop on it (`gfso.hold`)
+        if _t is not None and persons_move(engine, _t.id, _STEP_SIGNAL.get(s.get("action"))):
+            s["persons"] = True
         # …AND A RULING THE USER MAY MAKE IS NOT A MOVE THE GRAPH WAITS ON: the system answers that dispute itself
         if s["mine"] and s.get("action") == Action.RESOLVE and _t is not None and engine.users_dispute(_t.id)                 and not engine.paused():
             s["optional"] = True
@@ -2919,7 +2941,9 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
                               f"here are the issuer's and the plan's. "
                               f"{how_it_is_waited(engine.project_name, 'a move is yours')} | contract was: "
                               ) + s.get("directive", "")
-            s["parallel_ok"] = False
+            # …and the work its hands do is no move of the holder's until they report: as an observation the
+            # instrument makes by itself, not a step its wait wakes on, nor one its stop is held on (`gfso.hold`)
+            s["parallel_ok"], s["optional"] = False, s.get("optional") or s.get("action") != Action.ACCEPT
             continue
         if not s["mine"]:
             # …AND IT IS NOT A STEP TO FAN OUT EITHER. `parallel_ok` is documented as "delegate each

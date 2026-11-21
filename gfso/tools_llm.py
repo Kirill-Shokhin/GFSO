@@ -2065,11 +2065,7 @@ def _nothing_committed(engine: Engine, tid, place, commit: str, left: list, noth
             f"`nothing_to_commit=true`. No validator was started")
 
 
-#: a re-ASSIGN that hands the node to an executor (`reassign`): its packet unchanged, so no packet gate asks for it
-REASSIGN = "REASSIGN"
-#: the issuer's moves on a node (§11.2) — its verdict, its answer to a dispute or a block, its cancel, its re-issue
-PERSONS_MOVES = (Verdict.PASS.value, Verdict.FAIL.value, Signal.ACCEPT_CHALLENGE.name, Signal.REJECT_CHALLENGE.name,
-                 Signal.RESOLVE_BLOCK.name, Signal.CANCEL.name, Signal.ASSIGN.name, REASSIGN)
+REASSIGN, persons_move = _tools.REASSIGN, _tools.persons_move
 
 
 def _the_persons_move(engine: Engine, tid, sig: str) -> Optional[dict]:
@@ -2080,8 +2076,7 @@ def _the_persons_move(engine: Engine, tid, sig: str) -> Optional[dict]:
     the root is ESCALATED, their decision (§12.5); elsewhere its packet is asked by the engine (`_the_persons_packet`).
     A reassign is theirs in every state: it re-issues the root with its packet unchanged, which that gate never sees.
     None: the move goes on."""
-    if sig not in PERSONS_MOVES or not engine.guards_his_word(tid) or (
-            sig == Signal.ASSIGN.name and engine.graph.get_state(tid) != State.ESCALATED):
+    if not persons_move(engine, tid, sig):
         return None
     if (p := CALLER.get()) is not None and p.a_page:
         return None                     # …the person's own page making it: the move itself is their word
@@ -3216,6 +3211,21 @@ def wait_for_the_customer(engine: Engine, root_id: Optional[str] = None, actor: 
                 {"waited_note": "nothing needs you yet: the graph is working (`in_flight`) or waiting on a person "
                                 "(`waiting`)"})}
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - engine.now())))
+
+
+def held_steps(engine: Engine, bridged: bool = False) -> dict:
+    """What a console's Stop hook reads (`GET /api/steps`, `gfso.hold`): `next_steps` as its signer's, marking nothing
+    — a plan named here stays unsaid, for the wait that wakes on it (`said_a_plan` is a reply's) —, with the signer and
+    whether its name works in a chat here (`in_chat`: the record its own move over MCP made, `Engine.performs_in_chat`);
+    a connection whose holding was refused (`signin.held`) reads as no one's, its `refused` saying why, and a call with
+    no credential and no live bridge's lease (`signin.BARE`, not `bridged`) as a console with no gfso connection
+    (`unsigned`): no move of the frontier could sign from it. An untaken bridge's lease reads as the person's agent."""
+    me, p = caller_id(), CALLER.get()
+    # …`current`: the node of the signer's latest move the log took — the task it is on, read off the system's record
+    on = next((str(a.task_id) for a in reversed(engine.audit_log()) if not a.rejected and str(a.source or "") == me), None)
+    return {**next_steps(engine, actor=me), "signer": me, "in_chat": me in engine.in_chat_names(), "current": on,
+            **({"refused": p.lift} if p is not None and p.via == signin.REFUSED else
+               {"unsigned": True} if p is not None and p.via == signin.BARE.via and not bridged else {})}
 
 
 def _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, network, bounds,
