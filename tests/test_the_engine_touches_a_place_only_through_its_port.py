@@ -97,7 +97,9 @@ HOSTS_OWN = {
     ("adapters/execution.py", "scrubs", "shutil.which('bwrap')"): "this host's bubblewrap",
     ("adapters/execution.py", "LocalExecution.which", "shutil.which(program)"): "this host's PATH",
     ("adapters/execution.py", "LocalExecution.temp_root", "tempfile.gettempdir()"): "this host IS the place",
-    ("adapters/execution.py", "LocalExecution.copy_tree", "shutil.copytree(src, dst, symlinks=True)"): "this host IS the place",
+    ("adapters/execution.py", "LocalExecution.copy_tree", "shutil.copytree(src, dst, symlinks=True, ignore=_left_out, "
+     "copy_function=lambda s, d: shutil.copy2(_bounded(s), d))"): "this host IS the place",
+    ("adapters/execution.py", "LocalExecution.copy_tree", "shutil.copy2(_bounded(s), d)"): "this host IS the place",
     ("adapters/execution.py", "LocalExecution.remove_tree", "os.path.lexists(path)"): "this host IS the place",
     ("adapters/execution.py", "LocalExecution.remove_tree", "os.walk(path)"): "this host IS the place",
     ("adapters/execution.py", "LocalExecution.remove_tree", "os.path.islink((p := os.path.join(d, x)))"): "this host IS the place",

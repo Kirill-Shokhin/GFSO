@@ -478,9 +478,10 @@ class ExecutionPort(ABC):
 
 
     @abstractmethod
-    def copy_tree(self, src: str, dst: str) -> None:
+    def copy_tree(self, src: str, dst: str, leave_out: tuple = (), timeout: float = 1800) -> None:
         """`src` as it stands where this execution runs — every file, symlinks as links, times kept — at `dst`, which
-        does not exist yet. A failure raises `OSError`."""
+        does not exist yet, but the paths of `leave_out` (relative to `src`, `/`-separated). A failure raises `OSError`;
+        a copy still running past `timeout` seconds is ended, `TimeoutExpired`."""
         ...
 
     @abstractmethod

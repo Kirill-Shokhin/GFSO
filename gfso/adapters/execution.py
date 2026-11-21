@@ -1291,8 +1291,20 @@ class LocalExecution(ExecutionPort):
     def run(self, args, *, cwd, timeout, env=None):
         return run_printing(args, timeout=timeout, cwd=cwd, **({"env": env} if env is not None else {}))
 
-    def copy_tree(self, src: str, dst: str) -> None:
-        shutil.copytree(src, dst, symlinks=True)
+    def copy_tree(self, src: str, dst: str, leave_out: tuple = (), timeout: float = 1800) -> None:
+        # …in this process, which nothing can end from outside: the bound is checked at each directory and file
+        leave, end_at = set(leave_out), time.monotonic() + timeout
+
+        def _bounded(at):
+            if time.monotonic() > end_at:
+                raise subprocess.TimeoutExpired(f"copy of {src}", timeout)
+            return at
+
+        def _left_out(d, names):
+            rel = Path(_bounded(d)).relative_to(src).as_posix()
+            return {n for n in names if (n if rel == "." else f"{rel}/{n}") in leave}
+        shutil.copytree(src, dst, symlinks=True, ignore=_left_out,
+                        copy_function=lambda s, d: shutil.copy2(_bounded(s), d))
 
     def remove_tree(self, path: str) -> None:
         # owned before listed: rmtree neither lists a directory it may not read nor unlinks inside one it may not write
@@ -2467,6 +2479,39 @@ def drop_volumes(project: str) -> None:
         _LEDGER.forget(v)      # …a new project of the name read it through a mount, Docker made it again unlabelled, and "not this installation's" refused the name for good (critic, ran)
 
 
+#: `ContainerExecution.copy_tree`, run by root inside over (src, dst), the paths to leave out NUL-separated on its input:
+#: `cp -a` of every entry but those, a directory on the way to one made here and copied into entry by entry, its owner,
+#: mode and times set as `cp -a` sets them, after its entries. Exit 3: `dst` stands already or cannot be made
+_COPY_LEAVING = r'''
+import os, shutil, subprocess, sys
+src, dst = os.fsencode(sys.argv[1]), os.fsencode(sys.argv[2])
+leave = {p.strip(b"/") for p in sys.stdin.buffer.read().split(b"\0")} - {b""}
+above = {b"/".join(q[:i]) for q in (p.split(b"/") for p in leave) for i in range(1, len(q))}
+def copy(rel, s, d):
+    whole = []
+    for n in sorted(os.listdir(s)):
+        r, f = rel + b"/" + n if rel else n, os.path.join(s, n)
+        if r in above and os.path.isdir(f) and not os.path.islink(f):
+            os.mkdir(os.path.join(d, n))
+            copy(r, f, os.path.join(d, n))
+        elif r not in leave:
+            whole.append(f)
+    for i in range(0, len(whole), 500):
+        if (e := subprocess.run([b"cp", b"-a", b"--", *whole[i:i + 500], d], stderr=subprocess.PIPE)).returncode:
+            sys.stderr.buffer.write(e.stderr)
+            sys.exit(1)
+    st = os.lstat(s)
+    os.chown(d, st.st_uid, st.st_gid)
+    shutil.copystat(s, d)
+try:
+    os.mkdir(dst)
+except OSError as e:
+    print(e, file=sys.stderr)
+    sys.exit(3)
+copy(b"", src, dst)
+'''
+
+
 class _SystemWrites:
     """What the disk's watch is told by an execution in containers: the system's own writes into its nodes'
     directories (`DiskLedger`), its removals among them."""
@@ -2745,7 +2790,8 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
     def shell(self):
         return "bash"
 
-    def bytes_call(self, args, *, cwd, input: bytes | None = None, root: bool = False) -> subprocess.CompletedProcess:
+    def bytes_call(self, args, *, cwd, input: bytes | None = None, root: bool = False,
+                   timeout: float = 600) -> subprocess.CompletedProcess:
         """`args` to its end here as the image's user — or root —, bytes in and out as they are — a file's, never a path
         to map; the container started only where this process has not started it, no `docker inspect` per call
         (`ContainerFiles`, which starts it again where it went)."""
@@ -2754,24 +2800,27 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         call = uuid.uuid4().hex
         argv, client = self._exec_argv(args, None, cwd, call, root, start=False)
         try:
-            return run(argv, timeout=600, cwd=str(self.parent), env=client, input=input)
+            return run(argv, timeout=timeout, cwd=str(self.parent), env=client, input=input)
         except subprocess.TimeoutExpired:
             self._end_inside(call)
             raise
 
-    def copy_tree(self, src: str, dst: str) -> None:
+    def copy_tree(self, src: str, dst: str, leave_out: tuple = (), timeout: float = 1800) -> None:
         # inside, as the place was made: a symlink a session made in here is no link on the host (probe P5)
         # …by root, in the project's container (`SYSTEM_CAPS`): as the agent, one unreadable file the executor left in
         # its place failed every copy and kept its delivery from being judged (critic over the judges slice) — and only
         # where nothing stands: into a directory or a link left there, `cp -a` copies INTO it (critic 3) — made fresh
-        # by the same call that copies, so nothing can stand there between a look and the copy
-        r = self.run(["sh", "-c", 'mkdir -- "$2" || exit 3; cp -a -- "$1/." "$2/"', "sh", src, dst], cwd=src,
-                     timeout=1800, root=True)
-        if r.returncode == 3:
+        # by the same call that copies, so nothing can stand there between a look and the copy. What is left out goes
+        # on its input: a list of a big tree's ignored paths outgrows a command line
+        r = self.bytes_call([self.python, "-I", "-c", _COPY_LEAVING, src, dst], cwd=src, root=True, timeout=timeout,
+                            input=b"\0".join(p.encode() for p in leave_out))
+        if r.returncode:
+            err = r.stderr.decode("utf-8", "replace").strip()
+            if down := self.storage_down(err):
+                raise PlaceUnavailable(self.name, down)
             raise OSError(f"{dst} already exists or cannot be made: a copy is made only where nothing stands "
-                          f"({r.stderr.strip()[-200:]})")
-        if r.returncode != 0:
-            raise OSError(f"cp -a {src} {dst} failed in {self.container}: {r.stderr.strip()[-300:]}")
+                          f"({err[-200:]})" if r.returncode == 3 else
+                          f"cp -a {src} {dst} failed in {self.container}: {err[-300:]}")
 
     def _remove_tree(self, path: str) -> None:
         # a place going takes its session's container with it, and its CLI's state: nothing will resume there — the

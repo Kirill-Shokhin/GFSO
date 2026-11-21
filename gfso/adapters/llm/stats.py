@@ -75,7 +75,9 @@ def what_stopped(calls) -> "str | None":
             # …what lifts it, the provider's to say: "sign it in" named a login no call runs on
             return c.get("remedy") or "the account refused authentication: set its credential again (`gfso credential <provider>`)"
         if isinstance(c, dict) and c.get("ended") == "uncopied":     # …no stop: nothing is down, and nothing ran
-            return f"the delivery at {c.get('place') or '?'} could not be copied to be judged"
+            # …its cause said: a copy that outran its bound is told apart from one that failed (`snapshots.COPY_S`)
+            return f"the delivery at {c.get('place') or '?'} could not be copied to be judged" + (
+                f" ({c['error']})" if c.get("error") else "")
     return "the account's usage limit" if refused_by_limit(calls) else None
 
 

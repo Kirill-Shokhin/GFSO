@@ -457,7 +457,7 @@ def test_an_issuer_does_not_rule_in_its_executors_place_where_places_stand_apart
     (where := tmp_path / "ws").mkdir(exist_ok=True)
 
     class _NoCopy(E.LocalExecution):
-        def copy_tree(self, src, dst):
+        def copy_tree(self, src, dst, **kw):
             raise OSError("cp -a failed")
     _NoCopy.apart = apart
     ran = []

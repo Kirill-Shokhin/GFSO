@@ -129,7 +129,7 @@ def test_each_run_validates_its_own_copy_of_the_place_and_the_report_names_the_p
     cwds = {s["cwd"] for s in seen}
     assert len(cwds) == 2 and str(at) not in cwds                      # …a copy per run, neither the place
     for s in seen:
-        assert s["had"] == [".gitignore", "app", "main.c", "main.o", "notes.txt"], s["had"]   # …the place on disk
+        assert s["had"] == [".gitignore", "app", "main.c", "notes.txt"], s["had"]   # …as git sees it: main.o ignored
         assert "a copy of the delivery's directory" in s["packet"] and s["cwd"] in s["packet"]
         assert "run no git command that writes (no commit, checkout -b, gc, worktree prune)" in s["packet"]
         assert "is not reached" not in s["packet"]                    # …the copy shares the base's refs
@@ -220,9 +220,9 @@ def test_the_copy_is_made_and_removed_where_the_work_runs(monkeypatch, place):
         def __init__(self):
             self.ops = []
 
-        def copy_tree(self, src, dst):
+        def copy_tree(self, src, dst, **kw):
             self.ops.append(("copy", dst))
-            super().copy_tree(src, dst)
+            super().copy_tree(src, dst, **kw)
 
         def remove_tree(self, path):
             self.ops.append(("remove", path))
@@ -358,13 +358,13 @@ class _Copies(LocalExecution):
     def __init__(self, log: list, fail=(1, 2), raise_=lambda: OSError(1314, "A required privilege is not held")):
         self.log, self.fail, self.raise_ = log, fail, raise_
 
-    def copy_tree(self, src, dst):
+    def copy_tree(self, src, dst, **kw):
         if any(f"batch{i}" in dst for i in self.fail):
             Path(dst, "half").mkdir(parents=True)                  # …a partial copy, as a cut `cp -a` leaves
             raise self.raise_()
         t = time.monotonic()
         time.sleep(0.3)
-        super().copy_tree(src, dst)
+        super().copy_tree(src, dst, **kw)
         self.log.append(("copy", dst, t, time.monotonic()))
 
 
@@ -381,19 +381,29 @@ def _overlap(a, b) -> bool:
     return a[2] < b[3] and b[2] < a[3]
 
 
-@pytest.mark.parametrize("cause", ["privilege", "timeout"])
-def test_runs_that_could_not_copy_take_the_place_one_at_a_time(monkeypatch, place, tmp_path, cause):
-    """The fallback must not reopen the race: WinError 1314 on a host that may not make links, or a `cp -a` past its
-    time on a large root. The partial copy goes; the runs stand in the place in turn; the report is not lost."""
+def test_runs_that_could_not_copy_take_the_place_one_at_a_time(monkeypatch, place, tmp_path):
+    """The fallback must not reopen the race: WinError 1314 on a host that may not make links. The partial copy goes;
+    the runs stand in the place in turn; the report is not lost."""
     _, at = place
-    raise_ = (lambda: OSError(1314, "privilege")) if cause == "privilege" else         (lambda: subprocess.TimeoutExpired(["cp", "-a"], 1800))
-    ex = _Copies([], raise_=raise_)
+    ex = _Copies([])
     e, out = _timed(monkeypatch, at, ex)
     runs = [x for x in ex.log if x[0] == "run"]
     assert [r[1] for r in runs] == [str(at)] * 2
     assert not _overlap(*runs), runs
     assert out["verdict"] == "PASS"
     assert not list(at.parent.glob(".gfso-scratch-big/*/batch*/delivery"))      # …no partial copy left
+    e.stop()
+
+
+def test_a_copy_past_its_bound_is_no_run_in_the_place(monkeypatch, place):
+    """A copy that outran its bound would outrun it again in the place itself: no run, no verdict, the bound said —
+    a validator that never started, asked again (`snapshots.COPY_S`)."""
+    _, at = place
+    ex = _Copies([], raise_=lambda: subprocess.TimeoutExpired(["cp", "-a"], 600))
+    e, out = _timed(monkeypatch, at, ex)
+    assert not [x for x in ex.log if x[0] == "run"]
+    assert out["verdict"] is None and "outran its bound" in out["error"], out
+    assert not list(at.parent.glob(".gfso-scratch-big/*/batch*/delivery"))
     e.stop()
 
 
@@ -450,9 +460,9 @@ def test_the_runs_cap_is_read_once_its_copy_stands(monkeypatch, place):
     order: dict = {}
 
     class _Ex(LocalExecution):
-        def copy_tree(self, src, dst):
+        def copy_tree(self, src, dst, **kw):
             order.setdefault(threading.get_ident(), []).append("copy")
-            super().copy_tree(src, dst)
+            super().copy_tree(src, dst, **kw)
     real = TL._validation_cap
     monkeypatch.setattr(TL, "_validation_cap",
                         lambda t, g: order.setdefault(threading.get_ident(), []).append("cap") or real(t, g))
