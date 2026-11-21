@@ -207,9 +207,10 @@ def _ignored(place: Path, execution) -> tuple:
     place itself is ignored by the tree it stands in: then it is copied whole. A nested repository or submodule the
     tree does not ignore is copied whole as well: its own ignores are not read."""
     r = W.git(place, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", execution=execution)
-    if r.returncode or not W.git(place, "check-ignore", "-q", "--", ".", execution=execution).returncode:
-        return ()
-    return tuple(p.rstrip("/") for p in r.stdout.split("\0") if p)
+    # …decided by what git lists, not by `check-ignore .`: inside a place matched by `build/*` that says "ignored" of
+    # the place while `ls-files` lists its ignored files rightly (a kept `!build/keep` beside them)
+    out = tuple(p.rstrip("/") for p in r.stdout.split("\0") if p) if not r.returncode else ()
+    return () if any(p in ("", ".") for p in out) else out
 
 
 def changed_or_unknown(place, at, execution, commit: Optional[str] = None, base: Optional[tuple] = None) -> list[str]:

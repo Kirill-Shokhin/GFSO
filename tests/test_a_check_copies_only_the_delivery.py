@@ -105,6 +105,21 @@ def test_a_place_below_the_top_of_a_work_tree_is_copied_without_what_git_ignores
         assert _files(Path(at)) == {"x.o"}
 
 
+def test_a_place_its_tree_matches_by_a_star_keeps_what_it_unignores_and_leaves_the_rest(tmp_path):
+    """`build/*` with `!build/keep.txt`: `check-ignore .` inside `build/` says the place is ignored, yet git lists its
+    ignored files rightly — the copy follows the list (critic, 2026-11-22). CONTROL: deciding by `check-ignore .` — red."""
+    repo = tmp_path / "repo"
+    (b := repo / "build").mkdir(parents=True)
+    (repo / ".gitignore").write_text("build/*\n!build/keep.txt\n")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "start")
+    (b / "keep.txt").write_text("kept, untracked\n")      # …untracked: `check-ignore .` then calls the place ignored
+    (b / "x.o").write_text("built\n")
+    with S.snapshot(b, tmp_path / "scratch" / "copy", LocalExecution()) as at:
+        assert _files(Path(at)) == {"keep.txt"}
+
+
 def test_the_step_that_outran_its_bound_is_named(place, tmp_path, monkeypatch):
     def slow(*a):
         raise subprocess.TimeoutExpired(["git", "ls-files"], 120)
