@@ -24,6 +24,7 @@ from gfso.api.server import create_app
 from gfso.config import STANDING, Principal
 from gfso.core.types import State, TaskId
 from gfso.decompose import kept as K
+from gfso.delegate import ensure_dispatcher
 from gfso.signin import PAGE
 from tests.support import criterion, instrument_passes, make_engine
 from tests.test_the_mode_decides_who_holds_what import Mode, _engine
@@ -175,6 +176,8 @@ def test_once_delivered_the_holder_owes_nothing_observed_or_not(tmp_path):
     with _as(STANDING):
         assert any(str(s.get("directive")).startswith("OBSERVE THIS DELIVERY") for s in TL.next_steps(e)["steps"])
     assert H.decide({}, "p", _asked(e, STANDING)) == {}
+    # …its dispatcher stopped before the validator is: the PASS is the test's own, never a live validation's in flight
+    ensure_dispatcher(e).stop()
     assert not TL.register_agent(e, "p-val", "llm-validator", workdir=str(tmp_path)).get("refused")
     assert H.decide({}, "p", _asked(e, STANDING)) == {}
     instrument_passes(e, TaskId("root"), validator="p-val")

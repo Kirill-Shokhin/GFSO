@@ -765,6 +765,7 @@ class Dispatcher:
         #: a second validation (see the branch in the validate pass).
         self._torn: dict[str, int] = {}
         self._stop = threading.Event()
+        self._thread: threading.Thread | None = None   # the loop `start` runs, joined by `stop`
         self._timers: list = []   # rounds given back later: cancelled by `stop`
         self._dirty = threading.Event()   # set by every transition → the loop re-evaluates the frontier
         self._rejoined_once = False       # the start-up sweep of passed roots the base does not hold (`_rejoin`)
@@ -2111,15 +2112,23 @@ class Dispatcher:
                 except Exception as e:
                     log.warning(f"dispatcher run failed: {e}")
                 self._dirty.wait(self._poll)           # woken instantly by a transition, else safety-net poll
-        threading.Thread(target=_loop, daemon=True).start()
+        self._thread = threading.Thread(target=_loop, daemon=True)
+        self._thread.start()
 
     def stop(self) -> None:
-        """Stop the loop and wait briefly for it to settle. Idempotent."""
+        """Stop the loop and wait for the pass it is in to end, so nothing starts after the return. Idempotent.
+
+        Setting the flag alone left a pass already running to read the graph and start what it found AFTER the stop:
+        a delivery landed after it was validated by the stopped dispatcher (measured: a pass held 0.3 s across
+        `stop()` started `validate:` on every one of 20 runs), and `ProjectRegistry.unmake` deletes the database
+        such a pass is still reading. Bounded, as a pass is milliseconds; never from the loop's own thread."""
         self._stop.set()
         self._dirty.set()                              # wake the loop so it exits promptly
         for timer in list(self._timers):
             timer.cancel()
         self._timers.clear()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=10)
 
 
 _DISPATCHERS: dict[int, Dispatcher] = {}
