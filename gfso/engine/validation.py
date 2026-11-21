@@ -25,7 +25,7 @@ from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import finding_keys
-from gfso.core.graph.model import (PAUSE_KEY, hands_of, party_kind, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+from gfso.core.graph.model import (chosen_checker, PAUSE_KEY, hands_of, party_kind, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer, logged_criteria, parent_waits)
 from gfso.engine.audit import VERSION_INSTALLING, on_current_version
 
@@ -579,6 +579,8 @@ def validator_chosen(graph: Graph, task) -> bool:
     """Did its issuer choose the validator to check this node where it would self-verify? Who checks is his choice and
     the signature his either way (§10.2: the check anyone's, the verdict the issuer's) — as the kit's critic is called
     on a piece of work; the author, 2026-11-20: «решает кто будет валидировать. Если сам то сам и ставит подпись»."""
+    if (made := chosen_checker(graph._storage, task.id)) is not None:
+        return made == "validator"
     return str(task.id) in json.loads(graph._storage.get_setting(VALIDATOR_CHOSEN) or "[]")
 
 

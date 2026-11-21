@@ -124,6 +124,8 @@ def test_no_one_turns_the_validator_off_at_his_seam_and_he_may_ask_it_again(tmp_
     off = _call(PAGE, "set_checker", e, SEAM, "self", agent="user")
     assert off.get("refused") and "validator checks every delivery" in off["error"], off
     assert not _call(PAGE, "set_checker", e, SEAM, "validator", agent="user").get("refused")
+    # …and his asking leaves its record, though who checks does not change (Thm 11: his decision, his record)
+    assert [m["checker"] for m in e.checker_choices(TaskId(SEAM))] == ["validator"]
     assert e.checker(TaskId(SEAM)) == "validator"
 
 

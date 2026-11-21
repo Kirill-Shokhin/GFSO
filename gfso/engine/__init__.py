@@ -3436,23 +3436,30 @@ class Engine:
                              f"validator's record (`set_mode`)")
         if (why := _owed_observer(self._graph, t)) is not None:
             if _persons_seam(self._graph, t) and checker == "validator":
+                self._record_checker(task_id, checker, author, said)
                 return self.validators_chosen()      # …his seam: his word adds a check, never removes the validator's
             raise ValueError(f"the validator checks every delivery of {task_id}, not its issuer's to choose: {why}")
-        held = [i for i in self.validators_chosen() if i != str(task_id)] + ([str(task_id)] if checker == "validator"
-                                                                             else [])
-        self._storage.store_setting(VALIDATOR_CHOSEN, json.dumps(held))
-        # …the decision on the log with its record (Thm 11), words or none: the chosen set above is its projection
-        made = json.loads(self._storage.get_critique(checker_choices_key(task_id)) or "[]")
-        made.append({"log_at": len(self._audit), "by": str(author), "checker": checker, "said": str(said or "").strip(),
-                     "at": datetime.now().isoformat()})
-        self._storage.store_critique(checker_choices_key(task_id), json.dumps(made))
+        self._record_checker(task_id, checker, author, said)
+        held = self.validators_chosen()
         # …heard over the top of the mode it lies under — its scope's, in a shared graph — where his words are read
         self.hear(_mode_at(self._graph, t)[1].id, "checker", said, node=str(task_id), checker=checker)
         return held
 
+    def _record_checker(self, task_id, checker: str, author, said: str) -> None:
+        """The issuer's choice of who checks `task_id`, on the record with its author, words or none, time and place in the
+        signal log (Thm 11) — one write, and the only one: every reading of who checks is read off these records."""
+        made = self.checker_choices(task_id)
+        made.append({"log_at": len(self._audit), "by": str(author), "checker": checker, "said": str(said or "").strip(),
+                     "at": datetime.now().isoformat()})
+        self._storage.store_critique(checker_choices_key(task_id), json.dumps(made))
+
     def validators_chosen(self) -> list:
-        """The ids of the nodes whose issuer chose the validator to check them (`set_checker`)."""
-        return json.loads(self._storage.get_setting(VALIDATOR_CHOSEN) or "[]")
+        """The ids of the nodes whose issuer chose the validator to check them (`set_checker`): each node's latest
+        recorded choice, and for a node chosen before records were kept, the older chosen-set setting."""
+        recorded = {k[len(checker_choices_key("")):]: json.loads(v)[-1]["checker"]
+                    for k, v in self._storage.critiques_under(checker_choices_key("")).items() if json.loads(v)}
+        legacy = [i for i in json.loads(self._storage.get_setting(VALIDATOR_CHOSEN) or "[]") if i not in recorded]
+        return legacy + sorted(i for i, c in recorded.items() if c == "validator")
 
     def checker_choices(self, task_id) -> list:
         """[{log_at, by, checker, said, at}] its issuer's choices of who checks `task_id`, oldest first (`set_checker`)."""

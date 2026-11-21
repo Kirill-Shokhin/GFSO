@@ -36,8 +36,10 @@ def test_a_choice_of_who_checks_is_kept_with_its_author_and_time_words_or_none(t
     assert all(m["at"] and isinstance(m["log_at"], int) for m in made)
     assert made[0]["log_at"] <= made[1]["log_at"]
     assert T.get_task(e, "kid")["checker_chosen"] == made
+    # …the record decides, not the older chosen-set setting: a stale setting naming the node changes nothing
+    e._storage.store_setting("validator_chosen", '["kid"]')
+    assert "kid" not in e.validators_chosen() and not e.observed_here(TaskId("kid"))
     e.stop()
-
     again = _engine(tmp_path / "g.db")
     assert again.checker_choices(TaskId("kid")) == made
     assert (str(TaskId("kid")) in again.validators_chosen()) == (made[-1]["checker"] == "validator")

@@ -121,6 +121,13 @@ def checker_choices_key(task_id) -> str:
     return f"checker_choices:{task_id}"
 
 
+def chosen_checker(storage, task_id) -> Optional[str]:
+    """The checker its issuer's latest recorded choice names for `task_id`, or None where none is recorded — the record is
+    the decision (Thm 11); the older chosen-set setting stands only for nodes chosen before records were kept."""
+    made = json.loads(storage.get_critique(checker_choices_key(task_id)) or "[]")
+    return made[-1]["checker"] if made else None
+
+
 def replaces_key(task_id) -> str:
     """Where the dropped children a node was admitted to stand in for are recorded — whose work it carries on."""
     return f"replaces:{task_id}"
