@@ -131,6 +131,7 @@ def test_each_run_validates_its_own_copy_of_the_place_and_the_report_names_the_p
     for s in seen:
         assert s["had"] == [".gitignore", "app", "main.c", "notes.txt"], s["had"]   # …as git sees it: main.o ignored
         assert "a copy of the delivery's directory" in s["packet"] and s["cwd"] in s["packet"]
+        assert "but for what its git ignores" in s["packet"] and "nothing is built in it" in s["packet"]   # …said as it is
         assert "run no git command that writes (no commit, checkout -b, gc, worktree prune)" in s["packet"]
         assert "is not reached" not in s["packet"]                    # …the copy shares the base's refs
         assert str(at) not in s["packet"] and at.as_posix() not in s["packet"]

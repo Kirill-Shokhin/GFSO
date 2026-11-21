@@ -29,7 +29,7 @@ from dataclasses import replace
 from gfso.config import host_env
 from gfso.core.types import IN_THE_WORKS_PATH, PlaceUnavailable
 from gfso.adapters.execution import ended_by_watch, past_disk
-from gfso.adapters.snapshots import WATCHED, changed_or_unknown, on_disk, snapshot, swap
+from gfso.adapters.snapshots import WATCHED, Uncopied, changed_or_unknown, on_disk, snapshot, swap
 from gfso.core.protocol.procedure import (INPUTS_TOKEN, PROBE_S, contains, materialize_inputs, probe_id, shows,
                                          unsafe_input_paths)
 from gfso.workspaces import execution_of
@@ -69,9 +69,12 @@ def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None
         return {}
     seen = {}
     with ex.scratch("gfso-observe-", system=True) as tmp:
-        with snapshot(place, Path(tmp) / "place", ex) as tree:
-            for t, row in run_checks(ex, probes, place, tree, budget):
-                seen.setdefault(str(t.id), []).append(row)
+        try:
+            with snapshot(place, Path(tmp) / "place", ex) as tree:
+                for t, row in run_checks(ex, probes, place, tree, budget):
+                    seen.setdefault(str(t.id), []).append(row)
+        except Uncopied:             # …an observation, no verdict: the session starts without it
+            return {}
     return seen
 
 

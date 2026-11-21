@@ -94,8 +94,9 @@ def snapshot_note(tree: str, built: Optional[str] = None) -> str:
     what = (f"a checkout of exactly the tree DELIVER recorded — nothing the delivery's directory holds besides (ignored "
             f"or untracked files, build outputs, an environment) is in it — built by the system before you with "
             f"{built}" if built is not None else
-            "a copy of the delivery's directory exactly as it stands on disk — uncommitted files, build outputs and "
-            "links included")
+            "a copy of the delivery's directory as it stands on disk — uncommitted and untracked files and links "
+            "included — but for what its git ignores (build outputs among it), which is left out, and nothing is "
+            "built in it: build what a check needs")
     return (f"\nThis run has the delivery to itself: {tree} is {what}, made for this run alone, while the "
             f"other runs of this validation work in copies of their own: wherever the contract or the report names "
             f"the delivery's directory, it means this one. Build and clean as the checks say: the delivery's files are "

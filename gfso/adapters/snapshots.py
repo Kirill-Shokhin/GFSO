@@ -123,8 +123,9 @@ def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Opti
     running ends with it, and a tracked file it changed is put back as delivered (`_after_build`).
 
     A delivery with no recorded commit — no git base, nothing to commit, a record from before the commit was kept — is
-    copied as it stands; at the top of a work tree, as git sees it: tracked and untracked files, never the ignored
-    (`_ignored`). A copy still running past `COPY_S` raises `Uncopied`, its bound said. Where that copy cannot be made
+    copied as it stands; in a work tree, as git sees it: tracked and untracked files, never the ignored (`_ignored`),
+    and nothing built. A step of it past its bound (the copy's, `COPY_S`) raises `Uncopied`, the step and its bound
+    said. Where that copy cannot be made
     otherwise (a host that may not make symlinks, WinError 1314; a `cp -a` that failed) the run is yielded None and
     works in the place itself — ALONE among the runs that fell back so: side by side there is the race this module
     exists to end."""
@@ -138,9 +139,7 @@ def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Opti
             if commit:
                 smudged = _checkout(place, at, *delivered[:2], execution)
             else:
-                execution.copy_tree(str(place), str(at), leave_out=_ignored(place, execution), timeout=COPY_S)
-            if not commit:
-                _own_git(place, at, execution)
+                _as_it_stands(place, at, execution)
     except PlaceUnavailable:
         raise                    # …the place down is its project's stop, not a copy to do without (`PlaceUnavailable`)
     except (OSError, subprocess.TimeoutExpired, NotTheDelivery) as e:
@@ -153,7 +152,8 @@ def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Opti
         # …a copy past its bound would wait as long again in the place itself, alone
         if commit or isinstance(e, subprocess.TimeoutExpired):
             raise Uncopied(f"no checkout of the delivery {commit[:12]} could be made: {e}" if commit else
-                           f"the copy of the delivery {place} outran its bound of {COPY_S} s: {e}") from e
+                           f"no copy of the delivery {place} could be made: {e.cmd} outran its bound of "
+                           f"{e.timeout:g} s") from e
         log.warning(f"no snapshot of {place} at {at} ({e}) — this run validates the place itself, alone")
         with _place(place).enter(alone=True):
             yield None
@@ -180,16 +180,36 @@ def snapshot(place, at, execution, edits: Optional[list] = None, delivered: Opti
         execution.remove_tree(str(at))
 
 
+def _as_it_stands(place: Path, at: Path, execution) -> None:
+    """`place` copied at `at` but for what its git ignores (`_ignored`), the copy given a git of its own (`_own_git`).
+    Each step is a wait: one past its bound raises `TimeoutExpired` naming that step."""
+    with _step("reading what the place's git ignores"):
+        leave = _ignored(place, execution)
+    with _step("the copy"):
+        execution.copy_tree(str(place), str(at), leave_out=leave, timeout=COPY_S)
+    with _step("giving the copy a git of its own"):
+        _own_git(place, at, execution)
+
+
+@contextmanager
+def _step(name: str):
+    """A wait past its bound inside, said as `name`'s."""
+    try:
+        yield
+    except subprocess.TimeoutExpired as e:
+        raise subprocess.TimeoutExpired(name, e.timeout) from e
+
+
 def _ignored(place: Path, execution) -> tuple:
-    """What git ignores in `place` where it is the top of a work tree — an ignored directory as one path, never
-    entered —, else nothing: no part of a delivery with no recorded commit (§11.3), as none is of a checkout of one.
-    Read by the place's own git, in its own container (`W.git`); a place inside another's work tree is no tree of its
-    own, and that tree's rules could ignore it whole."""
-    top = W.git(place, "rev-parse", "--show-prefix", execution=execution)
-    if top.returncode or top.stdout.strip():
-        return ()
+    """What git ignores in `place` within the work tree it stands in — paths relative to it, an ignored directory as
+    one path, never entered —: no part of a delivery with no recorded commit (§11.3), as none is of a checkout of one.
+    Read by the place's own git, in its own container (`W.git`). Nothing where no work tree holds it, or where the
+    place itself is ignored by the tree it stands in: then it is copied whole. A nested repository or submodule the
+    tree does not ignore is copied whole as well: its own ignores are not read."""
     r = W.git(place, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", execution=execution)
-    return tuple(p.rstrip("/") for p in r.stdout.split("\0") if p) if r.returncode == 0 else ()
+    if r.returncode or not W.git(place, "check-ignore", "-q", "--", ".", execution=execution).returncode:
+        return ()
+    return tuple(p.rstrip("/") for p in r.stdout.split("\0") if p)
 
 
 def changed_or_unknown(place, at, execution, commit: Optional[str] = None, base: Optional[tuple] = None) -> list[str]:

@@ -2791,11 +2791,12 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         return "bash"
 
     def bytes_call(self, args, *, cwd, input: bytes | None = None, root: bool = False,
-                   timeout: float = 600) -> subprocess.CompletedProcess:
+                   timeout: float = 600, start: bool = False) -> subprocess.CompletedProcess:
         """`args` to its end here as the image's user — or root —, bytes in and out as they are — a file's, never a path
         to map; the container started only where this process has not started it, no `docker inspect` per call
-        (`ContainerFiles`, which starts it again where it went)."""
-        if self.container not in _STARTED:
+        (`ContainerFiles`, which starts it again where it went); `start`: the container asked to run each call, as
+        `run` asks it."""
+        if start or self.container not in _STARTED:
             self.start()
         call = uuid.uuid4().hex
         argv, client = self._exec_argv(args, None, cwd, call, root, start=False)
@@ -2813,7 +2814,7 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
         # by the same call that copies, so nothing can stand there between a look and the copy. What is left out goes
         # on its input: a list of a big tree's ignored paths outgrows a command line
         r = self.bytes_call([self.python, "-I", "-c", _COPY_LEAVING, src, dst], cwd=src, root=True, timeout=timeout,
-                            input=b"\0".join(p.encode() for p in leave_out))
+                            start=True, input=b"\0".join(p.encode() for p in leave_out))
         if r.returncode:
             err = r.stderr.decode("utf-8", "replace").strip()
             if down := self.storage_down(err):
