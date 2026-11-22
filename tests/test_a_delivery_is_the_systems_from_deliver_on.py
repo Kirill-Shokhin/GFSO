@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+import gfso.past as PA
 import gfso.store as ST
 import gfso.tools as T
 import gfso.tools_llm as TL
@@ -313,6 +314,51 @@ def test_a_named_place_at_the_start_is_refused(tmp_path):
     repo, e, wt = _work_in_a_linked_worktree(tmp_path, _in_chat)
     no = _refused(e, place=str(repo))
     assert "the commit the work started from" in no and f"place={wt}" in no, no
+    e.stop()
+
+
+@pytest.mark.parametrize("by", ["nothing", "path"])
+def test_a_revised_node_re_delivers_its_committed_work_after_its_re_consent(tmp_path, by):
+    """The work committed, the node revised (§12.10) and re-ACCEPTed — that ACCEPT recording the work as its HEAD —:
+    its DELIVER of the identical artifact was refused as the start, its lift an empty commit, a false report. The start
+    is the first ACCEPT's: delivered, its range in the record of work past the system its commits (it was empty); the
+    start itself still refused."""
+    repo = _repo(tmp_path)
+    e = _in_chat(tmp_path, repo)
+    _take(e, repo)
+    (repo / "f.txt").write_text("v1\n")
+    work = _commit(repo, "f.txt")
+    T.revise(e, "root", max_iterations=9, agent="user")      # …a re-ASSIGN: the executor's re-consent is asked
+    e.wait_idle()
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user")["accepted"]
+    assert e.audit_log(TaskId("root"))[-1].commit == work, "the re-ACCEPT did not record the committed work"
+    assert "the commit the work started from" in _refused(e, place=PA.start_of(e, "root"))
+    out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="f.txt", self_validation="PASS",
+                             **({"place": str(repo)} if by == "path" else {}))
+    assert out["accepted"] and e.delivered(TaskId("root"))[1] == work, out
+    assert work in json.loads(e.graph.setting(PA.DELIVERED))[work]["changes"], "the delivery's range lists none of its commits"
+    e.stop()
+
+
+def test_a_delivery_before_its_record_is_read_from_its_nodes_first_accept():
+    """A DELIVER whose range no record keeps is read from where its node's work started: a re-ACCEPT's HEAD, the work
+    itself, left it empty."""
+    log = [("n", s, None, None, c, "r", "user", 0) for s, c in (("ACCEPT", "s0"), ("ACCEPT", "w"), ("DELIVER", "w"))]
+    assert PA._deliveries([{"landed": None, "delivered": {}, "log": log}], "k", {"r": "k"})[2] == [("w", "s0")]
+
+
+def test_a_root_taken_at_the_go_re_delivers_its_work_after_its_first_accept(tmp_path):
+    """A root taken at the go holds no ACCEPT: the one its revision asks records the work committed since — the go's
+    record is the start, and the work is delivered."""
+    repo = _repo(tmp_path)
+    e = _in_chat(tmp_path, repo)
+    e.graph.store_setting(f"{PA.CHAT_START}root", json.dumps({"branch": "master", "head": _git(repo, "rev-parse", "HEAD")}))
+    _git(repo, "switch", "-q", "-c", "gfso/p/work")
+    (repo / "f.txt").write_text("v1\n")
+    work = _commit(repo, "f.txt")
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user")["accepted"]
+    out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="f.txt", self_validation="PASS")
+    assert out["accepted"] and e.delivered(TaskId("root"))[1] == work, out
     e.stop()
 
 

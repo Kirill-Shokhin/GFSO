@@ -79,7 +79,7 @@ def _deliver(e):
     # …the node's work is what the test committed where its judge stands, named; none: an empty commit says so, on no
     # branch, so that no line of the repository moves
     at = TL._delegation().validator_workdir(e, TL._delegation().default_agents(), TaskId("root"))
-    if (head := _git(at, "rev-parse", "HEAD")) == TL._started_from(e, TaskId("root")):
+    if (head := _git(at, "rev-parse", "HEAD")) == P.start_of(e, "root"):
         at = _git(at, "commit-tree", "-m", "nothing changed", "-p", head, f"{head}^{{tree}}")
     assert TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="f.txt", self_validation="PASS", place=at)["accepted"]
     time.sleep(1.1)              # …git's clock is whole seconds: what is made in the DELIVER's second is the node's

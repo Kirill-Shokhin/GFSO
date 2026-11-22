@@ -54,7 +54,7 @@ from gfso.adapters import worktrees as W
 from gfso.adapters.storage.sqlite import peek_work
 from gfso.config import CALLER, DEFAULT_PROJECT, agent_id, agents_path, caller_id, db_path
 from gfso.core.graph.model import LANDED, root_of
-from gfso.core.types import TERMINAL_STATES, WORK_STATES, Signal
+from gfso.core.types import TERMINAL_STATES, WORK_STATES, Signal, TaskId
 from gfso.places import cheap_to_ask
 from gfso.roster import AgentRegistry
 from gfso.witness import installed
@@ -71,6 +71,8 @@ LISTED = 50
 KEPT = "made-by-hand:"
 #: the content of every carrier the readings of a repository saw, per project: {commit: [patch id, [[path, blob]]]}
 CARRIED = "carried-by:"
+#: where a chat's work on a root taken at the go started: {branch the person stood on, the commit it started from}
+CHAT_START = "chat_start:"
 #: a project's chat deliveries, each with its own range's content as it stood at its DELIVER (`delivered`)
 DELIVERED = "past-delivered"
 #: the repositories a project's readings were taken in: {common git directory: its main worktree}
@@ -120,6 +122,22 @@ def repository(path) -> str | None:
         return None
     r = W.git(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
     return os.path.normcase(str(Path(r.stdout.strip()).resolve())) if r.returncode == 0 and r.stdout.strip() else None
+
+
+def started(accepts, went=None) -> str:
+    """The commit a node's work started from, across every version of it: for a root taken at the go, the go's record
+    (`went`); else the first of its accepted ACCEPTs' recorded commits (`accepts`, oldest first). Never a later
+    ACCEPT's: a re-ACCEPT after a revision (§12.10) records the HEAD of the work already committed, and the re-delivery
+    of that identical artifact, which the re-consent costs, was refused as the start, its range in this record empty
+    — a root taken at the go has no ACCEPT before it. So a REOPENed part re-delivers the commit that passed, the
+    identical re-delivery too."""
+    return went or next((c for c in accepts if c), "")
+
+
+def start_of(engine, node) -> str:
+    """`started` read off `engine`'s record of `node`."""
+    accepts = (e.commit for e in engine.audit_log(TaskId(str(node))) if e.signal == Signal.ACCEPT and not e.rejected)
+    return started(accepts, json.loads(engine.graph.setting(f"{CHAT_START}{node}") or "{}").get("head"))
 
 
 def _work_of(x) -> dict:
@@ -216,14 +234,13 @@ def at_work(spans_, repository_key: str, at: int, holders=None) -> list[Span]:
 
 
 def delivered(engine, place, node: str, commit: str):
-    """A chat's DELIVER of `commit` in `place`: its own range — from the HEAD its node's last ACCEPT recorded, else the
-    commit alone — with each commit's change, as it stands now (a rework, an amend or git's `gc` after it leaves what
+    """A chat's DELIVER of `commit` in `place`: its own range — from where its node's work started (`start_of`), else
+    the commit alone — with each commit's change, as it stands now (a rework, an amend or git's `gc` after it leaves what
     was delivered). Read before the DELIVER is sent, so nothing waits after it; the call it returns keeps it in the
     project's record once the DELIVER is accepted."""
     if not (k := repository(place)):
         return lambda: None
-    head = next((e.commit for e in reversed(engine.audit_log()) if str(e.task_id) == node and e.commit
-                 and e.signal == Signal.ACCEPT and not e.rejected), None)
+    head = start_of(engine, node)
     shas = _git(place, "rev-list", "--no-merges", commit,
                 *([f"^{head}"] if head and _there(place, [head]) else ["-1"])).split()
     got = {"repository": k, "changes": _dumped(_changes(place, shas))}
@@ -233,9 +250,9 @@ def delivered(engine, place, node: str, commit: str):
 
 def _deliveries(works, key: str, named: dict) -> tuple:
     """(the commits of the chat deliveries into the repository `key` their DELIVER recorded, over every project held
-    here; their content; [(delivered commit, the HEAD its node's ACCEPT recorded or None)] of those delivered before
-    that record — in `key`, or in a place that no longer stands —; [the commits the deliveries made in places of the
-    system's and the landings recorded])."""
+    here; their content; [(delivered commit, where its node's work started by its ACCEPTs (`started`) or None)] of
+    those delivered before that record — in `key`, or in a place that no longer stands —; [the commits the deliveries
+    made in places of the system's and the landings recorded])."""
     held, content, live, places = set(), {}, [], []
     for w in works:
         heads, places = {}, places + ([w["landed"]] if w["landed"] else [])
@@ -243,7 +260,7 @@ def _deliveries(works, key: str, named: dict) -> tuple:
             if not c:
                 continue
             if s == "ACCEPT" and r:
-                heads[node] = c
+                heads.setdefault(node, []).append(c)
             elif s == "DELIVER" and not r:
                 places.append(c)
             elif s == "DELIVER" and (d := w["delivered"].get(c)) is not None:
@@ -251,7 +268,7 @@ def _deliveries(works, key: str, named: dict) -> tuple:
                     held |= d["changes"].keys()
                     content.update(_loaded(d["changes"]))
             elif s == "DELIVER" and named.setdefault(r, repository(r)) in (key, None):
-                live.append((c, heads.get(node)))
+                live.append((c, started(heads.get(node, ())) or None))
     return held, content, live, places
 
 

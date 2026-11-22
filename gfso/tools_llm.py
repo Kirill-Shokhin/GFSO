@@ -1940,7 +1940,7 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
         place = _delegation().validator_workdir(engine, _delegation().default_agents(), TaskId(str(root_id)))
         theirs = on_their_branch(engine, place) if place and switches_branches(engine, root_id) else ""
         if place and W.is_repo_top(place):
-            engine.graph.store_setting(f"{CHAT_START}{root_id}", json.dumps({
+            engine.graph.store_setting(f"{past.CHAT_START}{root_id}", json.dumps({
                 "branch": W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip(),
                 "head": W.git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()}))
         parts = [str(c.id) for c in engine.graph.get_active_children(TaskId(str(root_id)))]
@@ -2021,16 +2021,6 @@ def on_their_branch(engine: Engine, place) -> str:
             f"person so in one line, and switch it back to `{on or 'where it stood'}` once the work is delivered")
 
 
-#: where a chat's work on a root started (`_built_from_a_file`): {branch the person stood on, the commit it started from}
-CHAT_START = "chat_start:"
-
-
-def _started_from(engine: Engine, tid) -> str:
-    """The commit a chat's work on `tid` started from: its last ACCEPT's record, or for a root taken at the go, the go's."""
-    taken = next((e.commit for e in reversed(engine.audit_log(tid)) if e.signal.name == "ACCEPT" and e.commit), None)
-    return taken or json.loads(engine.graph.setting(f"{CHAT_START}{tid}") or "{}").get("head", "")
-
-
 def _past(place, start: str, head: str) -> bool:
     """Has `head`, read in the git at `place`, moved past `start` — differs and descends from it (any head, where no start
     is recorded)?"""
@@ -2055,7 +2045,7 @@ def _work_tip(engine: Engine, tid, top) -> Optional[tuple]:
     linked worktree's work went unnamed until the start itself was handed in (critics over ac9dcaa, f96cb2b)."""
     wb = work_branch(engine)
     tip = W.git(top, "rev-parse", "--verify", "-q", f"refs/heads/{wb}^{{commit}}").stdout.strip()
-    if not (switches_branches(engine, tid) and _past(top, _started_from(engine, tid), tip)):
+    if not (switches_branches(engine, tid) and _past(top, past.start_of(engine, tid), tip)):
         return None
     return next((p for p, _, b in _trees(top) if b == wb), top), tip
 
@@ -2065,9 +2055,10 @@ def _unnamed(engine: Engine, tid, top, why: str = "no commit of the work is name
     (ii)): its lifts — commit on the work's branch where the mode works on one, or name the place or commit — and the
     linked work trees and branches of the repository standing past the start, never the person's main tree nor his
     branches: only the sender knows where its work is committed."""
-    start, wb = _started_from(engine, tid), work_branch(engine)
+    start, wb = past.start_of(engine, tid), work_branch(engine)
     trees = _trees(top)
-    theirs = {json.loads(engine.graph.setting(f"{CHAT_START}{tid}") or "{}").get("branch"), *(b for *_, b in trees[:1])}
+    theirs = {json.loads(engine.graph.setting(f"{past.CHAT_START}{tid}") or "{}").get("branch"),
+              *(b for *_, b in trees[:1])}
     there = [f"`place={p}` (at {h[:12]})" for p, h, _ in trees[1:] if _past(top, start, h)]
     held = {b for *_, b in trees}
     there += [f"`place={h}` (branch `{b}`)" for b, h in (ln.split(" ", 1) for ln in W.git(
@@ -2147,7 +2138,7 @@ def _a_chats_delivery(engine: Engine, tid, top, rev: Optional[str]) -> tuple[Opt
         return {"refused": True, "error": f"NOT delivered — {why}, and DELIVER again. No validator was started"}, {}
     if no := _unrelated(engine, place, commit):
         return {"refused": True, "error": no}, {}
-    if not _past(place, start := _started_from(engine, tid), commit):   # …the start judged FAILed true work (s21)
+    if not _past(place, start := past.start_of(engine, tid), commit):   # …the start judged FAILed true work (s21)
         return {"refused": True, "error": _unnamed(engine, tid, place, (
             f"{commit[:12]} is the commit the work started from" if commit == start else
             f"{commit[:12]} does not descend from {start[:12]}, the commit the work started from")
@@ -2203,7 +2194,7 @@ def _the_persons_move(engine: Engine, tid, sig: str) -> Optional[dict]:
 
 def back_to_their_branch(engine: Engine, tid) -> str:
     """What a chat hears at its root's PASS where the person's repository was left on the work's branch: switch it back."""
-    start = json.loads(engine.graph.setting(f"{CHAT_START}{tid}") or "{}")
+    start = json.loads(engine.graph.setting(f"{past.CHAT_START}{tid}") or "{}")
     place = _delegation().validator_workdir(engine, _delegation().default_agents(), tid)
     if not (place and W.is_repo_top(place) and switches_branches(engine, tid)):
         return ""
