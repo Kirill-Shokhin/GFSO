@@ -451,8 +451,8 @@ def test_live_a_check_the_system_runs_over_a_delivery_reaches_its_copy_alone(pro
 
 @pytest.mark.parametrize("apart", [True, False])
 def test_an_issuer_does_not_rule_in_its_executors_place_where_places_stand_apart(tmp_path, apart):
-    """As a validator (`tools_llm`): with no copy of the place, where places stand apart the contact does not run in
-    the executor's container, its CLI state and its tree (§10.3); on this host it runs in the place, alone."""
+    """As a validator (`tools_llm`): with no copy of the place the contact does not run in the executor's container,
+    its CLI state and its tree (§10.3) — on this host neither: what it rules on is read by its id, never as it stands."""
     e, _ = _auto_goal(tmp_path)
     (where := tmp_path / "ws").mkdir(exist_ok=True)
 
@@ -475,5 +475,6 @@ def test_an_issuer_does_not_rule_in_its_executors_place_where_places_stand_apart
                     execution=lambda en: _NoCopy())
     with pytest.raises(I.Unavailable):
         I._ask(e, TaskId("root"), "escalation", "exec-1", I.MOVE_SCHEMA, "", verbs, _Llm(), where=str(where))
-    assert ran == ([] if apart else [str(where)])
+    assert ran == []
+
     e.stop()

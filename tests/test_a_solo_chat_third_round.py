@@ -13,6 +13,7 @@ from gfso.adapters.llm import credentials
 from gfso.core.graph.model import generation_of_task
 from gfso.config import CALLER, Principal
 from gfso.core.types import Mode, TaskId
+from gfso.places import same_place
 from gfso.mcp import protocol, server as S
 from tests.test_a_solo_chat_writes_its_own_plan_and_the_person_gives_the_go import ASKED, _filled, _gone, no_model  # noqa: F401
 from tests.support import hold_a_credential
@@ -34,30 +35,34 @@ def _started(e, start):
     e.graph.store_setting("chat_start:root", json.dumps({"branch": "main", "head": start}))
 
 
-def test_a_delivery_of_the_start_with_the_work_elsewhere_names_where_the_work_is(no_model, tmp_path):
-    """The work committed on `gfso/<p>/work` in a linked worktree, the person's own file untracked in theirs: the
-    refusal is where the work is — never "commit notes.txt", which would put their file on their branch."""
+def test_a_delivery_of_the_start_with_the_work_elsewhere_carries_the_work(no_model, tmp_path):
+    """The work committed on `gfso/<p>/work` in a linked worktree, the person's tree still on the start: the DELIVER
+    carries the work's branch — the base was delivered, and FAILed, paid — and its
+    notice says nothing of another branch, the commit being the work's."""
     e = _engine(Mode.SOLO)
     _gone(e, _filled(TL.plan(e, ASKED)["text"]))
     git, start = _repo(tmp_path)
     _started(e, start)
-    git("worktree", "add", "-q", "-b", "gfso/p/work", str(tmp_path / "wt"))
-    git(*IDENT, "commit", "-q", "--allow-empty", "-m", "work", at=tmp_path / "wt")
-    for left in (["notes.txt"], []):               # …a clean tree too: the base was delivered, and FAILed, paid
-        no = TL._nothing_committed(e, TaskId("root"), str(tmp_path), start, left)
-        assert no and "gfso/p/work" in no and "deliver again" in no and "commit them" not in no, no
+    assert TL._work_tip(e, TaskId("root"), str(tmp_path)) is None, "no work's branch: nothing delivered by inference"
+    git("worktree", "add", "-q", "-b", "gfso/p/work", str(wt := tmp_path / "wt"))
+    assert TL._work_tip(e, TaskId("root"), str(tmp_path)) is None, "the work's branch at the start: not the work"
+    git(*IDENT, "commit", "-q", "--allow-empty", "-m", "work", at=wt)
+    work = git("rev-parse", "gfso/p/work")
+    at, tip = TL._work_tip(e, TaskId("root"), str(tmp_path))
+    assert tip == work and same_place(at, wt), (at, tip)
+    assert TL.not_the_work(e, at, work) == ""
 
 
-def test_a_dirty_tree_with_no_work_elsewhere_is_lifted_by_a_true_word(no_model, tmp_path):
+def test_the_start_is_never_delivered_and_its_refusal_names_the_lifts(no_model, tmp_path):
+    """Neither a dirty tree nor a word handed in the start: the refusal names committing on the work's branch, naming
+    the place, and an empty commit for a work that changed nothing."""
     e = _engine(Mode.SOLO)
     _gone(e, _filled(TL.plan(e, ASKED)["text"]))
     git, start = _repo(tmp_path)
     _started(e, start)
-    no = TL._nothing_committed(e, TaskId("root"), str(tmp_path), start, ["exts.py"])
-    assert no and "commit them on `gfso/p/work`" in no and "nothing_to_commit=true" in no and "No validator" in no, no
-    assert TL._nothing_committed(e, TaskId("root"), str(tmp_path), start, ["notes.txt"], True) is None
-    assert TL._nothing_committed(e, TaskId("root"), str(tmp_path), "b" * 40, ["notes.txt"]) is None, "a commit made"
-    assert TL._nothing_committed(e, TaskId("root"), str(tmp_path), start, []) is None, "an empty change is its own"
+    no = TL._unnamed(e, TaskId("root"), str(tmp_path))
+    assert "commit it on `gfso/p/work`" in no and "place=<its path>" in no and "empty commit" in no, no
+    assert "No validator" in no and "stand past" not in no, no
 
 
 def test_the_persons_own_page_signs_the_root_with_no_words(no_model):

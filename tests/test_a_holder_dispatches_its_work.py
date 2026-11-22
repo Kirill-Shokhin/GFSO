@@ -19,6 +19,7 @@ import gfso.delegate as D
 import gfso.sessions as S
 import gfso.tools as T
 import gfso.tools_llm as TL
+from gfso.adapters import worktrees as W
 from gfso.core.graph.model import generation_of_task
 from gfso.core.types import AgentId, Mode, Signal, State, TaskId
 from gfso.decompose.build import build_graph_live
@@ -27,7 +28,7 @@ from tests.test_one_session_carries_a_scope import _drive
 from gfso.roster import AgentRegistry
 from gfso.config import VALIDATION_CLAIM_TTL
 from gfso.core.types.ports import SystemClock
-from tests.support import criterion, make_engine, REGISTER
+from tests.support import REGISTER, a_repository, criterion, make_engine
 
 
 class _LLM:
@@ -53,6 +54,7 @@ def _project(tmp_path, hands="exec-1"):
     e.start()
     e.project_name = "p"
     agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    a_repository(tmp_path)                # …a repository, as every directory a role is named in
     for aid, kind in (("exec-1", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(aid, kind, workdir=str(tmp_path), project="p")
     D.publish_the_workforce(e, agents.list())
@@ -95,7 +97,9 @@ def test_after_the_holders_accept_its_hands_perform_and_report_in_its_name(tmp_p
     assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user").get("accepted")
     _pass(e, d)
     assert ran == [("root", "user")], f"one session, run for the holder: {ran}"
-    assert llm.cwd == [str(tmp_path)], "the session runs where the hands work"
+    # …in a place of the hands' base, given a repository of its own where it had none: a node's place cut from it
+    assert len(llm.cwd) == 1 and W.base_of(llm.cwd[0]) and Path(W.base_of(llm.cwd[0])) == tmp_path, (
+        "the session runs where the hands work")
     assert _state(e) in (State.VALIDATING, State.DONE)
     deliver = [x for x in e._audit.get_entries() if x.task_id == TaskId("root") and x.signal == Signal.DELIVER]
     assert [str(x.source) for x in deliver] == ["user"], "the delivery is the holder's, Del unchanged"

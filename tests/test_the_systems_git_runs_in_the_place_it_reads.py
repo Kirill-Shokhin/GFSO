@@ -65,13 +65,13 @@ def test_live_a_delivery_and_a_judges_copy_run_their_agents_filter_in_their_own_
     a, b = x.own / "a", x.own / "b"
     _plant(x, a, b, base)
     _sh(x, a, "echo w > w.txt")
-    W.commit_all(base, a, "gfso: a delivery", "exec-a", execution=x, branch="gfso/p/a")
+    tree = W.commit_all(base, a, "gfso: a delivery", "exec-a", execution=x, branch="gfso/p/a")
     _unmarked(x, b, base)
     shown = W.git(base, "show", "gfso/p/a:w.txt", execution=x)
     assert shown.stdout == "w\n", "the delivery is taken back into the base, whole"
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
     edits = []
-    with snapshot(a, round_ / "delivery", x, edits) as at:
+    with snapshot(a, round_ / "delivery", x, edits, delivered=(tree, W.head(a, execution=x), "")) as at:
         _sh(x, at, "echo judged > w.txt")
     assert edits == ["w.txt"]
     _unmarked(x, b, base)

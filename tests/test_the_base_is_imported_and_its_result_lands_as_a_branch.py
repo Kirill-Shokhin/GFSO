@@ -15,6 +15,7 @@ from pathlib import Path
 
 import gfso.adapters.execution as E
 import gfso.adapters.worktrees as W
+import gfso.store as ST
 from gfso.runtime import ProjectRegistry
 from gfso.tools import TOOLS
 import gfso.tools_llm as TL
@@ -362,7 +363,7 @@ def test_live_a_project_from_before_keeps_its_clones_once_its_base_moves_in(tmp_
 
 def test_in_chat_is_admitted_under_a_container_execution(monkeypatch):
     """The user's own agent works on the host; its delivery is recorded there and taken into the base its judge copies
-    (`Volume.take_in`), its parts' joined work lands back as a branch (`workspaces._to_the_chat`) — so neither the mode
+    (`store.admit`), its parts' joined work lands back as a branch (`workspaces._to_the_chat`) — so neither the mode
     nor a role's execution is refused for it any more (it was, while nothing carried a chat's work to its judge)."""
     e = make_engine()
     monkeypatch.setattr(TL, "declaring_role", lambda engine, agents=None: {"execution": "e3-linux"})
@@ -460,16 +461,19 @@ def test_live_a_chats_delivery_is_taken_in_its_parts_land_back_and_its_pass_name
     (user / "c.txt").write_text("the chat's\n")
     _git(user, "add", "c.txt")
     _git(user, "commit", "-qm", "the chat's work")
-    ref = WS.delivered_ref(e, "root")
-    tree, commit, left = W.record_head(user, ref)
+    tree, commit, left = W.read_head(user)
     # …the fixture's hook runs where git runs a hook with no exec bit (Windows), not on Linux (red on CI's live leg)
     assert set(left) == {"mine.txt", *(["HOOK-RAN"] if (user / "HOOK-RAN").exists() else [])}, \
         "only what is committed is delivered; the rest is named"
     status = _git(user, "status", "--porcelain")          # …the fixture's hook ran on this test's own checkout
-    E.take_in(x, ref)
-    assert _inside(x, "rev-parse", ref) == commit and _inside(x, "rev-parse", "HEAD") == joined, "taken in, nothing moved"
+    ST.admit(e, x, commit, user)
+    ST.keep(e, x, commit, user, user).join(600)
+    store = ST._where(e, x)[0]
+    assert W.git(store, "rev-parse", ST.KEEP + commit, execution=x).stdout.strip() == commit, "not kept in the store"
+    assert _inside(x, "rev-parse", "HEAD") == joined, "the base moved"
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-ws" / "root_1"))
-    with snapshot(x.base, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")) as at:
+    with snapshot(ST.held(e, x, commit), Path(TL._own_place(str(round_), 0, x)) / "delivery", x,
+                  delivered=(tree, commit, "")) as at:
         assert x.files.read_bytes(str(Path(at) / "c.txt")) == b"the chat's\n"
     e.accepted_delivery, e.accepted_repository = (lambda task_id: (tree, commit)), (lambda task_id: str(user))
     assert WS.land_accepted(e, None, SimpleNamespace(id="root")) is None, e.said
@@ -481,11 +485,15 @@ def test_live_a_chats_delivery_is_taken_in_its_parts_land_back_and_its_pass_name
 
 
 @live
-def test_live_a_chats_delivery_before_any_session_brings_the_place_up(x, user):
+def test_live_a_chats_delivery_before_any_session_brings_the_place_up(x, user, monkeypatch):
     """Solo in_chat in a container project: the chat delivers before any session of the project started a container,
-    and `take_in` met a volume not made yet (live inchat-live-1113-200443) — it brings the place up, the base imported."""
+    and its admission met a volume not made yet (live inchat-live-1113-200443) — it brings the place up, the base
+    imported."""
+    monkeypatch.setattr(WS, "execution_of", lambda engine, agents=None: x)
     _git(user, "add", "mine.txt")
     _git(user, "commit", "-qm", "the chat's work")
-    tree, commit, _ = W.record_head(user, ref := "refs/gfso/p/delivered/root")
-    E.take_in(x, ref)
-    assert _inside(x, "cat-file", "-t", commit) == "commit", "the judge finds the delivery in the base"
+    tree, commit, _ = W.read_head(user)
+    ST.keep(e := _engine(x), x, commit, user, user).join(600)
+    assert W.git(ST._where(e, x)[0], "cat-file", "-t", commit, execution=x).stdout.strip() == "commit", \
+        "the judge finds the delivery in the project's store"
+

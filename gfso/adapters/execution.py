@@ -140,6 +140,10 @@ STATE_DIR = ".gfso-state"
 BASE_DIR = ".gfso-base"
 #: the base as a session reads it (`_READ_COPY`), and the ref in the base that names what it holds
 BASE_READ, READ_REF = ".gfso-base-read", "refs/gfso/read"
+#: the project's store in its places volume, under the project's own directory (`gfso.store`): a repository of the
+#: system's, the base imported into it (`_IMPORT`), its git run in the project's container alone — no session's container
+#: mounts it (`ContainerExecution.session`), so no executor deletes a delivery kept there or prunes what it names
+STORE_DIR = ".gfso-store"
 #: what keys, in a project's settings, the record of its base's import: {"for": the root, commit, at}
 IMPORTED = "imported"
 #: a system container's own memory-backed directory — its script laid there by the system, its log written there:
@@ -1101,7 +1105,9 @@ _READ_AGAIN = "d=/to/$1 fc=$2 fs=$3\n" + _READ_COPY + "read_copy"
 #: git), "$2" the base's directory in the volume, "$3" the project, "$4" "$5" the system's LFS filter (`lfs`), which
 #: writes each LFS file's content from the objects carried, verified — written into the base's own config too, so the
 #: root's agent's own git agrees. Its git reads no config but the clone's own, runs no hook; a node branch that stands in
-#: the volume is never overwritten, a base with no git never removed
+#: the volume is never overwritten, a base with no git never removed. The imported commit is kept in the project's
+#: store (`STORE_DIR`) from the same bundle, every object checked: its history there once, which every later keep
+#: stands on and the guards credit (`store.held`)
 _IMPORT = r'''c=$1 d=/to/$2 p=$3 fc=$4 fs=$5
 ''' + _READ_COPY + r'''mkdir -p /tmp/in && tar -x -C /tmp/in || exit 1
 if [ -z "$c" ]; then
@@ -1130,13 +1136,11 @@ for f in /tmp/in/lfs/*; do
   [ ! -d "${d%/*}/''' + BASE_READ + r'''/.git" ] || { mkdir -p "$q" && ln -f "$s/$o" "$q/$o"; } || exit 1
 done
 for kv in "$fc" "$fs"; do g config "${kv%%=*}" "${kv#*=}" || exit 1; done
-g checkout -q -f -B "$(cat /tmp/in/branch)" "$c" && g clean -q -ffdx && read_copy'''
-#: `Volume.take_in` inside: the bundle on stdin fetched into the base at /to/$1 as the ref $2, every object checked
-_TAKE_IN = r'''d=/to/$1 r=$2
-cat > /tmp/in.bundle || exit 1
-GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c safe.directory='*' -c core.hooksPath=/dev/null \
-  -c core.fsmonitor=false -c transfer.fsckObjects=true -c fetch.fsckObjects=true -C "$d" \
-  fetch -q --no-tags /tmp/in.bundle "+$r:$r" </dev/null'''
+g checkout -q -f -B "$(cat /tmp/in/branch)" "$c" && g clean -q -ffdx && read_copy || exit 1
+s=/to/''' + STORE_DIR + r'''
+gs() { GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c safe.directory='*' -c core.hooksPath=/dev/null \
+  -c core.fsmonitor=false -c fetch.fsckObjects=true -C "$s" "$@" </dev/null; }
+{ [ -d "$s/.git" ] || git init -q "$s"; } && gs config gc.auto 0 && gs fetch -q --no-tags /tmp/in/bundle "HEAD:refs/gfso/keep/$c"'''
 #: what the docker client says where the daemon does not answer — the place down (`PlaceUnavailable`)
 _DOWN = re.compile(r"failed to connect to the docker API|Cannot connect to the Docker daemon|error during connect", re.I)
 #: …and where the container is gone or stopped under a live server — started again, once
@@ -1942,11 +1946,6 @@ class Volume:
             raise OSError(f"{self.name}: the base's read copy could not be brought up "
                           f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
 
-    def fetch_in(self, bundle, ref: str) -> subprocess.CompletedProcess:
-        """`_TAKE_IN` over the base: the git bundle read from `bundle` fetched as `ref`, every object checked."""
-        return self._one_shot(self.image, ["--mount", f"type=volume,src={self.name},dst=/to"], [_TAKE_IN, "sh", BASE_DIR, ref],
-                              "take", _image_user(self.image) or "0", stdin=bundle, interactive=True)
-
     def land_tree(self, image: str, to: Path) -> list:
         """A base with no git as it stands in the volume, written to the host directory `to` in place of what stood
         there — a root's accepted result, where its user reads it; what could not be written as it stood
@@ -2187,34 +2186,6 @@ def _left_inert(to: Path) -> list:
 NO_LAZY_FETCH = {"GIT_NO_LAZY_FETCH": "1"}
 
 
-def take_in(ex, ref: str) -> None:
-    """The commit `ref` names in the user's repository, fetched into the base of `ex`'s volume under the same ref —
-    a chat's delivery for its judge, who copies the base (`snapshots._checkout`). Bundled on the host by their own
-    git of what the base's import lacks, carried in through the port, fetched inside with every object checked
-    (`fsckObjects`), under no config nor hook of a repository's; no checkout, no branch of the base moved. The
-    mirror of `worktrees.land`."""
-    if not isinstance(ex, ContainerExecution):
-        return                                   # …this host's base IS the user's repository: nothing to take
-    # …its place up first, the base imported: a solo chat delivers before any session of the project ever started a
-    # container, and its volume was not made yet (live inchat-live-1113-200443)
-    ex.start()
-    v = ex.volume
-    git, since = _host_git(v.base), json.loads(v.record[0](VOLUME + IMPORTED) or "{}").get("commit")
-    sha = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").stdout.strip()
-    if not sha:
-        raise OSError(f"{v.base}: {ref} names no commit")
-    if sha == since:
-        return
-    nots = [f"^{since}"] if since and git("merge-base", "--is-ancestor", since, sha).returncode == 0 else []
-    with tempfile.TemporaryDirectory(prefix="gfso-take-") as d, v.writes(v.base):
-        if (got := git("bundle", "create", "-q", str(b := Path(d) / "in.bundle"), ref, *nots)).returncode:
-            raise OSError(f"{v.base}: {ref} could not be bundled ({got.stderr.strip()[-300:]})")
-        with open(b, "rb") as stream:
-            if (got := v.fetch_in(stream, ref)).returncode:
-                raise OSError(f"{v.name}: the delivery {sha[:12]} could not be taken into the base "
-                              f"({(got.stderr or b'').decode(errors='replace').strip()[-300:]})")
-
-
 def _image_user(image: str) -> str:
     """The user `image` names to run as; '' for none."""
     return run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
@@ -2263,12 +2234,18 @@ def _no_places(base: Path) -> str | None:
 
 
 
-def _lfs_of(base: Path, git) -> tuple[dict, list]:
-    """({oid: its object in the user's LFS store}, [the paths whose object it lacks]) of the LFS pointers in HEAD's
+def lfs_held(base: Path, rev: str) -> tuple[dict, list]:
+    """`_lfs_of` the commit `rev` of the user's repository at `base`, read by their own git on the host — the objects
+    a delivery made there is kept with (`store.keep`)."""
+    return _lfs_of(base, _host_git(base), rev)
+
+
+def _lfs_of(base: Path, git, rev: str = "HEAD") -> tuple[dict, list]:
+    """({oid: its object in the user's LFS store}, [the paths whose object it lacks]) of the LFS pointers in `rev`'s
     tree — read as git stores them, so no git-lfs runs: a blob short enough to be a pointer and parsed as one
     (`lfs.parse`). An object counts where its size is the pointer's; its sha256 is checked where it is written (`lfs`).
     Missing ones are not fetched: that is the user's network and credentials, asked from no thread of the system."""
-    entries = [e.split("\t", 1) for e in git("ls-tree", "-r", "-l", "-z", "HEAD").stdout.split("\0") if "\t" in e]
+    entries = [e.split("\t", 1) for e in git("ls-tree", "-r", "-l", "-z", rev).stdout.split("\0") if "\t" in e]
     small = [(m[2], path) for meta, path in entries
              if (m := meta.split())[1] == "blob" and m[3].isdigit() and int(m[3]) <= lfs.LONGEST]
     if not small:
@@ -2411,11 +2388,11 @@ def _carried_in(base: Path, project: str, d: Path) -> tuple:
     return commit, out, _left_out(base, git, no_object)
 
 
-def fetched_on_host(base: Path, bundle: bytes) -> str:
+def fetched_on_host(base: Path, bundle: bytes, ref: str = "HEAD") -> str:
     """The objects of `bundle` taken into the user's repository at `base` by their own git — `fetch` of it alone, no
     ref written, no `FETCH_HEAD` —; git's words where it refused, else ''. Only a bundle: the bytes come out of a temp
     the base's sessions write, and handed anything else the host's git takes it for a repository it names and opens it,
-    a network path too (critic over a99ea34)."""
+    a network path too (critic over a99ea34). `ref`: the bundle's ref fetched."""
     if not bundle.startswith((b"# v2 git bundle\n", b"# v3 git bundle\n")):
         return "what came out is no git bundle"
     with tempfile.TemporaryDirectory(prefix="gfso-land-") as d:
@@ -2423,7 +2400,7 @@ def fetched_on_host(base: Path, bundle: bytes) -> str:
         # …every object it carries checked as git takes it (`fsckObjects`): the pack is made where an agent writes, and
         # the user's git parses it on the host (critic over the stream in use)
         got = run(["git", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "-C", str(base), "fetch",
-                   "-q", "--no-recurse-submodules", "--no-write-fetch-head", str(f), "HEAD"], timeout=600,
+                   "-q", "--no-recurse-submodules", "--no-write-fetch-head", str(f), ref], timeout=600,
                   text=True, encoding="utf-8", errors="replace")
     return "" if got.returncode == 0 else (got.stderr or "").strip()[-300:] or f"git fetch exited {got.returncode}"
 
@@ -2672,11 +2649,10 @@ class ContainerExecution(_SystemWrites, ExecutionPort):
 
     def session(self, cwd: str, agent: str | None = None) -> "ExecutionPort":
         """The container of the place a session works in (`PlaceContainer`): it writes there alone, reads the base,
-        and never sees another node's place. `agent`: who works there, labelled on it where it starts by this call."""
-        try:
-            rw = _writable_root(_real(cwd), self)
-        except ValueError:
-            return self        # refused where the call starts, after the place's own health — a dead place stops first
+        and never sees another node's place. `agent`: who works there, labelled on it where it starts by this call.
+        Where no session works (`_session_root`), the project's own container."""
+        if (rw := _session_root(cwd, self)) is None:
+            return self
         with _START:
             s = _SESSIONS.setdefault((self.container, os.path.normcase(rw)), PlaceContainer(self, rw, agent))
             for c in (s, s.paired or s):     # …the record's word, whoever started the container first (a system's git)
@@ -3074,7 +3050,20 @@ def _writable_root(cwd: Path, project: "ContainerExecution") -> Path:
     return project.own.joinpath(*rel[:1 + dotted + batch])
 
 
+def _session_root(cwd, project: "ContainerExecution") -> "Path | None":
+    """The writable root of a session working in `cwd` (`_writable_root`), or None where no session works: outside the
+    project's mounts — refused where the call starts, after the place's own health: a dead place stops first —, the
+    project's own directory whole and its store (`STORE_DIR`): a call there is the system's, in the project's container;
+    a session's container holding either could delete a kept delivery."""
+    try:
+        rw = _writable_root(_real(cwd), project)
+    except ValueError:
+        return None
+    return None if rw == project.own or rw.is_relative_to(project.own / STORE_DIR) else rw
+
+
 def _scratch_above(rw: Path) -> "Path | None":
+
     """The scratch whose round — or a round's batch — the writable root `rw` is; None for any other root."""
     return next((p for p in (rw.parent, rw.parent.parent) if p.name.startswith(SCRATCH)), None)
 

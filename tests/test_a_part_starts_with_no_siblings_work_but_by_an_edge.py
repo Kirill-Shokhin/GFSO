@@ -74,7 +74,7 @@ def test_a_part_admitted_after_a_join_stands_on_what_the_whole_then_held(tmp_pat
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}), "par": _Executor("par", {}),
                 "c": _Executor("c", {"c.c": "C\n"})}
     _dispatched(e, agents, sessions, lambda: e.graph.setting(grounds_key("par")), held=("b",))
-    _until(lambda: _done(e, "a"))
+    _until(lambda: _done(e, "a") and not e.joins.joining_nodes())     # …a's join into the whole over: its work held
     T.decompose(e, "par", [_part("c")], accepted_risks=REGISTER)
     _dispatched(e, agents, sessions, lambda: sessions["c"].saw)
     assert "a.c" in sessions["c"].saw, "its decomposer's fixing saw that work: the part stands on it"

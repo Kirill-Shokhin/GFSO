@@ -182,18 +182,3 @@ def test_a_place_keeps_out_what_the_base_keeps_out_and_reads_its_line_endings(tm
     assert _git(place, "config", "--get", "core.autocrlf").strip() == "false"
 
 
-def test_a_copy_of_a_place_at_its_real_depth_still_borrows_the_base_objects(tmp_path):
-    """A validator's copy stands deeper than the place; borrowed by the place's relative path, its objects were gone."""
-    base = _repo(tmp_path / "ws")
-    (base / "src").mkdir()
-    (base / "src" / "lib.c").write_text("int a;\n")                  # a subtree only the base's objects hold
-    _git(base, "add", "-A")
-    _git(base, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "nested")
-    nodes = tmp_path / ".gfso-nodes-ws" / "p"
-    place = nodes / "a"
-    W.ensure(base, place, "gfso/p/a", base)
-    at = nodes / ".gfso-scratch-a" / "r" / "batch1" / "delivery"
-    edits: list = []
-    with snapshot(place, at, LocalExecution(), edits) as copy:
-        (Path(copy) / "src" / "lib.c").write_text("int b;\n")
-    assert edits == ["src/lib.c"]

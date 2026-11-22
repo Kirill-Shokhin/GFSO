@@ -57,6 +57,7 @@ def _call(p, verb, e, *a, **kw):
 def _issued(tmp_path, staffed: bool = True, mode=None):
     """His root and a seam he issues from it to `engineering` from his page — under `mode`, none by default — with,
     where `staffed`, the project's validator registered; and the answer his issue got."""
+    a_repository(tmp_path)    # …where his roles work: a repository, as every directory a role is named in
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     e.project_name = "p"
@@ -451,11 +452,21 @@ def test_under_semi_a_node_he_issues_below_his_root_is_his_seam(tmp_path):
     assert _state(e) == "VALIDATING"
 
 
-def test_a_validator_registered_outside_a_repositorys_top_is_told_his_seams_cannot_force_rework(tmp_path):
+def test_a_validator_registered_where_no_commit_records_a_tree_is_told_his_seams_cannot_force_rework(tmp_path):
+    """In a repository with no commit, no delivery records a tree; below a work tree's top it records the top's commit
+    and its judge stands there (`judged_at`); a directory with no git at all is refused, with its lift."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.project_name = "p"
-    out = TL.register_agent(e, "p-val", "llm-validator", workdir=str(tmp_path))
+    (plain := tmp_path / "plain").mkdir()
+    assert "git init" in TL.register_agent(e, "p-val", "llm-validator", workdir=str(plain)).get("error", "")
+    (bare := tmp_path / "nocommit").mkdir()
+    subprocess.run(["git", "-C", str(bare), "init", "-q"], check=True)
+    out = TL.register_agent(e, "p-val2", "llm-validator", workdir=str(bare))
     ensure_dispatcher(e).stop()
-    assert "top of" in str(out.get("seam_boundary")), out
+    assert "no git repository with a commit" in str(out.get("seam_boundary")), out
     repo = a_repository(tmp_path / "repo")
-    assert "seam_boundary" not in TL.register_agent(e, "p-val2", "llm-validator", workdir=str(repo))
+    (sub := repo / "sub").mkdir()
+    assert "seam_boundary" not in TL.register_agent(e, "p-val3", "llm-validator", workdir=str(sub))
+    assert "seam_boundary" not in TL.register_agent(e, "p-val4", "llm-validator", workdir=str(repo))
+
+

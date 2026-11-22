@@ -1393,7 +1393,7 @@ def test_the_roster_verbs_are_on_every_door(tmp_path, monkeypatch):
     monkeypatch.setenv("GFSO_HOME", str(tmp_path))
     assert "register_agent" in TL.TOOLS and "list_agents" in TL.TOOLS
     e = _engine()
-    out = TL.TOOLS["register_agent"](e, "w-exec-1", "llm-executor", workdir=str(tmp_path))
+    out = TL.TOOLS["register_agent"](e, "w-exec-1", "llm-executor", workdir=workdir(tmp_path))   # …a repository, as every directory a role is named in
     assert out["will_be_validated_by"]                      # …and it says who would validate its work
     assert "w-exec-1" in TL.TOOLS["list_agents"](e)["agents"]
     e.stop()
@@ -1753,7 +1753,7 @@ def test_the_roster_verbs_do_not_ask_for_a_project_that_has_no_graph_yet(tmp_pat
     monkeypatch.setenv("GFSO_HOME", str(tmp_path))
     assert {"register_agent", "unregister_agent", "list_agents"} <= set(T.PROJECTLESS_VERBS)
     e = _engine()
-    out = TL.TOOLS["register_agent"](e, "w-val-1", "llm-validator", workdir=str(tmp_path))
+    out = TL.TOOLS["register_agent"](e, "w-val-1", "llm-validator", workdir=workdir(tmp_path))   # …a repository, as every directory a role is named in
     assert out["registered"] == "w-val-1"
     e.stop()
 

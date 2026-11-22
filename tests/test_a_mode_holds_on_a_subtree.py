@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import subprocess
 
 import pytest
 
@@ -87,6 +88,8 @@ def _in_its_chat(e, workdir):
     """`engineering`'s own connection took its name (`act_as`): it performs in a chat here — what the scope recorded
     for it, now its own fact — and the project's validator is registered at the repository, for a check he chooses."""
     e.performs_in_chat(HOLDER)
+    if not (workdir / ".git").exists():
+        a_repository(workdir)             # …where his roles work: a repository, as every directory a role is named in
     assert not TL.register_agent(e, "p-val", "llm-validator", workdir=str(workdir)).get("refused")
 
 
@@ -303,15 +306,25 @@ def test_who_checks_a_part_is_heard_over_the_scopes_top(tmp_path):
 
 
 def test_a_delivery_inside_the_scope_names_no_branch_of_the_shared_checkout(tmp_path):
-    """Branch switching is off in a checkout the streams share: a delivery with nothing committed is told to commit
-    where it works, not on the system's work branch."""
+    """Branch switching is off in a checkout the streams share, so no work's branch stands for the work: its sender
+    names what it delivers. Named nothing — uncommitted, then committed in the shared checkout — refused, the lift the
+    place, never the system's work branch; named, its commit delivered."""
     repo = a_repository(tmp_path / "repo")
+    git = lambda *a: subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", *a],
+                                    check=True, capture_output=True, text=True).stdout.strip()
     e = _shared(tmp_path, workdir=repo)
     _split(e, X, ASK, HOLDER, HOLDER)
     assert not _call(CONSOLE, "signal", e, ASK, "ACCEPT", HOLDER).get("refused")
     (repo / "f.txt").write_text("v1\n")
-    out = _call(CONSOLE, "signal", e, ASK, "DELIVER", HOLDER, result="f.txt written", self_validation="PASS")
-    assert out.get("refused") and "where you work" in out["error"] and "gfso/p/work" not in out["error"], out
+    deliver = lambda **kw: _call(CONSOLE, "signal", e, ASK, "DELIVER", HOLDER, result="f.txt written",
+                                 self_validation="PASS", **kw)
+    for committed in (False, True):
+        if committed:
+            git("add", "f.txt"), git("commit", "-qm", "f")
+        out = deliver()
+        assert out.get("refused") and "place=<its path>" in out["error"] and "gfso/p/work" not in out["error"], out
+    out = deliver(place=str(repo))
+    assert out.get("accepted") and e.delivered(TaskId(ASK))[1] == git("rev-parse", "HEAD"), out
 
 
 @pytest.mark.parametrize("asked", [False, True], ids=["by default", "asked again"])

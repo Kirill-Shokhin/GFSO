@@ -19,7 +19,7 @@ from gfso import tools_llm as TL
 from gfso.core.protocol.procedure import part_criteria, probe_id
 from gfso.core.types import Criteria, Probe
 from gfso.packets import _criteria_text, owed_probes
-from tests.support import criterion
+from tests.support import committed, criterion
 from tests.test_validate_result import _eng, _fenced
 from tests.support import FakeSpec
 
@@ -100,12 +100,12 @@ def test_the_dial_at_zero_is_one_run_carrying_everything():
 _LINE = re.compile(r"PINNED CHECK \[([^\]]+)\] — ([^:]+): run `([^`]+)`")
 
 
-def _split_node(e):
+def _split_node(e, at):
     probes = [{"behaviour": f"wide {k}", "command": f"check wide {k}", "expect": "it holds"} for k in range(3)]
     T.create_task(e, "big", {"description": "a contract one criterion of which owes more than a run holds",
                              "criteria": [criterion("wide", check=probes), criterion("small")]}, "alice")
     T.signal(e, "big", "ACCEPT", "alice")
-    T.signal(e, "big", "DELIVER", "alice", result="built it")
+    T.signal(e, "big", "DELIVER", "alice", result="built it", _recorded=committed(at))
 
 
 class _Runs:
@@ -142,7 +142,7 @@ class _Runs:
 def test_a_split_criterion_is_the_conjunction_of_its_runs(monkeypatch, word, bad, tmp_path):
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "2")
     e = _eng()
-    _split_node(e)
+    _split_node(e, tmp_path)
     llm = _Runs(word, bad)
     out = TL.validate_result(e, "big", _llm=llm, workdir=str(tmp_path))
     assert len(llm.packets) == 2 and all("**wide**" in p and "SPLIT between runs" in p for p in llm.packets)
@@ -169,7 +169,7 @@ def test_a_split_run_that_left_the_criterion_out_does_not_pass_it(monkeypatch, t
     """The union must cover what the criterion owes: a run silent on its share leaves those probes unobserved."""
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "2")
     e = _eng()
-    _split_node(e)
+    _split_node(e, tmp_path)
 
     class _Silent(_Runs):
         def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):

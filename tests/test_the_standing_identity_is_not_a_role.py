@@ -24,7 +24,7 @@ import pytest
 
 from gfso import tools_llm as TL
 from gfso.tools import _agent_id
-from tests.support import make_engine
+from tests.support import a_repository, make_engine
 
 
 @pytest.fixture(autouse=True)
@@ -77,7 +77,7 @@ def test_an_ordinary_role_registers_exactly_as_before(tmp_path):
     e = make_engine()
     e.start()
 
-    out = TL.register_agent(e, "w-val-1", "llm-validator", workdir=str(tmp_path))
+    out = TL.register_agent(e, "w-val-1", "llm-validator", workdir=str(a_repository(tmp_path)))   # …a repository, as every directory a role is named in
 
     assert out.get("refused") is not True, out
     assert "w-val-1" in TL.list_agents(e).get("agents", {})

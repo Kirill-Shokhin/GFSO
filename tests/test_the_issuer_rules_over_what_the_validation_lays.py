@@ -29,7 +29,7 @@ import gfso.tools as T
 from gfso import issuer as I
 from gfso.core.protocol.procedure import inputs_token, probe_id
 from gfso.core.types import DoneReason, State, TaskId
-from tests.support import criterion
+from tests.support import a_place, criterion
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
 from tests.test_the_mode_decides_who_holds_what import Mode, _admit, _engine, _kid
 
@@ -95,7 +95,7 @@ class _Sees(_ContactLLM):
 def _rule(e, tmp_path, retire):
     llm = _Sees({"decision": "accept", "justification": "ran it: no one layout meets both", "retire_findings": retire},
                 ran={"Bash": 1})
-    out = I.answer_the_challenge(e, WHOLE, str(e.graph.issuer_of(WHOLE)), _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, WHOLE, str(e.graph.issuer_of(WHOLE)), _llm=llm, where=a_place(tmp_path))
     e.wait_idle()
     return out, llm
 

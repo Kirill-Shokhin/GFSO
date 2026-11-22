@@ -4,6 +4,8 @@ declares the execution "default" on it, an executor registered naming no executi
 in one line what is missing. The person's word for this host, given on their page, is the explicit opt-out.
 """
 import json
+import os
+import shutil
 import subprocess
 import subprocess
 
@@ -17,7 +19,7 @@ import gfso.tools_llm as TL
 import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution
 from gfso.core.types import AgentId, Mode
-from tests.support import make_engine
+from tests.support import a_repository, make_engine
 
 
 @pytest.fixture
@@ -26,7 +28,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("GFSO_AGENTS_PATH", str(tmp_path / "agents.json"))
     monkeypatch.setattr(config, "local_agents", lambda: False)
     monkeypatch.setattr(WS, "_EXECUTIONS", {})
-    (tmp_path / "w").mkdir()
+    a_repository(tmp_path / "w")          # …where its roles work: a repository, as every directory a role is named in
     return tmp_path
 
 
@@ -78,7 +80,7 @@ def test_a_role_registered_again_keeps_the_execution_it_declares(home):
 
 def test_an_executor_beside_the_users_own_chat_works_in_the_default_container(home):
     """Under `in_chat` the parts below the holder's depth are dispatched to the project's executor — unattended work,
-    which runs in a container; the chat's own deliveries are carried in to their judge (`take_in`)."""
+    which runs in a container; the chat's own deliveries are kept in the base their judge copies (`store.keep`)."""
     _declare(home)
     e = make_engine()
     e.set_mode(Mode.SEMI, None, AgentId("user"), said="semi in my chat")
@@ -175,26 +177,27 @@ def test_a_docker_below_the_floor_stops_every_container_execution_not_only_docto
     assert "CVE-2025-9074" in E._unavailable(None, storage=False)
 
 
-def test_a_refused_mode_leaves_the_executors_where_they_were(home):
-    """A first run on a directory that is no repository: the mode is refused, and the executors it had moved into the
-    container shut the user's other choices — in their chat, on this host (critic)."""
+def test_a_role_on_a_directory_that_is_no_repository_is_refused_and_leaves_the_roster_as_it_was(home):
+    """A first run on a directory that is no repository: its executors moved into the container shut the user's other
+    choices, and no delivery from it could be judged. Refused where it is named, with the lift — the person's agent
+    makes it a repository —, nothing registered nor made a repository."""
     _declare(home)
     e = make_engine()
-    _registered(e, home, "p-exec"), _registered(e, home, "p-val", "llm-validator")
-    assert TL.set_mode(e, "solo").get("refused")
-    assert TL._roster().get("p-exec").get("execution") is None
-    assert not TL.set_mode(e, "solo", perform="in_chat").get("refused"), "the user's own chat still open to them"
+    (plain := home / "plain").mkdir()
+    got = TL.register_agent(e, "p-exec", "llm-executor", workdir=str(plain))
+    assert got.get("refused") and "git init" in got["error"], got
+    assert TL._roster().get("p-exec") is None and not (plain / ".git").exists()
 
 
 def test_a_mode_that_raises_or_cannot_move_every_executor_leaves_them_where_they_were(home, monkeypatch):
     """Past the refusals too: a moved executor whose workdir is gone made the move raise half done, and anything raising
     after it (a git timeout, the staffing read) left the project in the container (critic, reproduced)."""
     _declare(home)
-    (home / "w2").mkdir()
+    a_repository(home / "w2")
     e = make_engine()
     _registered(e, home, "p-exec"), _registered(e, home, "p-val", "llm-validator")
     assert not TL.register_agent(e, "p-exec2", "llm-executor", workdir=str(home / "w2")).get("refused")
-    (home / "w2").rmdir()
+    shutil.rmtree(home / "w2", onerror=lambda f, p, _: (os.chmod(p, 0o700), f(p)))
     got = TL.set_mode(e, "solo")
     assert got.get("refused") and "p-exec2" in got["error"], got
     assert {a: TL._roster().get(a).get("execution") for a in ("p-exec", "p-exec2")} == {"p-exec": None, "p-exec2": None}

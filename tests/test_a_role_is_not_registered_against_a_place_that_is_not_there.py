@@ -23,7 +23,7 @@ from gfso import tools as T
 from gfso import tools_llm as TL
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.places import cheap_to_ask, same_place, text_place
-from tests.support import criterion, make_engine
+from tests.support import a_repository, criterion, make_engine
 
 BS = chr(92)
 
@@ -331,7 +331,7 @@ def test_the_advice_names_the_spelling_that_actually_binds(tmp_path, monkeypatch
     RESOLVED workdir, so advice quoting the caller's own relative argument names a different place
     when run from a different directory."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "work").mkdir()
+    a_repository(tmp_path / "work")       # …a repository, as every directory a role is named in
     e = make_engine()
     monkeypatch.setattr(TL, "_roster", lambda _e: AgentRegistry(str(tmp_path / "roster.json")))
     # A transport with no `run_agent`: the door returns its own error right AFTER the workdir

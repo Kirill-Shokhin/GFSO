@@ -26,7 +26,7 @@ from gfso.delegate import _DISPATCHERS
 from gfso import tools as T, tools_llm as TL
 from gfso.config import CALLER, STANDING
 from gfso.adapters.llm.stub import StubLLM
-from tests.support import criterion, make_engine
+from tests.support import a_repository, criterion, make_engine
 from gfso.mcp import server as S
 
 
@@ -514,6 +514,7 @@ def test_the_mode_is_set_before_the_plan_on_every_door(monkeypatch, tmp_path):
     never started (`use_project` is not on the HTTP door, `set_mode` 404)."""
     reg = _reg(monkeypatch, tmp_path)
     app = create_app(reg.engine(), registry=reg)
+    a_repository(tmp_path)                # …a repository, as every directory a role is named in
     with TestClient(app) as c:
         refused = c.post("/api/run/set_mode?project=fresh_one", json={"mode": "solo"}).json()
         assert refused.get("refused") and "validator" in refused["error"], refused   # observed in every mode

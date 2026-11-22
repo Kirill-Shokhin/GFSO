@@ -11,6 +11,7 @@ CONTROL: drop the record in `answer_the_challenge`'s refusing paths and both tes
 """
 from __future__ import annotations
 
+from tests.support import a_place
 from gfso import issuer as I
 from gfso.core.types import Mode, Signal, TaskId
 from tests.test_a_ruling_is_part_of_the_acceptance import _auto_root, _challenged_with_a_finding, _no_l2  # noqa: F401
@@ -27,7 +28,7 @@ def test_an_acceptance_refused_before_the_signal_is_read_by_the_next_turn(tmp_pa
     _auto_root(e)
     pid = _challenged_with_a_finding(e, "root", "g")
     llm = _ContactLLM({"decision": "accept", "justification": "not g", "retire_findings": [pid]}, ran={"Bash": 1})
-    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=a_place(tmp_path))
     assert out["status"] == "users", out
     (row,) = _refusals(e)
     assert row.signal == Signal.ACCEPT_CHALLENGE and row.error and out["why"][:60] in row.error, row
@@ -41,7 +42,7 @@ def test_a_rejection_that_ran_nothing_is_read_by_the_next_turn(tmp_path):
     _auto_root(e)
     _challenged_with_a_finding(e, "root", "g")
     llm = _ContactLLM({"decision": "reject", "justification": "it stands"}, ran={})
-    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=a_place(tmp_path))
     assert out["status"] == "uncontacted", out
     (row,) = _refusals(e)
     assert row.signal == Signal.REJECT_CHALLENGE and "ran nothing" in row.error, row

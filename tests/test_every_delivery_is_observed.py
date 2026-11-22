@@ -22,7 +22,7 @@ import gfso.tools_llm as TL
 from gfso.api.server import create_app
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.engine.verdicts import observations
-from tests.support import criterion, instrument_passes, make_engine, parts_held, REGISTER
+from tests.support import committed, criterion, instrument_passes, make_engine, parts_held, REGISTER
 from tests.test_delegate import _agents, _dispatch_validate
 
 _RISK = REGISTER
@@ -41,7 +41,7 @@ def _observed(monkeypatch):
     monkeypatch.delenv("GFSO_VALIDATE_INTERNAL", raising=False)
 
 
-def _solo_delivered_kid(mode=Mode.SOLO, required=True):
+def _solo_delivered_kid(mode=Mode.SOLO, required=True, at=None):
     """…the validator chosen by its issuer to check it where `required`: under solo the person's agent holds every node,
     so below the root's seam a part self-verifies unless its issuer chooses the validator (the author, 2026-11-20)."""
     e = make_engine(validate_signals=True, state_timeout=0)
@@ -56,7 +56,8 @@ def _solo_delivered_kid(mode=Mode.SOLO, required=True):
     for s in ("ACCEPT",):
         T.signal(e, "root", s, "user")
         T.signal(e, "kid", s, "user")
-    T.signal(e, "kid", "DELIVER", "user", result="ran `check k`: it printed OK", self_validation="PASS")
+    T.signal(e, "kid", "DELIVER", "user", result="ran `check k`: it printed OK", self_validation="PASS",
+             _recorded=committed(at) if at else None)
     e.wait_idle()
     return e
 
@@ -190,7 +191,7 @@ def test_a_procedure_only_revision_still_waits_for_the_plan_re_check(monkeypatch
 def test_under_solo_the_instrument_observes_and_the_holder_signs(tmp_path, monkeypatch):
     """The issuer decides, the validator observes: under SOLO/SEMI, where the user's agent is a node's issuer,
     the dispatcher runs the instrument and records — and leaves the signature to the agent."""
-    e = _solo_delivered_kid()
+    e = _solo_delivered_kid(at=tmp_path)
     agents = _agents(tmp_path, ("p-val", "llm-validator"))
     agents._agents["p-val"]["project"] = "p"
     started, _ = _dispatch_validate(e, agents, {"verdict": "PASS", "failed_criteria": [], "per_criterion": [
@@ -404,7 +405,7 @@ def test_with_no_mode_the_validator_checks_where_one_is_registered(tmp_path):
     observes every delivery by itself and its FAIL holds the PASS, so the node says the validator checks it (critic over
     the chooser: it said "self" there). The choice is made under a mode only: with none no PASS waits for a chosen
     validator's record, and the reply said it would (second critic)."""
-    e = _solo_delivered_kid(mode=None, required=False)
+    e = _solo_delivered_kid(mode=None, required=False, at=tmp_path)
     assert T.get_task(e, "kid")["checker"] == "self"
     r = TL.set_checker(e, "kid", user_said="проверяй", agent="user")
     assert r.get("refused") and "under a mode" in r["error"], r

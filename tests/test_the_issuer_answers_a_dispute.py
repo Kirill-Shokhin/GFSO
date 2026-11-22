@@ -26,7 +26,7 @@ from gfso.adapters.snapshots import BuildFailed, NotTheDelivery
 from gfso.delegate import ISSUER_VERBS
 from gfso.issuer import Unavailable, Verbs, answer_the_challenge, settle
 from gfso.core.types import State, TaskId
-from tests.support import criterion, make_engine, REGISTER
+from tests.support import a_place, criterion, make_engine, REGISTER
 
 _RISK = REGISTER
 
@@ -234,12 +234,14 @@ def test_a_rejection_that_ran_nothing_is_not_an_answer(tmp_path):
     try:
         _disputed(e)
         llm = _ContactLLM({"decision": "reject", "justification": "gnulib strips the directory"}, ran={"Read": 2})
-        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(tmp_path))
+        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=a_place(tmp_path))
         e.wait_idle()
         assert out["status"] == "uncontacted" and "ran nothing" in out["why"], out
         assert e.graph.get_state(TaskId("leaf")) == State.CHALLENGED, "the dispute still stands"
-        assert llm.where == [(str(tmp_path), ("Read", "Bash", "Glob", "Grep"))], "it stood in the node's workspace"
-        assert str(tmp_path) in llm.packets[0], "and was told where it stands"
+        (stood, tools), = llm.where
+        assert stood != str(tmp_path) and stood.endswith("place") and tools == ("Read", "Bash", "Glob", "Grep"), (
+            "it stood in a checkout of the node's workspace, by its commit")
+        assert stood in llm.packets[0], "and was told where it stands"
     finally:
         e.stop()
 
@@ -252,7 +254,7 @@ def test_a_rejection_that_ran_the_check_lands(tmp_path):
         _disputed(e)
         llm = _ContactLLM({"decision": "reject", "justification": "ran `c`'s check: it passes on the reference"},
                           ran={"Bash": 3, "Read": 1})
-        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(tmp_path))
+        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=a_place(tmp_path))
         e.wait_idle()
         assert out["status"] == "rejected", out
         assert e.graph.get_state(TaskId("leaf")) == State.EXECUTING
@@ -269,7 +271,7 @@ def test_an_acceptance_needs_no_run(tmp_path):
         _disputed(e)
         llm = _ContactLLM({"decision": "accept", "justification": "c was undecidable as written",
                            "criteria": [dict(criterion("c", "C, stated so it can be met"))]}, ran={})
-        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(tmp_path))
+        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=a_place(tmp_path))
         e.wait_idle()
         assert out["status"] == "accepted", out
     finally:
@@ -287,11 +289,11 @@ def test_the_sweep_hands_the_dispute_its_workspace(tmp_path):
         _disputed(e)
         llm = _ContactLLM({"decision": "reject", "justification": "it stands"}, ran={"Grep": 1})
         verbs = Verbs(llm=lambda model: llm, busy=lambda *a: contextlib.nullcontext(), review=None, refine=None,
-                      place=lambda engine, agents, node: str(tmp_path))
+                      place=lambda engine, agents, node: a_place(tmp_path))
         out = settle(e, {}, TaskId("leaf"), "dispute", "worker", verbs)
         e.wait_idle()
         assert out["status"] == "uncontacted", out
-        assert [w for w, _ in llm.where] == [str(tmp_path)] * 2
+        assert len(llm.where) == 2 and all(w != str(tmp_path) and w.endswith("place") for w, _ in llm.where)
         assert "ran nothing" in llm.packets[1], "the retry is told why the first answer was refused"
         assert e.graph.get_state(TaskId("leaf")) == State.CHALLENGED
     finally:
@@ -318,7 +320,7 @@ def test_an_accepted_dispute_that_rewrites_a_probe_keeps_its_pinned_inputs(tmp_p
         T.signal(e, "leaf", "CHALLENGE", "worker", reason="criterion c: the oracle prints /usr/bin/head as its name")
         e.wait_idle()
         llm = _ContactLLM({"decision": "accept", "justification": "ran it", "criteria": [crit(new)]}, ran={"Bash": 2})
-        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(tmp_path))
+        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=a_place(tmp_path))
         e.wait_idle()
         probe = e.graph.get_task("leaf").spec.criteria[0].check[0]
         assert out["status"] == "accepted" and probe.command == new, out
@@ -356,7 +358,7 @@ def test_the_issuer_runs_a_probe_over_its_pinned_inputs_and_answers_in_the_contr
                                         "command": f"while read l; do ./head $l 2>&1; done < {d}/opts.txt; echo ok"}]}]}) \
                     + "\n```"
 
-        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=_Runs({}, ran={"Bash": 1}), where=str(tmp_path))
+        out = answer_the_challenge(e, TaskId("leaf"), "worker", _llm=_Runs({}, ran={"Bash": 1}), where=a_place(tmp_path))
         e.wait_idle()
         probe = e.graph.get_task("leaf").spec.criteria[0].check[0]
         assert seen["file"] == "-n 2\n", "the issuer's run read the pinned file"
@@ -382,7 +384,7 @@ def test_a_cut_contact_run_is_not_the_issuers_answer(tmp_path):
                 return "Let me run the disputed check first"
 
         with pytest.raises(Unavailable):
-            answer_the_challenge(e, TaskId("leaf"), "worker", _llm=_Cut({}, ran={"Bash": 1}), where=str(tmp_path))
+            answer_the_challenge(e, TaskId("leaf"), "worker", _llm=_Cut({}, ran={"Bash": 1}), where=a_place(tmp_path))
         assert e.graph.get_state(TaskId("leaf")) == State.CHALLENGED
     finally:
         e.stop()
@@ -399,11 +401,11 @@ def test_in_a_nodes_own_place_the_issuer_runs_in_a_copy_of_it(tmp_path):
     try:
         _disputed(e)
         llm = _ContactLLM({"decision": "accept", "justification": "ran it: the check cannot pass"}, ran={"Bash": 1})
-        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
+        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=a_place(place))
         e.wait_idle()
         (stood, _), = llm.where
         assert stood != str(place) and stood.endswith("place") and stood in llm.packets[0]
-        assert [p.name for p in place.iterdir()] == ["delivered.c"]
+        assert [p.name for p in place.iterdir() if p.name != ".git"] == ["delivered.c"]
     finally:
         e.stop()
 
@@ -430,7 +432,7 @@ def test_a_dispute_is_ruled_only_on_the_delivery_the_fail_judged(tmp_path, monke
         llm = _ContactLLM({"decision": "accept", "justification": "ran it"}, ran={"Bash": 1})
         # …the delivery itself the cause: told so, the issuer rules on that, in no copy and with no tools — asked
         # again as `Unavailable`, it failed again forever (critic over 909e417)
-        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
+        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=a_place(place))
         assert held == [("tree", "c0ffee", None)] and [w for w, _ in llm.where] == [None], llm.where
         assert "NO COPY of this delivery" in llm.packets[-1] and "cannot be read back" in llm.packets[-1]
     finally:
@@ -459,7 +461,7 @@ def test_a_dispute_of_a_fail_its_build_made_is_ruled_on_the_unbuilt_copy_with_th
         _disputed(e)
         monkeypatch.setattr(e, "delivered", lambda *ids: ("tree", "c0ffee", None))
         llm = _ContactLLM({"decision": "accept", "justification": "ran it: no compiler in the image"}, ran={"Bash": 1})
-        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=str(place))
+        answer_the_challenge(e, TaskId("leaf"), "worker", _llm=llm, where=a_place(place))
         e.wait_idle()
         assert asked == [True] and llm.where and "cc: not found" in llm.packets[0]
     finally:

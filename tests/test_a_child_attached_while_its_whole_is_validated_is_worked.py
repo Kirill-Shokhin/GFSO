@@ -28,7 +28,7 @@ from gfso.inflight import _inflight
 from gfso.roster import AgentRegistry
 from gfso.sessions import run_executor
 from tests import test_one_session_carries_a_scope as S
-from tests.support import REGISTER, criterion, instrument_passes, make_engine
+from tests.support import committed, REGISTER, criterion, instrument_passes, make_engine
 from tests.test_a_node_works_in_its_own_place import _Executor, _git, _repo
 
 SEEN = "a subquery in NOT IN (SELECT …) gives NULL"
@@ -87,6 +87,7 @@ def _goal(e, tmp_path, split=True):
     for aid, kind in (("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(aid, kind, workdir=str(tmp_path), project="p")
     e.workforce.publish_executor_pool({"exec-1": "p", "exec-2": "p"})
+    e.place = tmp_path                                       # …where its roles work: what a delivery commits (`_deliver`)
     e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]})
     if split:
@@ -113,7 +114,8 @@ def _deliver(e, tid):
     who = str(e.graph.get_task(TaskId(tid)).assignee)
     if e.graph.get_state(TaskId(tid)) == State.OFFERED:
         assert "error" not in (out := T.signal(e, tid, "ACCEPT", who)), out
-    assert "error" not in (out := T.signal(e, tid, "DELIVER", who, result=f"{tid} out")), out
+    assert "error" not in (out := T.signal(e, tid, "DELIVER", who, result=f"{tid} out",
+                                           _recorded=committed(e.place))), out
     e.wait_idle()
 
 

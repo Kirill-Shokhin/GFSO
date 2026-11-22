@@ -5,6 +5,7 @@ undecided report sends no delivery."""
 from __future__ import annotations
 
 import logging
+from gfso import store
 from gfso.adapters import worktrees as W
 from gfso.adapters.llm.stats import _stat_line
 from gfso.core.protocol.invariants import verdict_word
@@ -222,9 +223,10 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
             _cb(f"{task_id}: NOT delivered — {why} · {_stat_line(llm)}")
             engine.emit_info("delegate", f"{task_id}: {HELD}{why}")
             return
-        _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"],
-                self_validation=_self, artifact=artifact, commit=carried,
-                build=build if isinstance(build := report.get("build"), str) else None)
+        if _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"],
+                   self_validation=_self, artifact=artifact, commit=carried,
+                   build=build if isinstance(build := report.get("build"), str) else None) and carried:
+            store.keep(engine, ex := execution_of(engine), carried, workspace[1], workspace[1], ex)
         _cb(f"{task_id}: {DELIVERED} · {_stat_line(llm)}")
         _settle_internal(engine, task_id, _self, _cb, observed)
 

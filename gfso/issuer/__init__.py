@@ -35,8 +35,11 @@ from pathlib import Path
 from typing import Optional
 
 from gfso import tools as _tools
+from gfso import store
+from gfso.workspaces import standing
 from gfso.adapters.execution import LocalExecution, scratch_of
-from gfso.adapters.snapshots import NotTheDelivery, Uncopied, snapshot, swap
+
+from gfso.adapters.snapshots import NotTheDelivery, Uncopied, judged_at, snapshot, swap
 from gfso.adapters.worktrees import NODES as _NODES
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
@@ -153,8 +156,9 @@ def _contact_place(where: str, ex, project=None):
     VALIDATION SCRATCH, as a validator's run is (`tools_llm`) — its session reads the probes the node's standing
     findings name as the system laid them from its record (`_standing_findings`), writes only its own round, and no
     other node's session reaches it. A root's too where places stand apart: in the base it worked in its executor's
-    container and could change the delivery. On this host, where no copy is made (the base, a root's place), the temp
-    its session holds. `project`: whose places hold a base's rounds (`scratch_of`). Gone when the contact ends, with
+    container and could change the delivery. On this host, for a place that is no node's (the base, a chat's tree),
+    the temp its session holds: its copy is read by id there all the same. `project`: whose places hold a base's
+    rounds (`scratch_of`). Gone when the contact ends, with
     what was laid beside it (`laid_beside`)."""
     if _NODES not in str(where) and not ex.apart:
         lent = ex.scratch("gfso-issuer-inputs-", dir=ex.temp_of(where))
@@ -1893,23 +1897,22 @@ def _ask(engine, task_id, question, actor, schema, refusal, verbs, _llm, where=N
                     # …ruled on the delivery as DELIVER recorded it, held to it as a validator's copy is — a dispute on
                     # the one the FAIL judged, any other question too: a copy of the live place carried what the
                     # executor holds now, not what it handed in (critic over the judged tree)
-                    held = engine.delivered(task_id)
+                    # …BY ITS ID, never the live tree: with nothing delivered, the place's commit as it stands —
+                    # a place of the system's committed whole — kept and logged
+                    held = engine.delivered(task_id) or standing(engine, task_id, where)
                     # …built as its judge built it; a build that failed is no reason to withhold the ruling on the FAIL
                     # it made: the copy comes unbuilt, with the build's output (a dispute refused for it waited forever)
                     built: list = []
-                    with (snapshot(where, Path(tmp) / "place", at_place, delivered=held, built=built, unbuilt_ok=True)
-                          if _NODES in str(where) or at_place.apart
-                          else contextlib.nullcontext()) as copy:
-                        if not copy and at_place.apart:
-                            raise Unavailable(f"no copy of {where}: an issuer does not rule in its executor's place")
-                        at = copy or where
+                    with snapshot(lambda: store.held(engine, at_place, held[1], (str(where), at_place)),
+                                  Path(tmp) / "place", at_place, delivered=held, built=built, unbuilt_ok=True) as copy:
+                        copy = judged_at(copy, where, at_place)      # …its own directory of the commit
                         text = llm.run_agent(_prompt(),
-                                             CONTACT.format(where=at, checkout=checkout_note(at))
-                                             + (swap(packet, where, copy) if copy else packet)
+                                             CONTACT.format(where=copy, checkout=checkout_note(copy))
+                                             + swap(packet, where, copy)
                                              + (f"\n\nBefore you, the system built this copy as its judge did: "
                                                 f"{built[0]}\n" if built else ""),
-                                             allowed_tools=CONTACT_TOOLS, cwd=at, timeout=CONTACT_TIMEOUT_S)
-                        text = swap(text, copy, where) if copy else text
+                                             allowed_tools=CONTACT_TOOLS, cwd=copy, timeout=CONTACT_TIMEOUT_S)
+                        text = swap(text, copy, where)
                 else:
                     # the ZERO-TOOL port: an issuer reads the packet and answers; `run_agent` without a working
                     # directory refused every real call, so no machine issuer ever answered (hidden by fakes that

@@ -12,6 +12,7 @@ from gfso import tools_llm as TL
 from gfso.config import CALLER, Principal
 from gfso.core.protocol.invariants import red_set
 from gfso.core.types import TaskId
+from tests.support import committed
 from tests.test_validate_result import _delivered_node, _eng
 
 _RAN = []
@@ -28,8 +29,8 @@ class _Counts:
 
 def _refused_twice(tmp_path):
     e = _eng()
-    _delivered_node(e)
     (tmp_path / "f").write_text("x")
+    _delivered_node(e, recorded=committed(tmp_path))
     for why in ("c1 undecided", "c2 undecided"):
         e.record_rejected_report(TaskId("n1"), why)
     return e

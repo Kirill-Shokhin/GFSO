@@ -1,8 +1,10 @@
 """Before an executor session the system runs the node's pinned checks once on its place and hands it what they printed.
 
 On the v17 continuation of sql × haiku 4.5 six parts whose work was already there spent 15–49 turns each discovering
-that. The observation is machine state, never a verdict: nothing is built for it, it runs in a copy, the place is not
-touched, and a project may switch it off for the other arm of a paired row (`set_mode(observe=False)`)."""
+that. The observation is machine state, never a verdict: nothing is built for it, it runs in a checkout of the commit the
+place stands on, the place is not touched, and a project may switch it off for the other arm of a paired row
+(`set_mode(observe=False)`)."""
+
 from __future__ import annotations
 
 import time
@@ -15,7 +17,7 @@ from gfso import observe, sessions as S
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.observe import observe_place
 from gfso.packets import _executor_packet
-from tests.support import DENIAL_ENTRY, UNMODELLED_FAULT, make_engine
+from tests.support import DENIAL_ENTRY, UNMODELLED_FAULT, committed, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY", "justification": "no precedent",
           "invalidation_condition": "one occurs", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]
@@ -35,6 +37,7 @@ def test_each_check_is_seen_as_it_prints_on_the_place(tmp_path):
     place = tmp_path / "place"
     place.mkdir()
     (place / "done.txt").write_text("42\n")
+    committed(place)                        # …read by its commit, never the directory as it stands
     e, t = _node({"behaviour": "the answer is there", "command": "cat done.txt", "expect": "42"},
                  {"behaviour": "the tool is built", "command": "./tool", "expect": "ok"},
                  {"behaviour": "the inputs are read", "command": "cat {inputs}/in.txt", "expect": "pinned",
@@ -52,6 +55,7 @@ def test_each_check_is_seen_as_it_prints_on_the_place(tmp_path):
 
 def test_one_command_pinned_twice_is_matched_against_each_expectation(tmp_path):
     (tmp_path / "v.txt").write_text("1")
+    committed(tmp_path)
     e, t = _node({"behaviour": "one", "command": "cat v.txt", "expect": "1"},
                  {"behaviour": "two", "command": "cat v.txt", "expect": "2"})
     assert [r["matched"] for r in observe_place(e, [t], str(tmp_path))["root"]] == [True, False]
@@ -67,6 +71,7 @@ def test_a_place_holding_nothing_runs_no_check(tmp_path, monkeypatch):
 
 def test_a_place_with_nothing_built_reads_as_one_line(tmp_path):
     (tmp_path / "notes.txt").write_text("a place with no program in it")
+    committed(tmp_path)
     e, t = _node(*({"behaviour": f"b{i}", "command": "./sql_database < q.sql", "expect": f"value {i}"} for i in range(5)))
     seen = observe_place(e, [t], str(tmp_path))
     text = _executor_packet(e, t, str(tmp_path), seen=seen)
@@ -76,6 +81,7 @@ def test_a_place_with_nothing_built_reads_as_one_line(tmp_path):
 def test_a_check_past_its_time_is_named_and_the_rest_of_the_time_is_bounded(tmp_path, monkeypatch):
     monkeypatch.setattr(observe, "PROBE_S", 1)
     (tmp_path / "a").write_text("")
+    committed(tmp_path)
     e, t = _node({"behaviour": "it hangs", "command": "sleep 5", "expect": ""})
     (row,) = observe_place(e, [t], str(tmp_path))["root"]
     assert row["note"] == "did not finish in 1 s" and "matched" not in row

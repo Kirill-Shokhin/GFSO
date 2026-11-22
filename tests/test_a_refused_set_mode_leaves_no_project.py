@@ -9,6 +9,7 @@ from gfso.api.server import create_app
 from gfso.mcp.server import _bind
 from gfso.runtime import ProjectRegistry
 from gfso import tools_llm as TL
+from tests.support import a_repository
 
 
 def _reg(monkeypatch, tmp_path):
@@ -62,6 +63,7 @@ def test_an_accepted_set_mode_still_makes_the_project(monkeypatch, tmp_path):
     """The pair: the same door, staffed, makes the project — the refusal is what leaves none."""
     reg = _reg(monkeypatch, tmp_path)
     try:
+        a_repository(tmp_path)            # …a repository, as every directory a role is named in
         with TestClient(create_app(reg.engine(), registry=reg)) as c:
             for a, k in (("p-val", "llm-validator"), ("p-exec-1", "llm-executor"), ("p-exec-2", "llm-executor")):
                 c.post("/api/run/register_agent?project=made", json={"agent_id": a, "kind": k, "workdir": str(tmp_path)})

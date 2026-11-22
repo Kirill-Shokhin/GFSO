@@ -26,20 +26,20 @@ import gfso.tools as T
 from gfso import delegate as D
 from gfso.core.types import AgentId, Mode
 from gfso.delegate import Dispatcher
-from tests.support import criterion, make_engine, REGISTER
+from tests.support import committed, criterion, make_engine, REGISTER
 from tests.test_delegate import _agents
 
 _RISK = REGISTER
 
 
-def _a_delivery(e):
+def _a_delivery(e, at=None):
     T.create_task(e, "par", {"description": "parent",
                              "criteria": [criterion("g", "G")],
                              "accepted_risks": _RISK}, assignee="a-human")
     T.decompose(e, "par", [{"task_id": "kid", "spec": {"description": "the work",
                              "criteria": [criterion("k", "K")]}, "assignee": "exec-1", "covers": ["g"]}], accepted_risks=REGISTER)
     T.signal(e, "kid", "ACCEPT", "exec-1")
-    T.signal(e, "kid", "DELIVER", "exec-1", result="did it")
+    T.signal(e, "kid", "DELIVER", "exec-1", result="did it", _recorded=committed(at) if at else None)
 
 
 def _drive(tmp_path, outcome, passes):

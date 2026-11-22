@@ -18,6 +18,8 @@ import subprocess
 
 import pytest
 
+from tests.support import committed
+
 from gfso import tools as T
 from gfso import observe, tools_llm as TL
 from gfso.adapters.storage.sqlite import SqliteStorage
@@ -71,7 +73,7 @@ def _validated(tmp_path, printed: str, exact: bool = True, cmd: str = CMD, expec
     if keep is not None:
         keep["e"] = e
     T.signal(e, "n", "ACCEPT", "alice")
-    T.signal(e, "n", "DELIVER", "alice", result="out.txt")
+    T.signal(e, "n", "DELIVER", "alice", result="out.txt", _recorded=committed(place))
     before(e)
     try:
         return TL.validate_result(e, "n", _llm=_Says(cmd, expect if cite is None else cite, runs, edit),
@@ -113,7 +115,14 @@ def test_a_probe_the_system_could_not_run_is_recorded_as_the_validator_s_word(tm
     seen = {}
 
     def _no_shell(e):
-        monkeypatch.setattr(type(execution_of(e)), "shell", lambda self: None)
+        # …no shell for the system's own run alone: the judge's copy is made with one (`snapshots._checkout`)
+        real, kind = TL._observe_pins, type(execution_of(e))
+
+        def _shell_less(*a, **k):
+            with monkeypatch.context() as m:
+                m.setattr(kind, "shell", lambda self: None)
+                return real(*a, **k)
+        monkeypatch.setattr(TL, "_observe_pins", _shell_less)
         seen["e"] = e
     assert _validated(tmp_path, "goodbye", before=_no_shell)["verdict"] == "PASS"
     evidence = json.dumps(T.get_verdict(seen["e"], "n", _trim=False))
@@ -123,6 +132,7 @@ def test_a_probe_the_system_could_not_run_is_recorded_as_the_validator_s_word(tm
 
 def test_the_packet_matches_an_exact_check_by_the_same_rule_and_says_it_does_not(tmp_path):
     (tmp_path / "out.txt").write_text("Error: no such table t\n")
+    committed(tmp_path)                     # …the observation reads the place's commit
     e, t = _node({"behaviour": "errs", "command": "cat out.txt >&2", "expect": "Error: no such table t", "exact": True},
                  {"behaviour": "greets", "command": "cat out.txt", "expect": "hello", "exact": True})
     rows = observe_place(e, [t], str(tmp_path))["root"]

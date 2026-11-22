@@ -29,10 +29,12 @@ from dataclasses import replace
 from gfso.config import host_env
 from gfso.core.types import IN_THE_WORKS_PATH, PlaceUnavailable
 from gfso.adapters.execution import ended_by_watch, past_disk
-from gfso.adapters.snapshots import WATCHED, Uncopied, changed_or_unknown, on_disk, snapshot, swap
+from gfso import store
+from gfso.adapters.snapshots import WATCHED, NotTheDelivery, Uncopied, changed_or_unknown, judged_at, on_disk, snapshot, swap
+
 from gfso.core.protocol.procedure import (INPUTS_TOKEN, PROBE_S, contains, materialize_inputs, probe_id, shows,
                                          unsafe_input_paths)
-from gfso.workspaces import execution_of
+from gfso.workspaces import execution_of, standing
 
 #: Seconds one check may run, and the whole observation of one session's nodes — a quarter of the session's own
 #: cap at most (`observe_place`).
@@ -53,8 +55,9 @@ def observing(graph) -> bool:
 
 def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None) -> dict:
     """{task id: [{criterion, behaviour, command, expect, rc, out, matched, note}]} — every check pinned to `tasks`'
-    criteria run once, in contract order, in one copy of `place` (`adapters.snapshots`) with its inputs laid from the
-    contract, where the project's work runs. A check run already for an earlier node is not run again. {} where there is
+    criteria run once, in contract order, in one checkout of the commit `place` stands on (`workspaces.standing`,
+    read by its id: `adapters.snapshots`) with its inputs laid from the contract, where the project's work runs. A
+    check run already for an earlier node is not run again. {} where there is
     nothing to observe: no place, nothing in it, the project said no, the copy could not be made — the place itself is never run in,
     the session starts on it."""
     probes = [(t, c, p) for t in tasks for c in t.spec.criteria for p in (c.check or ()) if p.command]
@@ -70,10 +73,13 @@ def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None
     seen = {}
     with ex.scratch("gfso-observe-", system=True) as tmp:
         try:
-            with snapshot(place, Path(tmp) / "place", ex) as tree:
-                for t, row in run_checks(ex, probes, place, tree, budget):
+            # …the place's commit as it stands, read by its id: never a copy of the live tree
+            tree, commit, _ = standing(engine, tasks[0].id, place)
+            with snapshot(lambda: store.held(engine, ex, commit, (str(place), ex)), Path(tmp) / "place", ex,
+                          delivered=(tree, commit, "")) as tree:
+                for t, row in run_checks(ex, probes, place, judged_at(tree, place, ex), budget):
                     seen.setdefault(str(t.id), []).append(row)
-        except Uncopied:             # …an observation, no verdict: the session starts without it
+        except (Uncopied, NotTheDelivery):   # …an observation, no verdict: the session starts without it
             return {}
     return seen
 

@@ -299,8 +299,8 @@ def test_a_solo_chats_parts_self_verify_and_the_root_alone_is_observed(chat):
                          "invalidation_condition": "the root fails over it", "denial": True}])
     e.wait_idle()
     assert not e.observed_here(TaskId("root.a")) and e.observed_here(TaskId("root")), "a part of the chat's is observed apart"
-    _worked(repo)
     call("signal", "root.a", "ACCEPT", "user")
+    _worked(repo)                         # …the part's work, committed once it is taken
     call("signal", "root.a", "DELIVER", "user", result="f.txt written; `cat f.txt` printed v1", self_validation="PASS")
     e.wait_idle()
     assert e.current_exec_verdict(TaskId("root.a")) is None or e.current_exec_verdict(TaskId("root.a"))["validator"] != "p-val"
@@ -326,8 +326,8 @@ def test_the_chat_calls_the_check_of_its_own_part_whenever_it_wants(chat):
                                                               "check": [{"behaviour": "f.txt read", "command": "cat f.txt", "expect": "v1"}]}]}}],
         accepted_risks=[{"item": "the split's claim", "justification": "one part", "p": 0.1, "impact": "re-split",
                          "invalidation_condition": "the root fails over it", "denial": True}])
-    _worked(repo)
     call("signal", "root.a", "ACCEPT", "user")
+    _worked(repo)                         # …the part's work, committed once it is taken
     call("signal", "root.a", "DELIVER", "user", result="f.txt written", self_validation="PASS")
     e.wait_idle()
     out = TL.TOOLS["validate_result"](e, "root.a")

@@ -22,7 +22,7 @@ import gfso.past as P
 import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso.adapters import worktrees as W
-from gfso.core.types import AgentId, Mode
+from gfso.core.types import AgentId, Mode, TaskId
 from tests.support import REGISTER, criterion, make_engine
 
 OLD, LATER = "2001-01-01T00:00:00Z", "2099-01-01T00:00:00Z"
@@ -76,7 +76,12 @@ def _take(e, node="root"):
 
 
 def _deliver(e):
-    assert TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="f.txt", self_validation="PASS")["accepted"]
+    # …the node's work is what the test committed where its judge stands, named; none: an empty commit says so, on no
+    # branch, so that no line of the repository moves
+    at = TL._delegation().validator_workdir(e, TL._delegation().default_agents(), TaskId("root"))
+    if (head := _git(at, "rev-parse", "HEAD")) == TL._started_from(e, TaskId("root")):
+        at = _git(at, "commit-tree", "-m", "nothing changed", "-p", head, f"{head}^{{tree}}")
+    assert TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="f.txt", self_validation="PASS", place=at)["accepted"]
     time.sleep(1.1)              # …git's clock is whole seconds: what is made in the DELIVER's second is the node's
 
 

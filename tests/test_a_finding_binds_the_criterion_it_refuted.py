@@ -33,7 +33,7 @@ from gfso.adapters.execution import LocalExecution, scratch_of
 from gfso.core.protocol.procedure import unrerunnable
 from gfso.packets import _executor_packet, _validator_packet
 from gfso.core.types import AgentId, TaskId
-from tests.support import REGISTER, UNMODELLED_FAULT, DENIAL_ENTRY, criterion, make_engine
+from tests.support import a_place, REGISTER, UNMODELLED_FAULT, DENIAL_ENTRY, criterion, make_engine
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM, _IssuerLLM
 
 from gfso.engine import findings as F
@@ -421,7 +421,7 @@ def test_a_machine_ruling_that_retires_must_have_run_something(tmp_path):
     _refute(e, _OWN)
     T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"{_id(e)} is root.libc's scope")
     llm = _ContactLLM({"decision": "accept", "justification": "libc's", "retire_findings": [_id(e)]}, ran={"Read": 1})
-    out = I.answer_the_challenge(e, TaskId("kid"), "me", _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, TaskId("kid"), "me", _llm=llm, where=a_place(tmp_path))
     assert out["status"] == "uncontacted", out
     assert "conf" in e.regression_probes(TaskId("kid"))
     e.stop()

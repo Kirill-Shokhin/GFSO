@@ -200,8 +200,12 @@ def test_live_a_delivery_that_cannot_be_copied_for_a_check_fails_it(project):
     try:
         with project.scratch("gfso-exact-", system=True) as tmp:
             project.files.mkdir(str(tree := Path(tmp) / "exact" / "delivery"))
-            r = project.session(str(tree)).run(["sh", "-c", 'for i in $(seq 1 20); do d=$(printf "d%.0s" $(seq 1 200)); '
-                                                'mkdir "$d" && cd "$d"; done; echo x > f'], cwd=str(tree), timeout=60)
+            # …past PATH_MAX wherever the scratch stands, made step by step relative to where it is: a shell's `cd`
+            # spells the whole path and stopped short of it, so the tree a long prefix made uncopyable copied under a
+            # short one, and the check passed
+            r = project.session(str(tree)).run([project.python, "-c", "import os\nfor _ in range(25):\n"
+                                                "    os.mkdir('d' * 200); os.chdir('d' * 200)\nopen('f', 'w').write('x')"],
+                                               cwd=str(tree), timeout=60)
             assert r.returncode == 0, r.stderr
             rows = dict(run_checks(project, [("d", c, deep)], str(project.own / "a"), str(tree),
                                    120))

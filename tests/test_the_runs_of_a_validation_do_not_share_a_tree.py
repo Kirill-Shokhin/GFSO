@@ -1,4 +1,4 @@
-"""The runs of one validation, side by side, each validate their own copy of the place as it stands on disk.
+"""The runs of one validation, side by side, each validate their own checkout of the commit DELIVER recorded.
 
 GB_sql_database_tngtvm580 (2026-10-25): the root's validation ran in 12 batches at once, all in the root's place, and
 its pinned checks begin with `make clean`. One run's clean took `./sql_database` from under another's probes; the
@@ -23,7 +23,6 @@ from gfso import tools_llm as TL
 from gfso.adapters import snapshots as S
 from gfso.adapters import worktrees as W
 from gfso.adapters.execution import ContainerExecution, LocalExecution, scratch_of
-from gfso.delegate import _classify_no_verdict
 from tests.support import criterion, a_repository
 from tests.test_validate_result import _eng, _fenced
 
@@ -100,19 +99,22 @@ class _Run:
             self.calls[-1]["stage"] = stage
 
 
-def _task(e, n: int, cmd: str = "rm -f app; echo ok"):
+def _task(e, n: int, cmd: str = "rm -f app; echo ok", at=None):
+    """`big` delivered as the commit `at` stands on — what every judge reads, by its id; with no `at`, no commit."""
     T.create_task(e, "big", {"description": "criteria, one run each", "criteria": [
         criterion(c, check=[{"behaviour": f"b{c}", "command": cmd, "expect": "ok"}])
         for c in ("one", "two")[:n]]}, "alice")
     T.signal(e, "big", "ACCEPT", "alice")
-    T.signal(e, "big", "DELIVER", "alice", result="built it")
+    T.signal(e, "big", "DELIVER", "alice", result="built it",
+             _recorded=(_git(at, "rev-parse", "HEAD^{tree}"), _git(at, "rev-parse", "HEAD"), None) if at else None)
 
 
 def _validate(monkeypatch, at, n: int = 2, cmd: str = "rm -f app; echo ok", **run):
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "1" if n > 1 else "0")
     e = _eng()
-    _task(e, n, cmd)
+    _task(e, n, cmd, at)
     meet, seen = threading.Barrier(n), []
+
     out = TL.validate_result(e, "big", workdir=str(at), _llm=_Run(meet, seen, **run),
                              _spawn=lambda: _Run(meet, seen, **run))
     return e, out, seen
@@ -129,11 +131,9 @@ def test_each_run_validates_its_own_copy_of_the_place_and_the_report_names_the_p
     cwds = {s["cwd"] for s in seen}
     assert len(cwds) == 2 and str(at) not in cwds                      # …a copy per run, neither the place
     for s in seen:
-        assert s["had"] == [".gitignore", "app", "main.c", "notes.txt"], s["had"]   # …as git sees it: main.o ignored
-        assert "a copy of the delivery's directory" in s["packet"] and s["cwd"] in s["packet"]
-        assert "but for what its git ignores" in s["packet"] and "nothing is built in it" in s["packet"]   # …said as it is
-        assert "run no git command that writes (no commit, checkout -b, gc, worktree prune)" in s["packet"]
-        assert "is not reached" not in s["packet"]                    # …the copy shares the base's refs
+        assert s["had"] == [".gitignore", "app", "main.c"], s["had"]   # …the commit: nothing uncommitted nor ignored
+        assert "a checkout of exactly the tree DELIVER recorded" in s["packet"] and s["cwd"] in s["packet"]
+        assert "Run no git command that writes (no commit, checkout -b, gc, worktree prune)" in s["packet"]
         assert str(at) not in s["packet"] and at.as_posix() not in s["packet"]
     assert (at / "app").is_file() and (at / "main.o").is_file()         # …and no run's clean reached the delivery
     assert out["verdict"] == "PASS"
@@ -151,7 +151,7 @@ def test_a_single_run_validates_a_copy_too(monkeypatch, place):
     _, at = place
     e, out, seen = _validate(monkeypatch, at, n=1)
     assert len(seen) == 1 and seen[0]["cwd"] != str(at) and seen[0]["cwd"].endswith("delivery")
-    assert "a copy of the delivery's directory" in seen[0]["packet"]
+    assert "a checkout of exactly the tree DELIVER recorded" in seen[0]["packet"]
     e.stop()
 
 
@@ -221,20 +221,18 @@ def test_the_copy_is_made_and_removed_where_the_work_runs(monkeypatch, place):
         def __init__(self):
             self.ops = []
 
-        def copy_tree(self, src, dst, **kw):
-            self.ops.append(("copy", dst))
-            super().copy_tree(src, dst, **kw)
-
         def remove_tree(self, path):
             self.ops.append(("remove", path))
             super().remove_tree(path)
     ex = _Seen()
+    made, real = [], S._checkout
     monkeypatch.setattr(TL, "execution_of", lambda *_: ex)
+    monkeypatch.setattr(S, "_checkout", lambda src, at_, *a: (made.append((str(at_), a[-1])), real(src, at_, *a))[1])
     _, at = place
     e, out, _ = _validate(monkeypatch, at)
-    judged = next(k for k, (_, at_) in enumerate(ex.ops) if "batch" in at_)     # …the judges', past the system's own checks
-    ops = sorted(op for op, _ in ex.ops[judged:])
-    assert out["verdict"] == "PASS" and ops == ["copy"] * 2 + ["remove"] * 6, ex.ops   # …each copy, its place's index, each scratch's laid beside
+    judged = [d for d, x in made if "batch" in d]                         # …the judges', past the system's own checks
+    assert out["verdict"] == "PASS" and len(judged) == 2 and all(x is ex for d, x in made if "batch" in d), made
+    assert all(("remove", d) in ex.ops and not Path(d).exists() for d in judged), ex.ops
     e.stop()
 
 
@@ -255,7 +253,8 @@ def test_the_copy_is_a_repository_of_its_own(place, tmp_path):
     run's commit would move the delivery's branch."""
     _, at = place
     branch = _git(at, "rev-parse", "HEAD")
-    with S.snapshot(at, tmp_path / "copy", LocalExecution()) as c:
+    with S.snapshot(at, tmp_path / "copy", LocalExecution(),
+                    delivered=(_git(at, "rev-parse", "HEAD^{tree}"), branch, "")) as c:
         assert _git(c, "rev-parse", "HEAD") == branch
         assert _git(c, "status", "--porcelain", "--untracked-files=no") == ""
         _git(c, "commit", "-q", "--allow-empty", "-m", "a validator's commit")
@@ -290,13 +289,13 @@ def test_a_link_made_in_a_container_survives_its_copy_there(tmp_path):
     sh = lambda cmd, cwd: ex.run(["sh", "-c", cmd], cwd=str(cwd), timeout=60)
     try:
         sh("ln -s a.sh run.sh && echo built > out.bin", place)
-        W.commit_all(base, place, "delivery", "user", ex)
+        tree = W.commit_all(base, place, "delivery", "user", ex)
         head = sh("git rev-parse HEAD", place).stdout.strip()
         at = ex.own / ".gfso-scratch-root" / "r" / "batch1" / "delivery"
         ex.files.mkdir(str(at.parent.parent))
         ex.files.mkdir(str(at.parent))
         edits: list = []
-        with S.snapshot(place, at, ex, edits) as c:
+        with S.snapshot(place, at, ex, edits, delivered=(tree, head, "")) as c:
             assert sh("test -L run.sh && readlink run.sh", c).stdout.strip() == "a.sh"
             assert sh("git rev-parse HEAD", c).stdout.strip() == head
             sh("rm out.bin && echo bye >> a.sh && touch run.sh && git commit -qam v && "
@@ -382,49 +381,9 @@ def _overlap(a, b) -> bool:
     return a[2] < b[3] and b[2] < a[3]
 
 
-def test_runs_that_could_not_copy_take_the_place_one_at_a_time(monkeypatch, place, tmp_path):
-    """The fallback must not reopen the race: WinError 1314 on a host that may not make links. The partial copy goes;
-    the runs stand in the place in turn; the report is not lost."""
-    _, at = place
-    ex = _Copies([])
-    e, out = _timed(monkeypatch, at, ex)
-    runs = [x for x in ex.log if x[0] == "run"]
-    assert [r[1] for r in runs] == [str(at)] * 2
-    assert not _overlap(*runs), runs
-    assert out["verdict"] == "PASS"
-    assert not list(at.parent.glob(".gfso-scratch-big/*/batch*/delivery"))      # …no partial copy left
-    e.stop()
-
-
-def test_a_copy_past_its_bound_is_no_run_in_the_place(monkeypatch, place):
-    """A copy that outran its bound would outrun it again in the place itself: no run, no verdict, the bound said —
-    a validator that never started, asked again (`snapshots.COPY_S`)."""
-    _, at = place
-    ex = _Copies([], raise_=lambda: subprocess.TimeoutExpired(["cp", "-a"], 600))
-    e, out = _timed(monkeypatch, at, ex)
-    assert not [x for x in ex.log if x[0] == "run"]
-    assert out["verdict"] is None and "outran its bound" in out["error"], out
-    assert not list(at.parent.glob(".gfso-scratch-big/*/batch*/delivery"))
-    e.stop()
-
-
 class _Apart(_Copies):
     """The same failing copies where places stand apart (`ExecutionPort.apart`): a container's."""
     apart = True
-
-
-def test_where_places_stand_apart_a_run_that_could_not_copy_is_not_judged_in_the_executors_place(monkeypatch, place):
-    """There the place is its executor's container and CLI state, and its tree a run could change (§10.3): no run, no
-    verdict — a validator that never started, said as such: no refusal booked, no stop of a place that answers, and
-    asked again on its own tier, not a bigger one (critics over this slice)."""
-    _, at = place
-    ex = _Apart([])
-    e, out = _timed(monkeypatch, at, ex)
-    assert not [x for x in ex.log if x[0] == "run"]
-    assert out["verdict"] is None and "could not be copied" in out["error"] and "nothing was validated" in out["error"]
-    assert not e.rejected_report(T.TaskId("big")) and e.paused() is None
-    assert _classify_no_verdict(e, T.TaskId("big"), out) == "no-verdict:never-ran"
-    e.stop()
 
 
 def test_where_places_stand_apart_a_root_judged_in_one_run_is_judged_in_a_copy(monkeypatch, place):
@@ -435,22 +394,10 @@ def test_where_places_stand_apart_a_root_judged_in_one_run_is_judged_in_a_copy(m
     monkeypatch.setattr(TL, "execution_of", lambda *_: ex)
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "0")
     e = _eng()
-    _task(e, 1)
+    _task(e, 1, at=base)
     out = TL.validate_result(e, "big", workdir=str(base), _llm=_Timed(ex.log), _spawn=lambda: _Timed(ex.log))
     runs = [x for x in ex.log if x[0] == "run"]
     assert len(runs) == 1 and runs[0][1] != str(base) and runs[0][1].endswith("delivery")
-    assert out["verdict"] == "PASS"
-    e.stop()
-
-
-def test_a_run_in_the_place_never_stands_beside_a_copy_being_taken(monkeypatch, place):
-    """One copy failed, the other is being taken: a `make clean` in the place then would tear that copy."""
-    _, at = place
-    ex = _Copies([], fail=(1,))
-    e, out = _timed(monkeypatch, at, ex)
-    (copy,) = [x for x in ex.log if x[0] == "copy" and "batch" in x[1]]   # …a judge's, not the system's own check
-    (alone,) = [x for x in ex.log if x[0] == "run" and x[1] == str(at)]
-    assert not _overlap(copy, alone), ex.log
     assert out["verdict"] == "PASS"
     e.stop()
 
@@ -459,15 +406,13 @@ def test_the_runs_cap_is_read_once_its_copy_stands(monkeypatch, place):
     """What is left of T_validate when the run starts: read before the copy, the run outlives the visit by its time."""
     _, at = place
     order: dict = {}
-
-    class _Ex(LocalExecution):
-        def copy_tree(self, src, dst, **kw):
-            order.setdefault(threading.get_ident(), []).append("copy")
-            super().copy_tree(src, dst, **kw)
+    copied = S._checkout
+    monkeypatch.setattr(S, "_checkout", lambda *a: (order.setdefault(threading.get_ident(), []).append("copy"),
+                                                     copied(*a))[1])
     real = TL._validation_cap
     monkeypatch.setattr(TL, "_validation_cap",
                         lambda t, g: order.setdefault(threading.get_ident(), []).append("cap") or real(t, g))
-    monkeypatch.setattr(TL, "execution_of", lambda *_: _Ex())
+
     e, out, _ = _validate(monkeypatch, at)
     runs = [o for o in order.values() if "cap" in o]       # …the judges', not the system's own checks
     assert len(runs) == 2 and all(o[:2] == ["copy", "cap"] for o in runs), order

@@ -18,7 +18,7 @@ import pytest
 
 from gfso import issuer as I, tools as T
 from gfso.core.types import TaskId
-from tests.support import pinned
+from tests.support import a_place, pinned
 from tests.test_a_finding_binds_the_criterion_it_refuted import _seam
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
 
@@ -54,7 +54,7 @@ def _standing():
 def _rule(e, tmp_path, move, ran=None):
     llm = _ContactLLM({"move": move, "justification": "ran it: cd into a removed round, on any delivery",
                        "retire_findings": [FID]}, ran=ran or {"Bash": 1})
-    return I.issuer_turn(e, KID, "unrun", "me", _llm=llm, where=str(tmp_path))
+    return I.issuer_turn(e, KID, "unrun", "me", _llm=llm, where=a_place(tmp_path))
 
 
 def test_the_issuer_is_asked_and_a_retirement_admits_the_next_pass(tmp_path):

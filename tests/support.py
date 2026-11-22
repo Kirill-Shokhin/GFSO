@@ -68,6 +68,24 @@ def a_repository(base: Path) -> Path:
     return base
 
 
+def committed(place) -> tuple:
+    """(tree, commit, None) of everything in `place` committed — a git of its own made where it has none —: what a
+    DELIVER records (`_recorded`), and what every judge reads by its id: a directory is never judged as it stands."""
+    git = lambda *a: subprocess.run(["git", "-C", str(place), "-c", "user.email=t@t", "-c", "user.name=t", *a],
+                                    check=True, capture_output=True, text=True).stdout.strip()
+    if not (Path(place) / ".git").exists():
+        git("init", "-q")
+    git("add", "-A")
+    git("commit", "-q", "--allow-empty", "-m", "delivery")
+    return git("rev-parse", "HEAD^{tree}"), git("rev-parse", "HEAD"), None
+
+
+def a_place(place) -> str:
+    """`place` as a reader by id reads it — what stands there committed (`committed`) — named as a contact names it."""
+    committed(place)
+    return str(place)
+
+
 def carry_nothing_in(monkeypatch) -> None:
     """For a fake of the docker client, whose host git is no git: an empty bundle carried in (`_carried_in`), and no base
     refused for what that git cannot say (`_refused_over` keeps its own record's refusal)."""
@@ -323,7 +341,7 @@ def round_over(dispatcher, task_id: str, ran) -> None:
 
 
 def workdir(base, *parts) -> str:
-    """A registrable working directory, created.
+    """A registrable working directory, created — a repository with a commit, as every directory a role is named in.
 
     The roster refuses a `workdir` that is not an existing directory — a role registered against a
     place that is not there is spawned into nothing, and a validator sent to one validates an empty
@@ -331,7 +349,8 @@ def workdir(base, *parts) -> str:
     directories to exist, and this is the one line that says so.
     """
     p = Path(base).joinpath(*parts)
-    p.mkdir(parents=True, exist_ok=True)
+    if not (p / ".git").exists():
+        a_repository(p)
     return str(p)
 
 

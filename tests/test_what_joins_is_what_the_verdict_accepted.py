@@ -9,13 +9,16 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import pytest
+
 import gfso.delegate as D
 from gfso import workspaces as WS
 from gfso.adapters import worktrees as W
 from gfso.adapters.execution import LocalExecution
-from gfso.adapters.snapshots import snapshot
+from gfso.adapters.snapshots import Uncopied, snapshot
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.core.types import Signal, State, TaskId
+from tests.support import committed
 from tests.test_a_node_works_in_its_own_place import _Executor, _git, _in, _plan, _repo, _run
 from tests.test_an_unchanged_redelivery_is_no_new_round import _fail_over
 from tests.test_equal_fails_do_not_measure_kappa import _leaves
@@ -185,6 +188,7 @@ def test_a_scratch_inside_the_place_is_no_copy_of_it(tmp_path):
     place = tmp_path / "work"
     place.mkdir()
     (place / "f").write_text("x\n")
-    with snapshot(place, place / ".scratch" / "delivery", LocalExecution()) as copy:
-        assert copy is None
+    with pytest.raises(Uncopied):           # …a copy of a tree into itself is none: no run, never the place instead
+        with snapshot(place, place / ".scratch" / "delivery", LocalExecution(), delivered=committed(place)):
+            pytest.fail("a run was handed a copy inside its own place")
     assert not (place / ".scratch" / "delivery").exists()

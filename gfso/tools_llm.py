@@ -18,21 +18,23 @@ import json
 import logging
 import os
 import re
+import subprocess
 import threading
 import time
 import contextvars
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import nullcontext, suppress
+from contextlib import suppress
 from pathlib import Path
 from datetime import datetime
 from dataclasses import asdict
 from typing import Optional, Union
 
-from gfso import canon as _canon, past, runtime
+from gfso import canon as _canon, past, runtime, store
 from gfso.llm import llm_factory
-from gfso.workspaces import accepted_branch, declaring_role, delivered_ref, execution_of, performer, where_it_runs, rejected_reports_dir
+from gfso.workspaces import (accepted_branch, no_repository, unjudged, declaring_role, execution_of, performer, record_repository, repository,
+                             where_it_runs, rejected_reports_dir)
 from gfso.adapters import worktrees as W
-from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, snapshot, swap
+from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, judged_at, snapshot, swap
 from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, committed, left_out,
                                      scratch_of)
 from gfso.issuer import CONTACT_ROUND as _CONTACT
@@ -45,7 +47,7 @@ from gfso.observe import FRESH_S, OBSERVE_S, run_checks
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
-from gfso.adapters.execution import component, network_of, node_key, take_in
+from gfso.adapters.execution import component, network_of, node_key
 from gfso.decompose import NoPlan, decompose_into, artifact as _artifact, planning as _planning, kept as _kept
 from gfso.engine.events import emit_cb
 from gfso.engine.findings import record_round
@@ -684,13 +686,13 @@ def _round_epoch(name: str) -> int:
 
 
 def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None, project=None):
-    """Where the validator runs, and what the delivery held before it did.
+    """Where the validator runs: a round of its own in the scratch beside the delivery, which its copy is read into.
 
     Two needs once collapsed into one: a fresh scratch per validation (a shared one let
     a run validate another's leftovers), and the working directory being the DELIVERY's (a
     validator opened in the scratch saw an empty tree and failed correct work). The
     scratch is a SIBLING of the delivery, so a criterion like "every file here belongs
-    to this package" stays true. Returns (scratch, files_before)."""
+    to this package" stays true. None: no scratch (a delivery on a share), and no judge runs."""
     scratch = None
     if workdir and cheap_to_ask(workdir):
         # …and not beside a delivery on a share: creating the scratch there is the same wait as
@@ -734,47 +736,7 @@ def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None, 
                     ex.remove_tree(str(root / old))
                     if graph is not None:
                         record_round(graph, str(root / old), False)
-    # What the delivery held BEFORE the validator touched it. The instruction above is a prompt, and
-    # a prompt is not enforcement (the lesson this project keeps relearning), so the difference is
-    # MEASURED rather than assumed. Nothing is deleted: the executor's tree is not this code's to
-    # prune, and a stray named in the record is a fact its owner can act on.
-    # …AND `None` MEANS UNKNOWN, WHICH IS NOT "IT WAS EMPTY". An unreadable directory left this an
-    # empty SET, and every pre-existing file in the delivery was then named as something the validator
-    # had left behind — the exact false accusation the comparison exists to prevent, inverted.
-    # ⊥ is not zero here either (§2.3): with no pre-image there is nothing to subtract, so the
-    # honest answer about strays is silence.
-    _before = None
-    if workdir and cheap_to_ask(workdir):     # see `gfso.places.cheap_to_ask`: a share can hang
-        try:
-            _before = set(ex.files.listdir(workdir)) if ex.files.is_dir(workdir) else None
-        except OSError:
-            pass                      # …an unlistable delivery is unknown, said just below
-        if _before is None:
-            log.warning(f"the delivery {workdir} could not be listed before validation — this run can "
-                        f"say NOTHING about what the validator left behind, and says nothing")
-
-    return scratch, _before
-
-
-def _strays_left_behind(engine, task_id: str, workdir, _before, out: dict, _cb) -> None:
-    """Name what a validation run that worked in the place itself left there, if anything — a run in a copy is held to
-    the delivered commit instead (`_judged_elsewhere`). Nothing is deleted: the executor's tree is not this code's to
-    prune, and a stray named in the record is a fact its owner can act on."""
-    if workdir and _before is not None and cheap_to_ask(workdir):
-        strays = sorted(set(execution_of(engine).files.listdir(workdir)) - _before - {".gfso-scratch"})
-        if strays:
-            # …AND WHO ELSE COULD HAVE WRITTEN THEM. Two executors of one plan legitimately share
-            # a workspace, so files appearing during a validation may be a SIBLING's work, not
-            # the validator's — and naming the validator for them is an accusation in the audit trail
-            # against the one party that is supposed to be read-only (measured 2026-08-22: a
-            # `build/` and an `.egg-info` from a concurrent `pip install .` blamed on the
-            # validator). What is certain is the delta; who made it is not, when the directory
-            # is shared.
-            out["validator_strays"] = strays
-            _cb(f"{task_id}: {len(strays)} file(s) appeared in the delivery during this "
-                f"validation ({', '.join(strays[:5])}) — NOT part of what was delivered. The "
-                f"validator is read-only, so these are either its own leavings or another "
-                f"node's executor working in the same directory.")
+    return scratch
 
 
 def _registered_workdir(engine: Engine, task_id: str, validator: Optional[str]) -> Optional[str]:
@@ -1339,21 +1301,35 @@ def _observe_pins(engine: Engine, parts: list, workdir, built: Optional[list] = 
             # …a copy the delivery makes impossible raises `NotTheDelivery`: its FAIL, as a judge's copy's (`_unjudged`);
             # one that failed for another cause leaves these not run, said so
             try:
-                with snapshot(workdir, at / "delivery", ex, delivered=engine.delivered(*(t.id for t, *_ in parts)),
+                delivered = engine.delivered(*(t.id for t, *_ in parts))
+                with snapshot(_read_by_id(engine, delivered, workdir, ex), at / "delivery", ex, delivered=delivered,
                               built=built) as tree:
                     if tree:
                         # …the tree DELIVER recorded, built, and never `git clean`ed: one emptied a shared place's
                         # copy inside an enclosing repository (critic over the fresh copy). State an executor's own run
                         # left in a place with no recorded commit is the pin's to start clean of (`EXACT_TEXT`)
                         why, rows = ("its inputs could not be laid",
-                                     dict(run_checks(ex, probes, workdir, tree, OBSERVE_S + FRESH_S * len(probes),
+                                     dict(run_checks(ex, probes, workdir, judged_at(tree, workdir, ex), OBSERVE_S + FRESH_S * len(probes),
                                                      touched)))
             except Uncopied as e:
                 why = str(e)
     return {k: rows.get(k) or {"note": f"not run: {why}"} for k, _, _ in probes}
 
 
+def _read_by_id(engine: Engine, delivered: Optional[tuple], workdir, ex):
+    """Where a judge's copy of `delivered` is read from, as `snapshot` reads it when the copy is taken: the project's
+    store by its id, kept first if absent — from the
+    judge's directory, where the work stands, else where its record says it was made (`store.held`). `Absent`, an
+    `Uncopied`, where nothing holds it: no verdict. No commit recorded: the directory itself, which `snapshot` refuses
+    to copy as it stands."""
+    if not (delivered and delivered[1]):
+        return workdir
+    places = [(str(p), ex) for p in (workdir, W.base_of(str(workdir))) if p]   # …a node's place, its base
+    return lambda: store.held(engine, ex, delivered[1], *places)
+
+
 def _judged_elsewhere(out: dict, edits: list, touched: set) -> list:
+
     """The delivered files a judge changed in its copy that no pinned check changes when the system runs it — each
     changed one said in `out` (`validator_edits`), a fact either way."""
     if edits:
@@ -1383,7 +1359,7 @@ def _unjudged(parts: list, e: Exception) -> tuple:
 
 def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
                      edits: Optional[list] = None, built: Optional[list] = None, ex=None,
-                     seen: Optional[dict] = None, alone: Optional[list] = None) -> list:
+                     seen: Optional[dict] = None) -> list:
     """The validator's reports over the parts' deliveries — one run, or one per batch at the same time (`_run_each`),
     each batch carrying a disjoint share of the probes the validation owes over one unchanging set of deliveries, so
     their conjunction is the verdict whatever order they finish in (§2 V = ⋀ cᵢ; `_scope_batches`, `_conjoined`). A
@@ -1393,8 +1369,7 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
     and 42 root criteria (2026-08-21) — so a long contract is batched, every owed probe carried exactly once.
     `GFSO_VALIDATION_BATCH=0` restores the single run, whatever the size. Each copy is built before its run, what ran
     appended to `built`; a build that fails raises `BuildFailed` (`snapshots._build`). `seen`: what the system's own
-    runs of the pinned checks observed (`_observe_pins`), told to the validator in its packet. `alone`: gets an entry
-    for each run that worked in the place itself, no copy made."""
+    runs of the pinned checks observed (`_observe_pins`), told to the validator in its packet."""
     system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
     batches = _scope_batches(engine, parts, validation_batch())
     ex, delivered = ex or validation_execution(engine), engine.delivered(*(t.id for t, *_ in parts))
@@ -1413,26 +1388,29 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
             cap = lambda: _validation_cap(task, engine.graph)
         # RUNS SIDE BY SIDE EACH IN A COPY OF THE PLACE OF ITS OWN (`adapters.snapshots`): sharing the place, one run's
         # pinned `make clean` took the binary from under the others' probes — a false root FAIL (GB_sql_database_tngtvm580).
-        # A run alone gets its copy too (`_run_each`); without a scratch it works in the place. Mapped back, the report
-        # reads as run in the place.
+        # A run alone gets its copy too (`_run_each`); without a scratch no run starts: the delivery is read by its id
+        # into a scratch, never judged in the place. Mapped back, the report reads as run in the place.
         # Its cap is read once the copy stands: what is left of T_validate when the run starts, not before the copy took
         # its share — a cap read first let the run outlive the visit by the copy's minutes (`_validation_cap`).
         ran: list = []
+        if workdir and not place:
+            # …no scratch to read the delivery into (a place on a share): never the executor's place in its stead —
+            # its container, its CLI state, its tree to change (§10.3). No validator started: the never-started
+            # run, asked again on its own tier and then of a person (critics: read as the place down, it flapped)
+            return _no_start(client or llm, "uncopied", str(workdir), f"no scratch beside {workdir} to copy the "
+                                                                       f"delivery into: no judge runs in the place")
         try:
-            with snapshot(workdir, Path(place) / "delivery", ex, edits, delivered, ran) if place else nullcontext() as tree:
-                if not tree and ex.apart:
-                    # …never in the executor's place where places stand apart: its container, its CLI state, its tree
-                    # to change (§10.3). No validator started: not a report it failed to write nor a contract to
-                    # narrow, nor the place down (it answers) — the never-started run, asked again on its own tier and
-                    # then of a person (critics over this slice: read as the place down, the project flapped)
-                    return _no_start(client or llm, "uncopied", str(workdir), f"no copy of {workdir} to judge in")
-                if tree:
-                    body = swap(body, workdir, tree) + snapshot_note(tree, ran[0] if ran else None)
-                elif alone is not None:
-                    alone.append(workdir)
-                text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=tree or workdir,
+            if not workdir:
+                # …a goal acted out in the world, no directory anywhere: its judge reads the world at contact (§3.5).
+                # A directory with no commit delivered is no such goal: no copy (`snapshot`), no verdict
+                return (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=place or None,
                                                  timeout=cap())
-                return swap(text, tree, workdir) if tree else text
+            with snapshot(_read_by_id(engine, delivered, workdir, ex), Path(place) / "delivery", ex, edits, delivered,
+                          ran) as tree:
+                here = judged_at(tree, workdir, ex)       # …the judge's own directory of the commit
+                body = swap(body, workdir, here) + snapshot_note(here, ran[0] if ran else "nothing")
+                text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=here, timeout=cap())
+                return swap(text, here, workdir)
         except PlaceUnavailable as e:        # …the place down while copying: the stop a call that could not start makes
             return _no_start(client or llm, "unavailable", e.place, str(e))
         except Uncopied as e:                # …no copy, for a cause not the delivery's: no verdict, asked again
@@ -1483,17 +1461,17 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     # The validator runs WHERE THE WORK IS, with a private scratch BESIDE it (`_validation_place`): a shared scratch
     # let one run validate another's leftovers, and a scratch made the working directory opened the validator in an
     # empty tree, where it failed correct work saying nothing was there. A false FAIL at the seam is worse than none.
-    scratch, _before = _validation_place(top_id, workdir, ex, tuple(
+    scratch = _validation_place(top_id, workdir, ex, tuple(
         p.get("as_run") or p.get("command") for t in engine.all_tasks()
         for ps in engine.regression_probes(t.id).values() for p in ps), engine.graph, engine.project_name)
-    edits, built, unbuilt, touched, alone = [], [], None, set(), []
+    edits, built, unbuilt, touched = [], [], None, set()
     try:
         # the system's own run of the pinned checks FIRST, on the delivery as delivered (`_observe_pins`)
         if observed := _observe_pins(engine, parts, workdir, built, ex, touched):
             _cb(f"{top_id}: the system ran {len(observed)} pinned check(s) on a fresh copy of the delivery — "
                 f"{sum(o.get('matched') is True for o in observed.values())} print what they pin, "
                 f"{sum('matched' not in o for o in observed.values())} could not be run")
-        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built, ex, observed, alone)
+        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built, ex, observed)
     except ValueError as ex:
         return {"task_id": top_id, "error": str(ex)}, ""
     except (BuildFailed, NotTheDelivery) as ex:       # …the delivery's FAIL, nothing checked (`_unjudged`)
@@ -1506,8 +1484,6 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
             engine.emit_info("validation", f"{t.id}: {UNCOPIED if isinstance(unbuilt, NotTheDelivery) else BUILT}{said}")
     text = "\n\n".join(x or "" for x in texts)
     out: dict = {"task_id": top_id, "stats": session_calls(llm, Stage.VALIDATE_RESULT)}
-    # …a run in the place itself: what it left there is all that can be seen of what it wrote
-    _strays_left_behind(engine, top_id, workdir, _before if alone else None, out, _cb)
     _schema = _SCOPE_VALIDATOR_SCHEMA if inside is not None else _VALIDATOR_SCHEMA
     for x in texts:
         file_tech_reports(engine, parse_structured(x or "", _schema), "validator", validator or "validator", top_id)
@@ -1803,6 +1779,8 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     `solo` and `semi` the go is the person's: `user_said`, their own words agreeing to the plan they were shown."""
     if (yours := _a_new_roots_go(engine, root_id, request, plan, spec, model, user_said)) is not None:
         return yours
+    if (unjudged := _no_place_at_the_go(engine)) is not None:
+        return unjudged
     request, spec = (_the_go(engine, plan, request, spec, root_id) if plan is not None
                      else (request, _no_deferral_nobody_makes(spec, open_plan or engine.mode_kind() != Mode.AUTO)))
     given, model = request, model or engine.planner_model()
@@ -1986,6 +1964,15 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
     return out
 
 
+def _no_place_at_the_go(engine: Engine) -> Optional[dict]:
+    """The go refused where a role of the project works in a directory no delivery from it could be judged by
+    (`unjudged`): never sessions paid for with no verdict possible. None: the go goes on."""
+    if got := unjudged(engine, _delegation().default_agents()):
+        return {"refused": True, "error": "the go is refused: " + "; ".join(
+            f"{aid} works in a directory no delivery is judged in — {why}" for aid, why in got)}
+    return None
+
+
 def _a_new_roots_go(engine: Engine, root_id: str, request: str, plan, spec, model, user_said: str) -> Optional[dict]:
     """The one gate every new root's go passes, by any route (a plan file, a spec, a request): where the person's own
     agent holds the work in its chat (`holds_its_work`), a request with no model named is answered with the plan file to
@@ -2044,25 +2031,145 @@ def _started_from(engine: Engine, tid) -> str:
     return taken or json.loads(engine.graph.setting(f"{CHAT_START}{tid}") or "{}").get("head", "")
 
 
-def _nothing_committed(engine: Engine, tid, place, commit: str, left: list, nothing_to_commit: bool = False) -> Optional[str]:
-    """The refusal of a chat's DELIVER that would hand in the very commit its work started from — accepted, it sent a
-    paid validation the base to FAIL (s21) — each liftable by a truthful move (§12.16 (ii)), no validator before it.
-    Where the work is asked first: the work's branch moved past the start (a linked worktree's commits) is that work,
-    to check out and deliver (`not_the_work`). Else what stands uncommitted may be the work or the person's own files:
-    commit the work on the work's branch, or say none of it is the work (`nothing_to_commit`) — never "commit them",
-    which would put the person's files on their branch (critic over e45800d). None: the delivery goes on."""
-    if not commit or commit != _started_from(engine, tid):
+def _past(place, start: str, head: str) -> bool:
+    """Has `head`, read in the git at `place`, moved past `start` — differs and descends from it (any head, where no start
+    is recorded)?"""
+    return bool(head) and head != start and (not start or W.git(
+        place, "merge-base", "--is-ancestor", start, head).returncode == 0)
+
+
+def _trees(place) -> list:
+    """[(path, HEAD, branch or "")] of the work trees of `place`'s repository, its main one first."""
+    out = []
+    for entry in W.git(place, "worktree", "list", "--porcelain").stdout.split("\n\n"):
+        lines = dict(ln.split(" ", 1) for ln in entry.splitlines() if " " in ln)
+        if lines.get("worktree") and lines.get("HEAD"):
+            out.append((str(Path(lines["worktree"])), lines["HEAD"], lines.get("branch", "").removeprefix("refs/heads/")))
+    return out
+
+
+def _work_tip(engine: Engine, tid, top) -> Optional[tuple]:
+    """(where the work's branch is checked out, else `top`; its tip) where the mode works on the system's branch
+    (`work_branch`) and the work moved it past where it started — the commit a chat that names none delivers —, or
+    None. Never a HEAD by inference: the person's main tree at his own commit was judged as the agent's work, and a
+    linked worktree's work went unnamed until the start itself was handed in (critics over ac9dcaa, f96cb2b)."""
+    wb = work_branch(engine)
+    tip = W.git(top, "rev-parse", "--verify", "-q", f"refs/heads/{wb}^{{commit}}").stdout.strip()
+    if not (switches_branches(engine, tid) and _past(top, _started_from(engine, tid), tip)):
         return None
-    there = W.git(place, "rev-parse", "--verify", "-q", f"refs/heads/{work_branch(engine)}^{{commit}}").stdout.strip()
-    if there and there != commit and switches_branches(engine, tid):
-        return f"NOT delivered — {not_the_work(engine, place, commit)} No validator was started"
-    if not left or nothing_to_commit:
+    return next((p for p, _, b in _trees(top) if b == wb), top), tip
+
+
+def _unnamed(engine: Engine, tid, top, why: str = "no commit of the work is named") -> str:
+    """The refusal of a chat's DELIVER that names no commit past where its work started, before any write (§12.16
+    (ii)): its lifts — commit on the work's branch where the mode works on one, or name the place or commit — and the
+    linked work trees and branches of the repository standing past the start, never the person's main tree nor his
+    branches: only the sender knows where its work is committed."""
+    start, wb = _started_from(engine, tid), work_branch(engine)
+    trees = _trees(top)
+    theirs = {json.loads(engine.graph.setting(f"{CHAT_START}{tid}") or "{}").get("branch"), *(b for *_, b in trees[:1])}
+    there = [f"`place={p}` (at {h[:12]})" for p, h, _ in trees[1:] if _past(top, start, h)]
+    held = {b for *_, b in trees}
+    there += [f"`place={h}` (branch `{b}`)" for b, h in (ln.split(" ", 1) for ln in W.git(
+        top, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads").stdout.splitlines() if " " in ln)
+        if b not in held | theirs and _past(top, start, h)]
+    return (f"NOT delivered — {why}: "
+            + (f"commit it on `{wb}` and DELIVER again, or " if switches_branches(engine, tid) else "")
+            + "name the work tree you committed in: place=<its path>, or the commit: place=<its id>"
+            + (f". Of {W.main_worktree(top)}, these stand past where the work started ({start[:12]}): "
+               + "; ".join(there) if there else "")
+            + ". If the work changed nothing, an empty commit says so. No validator was started")
+
+
+def _chat_place(engine: Engine, source, tid, named):
+    """Where `source` performs `tid` in its own chat — the place it names (`named`), else its judge's directory, else
+    the project's repository —, or a falsy answer: the git a chat's ACCEPT records the HEAD of and its DELIVER reads
+    the commit it names in, or the work's branch (`_work_tip`)."""
+    agents = _delegation().default_agents()
+    return performer(engine, agents, source)[0] is None and (
+        named or _delegation().validator_workdir(engine, agents, tid) or repository(engine, agents))
+
+
+def _roots(repo, rev: str) -> set:
+    """The root commits of `rev`'s history in the git at `repo` — empty where it does not hold `rev`."""
+    return set(W.git(repo, "rev-list", "--max-parents=0", rev).stdout.split())
+
+
+def _unrelated(engine: Engine, place, commit: str) -> Optional[str]:
+    """Why `commit`, read in the git at `place`, is no commit of the project's repository — it shares no root commit
+    with what the project holds: the repository it recorded, its volume's imported commit, the deliveries its store
+    keeps — or None. Any git holding a commit of the project delivers it, a plain clone too; an unrelated repository
+    named by `place=` became the log's repository, its tree judged against this project's contract (critic over
+    4ac5e3a). Nothing the project holds to compare with: admitted, the first delivery stands as its history."""
+    rec = repository(engine, _delegation().default_agents())
+    known = ((_roots(rec, "HEAD") if rec and cheap_to_ask(rec) and W.is_repo_top(rec) else set())
+             | (_roots(place, first) if (first := store.imported(engine)) else set())
+             | store.roots(engine, execution_of(engine)))
+    if not known or _roots(place, commit) & known:
         return None
-    return (f"NOT delivered — nothing is committed since the work started ({commit[:12]}), and these stand uncommitted: "
-            f"{', '.join(left[:10])}{', …' if len(left) > 10 else ''}. If they are your work, commit them "
-            + (f"on `{work_branch(engine)}`" if switches_branches(engine, tid) else "where you work") +
-            f" and DELIVER again; if none of the work is in them, DELIVER with "
-            f"`nothing_to_commit=true`. No validator was started")
+    return (f"NOT delivered — commit {commit[:12]} at {place} shares no history with the project's repository"
+            f"{f' {rec}' if rec else ''}: deliver a commit of it, from a work tree or a clone of it (`place=`). No "
+            f"validator was started")
+
+
+def _not_its_repository(engine: Engine, place) -> Optional[str]:
+    """Why the place a chat names for its DELIVER is no git it can deliver from — not a work tree's top with a commit
+    — or None. Any git holding the commit delivers it, a plain clone as a linked worktree: the commit is
+    taken into the project's store by its id once admitted, and read there, never in the place."""
+    return None if W.is_repo_top(place) else f"{place} is not the top of a git work tree with a commit"
+
+
+def _a_chats_delivery(engine: Engine, tid, top, rev: Optional[str]) -> tuple[Optional[dict], dict]:
+    """(why a chat's DELIVER of `rev` — named by its sender: a place's HEAD or a commit id —, read in the git at `top`,
+    a repository's top, is refused — the answer's fields — or None; what it delivers: `_recorded`, the act that `keep`s
+    it once accepted, and what its answer says besides). Named nothing (`rev` None): the work's branch past the start
+    (`_work_tip`), else refused, its lifts named (`_unnamed`). REFUSED ONLY ON WHAT ITS SENDER LIFTS, EVERY REFUSAL
+    BEFORE ANY WRITE (§12.16 (ii)): the admission test reads the commit whole in the sender's git and writes nothing
+    (`store.admit`); a system's failure is no refusal — its keep, the system's act once the DELIVER is accepted, is
+    retried by the first reader (`store.held`)."""
+    place = top
+    if rev is None:
+        if not (work := _work_tip(engine, tid, top)):
+            return {"refused": True, "error": _unnamed(engine, tid, top)}, {}
+        place, rev = work
+    elif rev != "HEAD" and not W.git(place, "rev-parse", "--verify", "-q", f"{rev}^{{commit}}").stdout.strip():
+        return {"refused": True, "error": f"NOT delivered — {rev} is no commit of {place}: name one of the project's "
+                                          f"repository, or the work tree it is committed in (`place=<its path>`). "
+                                          f"No validator was started"}, {}
+    try:
+        tree, commit, left = W.read_head(place, rev)
+        left = left if W.git(place, "rev-parse", "HEAD").stdout.strip() == commit else []   # …another tree's files
+    except OSError as ex:
+        return {"error": f"NOT delivered — the commit at {place} could not be recorded: {ex}"}, {}
+    if inner := W.nested(place, commit):        # …refused where its sender lifts it, not FAILed at the copy
+        return {"error": f"NOT delivered — {W.nested_cause(inner)}"}, {}
+    if why := store.shallow(place):     # …before its roots are read: its boundary is one, shared with nothing
+        return {"refused": True, "error": f"NOT delivered — {why}, and DELIVER again. No validator was started"}, {}
+    if no := _unrelated(engine, place, commit):
+        return {"refused": True, "error": no}, {}
+    if not _past(place, start := _started_from(engine, tid), commit):   # …the start judged FAILed true work (s21)
+        return {"refused": True, "error": _unnamed(engine, tid, place, (
+            f"{commit[:12]} is the commit the work started from" if commit == start else
+            f"{commit[:12]} does not descend from {start[:12]}, the commit the work started from")
+            + (f", and these stand uncommitted at {place}: {', '.join(left[:10])}{', …' if len(left) > 10 else ''}"
+               if left else ""))}, {}
+    pack = None
+    try:
+        pack = store.admit(engine, execution_of(engine), commit, place)
+    except store.Unreadable as ex:
+        return {"refused": True, "error": f"NOT delivered — {ex}, and DELIVER again. No validator was started"}, {}
+    except (OSError, subprocess.TimeoutExpired) as ex:   # …the system's own reading failed: no cause of the sender's
+        engine.emit_info("delivery", f"{tid}: the admission read of {commit[:12]} failed on the system's side ({ex}): "
+                                     f"admitted, its keep reads it again")
+    got = {"_recorded": (tree, commit, W.main_worktree(place)),
+           "keep": lambda: store.keep(engine, execution_of(engine), commit, place, place, pack=pack),
+           "drop": lambda: store.discard(pack)}
+    if switches_branches(engine, tid) and (notice := not_the_work(engine, place, commit)):
+        got["notice"] = notice
+    if left:
+        got["not_delivered"] = (f"delivered: commit {commit[:12]}; not committed, so no part of it: "
+                                f"{', '.join(left[:10])}{', …' if len(left) > 10 else ''}")
+    return None, got
 
 
 REASSIGN, persons_move = _tools.REASSIGN, _tools.persons_move
@@ -2110,15 +2217,20 @@ def back_to_their_branch(engine: Engine, tid) -> str:
 def not_the_work(engine: Engine, place, commit: str) -> str:
     """What a chat's DELIVER hears where the commit it recorded — what `place`, the registered top, stands on — is not
     on the work's branch: an agent working in a linked worktree on `work_branch` delivered the person's start commit,
-    and its judge FAILed true work (critic over 354554c). A notice, never a refusal: the report may be true. Or ""."""
-    on = W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
-    if on == (wb := work_branch(engine)):
+    and its judge FAILed true work (critic over 354554c). A notice, never a refusal: the report may be true. A commit
+    named by its id is told as named, never as what `place` stands on (critic over 1d84a75). Or ""."""
+    wb = work_branch(engine)
+    if (there := W.git(place, "rev-parse", "--verify", "-q", f"refs/heads/{wb}^{{commit}}").stdout.strip()) == commit:
         return ""
-    there = W.git(place, "rev-parse", "--verify", "-q", f"refs/heads/{wb}^{{commit}}").stdout.strip()
+    if W.git(place, "rev-parse", "HEAD").stdout.strip() != commit:
+        return (f"delivered: commit {commit[:12]}, named by its id, not the tip of `{wb}`"
+                + (f" ({there[:12]}): if your work is there, DELIVER naming nothing" if there else "")
+                + ". The judge reads this commit.")
+    on = W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
     return (f"delivered: commit {commit[:12]}, what {place} stands on ({f'`{on}`' if on else 'a detached HEAD'}), not "
             f"`{wb}`" + (f", which stands at {there[:12]}: if your work is there, `git switch --detach {wb}` at {place} "
                          f"(a branch a linked worktree holds cannot be checked out twice — or remove that worktree "
-                         f"first, then `git switch {wb}`), and deliver again" if there and there != commit else "")
+                         f"first, then `git switch {wb}`), and deliver again" if there else "")
             + ". The judge reads this commit.")
 
 
@@ -2955,6 +3067,9 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
     own = agents.get(agent_id) or {}
     kept = own.get("execution") if own.get("project") == engine.project_name else None
     execution = execution or kept or (_default_execution(engine, engine.mode(), agents) if kind == "llm-executor" else None)
+    # …a directory no delivery from it could be judged by, refused with its lift before anything is written
+    if workdir and (why := no_repository(workdir, executor=kind == "llm-executor" and not execution)):
+        return {"refused": True, "error": f"NOT registered — {why}"}
     out = agents.register(agent_id, kind, model=model, workdir=workdir, validator=validator,
                           oracle_map=oracle_map, max_turns=max_turns, client=client, context_budget=context_budget,
                           project=engine.project_name, execution=execution)
@@ -2966,6 +3081,7 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
     # caller's own argument, so a relative `workdir='work'` came back as an instruction that names a
     # different place when run from a different directory.
     workdir = out.get("workdir") or workdir
+    record_repository(engine, out.get("workdir"))
     # …AND WHO WILL ACTUALLY VALIDATE THIS ROLE'S WORK. The roster is server-wide, and an executor
     # registered without an explicit `validator` came back with `validator: null` — while the
     # instrument that would really validate it was whichever llm-validator had been registered first,
@@ -3013,11 +3129,13 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
             + ". An executor registered there binds to this instrument by workspace, in either order.")
         # …and the declared boundary of the seams the person issues: a delivery records the tree it hands in only where
         # its judge's place is a repository's top, and a tree no delivery records no FAIL can refuse handed in again
-        if kind == "llm-validator" and workdir and not W.is_repo_top(workdir):
-            out["seam_boundary"] = (f"{workdir} is not the top of a git repository: a delivery judged there records no "
-                                    f"tree, so a FAIL at a seam the person issues cannot refuse the same work handed in "
-                                    f"again — it is observed after it lands. Register the validator at the "
-                                    f"repository's top for his seams to force rework")
+        # …a directory below a top delivers that tree's commit, its judge standing in it (`judged_at`)
+        top = W.git(workdir, "rev-parse", "--show-toplevel").stdout.strip() if workdir else ""
+        if kind == "llm-validator" and workdir and not (top and W.is_repo_top(top)):
+            out["seam_boundary"] = (f"{workdir} is in no git repository with a commit: a delivery judged there records "
+                                    f"no tree, so a FAIL at a seam the person issues cannot refuse the same work handed "
+                                    f"in again — it is observed after it lands. Commit the repository for his seams to "
+                                    f"force rework")
     return out
 
 
@@ -3065,7 +3183,7 @@ def _default_execution(engine: Engine, mode: Optional[dict], agents) -> Optional
     """WHERE A PROJECT'S EXECUTORS NAMING NO EXECUTION WORK: the installation's "default" (`gfso setup` declares it), so
     delegation on a new install runs in a container with no hand step — once a mode is set: with none, the user's agent
     builds nodes in its own chat beside delegated ones, and the whole project moved into a volume that does not hold
-    that work (critic). `in_chat` too: its chat's deliveries are taken into the volume (`take_in`) and its parts' work
+    that work (critic). `in_chat` too: its chat's deliveries are kept in the volume (`store.keep`) and its parts' work
     lands back (`workspaces._to_the_chat`). Not where the project already runs somewhere, nor where the user said
     unattended work may run on this host."""
     if not mode or _config_module.local_agents() or declaring_role(engine, agents) is not None:
@@ -3701,71 +3819,83 @@ def _reminded_before_a_self_pass(fn):
 
 @functools.wraps(_tools.signal)
 def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict:
-    """`tools.signal`, where a DELIVER whose sender performs the node in its own chat carries the commit that chat's
-    repository stands on — the directory its judge stands in (`validator_workdir`) —, kept by the system under its own
-    ref (`W.record_head`) and taken where its judge copies it (`take_in`); what is not committed is no part of it, and
-    the answer names it (`not_delivered`). Without it the judge copied that directory as it stood when it came, so what
-    was written there after DELIVER was judged as delivered (§11.3: the result as it stands at DELIVER). A party whose
-    session the system runs records its own place's commit (`reports.committed_place`); a directory that is no
-    repository's top with a commit is read as before — said in the answer (`not_recorded`). An ACCEPT of such a chat
-    carries the HEAD that repository stood on when the work was taken, and the repository: where and from when a node
-    is at work in it, as the system's own record (`past.spans`). Either records the repository by its main worktree
-    (`W.main_worktree`): a linked worktree is removed once its work is merged, and the record must outlive it."""
-    said, tid, sig, keep = {}, TaskId(task_id), str(signal).strip().upper(), lambda: None
-    nothing_to_commit = bool(kw.pop("nothing_to_commit", False))
-
-    def in_chat():
-        """Where `source` performs the node in its own chat — its judge's directory —, or a falsy answer."""
-        agents = _delegation().default_agents()
-        return performer(engine, agents, source)[0] is None and _delegation().validator_workdir(engine, agents, tid)
-    if sig == "ACCEPT" and (place := in_chat()) and W.is_repo_top(place) and (
+    """`tools.signal`, where a DELIVER whose sender performs the node in its own chat carries a commit of the project's
+    repository — what its sender names (`place`: a work tree's or clone's HEAD, or a commit id), else the tip of the
+    work's branch past where the work started (`_work_tip`), else refused, its lifts named (`_unnamed`): never a HEAD
+    by inference, the person's main tree's or the judge's directory's. Admitted only
+    once every refusal its sender lifts has passed and the commit is taken whole into the project's store
+    (`store.admit`, read only) — nothing written before —, and kept there by its id once accepted
+    (`store.keep`); what is not committed is no part of it, and the answer names it (`not_delivered`). Without it the
+    judge copied that directory as it stood when it came, so what was written there after DELIVER was judged as
+    delivered (§11.3: the result as it stands at DELIVER). A party whose session the system runs records its own
+    place's commit (`reports.committed_place`); a directory inside a work tree delivers that tree's commit, and one in
+    none is refused before any write, its lift named. An ACCEPT of such a chat carries the HEAD that repository stood
+    on when the work was taken, and the repository: where and from when a node is at work in it, as the system's own record
+    (`past.spans`). Either records the repository by its main worktree (`W.main_worktree`): a linked worktree is
+    removed once its work is merged, and the record must outlive it."""
+    said, tid, sig, after, unaccepted = {}, TaskId(task_id), str(signal).strip().upper(), [], []
+    named = kw.pop("place", "") or None
+    # …a commit id named, read in the git the chat's place stands in
+    commit = named if named and re.fullmatch(r"[0-9a-fA-F]{7,40}", named) else None
+    named = None if commit else named
+    if sig == "ACCEPT" and (place := _chat_place(engine, source, tid, named)) and W.is_repo_top(place) and (
             head := W.git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()):
+        # …where the work goes on the system's branch, it starts from that branch's tip once it exists: the person's
+        # own commit between two takes was the start, and honest work on the branch could descend from it no way
+        # (critic over 1d84a75: a part after his commit, a REOPEN after a PASS)
+        if switches_branches(engine, tid) and (wb := W.git(place, "rev-parse", "--verify", "-q",
+                                                         f"refs/heads/{work_branch(engine)}^{{commit}}").stdout.strip()):
+            head = wb
         kw["_recorded"] = (None, head, W.main_worktree(place))
         if switches_branches(engine, tid) and (theirs := on_their_branch(engine, place)):
             said["say"] = theirs
-    if (sig == "DELIVER" and (st := engine.graph.get_state(tid)) in (State.EXECUTING, State.REWORKING)
-            and (place := in_chat())):
-        if W.is_repo_top(place):
-            try:
-                tree, commit, left = W.record_head(place, delivered_ref(engine, tid))
-                if inner := W.nested(place, commit):        # …refused where its sender lifts it, not FAILed at the copy
-                    return {"accepted": False, "state": st.name, "error": f"NOT delivered — {W.nested_cause(inner)}"}
-                take_in(execution_of(engine), delivered_ref(engine, tid))   # …a project's volume, never this host
-                kw["_recorded"] = (tree, commit, W.main_worktree(place))
-            except OSError as ex:
-                return {"accepted": False, "state": st.name,
-                        "error": f"NOT delivered — the commit at {place} could not be recorded: {ex}"}
-            if no := _nothing_committed(engine, tid, place, commit, left, nothing_to_commit):
-                return {"accepted": False, "refused": True, "state": st.name, "error": no}
-            if switches_branches(engine, tid) and (notice := not_the_work(engine, place, commit)):
-                said["notice"] = notice
-            if left:
-                said["not_delivered"] = (f"delivered: commit {commit[:12]}; not committed, so no part of it: "
-                                         f"{', '.join(left[:10])}{', …' if len(left) > 10 else ''}")
-        elif W.git(place, "rev-parse", "--is-inside-work-tree").stdout.strip() == "true":
-            said["not_recorded"] = (f"{place}, where this node's judge stands, is not the top of a git repository with a "
-                                    f"commit: the delivery is not recorded as a commit, and its judge reads what stands "
-                                    f"there when it comes — register the validator at the top of a repository with a "
-                                    f"commit, and commit your work, for a verdict on what you delivered")
+    deliver = sig == "DELIVER" and (st := engine.graph.get_state(tid)) in (State.EXECUTING, State.REWORKING)
+    if deliver and (place := _chat_place(engine, source, tid, named)):
+        if named and (no := _not_its_repository(engine, named)):
+            return {"accepted": False, "refused": True, "state": st.name, "error": f"NOT delivered — {no}"}
+        # …a directory inside a work tree delivers that tree's commit: no directory is judged as it stands
+        top = W.git(place, "rev-parse", "--show-toplevel").stdout.strip() if not W.is_repo_top(place) else place
+        if top and W.is_repo_top(top):
+            no, got = _a_chats_delivery(engine, tid, top, commit or ("HEAD" if named else None))
+            if no:
+                return {"accepted": False, "state": st.name, **no}
+            kw["_recorded"], keep = got.pop("_recorded"), got.pop("keep")
+            unaccepted.append(got.pop("drop"))
+            said.update(got)
+            after.append(keep)
+        else:
+            # …refused, nothing written: accepted, no judge could read it and no verdict could ever come. Only a
+            # project with no directory at all — a goal acted out in the world — delivers its report alone
+            return {"accepted": False, "refused": True, "state": st.name,
+                    "error": f"NOT delivered — {place}, where this node's judge stands, is in no git work tree with a "
+                             f"commit, and no judge reads a directory as it stands: commit your work in a repository "
+                             f"and DELIVER again, or name the work tree it is committed in (`place=`)"}
+
     if sig == "DELIVER" and (rec := kw.get("_recorded")):
         try:
-            keep = past.delivered(engine, rec[2], task_id, rec[1])      # …its range read while git still holds it
+            after.append(past.delivered(engine, rec[2], task_id, rec[1]))  # …its range read while git still holds it
         except OSError:
             pass                                                        # …a measure's record, never the delivery's refusal
-    out = _tools.signal(engine, task_id, signal, source, **kw)
+    try:
+        out = _tools.signal(engine, task_id, signal, source, **kw)
+    except BaseException:
+        for act in unaccepted:
+            act()
+        raise
     if out.get("accepted") and sig == Verdict.PASS.value and (back := back_to_their_branch(engine, tid)):
         said["say"] = back
         # …and on the feed: signed from the person's page, the PASS's answer goes to the page, and the chat hears it there
         engine.emit_info("verdict", f"{tid}: {back}")
-    if out.get("accepted"):
-        keep()
+    for act in after if out.get("accepted") else unaccepted:   # …the keep, or what an admission verified, gone
+        act()
     return {**out, **said} if said and out.get("accepted") else out
 
 
-#: …and `nothing_to_commit`, a chat's own word that none of the work stands uncommitted (`_nothing_committed`); and
-#: `confirm`, the holder's answer to the reminder before a self-signed PASS (`unchecked_self_pass`)
-signal.__signature__ = (lambda sig: sig.replace(parameters=[*sig.parameters.values(), *(inspect.Parameter(
-    n, inspect.Parameter.KEYWORD_ONLY, default=False, annotation=bool) for n in ("nothing_to_commit", "confirm"))]))(
+#: …and `confirm`, the holder's answer to the reminder before a self-signed PASS (`unchecked_self_pass`); and `place`,
+#: the work tree, clone or commit id of the project's repository a chat's DELIVER names (`_a_chats_delivery`)
+signal.__signature__ = (lambda sig: sig.replace(parameters=[*sig.parameters.values(), inspect.Parameter(
+    "confirm", inspect.Parameter.KEYWORD_ONLY, default=False, annotation=bool),
+    inspect.Parameter("place", inspect.Parameter.KEYWORD_ONLY, default="", annotation=str)]))(
     inspect.signature(_tools.signal))
 
 

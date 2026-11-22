@@ -205,7 +205,7 @@ def test_a_limit_refused_validation_leaves_no_refused_report(tmp_path):
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
-    _a_delivery(e)
+    _a_delivery(e, tmp_path)
     for sign in (True, False, True):
         assert D._auto_validate(e, "kid", agents, _llm=_LimitedProvider(), sign=sign) == "no-verdict:limit", sign
     assert e.rejected_report("kid") is None, e.rejected_report("kid")

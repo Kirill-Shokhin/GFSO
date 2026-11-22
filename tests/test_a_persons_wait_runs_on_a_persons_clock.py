@@ -94,6 +94,7 @@ def test_a_solo_project_in_the_chat_survives_its_person_away_two_days(tmp_path):
     e, repo = _solo_in_chat(tmp_path)
     try:
         TL.TOOLS["signal"](e, "root.a", "ACCEPT", "user")
+        _git(repo, "switch", "-q", "-c", "gfso/p/work")          # …as the ACCEPT's answer tells the chat
         _commit(repo, "a.txt")
         out = TL.TOOLS["signal"](e, "root.a", "DELIVER", "user", result="a.txt written", self_validation="PASS")
         assert out.get("accepted"), out

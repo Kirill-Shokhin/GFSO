@@ -10,7 +10,7 @@ from __future__ import annotations
 import gfso.tools as T
 from gfso import issuer as I
 from gfso.core.types import Mode, State, TaskId
-from tests.support import criterion
+from tests.support import a_place, criterion
 from tests.test_the_mode_decides_who_holds_what import _FakeLLM, _admit, _engine, _kid
 
 OLD = {"behaviour": "b", "command": "./engine < q.sql", "expect": "Alice 55000.000\nBob 60000.000"}
@@ -76,7 +76,7 @@ def test_a_derivation_that_runs_the_work_under_test_is_refused(tmp_path):
     path reaches, so the derivation may not name the work's place or the program the probe runs from it."""
     (tmp_path / "engine").write_text("#!/bin/sh\necho 'Bob 60000.000'\n", encoding="utf-8")
     for how in ("./engine < q.sql", f"{tmp_path.as_posix()}/engine < q.sql", "cd .. && engine"):
-        out, t = _accept(_disputed(), _derive(how), where=str(tmp_path))
+        out, t = _accept(_disputed(), _derive(how), where=a_place(tmp_path))
         assert out["status"] == "would_narrow" and "runs the work under test" in out["why"], (how, out)
         assert [p.expect for p in t.spec.criteria[0].check] == [OLD["expect"]]
 

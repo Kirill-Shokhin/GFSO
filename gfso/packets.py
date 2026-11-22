@@ -88,21 +88,18 @@ def _working_directory(workdir: Optional[str], validating: bool = False) -> str:
             f"never write.\n{checkout_note(here)}")
 
 
-def snapshot_note(tree: str, built: Optional[str] = None) -> str:
-    """What a validator run in its own copy of the delivery (`adapters.snapshots`) is told about where it stands —
-    `built`: what the system built in it, where the copy is the tree DELIVER recorded."""
-    what = (f"a checkout of exactly the tree DELIVER recorded — nothing the delivery's directory holds besides (ignored "
-            f"or untracked files, build outputs, an environment) is in it — built by the system before you with "
-            f"{built}" if built is not None else
-            "a copy of the delivery's directory as it stands on disk — uncommitted and untracked files and links "
-            "included — but for what its git ignores (build outputs among it), which is left out, and nothing is "
-            "built in it: build what a check needs")
-    return (f"\nThis run has the delivery to itself: {tree} is {what}, made for this run alone, while the "
+def snapshot_note(tree: str, built: str) -> str:
+    """What a validator run in its own copy of the delivery (`adapters.snapshots`) is told about where it stands — a
+    checkout of the tree DELIVER recorded, read by its id; `built`: what the system built in it."""
+    return (f"\nThis run has the delivery to itself: {tree} is a checkout of exactly the tree DELIVER recorded — nothing "
+            f"the delivery's directory holds besides (ignored or untracked files, build outputs, an environment) is in "
+            f"it — built by the system before you with {built}, made for this run alone, while the "
             f"other runs of this validation work in copies of their own: wherever the contract or the report names "
             f"the delivery's directory, it means this one. Build and clean as the checks say: the delivery's files are "
-            f"not reached from here. {'Run' if built is not None else 'Git refs, config and worktrees are shared with the delivery: run'}"
-            f" no git command that writes (no commit, checkout -b, gc, worktree prune). You are still READ-ONLY: change no file the delivery holds — the copy is compared with the "
-            f"delivery before it goes, and a committed file that differs is recorded as your edit.\n")
+            f"not reached from here. Run no git command that writes (no commit, checkout -b, gc, worktree prune). You "
+            f"are still READ-ONLY: change no file the delivery holds — the copy is compared with the delivery before it "
+            f"goes, and a committed file that differs is recorded as your edit.\n")
+
 
 
 def checkout_note(here: Optional[str]) -> str:

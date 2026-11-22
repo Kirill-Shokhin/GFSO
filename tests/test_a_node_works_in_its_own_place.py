@@ -27,7 +27,7 @@ from gfso.core.types import PlaceUnavailable, State, TaskId, nodes_root
 from gfso.delegate import Dispatcher, _auto_validate
 from gfso.engine.joins import NOT_ON_ITS_BRANCH, Joins
 from gfso.sessions import run_consent, run_executor
-from gfso.workspaces import _ensure_place, _name_the_delivery, _workspace, delivered_ref, land_accepted, left_to_merge, node_workspace
+from gfso.workspaces import _ensure_place, _workspace, land_accepted, left_to_merge, node_workspace
 from gfso.roster import AgentRegistry
 from tests import test_one_session_carries_a_scope as S
 from tests.support import criterion, instrument_passes, make_engine, REGISTER
@@ -331,19 +331,14 @@ def test_a_whole_that_merges_its_conflicting_part_is_delivered_with_both(tmp_pat
     e.stop()
 
 
-def test_a_directory_that_is_not_a_repository_is_shared_as_before(tmp_path):
+def test_a_directory_that_is_not_a_repository_is_refused_at_the_go(tmp_path, door):
+    """A base with no git: shared by every node, no delivery from it had a commit to be judged by, and its sessions
+    were paid for with no verdict possible. The go is refused with the lift — the person's agent makes it a
+    repository —, and the system makes none of the directory."""
     e, agents, base = _plan(tmp_path, git=False, whole="exec-1")
-    said: list = []
-    e.on_info(lambda src, msg: said.append(msg))
-    meet = threading.Barrier(2)
-    sessions = {"a": _Executor("a", {"a.c": "A\n"}, meet), "b": _Executor("b", {"b.c": "B\n"}, meet),
-                "par": _Executor("par", {})}
-    where: dict = {}
-    _run(e, agents, sessions, _in(e, "a", "b", states=(State.DONE,)), validated=where)
-    assert sessions["a"].cwd == sessions["b"].cwd == str(base) == where["a"] == where["b"]
-    assert {"a.c", "b.c"} <= sessions["a"].saw
-    assert sum("is not the top of a git repository" in m for m in said) == 1
-    assert not [p for p in nodes_root(base).glob("*/*") if not p.name.startswith(".gfso-scratch-")],         "no node's place: only the base's validation rounds, among its project's"
+    out = TL._no_place_at_the_go(e)
+    assert out and "git init" in out["error"], out
+    assert not (base / ".git").exists()
 
 
 def test_a_scopes_session_and_its_validation_share_the_scopes_one_tree(tmp_path):
@@ -583,8 +578,9 @@ def test_a_held_whole_is_told_its_parts_to_merge_by_a_process_started_after_they
 
 
 def test_a_part_whose_whole_works_over_another_repository_is_named_with_where_its_commit_is(tmp_path):
-    """Its accepted commit is in its own base alone: `git merge <sha>` where the whole works names an object that
-    repository does not have, so the base and the branch to fetch are named (critic)."""
+    """Its accepted commit is in its own base alone: `git merge <sha>` where the whole works named an object that
+    repository did not have (critic) — now the commit is read by its id from the project's store into that repository,
+    and the merge named there is one it can make."""
     e, agents, base = _plan(tmp_path, whole="exec-1")
     other = _repo(tmp_path / "other")
     agents.register("exec-1", "llm-executor", workdir=str(other), project="p")
@@ -592,7 +588,8 @@ def test_a_part_whose_whole_works_over_another_repository_is_named_with_where_it
     _run(e, agents, sessions, _in(e, "a", "b", states=(State.DONE,)))
     named = dict(left_to_merge(e, agents, e.graph.get_task(TaskId("par"))))
     assert set(named) == {"a", "b"}, named
-    assert f"`git fetch {base} gfso/p/a`" in named["a"] and "git merge" in named["a"], named["a"]
+    sha = re.search(r"`git merge (\w+)`", named["a"]).group(1)
+    assert _git(_workspace(e, agents, e.graph.get_task(TaskId("par")))[0], "cat-file", "-t", sha) == "commit", named["a"]
     # …and once merged where the whole works it is named no more (its AGGREGATE repeated it). CONTROL: test the
     # part's own base instead of the whole's tree in `left_to_merge` and "a" stays named.
     place = _workspace(e, agents, e.graph.get_task(TaskId("par")))[0]
@@ -654,8 +651,8 @@ def door(tmp_path, monkeypatch):
 
 
 def _by_hand(e, repo: Path, tid, who, files: dict, apart: bool = False) -> str:
-    """A person performs `tid` in their own repository and delivers its committed HEAD through the door that records it
-    where the node's judge stands (`tools_llm.signal`) — `apart`: on a branch of theirs, their checked-out one restored."""
+    """A person performs `tid` in their own repository and delivers its committed HEAD, naming that tree, through the
+    door that records it (`tools_llm.signal`) — `apart`: on a branch of theirs, their checked-out one restored."""
     was = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     if apart:
         _git(repo, "switch", "-q", "-c", f"{who}-{tid}")
@@ -664,7 +661,7 @@ def _by_hand(e, repo: Path, tid, who, files: dict, apart: bool = False) -> str:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", f"{tid} by hand")
     sha = _git(repo, "rev-parse", "HEAD")
-    out = TL.TOOLS["signal"](e, tid, "DELIVER", who, result="done")
+    out = TL.TOOLS["signal"](e, tid, "DELIVER", who, result="done", place=str(repo))
     assert out["accepted"] and "not_recorded" not in out, out
     if apart:
         _git(repo, "switch", "-q", was)
@@ -733,26 +730,13 @@ def test_a_roots_commit_recorded_with_no_repository_is_said_never_landed_unsaid(
     None it reads as landed."""
     base = _repo(tmp_path / "ws")
     e, agents = _by_hand_alone(tmp_path, base)
-    tree, sha, _ = W.record_head(base, delivered_ref(e, "par"))
+    tree, sha, _ = W.read_head(base)
     assert T.signal(e, "par", "DELIVER", "kirill", result="done", _recorded=(tree, sha, None))["accepted"]
     _passed(e, "par")
     said = land_accepted(e, agents, e.graph.get_task(TaskId("par"))) or ""
     assert sha[:12] in said, "landed unsaid"
     assert NOT_ON_ITS_BRANCH in said, "…and the frontier says to deliver it again, never to merge a branch none names"
     assert W.git(base, "rev-parse", "-q", "--verify", "refs/heads/gfso/p/accepted").returncode, "nothing named"
-    e.stop()
-
-
-def test_a_roots_delivery_recorded_before_the_log_named_its_repository_is_found_by_the_systems_own_ref(tmp_path):
-    """Under a container the base is known: the ref the system kept the delivery under, being the accepted commit
-    itself, names it (critic: it fell through to the volume's HEAD, which holds only the parts)."""
-    base = _repo(tmp_path / "ws")
-    e, agents = _by_hand_alone(tmp_path, base)
-    tree, sha, _ = W.record_head(base, delivered_ref(e, "par"))
-    assert T.signal(e, "par", "DELIVER", "kirill", result="done", _recorded=(tree, sha, None))["accepted"]
-    _passed(e, "par")
-    assert _name_the_delivery(e, e.graph.get_task(TaskId("par")), base) is None
-    assert W.git(base, "rev-parse", "refs/heads/gfso/p/accepted").stdout.strip() == sha
     e.stop()
 
 

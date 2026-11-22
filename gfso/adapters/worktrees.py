@@ -29,10 +29,11 @@ from pathlib import Path
 
 from gfso.adapters import children, lfs
 from gfso.config import subprocess_env
-from gfso.adapters.execution import NODES, READ_REF, ContainerExecution, LocalExecution, fetched_on_host, stored_on_host
+from gfso.adapters.execution import (NODES, READ_REF, ContainerExecution, LocalExecution, fetched_on_host,
+                                     stored_on_host)
 from gfso.core.types import base_of_nodes
 
-#: the largest bundle `_carry` moves through the server's memory
+#: the largest bundle `carry` moves through the server's memory
 BUNDLE_CAP = 512 * 2 ** 20
 
 
@@ -61,8 +62,10 @@ def _lock(base) -> threading.RLock:
 
 #: every system git call's own settings, after the caller's: no config but the repository's (the system's and the
 #: user's are not the agent's to read, and an image's `safe.directory` goes with them), no hook, no fsmonitor. Depth,
-#: not the bound — a repository's config still names filters, drivers, commands, and a denylist leaks by class
-APART = ("-c", "safe.directory=*", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
+#: not the bound — a repository's config still names filters, drivers, commands, and a denylist leaks by class. Long
+#: paths taken where the platform bounds them (Git for Windows): a judge's copy deep in a project's places wrote no pack
+#: ("Filename too long") and read as the delivery's own fault
+APART = ("-c", "safe.directory=*", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.longpaths=true")
 NO_CONFIG = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
 
 
@@ -259,47 +262,56 @@ def _laid_kib(ex, at, commit: str, limit: int, stores) -> int | None:
     return int(laid) if not r.returncode and laid.isdigit() else None
 
 
-def tree_past_place(ex, at, commit: str, holder, place, base: tuple | None = None, stores: tuple = ()) -> str | None:
-    """Why a commit's tree may not be laid at `at` from the place `place` read by `holder`: it records more than that place holds on disk.
+def du_kib(holder, place) -> int | None:
+    """What `place` holds on disk in KiB, read by `du` where `holder` runs; None unread — a host with no `du` on its path
+    (critic, ran)."""
+    try:
+        kib = (holder.run(["du", "-sk", "."], cwd=str(place), timeout=600, env=_env()).stdout or "").split()[:1]
+    except OSError:
+        return None
+    return int(kib[0]) if kib and kib[0].isdigit() else None
+
+
+def tree_past_place(ex, at, commit: str, held: int | None, base: tuple | None = None, stores: tuple = ()) -> str | None:
+    """Why a commit's tree may not be laid at `at`: it records more than its place held on disk (`held` KiB — for a
+    delivery, what its keep recorded at DELIVER, so the guard outlives the place).
     One blob under many names, kept from the place's disk by the index, took 2.0 GiB of copy from a 509 KB pack, a system's write and no
     one's charge, bounded by nothing but Docker's disk, every project's (critic, ran). Against the place, not a node's bound: that bound
     is what a node adds, and a whole of accepted parts, or a large repository, lay past it honestly (critic, ran); a tree as large as its
-    place costs what the place already did, and what the user's own imported commit `base` (its session, its path) records is credited, no agent
-    writing it: a file git lays with holes reads little in `du`, and a part may have removed from the whole what a sibling's ground still holds
-    (critic, ran). NOT HELD: a large file a part made and a sibling then removed parks that sibling. Unread is not refused: the checkout says."""
-    try:
-        kib = (holder.run(["du", "-sk", "."], cwd=str(place), timeout=600, env=_env()).stdout or "").split()[:1]
-    except OSError:                       # …a host with no `du` on its path: unread, as the docstring says (critic, ran)
+    place costs what the place already did, and what the user's own imported commit `base` records — (where git runs, the repository,
+    the revision) — is credited, no agent writing it: a file git lays with holes reads little in `du`, and a part may have removed from
+    the whole what a sibling's ground still holds (critic, ran). NOT HELD: a large file a part made and a sibling then removed parks that
+    sibling. Unread is not refused: the checkout says."""
+    if held is None:
         return None
-    if not kib or not kib[0].isdigit():
-        return None
-    limit = int(kib[0]) + LAY_MARGIN_KIB
+    limit = held + LAY_MARGIN_KIB
     laid = _laid_kib(ex, at, commit, limit, stores)
     if laid is None or laid <= limit:
         return None
-    if base and (credit := _laid_kib(base[0], base[1], "HEAD", 2 ** 50, ())):
+    if base and (credit := _laid_kib(base[0], base[1], base[2], 2 ** 50, ())):
         limit += credit
         laid = _laid_kib(ex, at, commit, limit, stores)
         if laid is None or laid <= limit:
             return None
-    return (f"the tree of {commit[:12]} would lay over {limit} KiB, past what its place holds on disk ({kib[0]} KiB): "
+    return (f"the tree of {commit[:12]} would lay over {limit} KiB, past what its place held on disk ({held} KiB): "
             f"it names content its files do not hold, or files git lays with holes that a part delivered, and no copy of it is made")
 
 
 def _start(base, place: Path, branch: str, start_from, execution, rev: str = "HEAD") -> None:
     """The new clone on `branch`: the base's commit of that name where it has one, else `rev` of `start_from` — a
-    parent's place, whose commit comes over by bundle (`_carry`): no container holds both places."""
+    parent's place, whose commit comes over by bundle (`carry`): no container holds both places."""
     relative_alternates(place / ".git" / "objects", Path(base) / ".git" / "objects", execution)
     for name, kept in kept_out(base, execution).items():
         _fs(execution).files.write_bytes(str(place / ".git" / "info" / name), kept)
     if git(base, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", execution=execution).returncode == 0:
-        start = _carry(base, base, place, f"refs/heads/{branch}", execution)
+        start = carry(base, base, place, f"refs/heads/{branch}", execution)
     else:
         held = git(start_from, "cat-file", "-e", f"{rev}^{{commit}}", execution=execution).returncode == 0
-        start = _carry(base, start_from, place, rev if held else "HEAD", execution)
+        start = carry(base, start_from, place, rev if held else "HEAD", execution)
     # …a parent's commit laid here is this place's baseline, charged to no one: the same tree a delivery's copy refuses
-    if past := tree_past_place(_fs(execution).session(str(place)), place, start, _fs(execution).session(str(start_from)), start_from,
-                               (_fs(execution).session(str(base)), base), _stores(base, place) if _lfs_in(execution) else ()):
+    if past := tree_past_place(_fs(execution).session(str(place)), place, start,
+                               du_kib(_fs(execution).session(str(start_from)), start_from),
+                               (_fs(execution).session(str(base)), base, "HEAD"), _stores(base, place) if _lfs_in(execution) else ()):
         raise OSError(f"{place} could not start {branch}: {past}")
     r = git(place, "checkout", "-q", "-B", branch, start, execution=execution)
     if r.returncode != 0:
@@ -337,7 +349,7 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
     (four FAILs over one tree read as four attempts and split a leaf, GB_sql_database_tngo2o700 root.joins). Taken
     where the work was made: host git cannot index a symlink made inside a container (probe P5) — in the place's own
     container, whose agent's filters and fsmonitor ran over every place from the project's; and taken back into the
-    base by bundle (`_carry`), the base's side in the root's container."""
+    base by bundle (`carry`), the base's side in the root's container."""
     with _lock(base):
         if (r := stage(lambda *a: git(place, *a, execution=execution))).returncode:
             raise NotStaged(unstaged_cause(r.stderr or ""))
@@ -347,22 +359,21 @@ def commit_all(base, place, message: str, who: str, execution=None, branch: str 
         # …taken back into the base under the node's own name, never the place's word
         if branch and is_clone(place, execution):
             try:
-                _name(base, branch, _carry(base, place, base, "HEAD", execution), execution)
+                _name(base, branch, carry(base, place, base, "HEAD", execution), execution)
             except OSError as e:
                 raise NotCarried(f"the delivery could not be taken back into the project: {e}") from e
         return git(place, "rev-parse", "HEAD^{tree}", execution=execution).stdout.strip()
 
 
-def record_head(place, ref: str) -> tuple[str, str, list]:
-    """(tree, commit, left out) of the user's repository at `place` as their chat committed it — its HEAD, kept under
-    `ref` so no move of theirs loses it —; left out: what `git status` names that the commit does not hold, no part of
-    the delivery. Only what is committed is delivered, as only what is committed enters a project (`_carried_in`): a
-    tree staged whole took their uncommitted notes and local files into the volume every later session reads (critic)."""
-    commit = git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()
+def read_head(place, rev: str = "HEAD") -> tuple[str, str, list]:
+    """(tree, commit, left out) of the user's repository at `place` as their chat committed it — its `rev`, HEAD where
+    none is named —; left out: what `git status` names that the commit does not hold, no part of the delivery. Read
+    only: a DELIVER refused after it writes nothing (a ref written first stood for a delivery never admitted).
+    Only what is committed is delivered, as only what is committed enters a project (`_carried_in`): a tree staged whole
+    took their uncommitted notes and local files into the volume every later session reads (critic)."""
+    commit = git(place, "rev-parse", "--verify", "-q", f"{rev}^{{commit}}").stdout.strip()
     if not commit:
         raise OSError(f"{place} has no commit to deliver")
-    if (r := git(place, "update-ref", ref, commit)).returncode:
-        raise OSError(f"the delivery could not be kept in {place}: {r.stderr.strip()}")
     # …read by their own git: under the system's flags (`APART`) their CRLF checkout read as changed (README, live)
     seen = children.run(["git", "-C", str(place), "status", "--porcelain", "-z"], timeout=_SLOW, text=True,
                         encoding="utf-8", errors="replace").stdout
@@ -392,26 +403,31 @@ def nested(place, rev: str = "HEAD", execution=None) -> list[str]:
     imported commit records at that commit: empty in every copy alike, they carry nothing of a node's, and a repository holding a
     submodule could deliver nothing, with no move of its executor's to lift it (critic, ran)."""
     kept = set(users_links(place, execution))
-    return [link.split(" ", 1)[1] for link in _links(place, rev, execution) if link not in kept]
+    return [link.split(" ", 1)[1] for link in links_of(place, rev, execution) if link not in kept]
 
 
-def _links(repo, rev: str, execution) -> list[str]:
+def links_of(repo, rev: str, execution) -> list[str]:
     """Each gitlink of `rev`'s tree in `repo`, as "<commit> <path>"."""
     r = git(repo, "ls-tree", "-r", "-z", rev, execution=execution)
     return [" ".join((e.split(" ", 2)[2].split("\t", 1))) for e in r.stdout.split("\0") if e.startswith("160000 ")] if r.returncode == 0 else []
 
 
+def declared_links(repo, rev: str, execution=None) -> list[str]:
+    """The gitlinks of `rev` in `repo` its own `.gitmodules` declares as submodules: a repository a chat committed as a
+    bare gitlink is its stray, which no checkout holds (critic)."""
+    said = git(repo, "config", "--blob", f"{rev}:.gitmodules", "--get-regexp", r"\.path$", execution=execution).stdout.split("\n")
+    declared = {line.split(" ", 1)[1] for line in said if " " in line}
+    return [link for link in links_of(repo, rev, execution) if link.split(" ", 1)[1] in declared]
+
+
 def users_links(place, execution) -> list[str]:
     """What the user's imported commit records of gitlinks, for the node's `place` — or, for a place that is no node's on
-    this host, the user's own repository where their chat works, the submodules its HEAD declares in `.gitmodules`: a
-    repository the chat committed as a bare gitlink is its stray, which no checkout holds (critic)."""
+    this host, the user's own repository where their chat works, the submodules its HEAD declares (`declared_links`)."""
     if root := base_of(str(place)):
-        return _links(root, "HEAD", execution)
+        return links_of(root, "HEAD", execution)
     if execution is not None and not isinstance(execution, LocalExecution):
         return []
-    said = git(place, "config", "--blob", "HEAD:.gitmodules", "--get-regexp", r"\.path$").stdout.split("\n")
-    declared = {line.split(" ", 1)[1] for line in said if " " in line}
-    return [link for link in _links(place, "HEAD", execution) if link.split(" ", 1)[1] in declared]
+    return declared_links(place, "HEAD")
 
 
 def nested_cause(paths: list) -> str:
@@ -428,13 +444,13 @@ def bring(base, place, branch: str, execution=None) -> None:
     """`branch` of the base brought into a node's own repository under its name — what its packet tells it to merge."""
     if is_clone(place, execution):
         with _lock(base):
-            _name(place, branch, _carry(base, base, place, f"refs/heads/{branch}", execution), execution)
+            _name(place, branch, carry(base, base, place, f"refs/heads/{branch}", execution), execution)
 
 
 @_writes_into("repo")
 def _name(repo, branch: str, sha: str, execution) -> None:
     """`branch` of the repository at `repo` set to `sha`, whatever it held — checked out by a worktree left from
-    before or not: the commit is the system's word, read in its source (`_carry`)."""
+    before or not: the commit is the system's word, read in its source (`carry`)."""
     r = git(repo, "update-ref", f"refs/heads/{branch}", sha, execution=execution)
     if r.returncode != 0:
         raise OSError(f"{repo} could not name {sha} {branch}: {r.stderr.strip()}")
@@ -459,7 +475,7 @@ def _not_carried(base, dst, execution) -> list:
 
 
 @_writes_into("dst")
-def _carry(base, src, dst, rev: str, execution) -> str:
+def carry(base, src, dst, rev: str, execution) -> str:
     """The commit `rev` names in the repository at `src`, present in the one at `dst` — its id. TWO REPOSITORIES, AND
     NEITHER'S GIT RUNS WHERE THE OTHER STANDS: a fetch from a path ran the source's `upload-pack` beside the target, in
     one container holding both. Here the source writes a bundle of what the base lacks in its own container (`git`), the
@@ -615,6 +631,13 @@ def _bundled(src, rev: str, nots: list, execution) -> bytes:
             ex.files.remove_matching(str(a.parent), [name])
 
 
+def to_host(src, ref: str, to, execution) -> str:
+    """The commit `ref` names in the repository at `src`, where `execution` runs (a container), taken into the user's
+    repository at `to` on this host by their own git (`fetched_on_host`) — a bundle made in `src`'s own container,
+    every object checked; git's words where it refused, else ''."""
+    return fetched_on_host(Path(to), _bundled(src, ref, [], execution), ref)
+
+
 def move_result(base, ref: str, sha: str) -> str | None:
     """THE one move of a result branch of the person's repository to `sha` — every landing's (`land`, a chat-performed
     root's `_name_the_delivery`). The result it holds, where `sha` does not contain it, is kept first under
@@ -644,10 +667,11 @@ def main_worktree(place) -> str:
     return str(Path(top)) if top and is_repo_top(top) else str(place)
 
 
-def checked_out(base, ref: str) -> bool:
-    """Is `ref` checked out in a worktree of the user's repository at `base`? The system lands only on a branch nobody
-    works on: moved under their working tree, the files stay, and their next commit undoes what landed."""
-    return f"branch {ref}" in git(base, "worktree", "list", "--porcelain").stdout.splitlines()
+def checked_out(base, ref: str, execution=None) -> bool:
+    """Is `ref` checked out in a worktree of the repository at `base` (the user's, where `execution` names none)? The
+    system lands only on a branch nobody works on: moved under their working tree, the files stay, and their next commit
+    undoes what landed."""
+    return f"branch {ref}" in git(base, "worktree", "list", "--porcelain", execution=execution).stdout.splitlines()
 
 
 def land(base, ref: str, execution, since: str | None, tree: str | None = None, rev: str = "HEAD") -> str:
@@ -721,7 +745,7 @@ def merge(base, into, branch: str, message: str, execution=None) -> str | None:
         sha = _commit_in(base, branch, execution)
         # …its objects into `into`'s own store: a session reads no delivery through the base (`execution._READ_COPY`)
         try:
-            _carry(base, base, into, sha, execution)
+            carry(base, base, into, sha, execution)
         except OSError as e:                # …said as any join's refusal, its cause the whole's or its issuer's to read
             return str(e)
         r = git(into, "merge", "--no-ff", "--no-edit", "--no-verify", "-m", message, sha, execution=execution)

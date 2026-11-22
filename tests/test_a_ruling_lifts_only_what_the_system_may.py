@@ -26,7 +26,7 @@ import gfso.tools as T
 from gfso import issuer as I
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import State, TaskId
-from tests.support import criterion
+from tests.support import a_place, criterion
 from tests.test_a_check_of_the_plan_is_not_the_goal import (KEPT, KEPT_SAYS, ROOT, STUB, STUB_SAYS, _disputed, _fails_seen,
                                                             _finding, _pin, _pins, _rule, _settled, _standing, _whole)
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
@@ -140,7 +140,7 @@ def test_below_a_handed_in_root_a_ruling_is_the_persons_and_the_run_stops(tmp_pa
     issuer = str(e.graph.issuer_of(mid))
     llm = _ContactLLM({"decision": "accept", "justification": "false", "retire_findings": ids}, ran={"Bash": 1})
     verbs = I.Verbs(llm=lambda m, **k: llm, busy=lambda *a: contextlib.nullcontext(), review=None, refine=None,
-                    place=lambda en, ag, n: str(tmp_path))
+                    place=lambda en, ag, n: a_place(tmp_path))
     out = I.settle(e, _Roster(), mid, "dispute", issuer, verbs)
     e.wait_idle()
     assert out["status"] == "users" and e.paused() and "only the user changes a check" in out["why"], out

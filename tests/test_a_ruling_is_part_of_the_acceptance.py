@@ -33,7 +33,7 @@ from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import Mode, Signal, SignalData, TaskId
 from gfso.packets import _validator_packet
-from tests.support import criterion
+from tests.support import a_place, criterion
 from tests.test_a_finding_binds_the_criterion_it_refuted import _OTHER, _OWN, _delivered, _id, _pinned, _refute, _seam
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
 from tests.test_the_mode_decides_who_holds_what import _Roster, _engine, _goal
@@ -69,7 +69,7 @@ def test_a_ruling_on_the_users_own_goal_is_the_users_question(tmp_path):
     _auto_root(e)
     pid = _challenged_with_a_finding(e, "root", "g")
     llm = _ContactLLM({"decision": "accept", "justification": "not g", "retire_findings": [pid]}, ran={"Bash": 1})
-    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=a_place(tmp_path))
     assert out["status"] == "users" and e.graph.get_state("root").name == "CHALLENGED", out
     (step,) = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "root"]
     assert step["mine"] and "THE USER'S QUESTION" in step["directive"] and pid in step["directive"], step
@@ -105,7 +105,7 @@ def test_the_system_still_rejects_an_auto_roots_dispute_naming_a_finding(tmp_pat
     pid = _challenged_with_a_finding(e, "root", "g", reason="{pid} cannot be fixed without JOIN support")
     assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "user", "the system left the dispute to no one"
     llm = _ContactLLM({"decision": "reject", "justification": "the goal asks for joins: implement them"}, ran={"Bash": 1})
-    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=a_place(tmp_path))
     e.wait_idle()
     assert out["status"] == "rejected" and e.graph.get_state("root").name == "EXECUTING", out
     assert [p["id"] for p in e.regression_probes(TaskId("root"))["g"]] == [pid], "a rejection retired the finding"
@@ -119,7 +119,7 @@ def test_a_rejection_with_a_stray_ruling_beside_it_is_still_the_rejection(tmp_pa
     _auto_root(e)
     pid = _challenged_with_a_finding(e, "root", "g", reason="{pid} cannot be fixed")
     llm = _ContactLLM({"decision": "reject", "justification": "implement it", "retire_findings": [pid]}, ran={"Bash": 1})
-    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=a_place(tmp_path))
     e.wait_idle()
     assert out["status"] == "rejected" and [p["id"] for p in e.regression_probes(TaskId("root"))["g"]] == [pid], out
     assert "without `retire_findings`" in I._USERS_DISPUTE        # what the machine is told when it would rule
@@ -142,7 +142,7 @@ def test_control_the_system_rules_on_a_part_it_issued(tmp_path):
     pid = _challenged_with_a_finding(e, "kid", "k")
     issuer = str(e.graph.issuer_of(TaskId("kid")))
     llm = _ContactLLM({"decision": "accept", "justification": "not k", "retire_findings": [pid]}, ran={"Bash": 1})
-    out = I.answer_the_challenge(e, TaskId("kid"), issuer, _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, TaskId("kid"), issuer, _llm=llm, where=a_place(tmp_path))
     e.wait_idle()
     assert out["status"] == "accepted", out
     assert e.regression_probes(TaskId("kid")) == {}

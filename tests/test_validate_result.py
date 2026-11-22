@@ -20,7 +20,7 @@ from gfso import tools_llm as TL
 from gfso.adapters.llm.headless import _tool_use_name, ClaudeCodeProvider
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.invariants import verdict_report_defects
-from tests.support import criterion, hold_a_credential, make_engine, pinned, REGISTER, declare
+from tests.support import committed, criterion, hold_a_credential, make_engine, pinned, REGISTER, declare
 
 
 def _eng():
@@ -41,7 +41,8 @@ class _ValidatorLLM:
         self.seen = None
 
     def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
-        self.seen = {"system": system, "user": user, "tools": allowed_tools, "cwd": cwd}
+        self.seen = {"system": system, "user": user, "tools": allowed_tools, "cwd": cwd,
+                     "files": sorted(p.name for p in Path(cwd).iterdir() if p.name != ".git") if cwd else []}
         self.calls.append({"duration_ms": 1200, "input_tokens": 500, "output_tokens": 90})
         return self._text
 
@@ -49,7 +50,7 @@ class _ValidatorLLM:
         self.calls[-1]["stage"] = stage
 
 
-def _delivered_node(e, tid="n1", extra_dep=False):
+def _delivered_node(e, tid="n1", extra_dep=False, recorded=None):
     nail = {"name": "Nail it", "description": "hammer a nail",
             "criteria": [criterion("flush", "nail head is flush"), criterion("holds", "picture hangs on it")]}
     if not extra_dep:
@@ -66,7 +67,7 @@ def _delivered_node(e, tid="n1", extra_dep=False):
         declare(e, "prod", tid, glue="uses the bought nails")
     assert T.signal(e, tid, "ACCEPT", "alice")["state"] == "EXECUTING"
     r = T.signal(e, tid, "DELIVER", "alice",
-                 result="nail at wall.md:3; flush verified by touch; holds verified with 2kg frame")
+                 result="nail at wall.md:3; flush verified by touch; holds verified with 2kg frame", _recorded=recorded)
     assert r["state"] == "VALIDATING"
 
 
@@ -558,7 +559,7 @@ def test_the_validator_runs_where_the_delivery_IS(tmp_path):
     (project / "sum.py").write_text("print(42)", encoding="utf-8")
 
     e = _eng()
-    _delivered_node(e)
+    _delivered_node(e, recorded=committed(project))
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "read wall.md",
          "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]},
@@ -566,7 +567,8 @@ def test_the_validator_runs_where_the_delivery_IS(tmp_path):
          "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]}]}))
     TL.validate_result(e, "n1", workdir=str(project), _llm=llm)
 
-    assert llm.seen["cwd"] == str(project), "the validator was opened away from the delivery"
+    # …in a checkout of what was delivered, never the place itself (§11.3)
+    assert llm.seen["files"] == ["sum.py"] and llm.seen["cwd"] != str(project), "the validator was opened away from the delivery"
     assert (project / "sum.py").exists()
     # BESIDE the delivery, not inside it: a criterion like "every file under the target dir belongs
     # to this package" is otherwise false because of us (measured on the human door 2026-08-22).
@@ -574,7 +576,6 @@ def test_the_validator_runs_where_the_delivery_IS(tmp_path):
     scratch = list(scratch_of(project, e.project_name).iterdir())
     assert len(scratch) == 1, "a fresh scratch per validation is still made"
     assert str(scratch[0]) in llm.seen["user"], "…and the validator is told where it is"
-    assert str(project) in llm.seen["user"]
     e.stop()
 
 
@@ -681,40 +682,6 @@ def test_the_record_names_the_model_that_validated():
     e.stop()
 
 
-def test_what_the_validator_leaves_in_the_delivery_is_named(tmp_path):
-    """A validator that writes into the tree it validates is reported, by name.
-
-    Measured live across several runs: validators left fixtures in the delivery — `t1.csv`, a
-    `_fixtures/` directory, once a 120 MB `big.txt` — and the next validator then saw them as part of
-    the work. The packet now says to write only into the offered scratch; a prompt is not
-    enforcement, so the difference is measured too. Nothing is deleted: the executor's tree is not
-    this code's to prune, and a named stray is a fact its owner can act on."""
-    project = tmp_path / "project"
-    project.mkdir()
-    (project / "sum.py").write_text("print(42)", encoding="utf-8")
-
-    e = _eng()
-    _delivered_node(e)
-
-    class _Littering(_ValidatorLLM):
-        def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
-            (project / "t1.csv").write_text("a,b\n", encoding="utf-8")
-            (project / "_fixtures").mkdir()
-            return super().run_agent(system, user, allowed_tools, cwd)
-
-    llm = _Littering(_fenced({"verdict": "PASS", "per_criterion": [
-        {"criterion": "flush", "verdict": "pass", "evidence": "ran it",
-         "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]},
-        {"criterion": "holds", "verdict": "pass", "evidence": "ran it",
-         "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]}]}))
-    out = TL.validate_result(e, "n1", workdir=str(project), _llm=llm)
-
-    assert out["validator_strays"] == ["_fixtures", "t1.csv"]
-    assert (project / "t1.csv").exists()          # reported, never deleted
-    assert "WRITE NOTHING INTO THE DELIVERY" in llm.seen["user"]
-    e.stop()
-
-
 def test_an_empty_working_directory_is_refused_not_failed(tmp_path, monkeypatch):
     """A validator opened where the work is not reports what it honestly sees — and that lands as a FAIL.
 
@@ -745,7 +712,7 @@ def test_an_empty_working_directory_is_refused_not_failed(tmp_path, monkeypatch)
         {"criterion": "holds", "verdict": "pass", "evidence": "ran it",
          "probe": [{"command": "check holds", "expect": "it holds"}, {"command": "python sum.py", "expect": "42"}]}]})
     out2 = TL.validate_result(e, "n1", workdir=str(empty), _llm=_ValidatorLLM(ok))
-    assert "empty" not in (out2.get("error") or "")
+    assert "not the work" not in (out2.get("error") or "")
     e.stop()
 
 
@@ -761,14 +728,16 @@ def test_a_refused_report_reaches_the_issuer_who_has_to_decide(tmp_path):
     It is stored beside the node under its own key, so nothing can mistake it for a verdict, and
     `get_verdict` shows it to whoever has to act."""
     e = _eng()
-    _delivered_node(e)
+    (work := tmp_path / "work").mkdir()
+    (work / "nail.md").write_text("flush\n")
+    _delivered_node(e, recorded=committed(work))
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "read it",
          "behaviours": ["the head sits flush", "and stays flush under load"],
          "probe": [{"command": "check flush", "expect": "it holds"}, {"command": "python -c \"print('flush')\"", "expect": "flush"}]},
         {"criterion": "holds", "verdict": "pass", "evidence": "looked at it"}],
         "failed_criteria": []}))
-    out = TL.validate_result(e, "n1", workdir=str(tmp_path), _llm=llm)
+    out = TL.validate_result(e, "n1", workdir=str(work), _llm=llm)
     assert out["verdict"] is None                       # refused: a criterion with no probe at all
 
     back = T.get_verdict(e, "n1")
@@ -823,7 +792,9 @@ def test_a_long_contract_is_validated_in_batches_whose_conjunction_is_the_verdic
     crits = [criterion(f"c{i}", f"criterion {i}") for i in range(5)]
     T.create_task(e, "big", {"description": "a rich contract", "criteria": crits}, "alice")
     T.signal(e, "big", "ACCEPT", "alice")
-    T.signal(e, "big", "DELIVER", "alice", result="built it; see notes")
+    (work := tmp_path / "work").mkdir()
+    (work / "notes.md").write_text("built\n")
+    T.signal(e, "big", "DELIVER", "alice", result="built it; see notes", _recorded=committed(work))
 
     seen = []
 
@@ -844,7 +815,7 @@ def test_a_long_contract_is_validated_in_batches_whose_conjunction_is_the_verdic
         def tag_last(self, stage):
             self.calls[-1]["stage"] = stage
 
-    out = TL.validate_result(e, "big", _llm=_Batched(), workdir=str(tmp_path))
+    out = TL.validate_result(e, "big", _llm=_Batched(), workdir=str(work))
     assert [len(b) for b in seen] == [2, 2, 1]                  # …three runs, disjoint
     assert sorted(sum(seen, [])) == sorted(c["name"] for c in crits)   # …every criterion once
     assert out["verdict"] == "PASS" and len(out["per_criterion"]) == 5
@@ -864,10 +835,10 @@ def test_the_batches_of_one_verdict_run_at_the_same_time(monkeypatch, tmp_path):
     crits = [criterion(f"c{i}", f"criterion {i}") for i in range(5)]
     T.create_task(e, "big", {"description": "a rich contract", "criteria": crits}, "alice")
     T.signal(e, "big", "ACCEPT", "alice")
-    T.signal(e, "big", "DELIVER", "alice", result="built it")
     project = tmp_path / "project"
     project.mkdir()
     (project / "sum.py").write_text("x = 1" + chr(10), encoding="utf-8")
+    T.signal(e, "big", "DELIVER", "alice", result="built it", _recorded=committed(project))
 
     at_once = threading.Barrier(3, timeout=20)   # serial runs cannot clear it, and that IS the test
     places = []
@@ -958,7 +929,7 @@ def test_the_workdir_defaults_to_where_the_nodes_Del_is_registered(tmp_path, mon
     (project / "sum.py").write_text("print(42)", encoding="utf-8")
 
     e = _eng()
-    _delivered_node(e)                                     # Del = alice
+    _delivered_node(e, recorded=committed(project))        # Del = alice
     _roster_of(monkeypatch, {"alice": {"kind": "llm-executor", "workdir": str(project)}})
     llm = _ValidatorLLM(_fenced({"verdict": "PASS", "failed_criteria": [], "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "ran it", "behaviours": ["nail head is flush"],
@@ -970,8 +941,9 @@ def test_the_workdir_defaults_to_where_the_nodes_Del_is_registered(tmp_path, mon
     out = TL.validate_result(e, "n1")                       # no workdir: the roster has it
     assert "error" not in out, out.get("error")
     assert out["verdict"] == "PASS"
-    assert llm.seen["cwd"] == str(project), "the validator was opened away from the delivery"
+    assert llm.seen["files"] == ["sum.py"], "the validator was opened away from the delivery"
     e.stop()
+
 
 
 def test_the_refusal_stands_when_the_roster_has_no_answer_either(tmp_path, monkeypatch):
@@ -988,29 +960,6 @@ def test_the_refusal_stands_when_the_roster_has_no_answer_either(tmp_path, monke
     _roster_of(monkeypatch, {"alice": {"kind": "llm-executor"}})   # registered, no workdir
     assert TL.validate_result(e, "n1")["verdict"] is None
     e.stop()
-
-
-def test_an_unreadable_delivery_accuses_nobody(monkeypatch, tmp_path):
-    """No pre-image means NOTHING can be said about strays — not that there were none, and certainly
-    not that every file present is one.
-
-    The pre-image was an empty set on failure, so an unreadable directory turned every pre-existing
-    file in the delivery into something "the validator left behind" — the exact false accusation this
-    comparison exists to prevent, inverted (found while naming the swallowed failures, 2026-09-02).
-    """
-    (tmp_path / "already_here.py").write_text("x = 1", encoding="utf-8")
-    class _Unreadable(HostFiles):
-        def listdir(self, path):
-            if str(path) == str(tmp_path):
-                raise OSError("gone")
-            return super().listdir(path)
-    (ex := LocalExecution()).files = _Unreadable()
-    scratch, before = TL._validation_place("n1", str(tmp_path), ex)
-    assert before is None, "an unreadable pre-image is UNKNOWN, not empty"
-
-    out: dict = {}
-    TL._strays_left_behind(None, "n1", str(tmp_path), None, out, lambda *_: None)
-    assert "strays" not in out and not out, "with no pre-image, the honest answer about strays is silence"
 
 
 def test_a_validator_that_wrote_nothing_is_not_a_validator_that_wrote_badly():
@@ -1058,7 +1007,9 @@ def test_a_retry_after_a_refused_report_validates_only_what_it_left_undecided(tm
     crits = [criterion("c0", "criterion 0"), criterion("c1", "criterion 1")]
     T.create_task(e, "n", {"description": "two criteria", "criteria": crits}, "alice")
     T.signal(e, "n", "ACCEPT", "alice")
-    T.signal(e, "n", "DELIVER", "alice", result="built it")
+    (work := tmp_path / "work").mkdir()
+    (work / "built.txt").write_text("built\n")
+    T.signal(e, "n", "DELIVER", "alice", result="built it", _recorded=committed(work))
     seen = []
 
     def _entry(n, probed=True):
@@ -1083,9 +1034,10 @@ def test_a_retry_after_a_refused_report_validates_only_what_it_left_undecided(tm
         def tag_last(self, stage):
             self.calls[-1]["stage"] = stage
 
-    first = TL.validate_result(e, "n", _llm=_Validator(probe_c1=False), workdir=str(tmp_path))
+    first = TL.validate_result(e, "n", _llm=_Validator(probe_c1=False), workdir=str(work))
     assert first["verdict"] is None, "c1 carried no probe: the first report must be ⊥"
-    again = TL.validate_result(e, "n", _llm=_Validator(probe_c1=True), workdir=str(tmp_path))
+    again = TL.validate_result(e, "n", _llm=_Validator(probe_c1=True), workdir=str(work))
+
     assert seen[-1] == ["c1"], f"the retry re-validated {seen[-1]}, not only what was left undecided"
     assert again["verdict"] == "PASS" and {p["criterion"] for p in again["per_criterion"]} == {"c0", "c1"}
     reused = [p for p in again["per_criterion"] if p.get("reused_from_refused")]

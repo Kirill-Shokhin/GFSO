@@ -19,7 +19,6 @@ from tests.support import a_repository, carry_nothing_in
 
 import gfso.adapters.execution as E
 from gfso.adapters.execution import ContainerExecution
-from gfso.adapters.snapshots import _own_git
 from gfso.core.types import PlaceUnavailable
 
 IMAGE = os.environ.get("GFSO_TEST_IMAGE", "e3-linux-agent:2")   # CI: the product's own image
@@ -98,21 +97,6 @@ def test_live_a_link_flipped_out_of_a_place_never_leads_the_system_into_another(
         assert project.files.read_bytes(str(b / "secret")) == b"SECRET-B\n"
     finally:
         _sh(project, a, "pkill -f 'ln -sfn' || true")
-
-
-@live
-def test_live_a_copys_git_reaches_no_other_place_through_its_agents_links(project):
-    _places(project)
-    a, b = project.own / "a", project.own / "b"
-    project.files.write_bytes(str(b / "secret"), b"SECRET-B\n")
-    _sh(project, a, f"mkdir -p x && printf 'gitdir: x\\n' > .git && printf '.\\n' > x/commondir && "
-                    f"ln -s {project.to_inside(str(b))} x/loot")
-    round_ = project.own / ".gfso-scratch-a/a_1700000001"
-    project.files.mkdir(str(round_))
-    project.copy_tree(str(a), str(round_ / "delivery"))
-    _own_git(a, round_ / "delivery", project)
-    assert project.files.read_bytes(str(round_ / "delivery" / ".git" / "loot" / "secret")) is None
-    assert not _sh(project, round_, f"cat {project.to_inside(str(round_))}/delivery/.git/loot/secret").stdout
 
 
 def test_a_call_that_did_not_run_is_no_absence(project, monkeypatch):

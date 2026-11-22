@@ -25,7 +25,7 @@ from gfso import issuer as I
 from gfso.core.protocol.procedure import probe_id, with_engine_observations
 from gfso.core.types import AgentId, DoneReason, RevisionReason, State, TaskId
 from gfso.tools_llm import TOOLS as LOCKED
-from tests.support import criterion
+from tests.support import a_place, criterion
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
 from tests.test_the_mode_decides_who_holds_what import _admit, _engine, _kid, Mode, _Roster
 
@@ -76,7 +76,7 @@ def _disputed(e, *found, tid="root"):
 def _rule(e, tmp_path, ids, tid=ROOT, actor="user"):
     llm = _ContactLLM({"decision": "accept", "justification": "ran it: false on correct work", "retire_findings": ids},
                       ran={"Bash": 1})
-    out = I.answer_the_challenge(e, tid, actor, _llm=llm, where=str(tmp_path))
+    out = I.answer_the_challenge(e, tid, actor, _llm=llm, where=a_place(tmp_path))
     e.wait_idle()
     return out, llm
 
@@ -172,7 +172,7 @@ def test_a_plan_handed_in_is_never_changed_it_stops_with_the_signal(tmp_path):
     e.give_users_plan(ROOT)
     answers = [{"decision": "reject", "justification": "implement it"}]
     verbs = lambda answer: I.Verbs(llm=lambda m, **k: _ContactLLM(answer, ran={"Bash": 1}), busy=lambda *a: contextlib.nullcontext(),
-                                   review=None, refine=None, place=lambda en, ag, n: str(tmp_path))
+                                   review=None, refine=None, place=lambda en, ag, n: a_place(tmp_path))
     ids = _disputed(e, ("g", _finding("g")), ("h", _finding("h")))
     out = I.settle(e, _Roster(), ROOT, "dispute", "user", verbs(answers[0]))
     e.wait_idle()

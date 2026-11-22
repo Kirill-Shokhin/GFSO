@@ -17,7 +17,7 @@ import gfso.delegate as D
 from gfso.delegate import Dispatcher, _auto_validate, _checker_validate
 from gfso.sessions import run_executor, EXECUTOR_SCHEMA
 from gfso.roster import AgentRegistry
-from tests.support import (make_engine, instrument_passes, criterion, pinned,
+from tests.support import (committed, make_engine, instrument_passes, criterion, pinned,
                            workdir as workdir_)
 from gfso.decompose.build import build_graph_live
 from tests.support import DENIAL_ENTRY, REGISTER, REGISTER_SPLIT, round_over, declare
@@ -37,6 +37,7 @@ def _agents(tmp_path, *entries):
     a handler that only logged and the node was never retried, and the validator's error was
     discarded so the node sat in VALIDATING forever."""
     a = AgentRegistry(path=str(tmp_path / "agents.json"))
+    workdir_(tmp_path)                    # …a repository, as every directory a role is named in
     for aid, kind in entries:
         a.register(aid, kind, workdir=str(tmp_path))
     return a
@@ -120,7 +121,7 @@ def _dispatch_validate(e, agents, verdict_payload):
     started = d.dispatch_once()
     # until the VALIDATION is over, not until the canned text was read: the verdict is recorded and signed
     # after the fake returns, and waiting on the text alone raced that under load
-    for _ in range(500):
+    for _ in range(3000):                  # …a judge's copy is read by id from the store first: seconds, not ms
         if not llm._texts and not any(e.claims.validation_in_flight(t.id) for t in e.all_tasks()):
             break
         time.sleep(0.01)
@@ -517,7 +518,7 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
     _goal(e, "par", "exec-1")
     _children(e, "kid", assignee="exec-2")               # unregistered = human-ish, dispatcher passive
     T.signal(e, "par", "ACCEPT", "exec-1")
-    T.signal(e, "par", "DELIVER", "exec-1", result="premature aggregate")
+    T.signal(e, "par", "DELIVER", "exec-1", result="premature aggregate", _recorded=committed(tmp_path))
     ok = {"verdict": "PASS",
           "per_criterion": [{"criterion": "g", "verdict": "pass", "evidence": "aggregate checked", "behaviours": ["the criterion holds"], "probe": [{"command": "check g", "expect": "it holds"},
                                                                   {"command": "check c", "expect": "it holds"}]}],
@@ -545,15 +546,15 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
     assert vkey not in d._seen                                # key freed for a later revalidation
     assert not d._retried                                     # NOT burned as a no-verdict retry
     T.signal(e, "kid", "ACCEPT", "exec-2")
-    T.signal(e, "kid", "DELIVER", "exec-2", result="kid out")
+    T.signal(e, "kid", "DELIVER", "exec-2", result="kid out", _recorded=committed(tmp_path))
     # a seam needs the verdict on the record whoever signs it (§10.3); the issuer records what it
     # observed and then signs — "issuer ≠ Del" is a rule about the signature, not the evidence
     T.record_verdict(e, "kid", "PASS", reviewer="exec-1",
                      observed={"c": {"note": "ran the child's output", "ran": ["check c"]}})
     T.signal(e, "kid", "PASS", "exec-1")
     assert "validate:par" in d.dispatch_once()                # children settled → fresh validation
-    for _ in range(300):
-        if not llm._texts:
+    for _ in range(3000):                  # …until the validation is over, its copy read by id first
+        if not llm._texts and e.graph.get_state(TaskId("par")).name != "VALIDATING":
             break
         time.sleep(0.01)
     e.wait_idle()
@@ -720,7 +721,7 @@ def test_autoverdict_accepted_on_child_nodes_and_human_issuer_skipped(tmp_path):
     _goal(e, "par", BOSS)
     _children(e, "kid", crit="k")
     T.signal(e, "kid", "ACCEPT", "exec-1")
-    T.signal(e, "kid", "DELIVER", "exec-1", result="done; see files")
+    T.signal(e, "kid", "DELIVER", "exec-1", result="done; see files", _recorded=committed(tmp_path))
     started, _ = _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [
         {"criterion": "k", "verdict": "pass", "evidence": "ran", "behaviours": ["the criterion holds"], "probe": [{"command": "check k", "expect": "it holds"}]}], "failed_criteria": []})
     assert "validate:kid" in started
@@ -1660,7 +1661,7 @@ def test_under_auto_the_system_validates_its_own_executors_delivery(tmp_path):
     T.signal(e, "goal", "ACCEPT", "exec-1")      # consented already: no consent round to run here
     e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.signal(e, "kid", "ACCEPT", "exec-2")
-    T.signal(e, "kid", "DELIVER", "exec-2", result="nail hammered")
+    T.signal(e, "kid", "DELIVER", "exec-2", result="nail hammered", _recorded=committed(tmp_path))
     e.wait_idle()
     _dispatch_validate(e, agents, {"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "ran check", "behaviours": ["the criterion holds"],

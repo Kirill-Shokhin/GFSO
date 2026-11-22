@@ -16,18 +16,18 @@ import json
 
 from gfso import tools as T
 from gfso import tools_llm as TL
-from tests.support import criterion
+from tests.support import committed, criterion
 from tests.test_validate_result import _eng, _fenced
 
 NAMES = ("a", "b", "c")
 
 
-def _node(e):
+def _node(e, at=None):
     T.create_task(e, "n", {"description": "three criteria, one probe each", "criteria": [
         criterion(k, check=[{"behaviour": f"{k} holds", "command": f"check {k}", "expect": "ok"}]) for k in NAMES]},
         "alice")
     T.signal(e, "n", "ACCEPT", "alice")
-    T.signal(e, "n", "DELIVER", "alice", result="built it")
+    T.signal(e, "n", "DELIVER", "alice", result="built it", _recorded=committed(at) if at else None)
 
 
 class _Runs:
@@ -67,7 +67,7 @@ def _broken_b(monkeypatch):
 def test_the_unread_batch_alone_is_run_again_and_the_validation_decides(monkeypatch, tmp_path):
     _broken_b(monkeypatch)
     e = _eng()
-    _node(e)
+    _node(e, tmp_path)
     llm = _Runs()
     out = TL.validate_result(e, "n", _llm=llm, workdir=str(tmp_path))
     assert len(llm.packets) == 4 and sum("**b**" in p for p in llm.packets) == 2, len(llm.packets)
@@ -80,7 +80,7 @@ def test_the_run_again_works_in_a_fresh_place_of_its_own(monkeypatch, tmp_path):
     leftovers in it — the scratch exists so no run validates another's (critic over 779eade)."""
     _broken_b(monkeypatch)
     e = _eng()
-    _node(e)
+    _node(e, tmp_path)
     out = TL.validate_result(e, "n", _llm=_Runs(), workdir=str(tmp_path), _spawn=_Runs)
     assert out["verdict"] == "PASS", out
     seen = _Runs.scratch

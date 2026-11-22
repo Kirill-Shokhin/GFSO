@@ -16,7 +16,7 @@ GFSO = Path(__file__).resolve().parents[1] / "gfso"
 RADIUS = ("workspaces.py", "adapters/worktrees.py", "adapters/snapshots.py", "tools_llm.py", "delegate.py",
           "issuer/__init__.py", "packets.py", "core/protocol/procedure.py", "adapters/execution.py",
           "adapters/llm/toolloop.py", "adapters/llm/headless.py", "adapters/llm/chat.py", "adapters/llm/conformance.py",
-          "roster.py", "observe.py", "sessions.py")
+          "roster.py", "observe.py", "sessions.py", "store.py")
 #: a path's own methods that touch the file system, and how many positional arguments the path's form takes — the
 #: port's methods of the same name take the path first (`ex.is_dir(p)`), which is what tells the two apart
 PATH_CALLS = {**dict.fromkeys(("is_dir", "is_file", "exists", "iterdir", "read_text", "read_bytes", "mkdir", "unlink",
@@ -59,9 +59,16 @@ HOSTS_OWN = {
     ("adapters/execution.py", "Volume.land_tree", "to.exists()"): "a host directory of the user's: the result",
     ("adapters/execution.py", "fetched_on_host", "(f := (Path(d) / 'accepted.bundle')).write_bytes(bundle)"):
         "the accepted result, landing in the user's repository",
-    ("adapters/execution.py", "take_in", "open(b, 'rb')"): "the user's repository, a chat's delivery carried in",
-    ("adapters/execution.py", "take_in", "tempfile.TemporaryDirectory(prefix='gfso-take-')"):
-        "the user's repository, a chat's delivery carried in",
+
+    ("store.py", "_keep_lfs", "Path(f).read_bytes()"): "the user's LFS store, a chat's delivery kept",
+    ("store.py", "_keep_lfs", "os.path.getsize(f)"): "the user's LFS store, a chat's delivery kept",
+    ("store.py", "_where", "(at / '.git' / 'HEAD').is_file()"): "the project's store on this host, the server's state",
+    ("store.py", "_where", "at.parent.mkdir(parents=True, exist_ok=True)"): "the project's store on this host, the server's state",
+    ("store.py", "drop", "root.is_dir()"): "this host's stores under the data home, the server's state",
+    ("store.py", "drop", "root.iterdir()"): "this host's stores under the data home, the server's state",
+    ("workspaces.py", "left_to_merge", "Path(base).is_dir()"): "the repository a chat's part was delivered from, on this host",
+    ("workspaces.py", "no_repository", "p.is_dir()"): "a directory a role of this host is named in, at its registration",
+    ("workspaces.py", "_name_the_delivery", "Path(repo).is_dir()"): "the repository a chat's root was delivered from, on this host",
     ("adapters/execution.py", "fetched_on_host", "tempfile.TemporaryDirectory(prefix='gfso-land-')"):
         "the accepted result, landing in the user's repository",
     ("tools_llm.py", "_keep_rejected_report", "d.mkdir(parents=True, exist_ok=True)"): "the server's state",

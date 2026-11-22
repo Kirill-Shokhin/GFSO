@@ -26,7 +26,7 @@ from gfso.core.types import State, TaskId
 from gfso.decompose import kept as K
 from gfso.delegate import ensure_dispatcher
 from gfso.signin import PAGE
-from tests.support import criterion, instrument_passes, make_engine
+from tests.support import a_repository, criterion, instrument_passes, make_engine
 from tests.test_the_mode_decides_who_holds_what import Mode, _engine
 from tests.test_a_seam_he_issues_is_checked_by_the_validator import (CONSOLE, HOLDER, SEAM, _as, _checked, _delivers,
                                                                       _issued, _state)
@@ -192,7 +192,7 @@ def test_once_delivered_the_holder_owes_nothing_observed_or_not(tmp_path):
     assert H.decide({}, "p", _asked(e, STANDING)) == {}
     # …its dispatcher stopped before the validator is: the PASS is the test's own, never a live validation's in flight
     ensure_dispatcher(e).stop()
-    assert not TL.register_agent(e, "p-val", "llm-validator", workdir=str(tmp_path)).get("refused")
+    assert not TL.register_agent(e, "p-val", "llm-validator", workdir=str(a_repository(tmp_path))).get("refused")
     assert H.decide({}, "p", _asked(e, STANDING)) == {}
     instrument_passes(e, TaskId("root"), validator="p-val")
     with _as(STANDING):

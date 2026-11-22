@@ -62,10 +62,17 @@ def _in_chat(tmp_path, repo):
     return e
 
 
+def _take(e, repo):
+    """The root taken in the person's tree, and that tree switched to the work's branch, as the ACCEPT's answer tells
+    the chat: what it commits there is the work its DELIVER carries with no place named."""
+    assert TL.TOOLS["signal"](e, "root", "ACCEPT", "user")["accepted"]
+    _git(repo, "switch", "-q", "-c", "gfso/p/work")
+
+
 def _delivered_v1(tmp_path):
     repo = _repo(tmp_path)
     e = _in_chat(tmp_path, repo)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    _take(e, repo)
     (repo / "f.txt").write_text("v1\n")
     head = _commit(repo, "f.txt")
     out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
@@ -75,7 +82,7 @@ def _delivered_v1(tmp_path):
 def test_a_chat_delivery_is_its_committed_head_kept_and_what_is_not_committed_is_named(tmp_path):
     repo = _repo(tmp_path)
     e = _in_chat(tmp_path, repo)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    _take(e, repo)
     (repo / "f.txt").write_text("v1\n")
     head = _commit(repo, "f.txt")
     (repo / "notes.txt").write_text("the user's own, never committed\n")
@@ -84,7 +91,7 @@ def test_a_chat_delivery_is_its_committed_head_kept_and_what_is_not_committed_is
     got = e.delivered(TaskId("root"))
     assert got is not None and got[1] == head, f"an in_chat DELIVER recorded no commit, or another: {got}"
     assert _git(repo, "rev-parse", "HEAD") == head and _git(repo, "status", "--porcelain") == "?? notes.txt"
-    assert head in _git(repo, "for-each-ref", "--format=%(objectname)", "refs/gfso/"), "the delivery is kept by no ref"
+    assert not _git(repo, "for-each-ref", "refs/gfso/"), "a ref of the system's written into the person's repository"
     assert "notes.txt" not in _git(repo, "ls-tree", "-r", "--name-only", head)
 
 
@@ -127,7 +134,7 @@ def test_a_stray_repository_committed_is_refused_at_deliver_with_what_lifts_it(t
     (critic over 1569a97) — refused at DELIVER instead, where the chat lifts it, nothing sent."""
     repo = _repo(tmp_path)
     e = _in_chat(tmp_path, repo)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    _take(e, repo)
     (inner := repo / "vendor" / "lib").mkdir(parents=True)
     _git(inner, "init", "-q")
     (inner / "x").write_text("x\n")
@@ -148,20 +155,23 @@ def test_the_users_own_submodule_is_no_stray(tmp_path):
     _git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(inner), "sub")
     _git(repo, "-c", "user.name=u", "-c", "user.email=u@x", "commit", "-q", "-m", "sub")
     e = _in_chat(tmp_path, repo)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    _take(e, repo)
     (repo / "f.txt").write_text("v1\n")
     _commit(repo, "f.txt")
     out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="done", self_validation="PASS")
     assert out["accepted"] and e.delivered(TaskId("root")), out
 
 
-def test_a_judge_below_the_repositorys_top_is_said_not_recorded(tmp_path):
+def test_a_judge_below_the_repositorys_top_delivers_its_work_trees_commit(tmp_path):
+    """No directory is judged as it stands: a judge registered in a directory of a work tree reads that tree's commit."""
     repo = _repo(tmp_path)
     (sub := repo / "sub").mkdir()
     e = _in_chat(tmp_path, sub)
-    TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
+    _take(e, repo)
+    (repo / "f.txt").write_text("v1\n")
+    head = _commit(repo, "f.txt")
     out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="done", self_validation="PASS")
-    assert out["accepted"] and "not the top of a git repository" in out.get("not_recorded", ""), out
+    assert out["accepted"] and "not_recorded" not in out and e.delivered(TaskId("root"))[1] == head, out
 
 
 def test_a_deliver_the_machine_refuses_records_nothing(tmp_path):

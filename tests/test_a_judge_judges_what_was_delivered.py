@@ -126,6 +126,7 @@ def test_live_a_failing_build_is_the_deliverys_fail_and_its_executors_next_packe
 def test_live_a_batchs_leftover_process_cannot_reach_another_batchs_copy(project):
     x, a = project, project.own / "a"
     _sh(x, a, "echo delivered > f")
+    tree, commit = W.commit_all(x.base, a, "gfso: a delivery", "exec-a", execution=x), W.head(a, execution=x)
     round_ = x.own / ".gfso-scratch-a" / "a_1"
     x.files.mkdir(str(round_))
     one = Path(TL._own_place(str(round_), 0, x))
@@ -137,7 +138,7 @@ def test_live_a_batchs_leftover_process_cannot_reach_another_batchs_copy(project
                 f"mkdir -p \"{inside(round_)}/batch9\"; sleep 0.2; done' >/dev/null 2>&1 </dev/null &")
     tried = v1.run(["sh", "-c", f'echo x > "{inside(two)}/x"'], cwd=str(one), timeout=60)
     assert tried.returncode != 0, "a batch reaches another's directory"
-    with snapshot(a, two / "delivery", x) as at:
+    with snapshot(a, two / "delivery", x, delivered=(tree, commit, "")) as at:
         time.sleep(2)
         assert x.files.read_bytes(str(Path(at) / "f")) == b"delivered\n", "batch 1's leftover rewrote batch 2's copy"
     assert not x.files.exists(str(round_ / "batch9")), "batch 1's leftover wrote its round"
@@ -191,7 +192,8 @@ _CASES = {
 def test_live_an_object_of_the_delivery_rewritten_in_its_place_after_deliver_is_not_judged(project):
     """git reads an object by its id and does not hash it again: a loose object the executor rewrote after DELIVER
     would check out as a delivery nobody made. Committed without a branch, the object stands in the place alone (taken
-    back into the base, a pack there would be read first)."""
+    back into the base, a pack there would be read first). The delivery's object is then held nowhere: no copy, no
+    verdict — never the forged content, and never the delivery's FAIL for a loss (DELIVERY_IS_THE_SYSTEMS §4)."""
     x, a = project, project.own / "a"
     _sh(x, a, "echo mine > m.txt")
     tree = W.commit_all(x.base, a, "gfso: a delivery", "exec-a", execution=x)
@@ -201,8 +203,8 @@ def test_live_an_object_of_the_delivery_rewritten_in_its_place_after_deliver_is_
               "cp .git/objects/$(echo $n | cut -c1-2)/$(echo $n | cut -c3-) $f && test \"$(git cat-file -p $o)\" = forged")
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
     # …refused where the pack is taken in (`index-pack` names each object by its content: the forged one is not the
-    # delivery's, which is then missing), and where an object is hashed again before the checkout
-    with pytest.raises(NotTheDelivery, match="is missing|does not hold what its id names"):
+    # delivery's, which is then missing)
+    with pytest.raises(Uncopied, match="is missing"):
         with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")):
             pass
 
@@ -425,15 +427,16 @@ def test_live_an_object_rewritten_once_the_delivery_is_taken_in_is_never_read(pr
 
 
 @live
-def test_live_an_object_the_deliverys_own_store_lost_is_the_deliverys_not_the_machines(project):
-    """A blob of the recorded tree deleted from the place after DELIVER failed the pack and was booked as never copied —
-    asked again until a person stepped in (critic over the judged tree, run). The delivery's own store is its own."""
+def test_live_an_object_no_store_holds_is_no_verdict_never_the_deliverys_fail(project):
+    """A blob of the recorded tree deleted from the place after DELIVER, kept nowhere else: no copy, no verdict — the
+    row goes to its issuer by VALIDATING's bound, never a FAIL of the delivery for an object lost
+    (DELIVERY_IS_THE_SYSTEMS §4)."""
     x, a = project, project.own / "a"
     _sh(x, a, "echo mine > m.txt")
     tree, commit = W.commit_all(x.base, a, "gfso: a delivery", "exec-a", execution=x), W.head(a, execution=x)
     _sh(x, a, "o=$(git rev-parse HEAD:m.txt) && rm -f .git/objects/$(echo $o | cut -c1-2)/$(echo $o | cut -c3-)")
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    with pytest.raises(NotTheDelivery, match="cannot give back"):
+    with pytest.raises(Uncopied, match="is missing"):
         with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")):
             pass
 
@@ -753,6 +756,11 @@ def test_live_a_builds_processes_end_with_it_and_its_changes_to_delivered_files_
 def test_live_an_issuer_rules_on_a_delivery_no_copy_can_be_made_of(project, monkeypatch):
     """A delivery its own doing left uncopyable sent its issuer's contact to `Unavailable`, retried forever. The
     issuer is told why and rules on that."""
+    a = project.own / "a"
+    _sh(project, a, "echo mine > m.txt")
+    delivered = (W.commit_all(project.base, a, "gfso: a delivery", "exec-a", execution=project),
+                 W.head(a, execution=project), "")
+
     def _refused(*_):
         raise NotTheDelivery("the delivery holds nested repositories (dep)")
     monkeypatch.setattr(S, "_checkout", _refused)
@@ -761,10 +769,9 @@ def test_live_an_issuer_rules_on_a_delivery_no_copy_can_be_made_of(project, monk
     e.start()
     try:
         _disputed(e)
-        monkeypatch.setattr(e, "delivered", lambda *ids: ("t" * 40, "c" * 40, ""))
+        monkeypatch.setattr(e, "delivered", lambda *ids: delivered)
         llm = _ContactLLM({"decision": "accept", "justification": "no copy: nested repositories"}, ran={})
-        answer, _ = I._ask(e, TaskId("leaf"), "dispute", "worker", I.ISSUER_SCHEMA, "", None, llm,
-                           str(project.own / "a"))
+        answer, _ = I._ask(e, TaskId("leaf"), "dispute", "worker", I.ISSUER_SCHEMA, "", None, llm, str(a))
         assert answer and answer.get("decision") == "accept", answer
         assert "NO COPY of this delivery" in llm.packets[-1] and "nested repositories (dep)" in llm.packets[-1]
     finally:
@@ -772,21 +779,26 @@ def test_live_an_issuer_rules_on_a_delivery_no_copy_can_be_made_of(project, monk
 
 
 @live
-def test_live_a_copy_of_a_place_as_it_stands_has_a_git_of_its_own(project):
-    """An issuer asked about a node not yet delivered rules on its place as it stands: in the copy's container, which
-    mounts its round alone, the copy's git reads its history and shows the work not yet committed — a git borrowing
-    the base's objects by a relative path read nothing there (row 4, c_compiler, 2026-10-30)."""
+def test_live_a_copy_of_a_place_read_with_nothing_delivered_has_a_git_of_its_own(project):
+    """An issuer asked about a node not yet delivered rules on its place committed whole and read by that id
+    (`workspaces.standing`): in the copy's container, which mounts its round alone, the copy's git reads its history and
+    holds the work its executor had not committed — a git borrowing the base's objects by a relative path read nothing
+    there (row 4, c_compiler, 2026-10-30)."""
     x, a = project, project.own / "a"
     _sh(x, a, "echo one > c.txt && git add c.txt && git -c user.name=t -c user.email=t@t commit -qm committed"
               " && echo uncommitted >> c.txt && echo new > n.txt")
+    tree = W.commit_all(x.base, a, "gfso: a as it stood when read", "gfso", execution=x)
     round_ = x.own / ".gfso-scratch-a" / "issuer_1"
     x.files.mkdir(str(round_))
-    with snapshot(a, round_ / "place", x) as at:
+    with snapshot(a, round_ / "place", x, delivered=(tree, W.head(a, execution=x), "")) as at:
         s = x.session(at)
         run = lambda *cmd: s.run(list(cmd), cwd=at, timeout=60)
         log, status = run("git", "log", "--format=%s"), run("git", "status", "--porcelain")
-        assert log.returncode == 0 and log.stdout.split() == ["committed"], (log.stdout, log.stderr)
-        assert status.returncode == 0 and set(status.stdout.split()) >= {"M", "c.txt", "??", "n.txt"}, status
+        # …its history cut at the commit read (`snapshots._CHECKOUT`)
+        assert log.returncode == 0 and log.stdout.splitlines() == ["gfso: a as it stood when read"], (log.stdout, log.stderr)
+        assert status.returncode == 0 and status.stdout.strip() == "", status
+        assert x.files.read_bytes(str(Path(at) / "c.txt")) == b"one\nuncommitted\n" and \
+            x.files.exists(str(Path(at) / "n.txt"))
         assert run("test", "-e", ".git/objects/info/alternates").returncode != 0, "it borrows still"
         assert run("git", "fsck", "--connectivity-only").returncode == 0
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from pathlib import Path
 
 import gfso.delegate as D
 import gfso.tools as T
@@ -23,7 +24,7 @@ from gfso.delegate import Dispatcher
 from gfso.roster import AgentRegistry
 from gfso.engine.validation import record_stands, split_owed
 from gfso.issuer import Verbs, open_questions, settle
-from tests.support import criterion, instrument_passes, make_engine, REGISTER
+from tests.support import REGISTER, a_repository, committed, criterion, instrument_passes, make_engine
 
 _RISK = REGISTER
 _NODES = ("root", "root.a", "root.b")
@@ -39,6 +40,9 @@ class _LLM:
     def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
         self.packets.append(user)
         self.calls.append({"duration_ms": 1, "output_tokens": 1})
+        if cwd and Path(cwd).is_dir() and "validator" not in system.lower()[:400]:
+            # …each session's work a tree of its own: one delivered again unchanged over a FAIL is refused (§12.16)
+            (Path(cwd) / "session.txt").write_text(f"{len(self.calls)}\n")
         return self._texts.pop(0)
 
     def tag_last(self, stage):
@@ -55,6 +59,8 @@ def _project(tmp_path, fits=True, mode=Mode.AUTO):
     e.start()
     e.project_name = "p"
     agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    if not (tmp_path / ".git").exists():
+        a_repository(tmp_path)            # …where its roles work: a repository, as every directory a role is named in
     for aid, kind in (("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(aid, kind, workdir=str(tmp_path), project="p")
     D.publish_the_workforce(e, agents.list())
@@ -531,7 +537,8 @@ def test_per_node_reuse_does_not_replay_a_record_that_no_longer_stands(tmp_path)
     for t in ("root.a", "root.b", "root"):
         ex = str(e.graph.get_task(TaskId(t)).assignee)
         assert D._signal(e, TaskId(t), Signal.ACCEPT, ex)
-        assert D._signal(e, TaskId(t), Signal.DELIVER, ex, result="done", self_validation="PASS")
+        assert T.signal(e, t, "DELIVER", ex, result="done", self_validation="PASS",
+                        _recorded=committed(tmp_path))["accepted"]
         e.wait_idle()
         e.record_exec_verdict(TaskId(t), "PASS", [], "val-1", require_probe=True,
                               per_criterion=_entries(e, e.graph.get_task(TaskId(t))))
