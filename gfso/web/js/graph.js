@@ -356,7 +356,11 @@ function placeBadges() {
     // or none: ONE mark, the pulse (the author, 11-18: «а чем красная мигающая отличается? … ничего не понимаю»). Only the strip
     // and the In work list said so, the graph showed nothing (the author, 2026-11-18: «задачи инженерки которые она взяла и
     // подписаны in work никак не подсвечиваются»)
-    const work = new Set(inWorkOf(viewTasks()).map(r => r.t.id));   // …the strip's and the list's one reading of this view (JOINT W3: what runs is no mark)
+    // …and the DOT is what is in work BY FACT: a taken node with no parts — the work itself; a branch says its state in
+    // words, no dot (the author, 11-22: «точкой держать именно то что в работе сейчас по факту. по крайней мере взятые
+    // подноды. а ветки достаточно что подписаны как in progress»). Engineering's «no taken node under it» left a dot on
+    // every direction held for months whose parts wait unstarted (9 on the engineering view, measured)
+    const work = new Set(inWorkOf(viewTasks()).map(r => r.t.id).filter(id => !hasKids(id)));
     // a narrow tag keeps its word in a smaller type: a bare «404» on the largest node read as an error's code (critic)
     const count = (w, n, word) => { const need = 22 + 6 * String(n).length + 6 * word.length;
         return tally(n, word, w < need ? ` style="font-size:${Math.max(7, 10 * w / need).toFixed(1)}px"` : ''); };
