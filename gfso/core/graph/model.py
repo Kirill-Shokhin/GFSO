@@ -598,7 +598,7 @@ class Graph:
             return True
         return parent.assignee != task.assignee
 
-    def is_consumed(self, task: Task) -> bool:
+    def is_consumed(self, task: Task, resting: bool = True) -> bool:
         """R′'s finality gate (§12.14): is this terminal CONSUMED — something rests on it, or the plan moved past it —
         so that reversing it would reverse its downstream cone. Read from the first logged moment of THIS terminal
         visit (`at`), and once logged it stands: a parent's FAIL after its DELIVER does not give the child back.
@@ -614,14 +614,16 @@ class Graph:
         A root is consumed only through Dep. A settled cascade alone consumes nothing. Without the log (a bare graph)
         `at` is unknown and the legs read the standing state — the stricter side: a parent that ever delivered.
         Past consumption the recovery is the issuer's re-decomposition; within its own rework, the whole's
-        executor repairs the artifact it delivers (a part read on that delivery fails there, §8.4)."""
+        executor repairs the artifact it delivers (a part read on that delivery fails there, §8.4).
+        `resting=False` reads the plan's legs alone — whether the split has moved past the node, which a pass resting
+        on it does not say (a refuted pass the split covered around holds no COMPLETE back, `frontier.uncovered`)."""
         if task.state not in (State.DONE, State.ABANDONED):
             return True                    # no reopen question outside the quasi-terminals — fail-closed
         audit = self.audit
         at = audit.last_at(task.id, new_state=task.state) if audit is not None else -1
         after = (lambda tid, **kw: audit.last_at(TaskId(tid), **kw) > at) if audit is not None else None
         parent = self.get_parent(task.id)
-        if task.state == State.DONE:
+        if task.state == State.DONE and resting:
             if parent is not None and (after(parent.id, signal=Signal.DELIVER) if after else
                                        parent.iteration > 0 or parent.state in (State.VALIDATING, State.DONE)):
                 return True

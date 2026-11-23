@@ -6,7 +6,7 @@ second concern in the class that applies the signals (sync audit 2026-10-04, D-F
 from __future__ import annotations
 
 import weakref
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.config import ONE_CALL, agent_id as _config_agent_id, how_it_is_waited
@@ -399,8 +399,7 @@ class NodeSteps:
             cand = (4, t, Action.ACCEPT,
                     f"TAKE '{t.id}' ({nm}) when you start its work: signal ACCEPT (or CHALLENGE if its spec is "
                     f"wrong). Its split stands"
-                    + ("; its parts are taken as their work starts." if not all(_passed(k) for k in kids) else
-                       ", every part passed: take it to hand the whole in.")
+                    + parts_said(self.engine, kids, _passed)
                     if kids else
                     f"TAKE '{t.id}' ({nm}): signal ACCEPT (or CHALLENGE if its spec is wrong). Then "
                     f"decide by the criteria {crits}: DECOMPOSE it into subtasks if that fits the goal "
@@ -762,6 +761,165 @@ def walked_once(frontier, root_id, walk):
     return last[1]
 
 
+def _parent_of(engine, tid) -> str:
+    """The id of the node's parent — its own where it is the goal."""
+    p = engine.graph.get_parent(TaskId(tid))
+    return str(p.id if p is not None else tid)
+
+
+class Refuted(NamedTuple):
+    """A pass its own later FAIL refutes (q_V's later fail, §15.4), read where its recovery stands: `at` the node a
+    reopen would unmake — the refuted node, or the nearest settled whole above it whose parent still moves, since a
+    part under a settled whole is not reopened (§12.7's issuing condition) —, `mover` that parent (its holder is
+    `at`'s issuer, whose move the reopen is, §10.1), `open` whether R′'s gate on `at` is still open, `above` the
+    ancestors of `at`, `consumers` the Dep consumers of the refuted node and of `at`."""
+    node: str
+    at: Task
+    mover: Optional[Task]
+    open: bool
+    above: frozenset
+    consumers: frozenset
+
+
+def refuted_reading(engine, ids) -> list:
+    """`Refuted` for each id."""
+    deps, out = engine.adopted_dependencies(), []
+    for n in ids:
+        m = engine.graph.get_task(TaskId(n))
+        while (p := engine.graph.get_parent(m.id)) is not None and p.state in TERMINAL_STATES:
+            m = p
+        above, a = set(), p
+        while a is not None:
+            above.add(str(a.id))
+            a = engine.graph.get_parent(a.id)
+        on = {n, str(m.id)}
+        out.append(Refuted(n, m, p, not engine.graph.is_consumed(m) and m.reopens < m.max_reopens, frozenset(above),
+                           frozenset(str(e.to_id) for e in deps if str(e.from_id) in on)))
+    return out
+
+
+def uncovered(engine, root_id=None) -> list[str]:
+    """The refuted passes the split has not moved past (§12.14's plan legs): what COMPLETE is never answered over. A
+    re-admission covering around one, or a version mapping it to nothing, has left it out of what the goal rests on;
+    its record stays on the log for good, but no answer waits on it any more."""
+    return [n for n in engine.refuted_passes(root_id)
+            if not engine.graph.is_consumed(engine.graph.get_task(TaskId(n)), resting=False)]
+
+
+def recovery_said(engine, r: Refuted) -> str:
+    """The one recovery a refuted pass has now, in the words the door takes (`Engine.offer`): the reopen of `at` while
+    R′'s gate is open; past it, its issuer's re-decomposition around it — at a root, a new goal (§12.14)."""
+    under = "" if str(r.at.id) == r.node else f" ('{r.node}' stands under it)"
+    if r.open:
+        return engine.offer(Move("reopen", str(r.at.id), f"`reopen('{r.at.id}')`{under}, its issuer's move",
+                                 unmade=True), lead=f"for '{r.node}', recovery is ")
+    if r.mover is None:
+        return f"for '{r.node}', past its reopen recovery is a new goal (`use_project`)"
+    return engine.offer(Move("decompose", str(r.mover.id), f"re-decomposition of '{r.mover.id}' around "
+                                                          f"'{r.at.id}'{under}", unmade=True),
+                        lead=f"for '{r.node}', past its reopen recovery is ")
+
+
+#: what a refuted pass withholds, said once for every surface that names one
+WITHHOLDS = ("While it can be reopened, what rests on it waits for that — no DELIVER above it, no PASS over it, no Dep "
+             "consumer started on it — since each of those consumes it and shuts the reopen; a FAIL above it signs "
+             "over nothing and stays open (§12.8, §12.14). Past its reopen nothing waits on it: its issuer may "
+             "re-decompose around it, a move the graph does not wait on")
+
+
+def refuted_said(engine, root_id=None) -> dict:
+    """`refuted_passes` beside any frontier answer, as data, and their recoveries in one note."""
+    if not (ids := engine.refuted_passes(root_id)):
+        return {}
+    return {"refuted_passes": ids,
+            "refuted_passes_note": (f"{', '.join(ids)} stand(s) at PASS while the current recorded verdict for it is "
+                                    f"FAIL (`get_verdict`); the record stays on the log (q_V's later fail, §15.4). "
+                                    + "; ".join(recovery_said(engine, r) for r in refuted_reading(engine, ids))
+                                    + f". {WITHHOLDS}.")}
+
+
+#: the steps on the ancestors of a reopenable refuted pass that carry it upward — a verdict there is answered apart
+_CARRY_UP = (Action.DELIVER, Action.FIX)
+#: …and on a Dep consumer of it, each step that puts the consumer into work or validation (§12.14's Dep leg)
+_BUILD_ON = (Action.ACCEPT, Action.EXECUTE, Action.FIX, Action.DELIVER, Action.VALIDATE)
+
+
+def _no_pass_over(engine, a, over: list) -> tuple:
+    """The verdict step on a whole over a reopenable refuted pass: its FAIL, never its PASS (rule of §12.8 — a FAIL
+    signs over nothing; a PASS settles the whole the part would be reopened under)."""
+    under = {str(r.at.id) for r in over}
+    crits = ([m.criterion_name for m in a.criterion_mappings if str(m.child_id) in under]
+             or [c.name for c in a.spec.criteria])
+    return (1, a, Action.VALIDATE,
+            f"SIGN NO PASS on '{a.id}' ({a.spec.name or a.id}): {', '.join(r.node for r in over)} below it stand(s) at "
+            f"PASS while the current recorded verdict for it is FAIL (`get_verdict`), and can still be reopened — a "
+            f"PASS here signs over it and settles the whole it would be reopened under. Its FAIL signs over nothing: "
+            f"`signal('{a.id}', 'FAIL', failed_criteria={crits})`"
+            + (" — the verdict is the person's: tell them, and their words go with it (`user_said=`)"
+               if engine.persons_verdict(a.id) else "")
+            + "; or let the part be recovered first: " + "; ".join(recovery_said(engine, r) for r in over) + ".")
+
+
+def _waits_on_recovery(engine, t, on: list) -> dict:
+    """A Dep consumer held back from a reopenable refuted pass, said as the wait on its producer that it is."""
+    return Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee, kind="dependency",
+                waits_on=tuple(r.node for r in on),
+                why="it consumes what a pass produced that its own later FAIL refutes; started now, it would consume "
+                    "that pass, and the pass's reopen would be refused (§12.14)",
+                opens_with="the producer's recovery: " + "; ".join(recovery_said(engine, r) for r in on)).as_dict()
+
+
+def _recoveries(engine, live: list, inside: set) -> list:
+    """Each reopenable refuted pass's recovery, as ONE step of the party who can make it: on `mover`, by its holder."""
+    movers: dict = {}
+    for r in live:
+        if r.mover is not None and str(r.mover.id) in inside:
+            movers.setdefault(str(r.mover.id), (r.mover, []))[1].append(r)
+    return [(1, p, Action.REVISE,
+             f"RECOVER UNDER '{p.id}' ({p.spec.name or p.id}): {', '.join(r.node for r in rs)} stand(s) at PASS while "
+             f"the current recorded verdict for it is FAIL — read `get_verdict` on it. Its recovery is yours: "
+             + "; ".join(recovery_said(engine, r) for r in rs) + f". {WITHHOLDS}.")
+            for p, rs in movers.values()]
+
+
+def over_refuted_passes(engine, cands: list, tasks, held: list) -> list:
+    """The walk's steps less what rests on a refuted pass, plus its recovery. One such record answered the whole graph
+    with no step, and the stop hook let every console go with its moves owed (dev graph, 2026-11-23); offered as they
+    were, the parent's DELIVER or a consumer's ACCEPT consumed the part and shut its reopen (§12.14). So: while the
+    reopen is open, the steps that carry it upward or build on it wait and a PASS over it is turned into the FAIL that
+    signs over nothing; past it, nothing waits — the parent's own check reads its delivered result (§12.8) — and the
+    steps over it carry the record as data. Every other node's steps stay."""
+    rs = refuted_reading(engine, engine.refuted_passes())
+    live, kept, waits = [r for r in rs if r.open], [], {}
+    for c in cands:
+        tid = str(c[1].id)
+        over = [r for r in live if tid in r.above]
+        if (on := [r for r in live if tid in r.consumers]) and c[2] in _BUILD_ON:
+            waits[tid] = _waits_on_recovery(engine, c[1], on)
+        elif over and c[2] in _CARRY_UP:
+            continue
+        elif over and c[2] == Action.VALIDATE:
+            kept.append(_no_pass_over(engine, c[1], over))
+        elif (past := [r.node for r in rs if not r.open and tid in r.above]) and c[2] in (*_CARRY_UP, Action.VALIDATE):
+            kept.append((*c[:3], c[3] + f" | BELOW IT {', '.join(past)} stand(s) at PASS over a later FAIL "
+                                       f"(`get_verdict`), past its reopen: what that FAIL found is in what is handed "
+                                       f"in or signed here unless the whole repaired it (§8.4, §12.8)."))
+        else:
+            kept.append(c)
+    held += waits.values()
+    return kept + _recoveries(engine, live, {str(t.id) for t in tasks})
+
+
+def parts_said(engine, kids, _passed) -> str:
+    """How a taken whole's split stands, for its TAKE: a part whose pass its own later FAIL refutes is not passed."""
+    if not all(_passed(k) for k in kids):
+        return "; its parts are taken as their work starts."
+    if bad := [str(k.id) for k in kids if (engine.closure_of(k.id) or {}).get("refuted")]:
+        return (f", but {', '.join(bad)} stand(s) at PASS over a later FAIL: take it to recover "
+                f"{'that part' if len(bad) == 1 else 'those parts'} before the whole is handed in.")
+    return ", every part passed: take it to hand the whole in."
+
+
 class Frontier:
     """The walk over the graph: every node that owes a move, in order, and — when none does — why nothing is open, how
     the root closed, or what holds it (`next_step(s)`)."""
@@ -953,11 +1111,9 @@ class Frontier:
                 "directive": (f"NOT COMPLETE — {', '.join(refuted)} stand(s) at PASS while the "
                               f"current recorded verdict for it is FAIL. A signature landed "
                               f"before the instrument's verdict did, and the graph is showing "
-                              f"the signature. Read `get_verdict` on it. "
-                              + "; ".join(self.engine.offer(
-                                  Move("reopen", n, f"`reopen('{n}')` if it is not consumed", unmade=True),
-                                  Move("decompose", self._parent_of(n), "re-decomposition around it if it is", unmade=True),
-                                  sep=", and ", lead=f"For '{n}', recovery is ") for n in refuted) + ".")}
+                              f"the signature. Read `get_verdict` on it, and then: "
+                              + "; ".join(recovery_said(self.engine, r)
+                                          for r in refuted_reading(self.engine, refuted)) + ".")}
 
     def _how_this_closed(self, root_id: "Optional[TaskId]" = None) -> dict:
         """The facts a reader must weigh about a graph that answers COMPLETE.
@@ -1065,7 +1221,7 @@ class Frontier:
                 # key at all (CLI door, wave 23, 2026-09-03; reproduced directly). One question, one
                 # predicate, both ways of asking it — a rule that holds at one door and not at the
                 # next is the class this product keeps finding in itself.
-                if not_yet := (self._not_complete_because_refuted(r) if (r := self.engine.refuted_passes(root_id)) else
+                if not_yet := (self._not_complete_because_refuted(r) if (r := uncovered(self.engine, root_id)) else
                                _not_complete_while_open(self.engine, o) if (o := self.engine.open_nodes(root_id)) else None):
                     return (not_yet, None)
                 if not self.engine.joins.root_landed(root):
@@ -1081,13 +1237,16 @@ class Frontier:
         # where a second root had been created deliberately). Saying a graph is done while it is not
         # is the one kind of wrong answer this product exists to make impossible.
         roots = [t for t in tasks if t.parent_id is None] or [tasks[0]]
-        # A GREEN THAT IS NOT GREEN IS NOT COMPLETE. A node can stand at PASS while its own current
-        # record says FAIL — the signature landed first and the instrument's verdict was refused on a
-        # node already terminal. Answering COMPLETE over that is the false green this product exists
-        # to refuse, and it is the one answer a person cannot check for themselves.
-        if refuted := self.engine.refuted_passes():
-            return (self._not_complete_because_refuted(refuted), None)
         if all(_passed(r) for r in roots):
+            # A GREEN THAT IS NOT GREEN IS NOT COMPLETE. A node can stand at PASS while its own current
+            # record says FAIL — the signature landed first and the instrument's verdict was refused on a
+            # node already terminal. Answering COMPLETE over that is the false green this product exists
+            # to refuse, and it is the one answer a person cannot check for themselves. Below an open
+            # root it is no answer about the graph: the walk withholds what rests on it and offers its
+            # recovery (`over_refuted_passes`) — answered here, one record anywhere took every step from
+            # every holder, and the stop hook let each console go (dev graph, 2026-11-23).
+            if refuted := uncovered(self.engine):
+                return (self._not_complete_because_refuted(refuted), None)
             # …AND NOT WHILE ANYTHING IS STILL OPEN. A child can be attached to a node that has
             # already closed — which the canon's own recovery path needs, since re-decomposition
             # AROUND a consumed terminal is how a defect found later is repaired — and the roots
@@ -1199,7 +1358,7 @@ class Frontier:
             if _c is not None:
                 cands.append(_c)
 
-        if not cands:
+        if not (cands := over_refuted_passes(self.engine, cands, tasks, held)):
             return self._nothing_to_take(tasks, waits, _deps_ready)
         cands.sort(key=lambda c: (c[0], str(c[1].id)))
         return cands
@@ -1298,7 +1457,8 @@ class Frontier:
             # …the waits in EVERY answer: given only beside steps, a consumer's wait on its producer vanished for the
             # length of every validation, stuck or join (UI stream 2026-10-26)
             return (result if result.get("complete") else
-                    {**result, "steps": result.get("steps", []), **self._waiting_on([])})
+                    {**refuted_said(self.engine, root_id), **result, "steps": result.get("steps", []),
+                     **self._waiting_on([])})
         steps = []
         for _, t, action, directive in result:
             step = self.steps._step_out(t, action, directive)
@@ -1311,7 +1471,7 @@ class Frontier:
         # the MCP door: two of three children were dep-blocked and appeared nowhere, while
         # `get_dependencies` had every edge and glue note. The pairs go in the answer, not in a
         # second verb the reader has to know about.
-        out = {"complete": False, "steps": steps, **self._waiting_on(steps)}
+        out = {"complete": False, "steps": steps, **self._waiting_on(steps), **refuted_said(self.engine, root_id)}
         if stranded := [t for t in self.engine.stranded_nodes() if t.state != State.ABANDONED]:
             # …AND WHAT THE GRAPH CANNOT MOVE PAST, whether or not something else is actionable.
             out["stranded"] = [
@@ -1409,15 +1569,11 @@ class Frontier:
                 for p in self._open_producers(t.id, {str(t.id): {str(e.from_id) for e in self.engine.adopted_dependencies()
                                                                  if str(e.to_id) == str(t.id)}})]
 
-    def _parent_of(self, tid) -> str:
-        p = self.engine.graph.get_parent(TaskId(tid))
-        return str(p.id if p is not None else tid)
-
     def _around(self, t) -> str:
         """The way out of a node settled for good: its parent's split re-admitted around it — the split's own act
         (§11.5), keyed on the parent's Del, not its issuer (critic over 25faf94) — or, for the goal itself, nothing in
         this project."""
-        p = self._parent_of(t.id)
+        p = _parent_of(self.engine, t.id)
         if p == str(t.id):
             return (f"'{t.id}' is the goal, and nothing above it can carry what it left uncovered: a different goal "
                     f"belongs in another project (`use_project`)")

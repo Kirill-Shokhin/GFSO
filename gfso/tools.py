@@ -32,7 +32,7 @@ from gfso.config import (CALLER, DEFAULT_PROJECT, data_dir as _data_dir, for_the
                          VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE,
                          caller_id as _config_caller_id)
 from gfso.engine import Engine
-from gfso.engine.frontier import OBSERVE, step_role
+from gfso.engine.frontier import OBSERVE, WITHHOLDS, recovery_said, refuted_reading, step_role
 from gfso.engine.moves import CHECKS, DOOR_KEYS, READS, Move, door_holder, role_holder, signal_role, signer_due
 from gfso.engine.verdicts import OUTSIDE_NOTE
 from gfso.engine.validation import party_kind as _party_kind
@@ -840,8 +840,7 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
         out["contradicts_state"] = (
             f"{task_id} is {t.state.name} at PASS, and the verdict above — its CURRENT one — is "
             f"FAIL. The state is showing a signature that landed before this verdict did. This is "
-            f"not a green node: recovery is `reopen` if it is not consumed, re-decomposition around "
-            f"it if it is.")
+            f"not a green node: " + recovery_said(engine, refuted_reading(engine, [task_id])[0]) + f". {WITHHOLDS}.")
     # A verdict belongs to the delivery it validated. A node that has since been reworked or revised
     # carries a record about an EARLIER artifact, and read as current it is exactly the stale
     # evidence this system exists to refuse.

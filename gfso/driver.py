@@ -401,7 +401,9 @@ def _frontier_line(nxt: dict) -> str:
     somebody, waiting on a clock, or finished, and a reader who cannot tell those apart polls. So a
     step that is not yours names whose it is, and no step at all hands over the frontier's own
     sentence rather than a count of nothing."""
-    if nxt.get("refuted_passes"):
+    # …a refuted pass answers the line only where it answers the graph: below an open root the steps stay, and the
+    # answer that carries them has no `directive` of its own (`frontier.over_refuted_passes`)
+    if nxt.get("refuted_passes") and not nxt.get("steps") and nxt.get("directive"):
         return f"frontier: NOT COMPLETE — {nxt['directive']}"
     if nxt.get("complete"):
         return "frontier: COMPLETE — the root is DONE/PASS" + "".join(
@@ -418,7 +420,8 @@ def _frontier_line(nxt: dict) -> str:
         head = f" — {nxt['directive']}" if nxt.get("directive") else ""
     return (f"frontier: {len(mine)} step(s) for you{head}"
             f" · {len(nxt.get('in_flight') or ())} in flight"
-            f" · {len(nxt.get('waiting') or ())} waiting")
+            f" · {len(nxt.get('waiting') or ())} waiting"
+            + (f" · at PASS over a later FAIL: {', '.join(r)}" if (r := nxt.get("refuted_passes")) else ""))
 
 
 def run_verb(name: str, project: str | None = None, *pos, **kw):
