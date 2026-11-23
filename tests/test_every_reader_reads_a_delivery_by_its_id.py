@@ -263,7 +263,7 @@ def test_a_plain_clone_of_the_project_delivers_its_commit(tmp_path):
 
 
 def test_the_tree_bomb_guard_holds_a_checkout_to_what_its_place_held_at_deliver(tmp_path, monkeypatch):
-    """The place's `du` read when the delivery was kept is the comparator, not the place as it stands later (§5): a
+    """The place's measure read when the delivery was kept is the comparator, not the place as it stands later (§5): a
     tree laying past it is refused, its place present or not."""
     repo = _repo(tmp_path)
     e = _in_chat(tmp_path, repo)

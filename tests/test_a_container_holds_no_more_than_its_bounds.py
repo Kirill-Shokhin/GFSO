@@ -100,22 +100,58 @@ def _ran_here(argv, cwd=None, timeout=None, env=None):
     return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
 
 
-def _du_here(argv, cwd=None, timeout=None, env=None):
-    """`du -sk .` read in-process: a spawned MSYS `du` that prints nothing under a loaded suite reads as "no size, refuse
-    nothing" (`tree_past_place`), which the tree test's first assertion took for a refusal that never came (one run in a
-    full pass, not reproduced alone). The real `du` is read by the container test above."""
-    if argv[0] != "du":
-        return _ran_here(argv, cwd, timeout, env)
-    kib = sum(-(-f.stat().st_size // 1024) for f in Path(cwd).rglob("*") if f.is_file())
-    return subprocess.CompletedProcess(argv, 0, f"{kib}\t.\n", "")
+def test_a_place_is_measured_on_any_path_and_an_unread_one_refuses_nothing(tmp_path, monkeypatch):
+    """The measure is read by the holder's interpreter, not `du`: on Windows an MSYS program on Git Bash's path alone, a
+    server started anywhere else recorded no measure and its guard held nothing. A holder that cannot read it says None."""
+    (tmp_path / "f.bin").write_bytes(b"x" * 2 ** 20)
+    os.link(tmp_path / "f.bin", tmp_path / "again.bin")
+    monkeypatch.setenv("PATH", os.path.dirname(sys.executable))
+    kib = W.du_kib(SimpleNamespace(run=_ran_here, python=sys.executable), tmp_path)
+    assert kib is not None and 1024 <= kib < 2048, f"one file of two names, read once: {kib}"
 
-
-@pytest.mark.skipif(not shutil.which("sh"), reason="no sh here")
-def test_a_host_with_no_du_reads_no_size_and_refuses_nothing(tmp_path):
     def gone(*a, **k):
-        raise FileNotFoundError("du")
-    assert W.du_kib(SimpleNamespace(run=gone), tmp_path) is None
+        raise FileNotFoundError("python")
+
+    def outrun(argv, **k):
+        raise subprocess.TimeoutExpired(argv, k["timeout"])
+    for cannot in (gone, outrun):
+        assert W.du_kib(SimpleNamespace(run=cannot, python="python3"), tmp_path) is None, cannot.__name__
     assert W.tree_past_place(SimpleNamespace(run=_ran_here, python=sys.executable), tmp_path, "0" * 40, None) is None
+
+
+def _linked_dir(at: Path, to: Path) -> None:
+    """A directory entry naming another: a junction where Windows makes one without privilege, a symlink elsewhere."""
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(at), str(to)], check=True, capture_output=True)
+    else:
+        at.symlink_to(to, target_is_directory=True)
+
+
+@pytest.mark.parametrize("target", ["itself", "elsewhere"])
+def test_a_linked_directory_is_measured_as_its_entry_never_walked_into(tmp_path, target):
+    """A junction (pnpm builds `node_modules` of them; any host agent can make one) walked into: to the place itself, the
+    reader never ended and its timeout escaped the keep; to the interpreter's `Lib`, the place read ×360 what it holds and
+    the guard waved a tree that large through (critic, ran). Measured as `du` does: the entry, not what it names."""
+    (place := tmp_path / "place").mkdir()
+    (place / "f.bin").write_bytes(b"x" * 2 ** 20)
+    _linked_dir(place / "link", place if target == "itself" else Path(os.__file__).parent)
+    bounded = lambda argv, cwd=None, timeout=None, env=None: _ran_here(argv, cwd, min(timeout, 60), env)
+    kib = W.du_kib(SimpleNamespace(run=bounded, python=sys.executable), place)
+    assert kib is not None and 1024 <= kib < 1100, f"what the place holds, not what its link names: {kib}"
+
+
+_DU = shutil.which("du") or (Path(g).resolve().parents[1] / "usr" / "bin" / "du.exe"
+                             if (g := shutil.which("git")) and os.name == "nt" else None)
+
+
+@pytest.mark.skipif(not (_DU and Path(_DU).is_file()), reason="no du here to compare with")
+def test_an_ordinary_tree_reads_what_du_reads(tmp_path):
+    for i in range(40):
+        (d := tmp_path / f"d{i % 7}" / f"e{i % 3}").mkdir(parents=True, exist_ok=True)
+        (d / f"f{i}").write_bytes(os.urandom(1000 * i))
+    kib = W.du_kib(SimpleNamespace(run=_ran_here, python=sys.executable), tmp_path)
+    du = int(subprocess.run([str(_DU), "-sk", "."], cwd=tmp_path, capture_output=True, text=True).stdout.split()[0])
+    assert kib is not None and 0.8 * du <= kib <= 1.25 * du, (kib, du)
 
 
 def test_a_tree_past_what_its_place_holds_is_never_laid_and_an_honest_one_always(tmp_path, monkeypatch):
@@ -128,7 +164,7 @@ def test_a_tree_past_what_its_place_holds_is_never_laid_and_an_honest_one_always
     for i in range(5):
         git("update-index", "--add", "--cacheinfo", f"100644,{blob},f{i}")
     git("commit", "-q", "-m", "c")
-    ex = SimpleNamespace(run=_du_here, python=sys.executable)
+    ex = SimpleNamespace(run=_ran_here, python=sys.executable)
     past = lambda stores=(), base=None: W.tree_past_place(ex, tmp_path, git("rev-parse", "HEAD"), W.du_kib(ex, tmp_path), base,
                                                          stores)
     monkeypatch.setattr(W, "LAY_MARGIN_KIB", 0)

@@ -21,6 +21,7 @@ import os
 import posixpath
 import re
 import shutil
+import subprocess
 import tempfile
 import threading
 import uuid
@@ -262,14 +263,44 @@ def _laid_kib(ex, at, commit: str, limit: int, stores) -> int | None:
     return int(laid) if not r.returncode and laid.isdigit() else None
 
 
-def du_kib(holder, place) -> int | None:
-    """What `place` holds on disk in KiB, read by `du` where `holder` runs; None unread — a host with no `du` on its path
-    (critic, ran)."""
+#: what the working directory holds on disk, in KiB, as `du -sk .` reads it: allocated blocks, a file of many links once, one
+#: vanishing mid-walk no stop; where no blocks are told (Windows), its size by the cluster. A linked directory — a symlink, a
+#: junction — is its entry, never walked into: walked, one to the place itself never ended, one to elsewhere read ×360 (critic, ran)
+_HELD = r"""
+import os, stat
+seen, size = set(), 0
+def held(p):
+    global size
     try:
-        kib = (holder.run(["du", "-sk", "."], cwd=str(place), timeout=600, env=_env()).stdout or "").split()[:1]
+        s = os.lstat(p)
     except OSError:
+        return False
+    if s.st_nlink > 1 and not stat.S_ISDIR(s.st_mode):
+        if (s.st_dev, s.st_ino) in seen:
+            return False
+        seen.add((s.st_dev, s.st_ino))
+    b = getattr(s, "st_blocks", None)
+    size += b * 512 if b is not None else -(-s.st_size // 4096) * 4096
+    return stat.S_ISDIR(s.st_mode) and not getattr(s, "st_file_attributes", 0) & 0x400
+for d, dirs, names in os.walk(".", onerror=lambda e: None):
+    for n in names:
+        held(os.path.join(d, n))
+    dirs[:] = [n for n in dirs if held(os.path.join(d, n))]
+held(".")
+print(size // 1024)
+"""
+
+
+def du_kib(holder, place) -> int | None:
+    """What `place` holds on disk in KiB, read by `_HELD` in the interpreter `holder` runs; None unread. Not by `du`: on a
+    Windows host it is an MSYS program on Git Bash's path alone, and a server started anywhere else recorded no measure
+    at every keep — the tree-bomb guard holding nothing."""
+    try:
+        r = holder.run([holder.python, "-I", "-c", _HELD], cwd=str(place), timeout=600, env=_env())
+    except (OSError, subprocess.TimeoutExpired):
         return None
-    return int(kib[0]) if kib and kib[0].isdigit() else None
+    kib = (r.stdout or "").strip()
+    return int(kib) if not r.returncode and kib.isdigit() else None
 
 
 def tree_past_place(ex, at, commit: str, held: int | None, base: tuple | None = None, stores: tuple = ()) -> str | None:
@@ -279,7 +310,7 @@ def tree_past_place(ex, at, commit: str, held: int | None, base: tuple | None = 
     one's charge, bounded by nothing but Docker's disk, every project's (critic, ran). Against the place, not a node's bound: that bound
     is what a node adds, and a whole of accepted parts, or a large repository, lay past it honestly (critic, ran); a tree as large as its
     place costs what the place already did, and what the user's own imported commit `base` records — (where git runs, the repository,
-    the revision) — is credited, no agent writing it: a file git lays with holes reads little in `du`, and a part may have removed from
+    the revision) — is credited, no agent writing it: a file git lays with holes reads little on disk, and a part may have removed from
     the whole what a sibling's ground still holds (critic, ran). NOT HELD: a large file a part made and a sibling then removed parks that
     sibling. Unread is not refused: the checkout says."""
     if held is None:
