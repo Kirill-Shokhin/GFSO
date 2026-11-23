@@ -2219,12 +2219,15 @@ def _left_open(engine, task_id: TaskId, question: str) -> Optional[int]:
     return len(engine.split_holes(task_id)) + len(found)
 
 
-def _watched(engine, ledger: dict, owed: Optional[dict], now: float) -> list:
-    """The questions the system owes now, each one it is stuck on said first (`report_stuck`) where the caller keeps
-    `owed`."""
+def _watched(engine, agents, ledger: dict, owed: Optional[dict], now: float) -> list:
+    """The open questions, each one the system is stuck on said first (`report_stuck`) where the caller keeps `owed` —
+    only those whose mover is the system (`system_mover`): the owner of a move is read off the log (Inv-8), and a
+    person's wait is no stall of the system's nor a fault of his (§12.2) — a no-mode root's plan question, the person's,
+    was said "the system is stuck on its own move" after 1801 s (rdl tr-1, 2026-11-23)."""
     questions = open_questions(engine)
     if owed is not None:
-        report_stuck(engine, questions, ledger, owed, now)
+        report_stuck(engine, [(t, q) for t, q in questions if system_mover(engine, agents, t, q) is not None],
+                     ledger, owed, now)
     return questions
 
 
@@ -2498,7 +2501,7 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
     engine's own refusals of a correct move, GB_sql_database 2026-10-14/15)."""
     started = []
     now = time.monotonic()
-    for task_id, question in _watched(engine, ledger, owed, now):
+    for task_id, question in _watched(engine, agents, ledger, owed, now):
         task = engine.graph.get_task(task_id)
         actor = system_mover(engine, agents, task_id, question)
         # a revision the machine makes itself must not reset its own backoff — and a new question on the same version

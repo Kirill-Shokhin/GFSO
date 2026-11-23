@@ -5,15 +5,19 @@ TECH REPORT per node version and question, nothing else changed."""
 import threading
 
 import gfso.issuer as I
-from gfso.core.types import TaskId
+import tests.test_the_mode_decides_who_holds_what as M
+from gfso.core.types import Mode, TaskId
+from gfso.roster import AgentRegistry
 from tests.test_the_mode_decides_who_holds_what import _auto_goal
 from tests.support import issuer_sweep
 
 
-def _sweeper(e, agents, monkeypatch, status):
+def _sweeper(e, agents, monkeypatch, status, real=False):
+    """`real`: the graph's own questions and their movers, not scripted ones."""
     q = {"now": [(TaskId("root"), "dispute")]}
-    monkeypatch.setattr(I, "open_questions", lambda en: q["now"])
-    monkeypatch.setattr(I, "system_mover", lambda *a, **k: "exec-1")
+    if not real:
+        monkeypatch.setattr(I, "open_questions", lambda en: q["now"])
+        monkeypatch.setattr(I, "system_mover", lambda *a, **k: "exec-1")
     monkeypatch.setattr(I, "settle", lambda *a, **k: dict(status))
     ledger, owed, cap = {}, {}, threading.Semaphore(1)
 
@@ -52,6 +56,41 @@ def test_a_question_owed_past_its_bound_is_reported(tmp_path, monkeypatch):
     sweep()
     sweep()
     assert len(_stuck(e)) == 1 and "unanswered" in _stuck(e)[0]["text"]
+
+
+def _plan_question(tmp_path, monkeypatch, mode):
+    """A root whose plan question is open (a criterion no child carries, §12.10) — the person's with no mode, the
+    system's under AUTO (`system_mover`)."""
+    e = M._engine(mode)
+    M._goal(e)
+    monkeypatch.setattr(e, "split_holes", lambda t: ["h"] if str(t) == "root" else [])
+    assert (TaskId("root"), "plan") in I.open_questions(e)
+    agents = AgentRegistry(path=str(tmp_path / "agents.json"))
+    agents.register("exec-1", "llm-executor", workdir=str(tmp_path))
+    return e, agents
+
+
+def _owed_past_the_bound(e, agents, monkeypatch):
+    sweep, _, owed = _sweeper(e, agents, monkeypatch, {"status": "unavailable", "why": "x"}, real=True)
+    sweep()
+    _backdate(owed)
+    sweep()
+    return _stuck(e)
+
+
+def test_a_persons_move_is_never_reported_as_the_systems_stall(tmp_path, monkeypatch):
+    """No mode: the root's plan question is the person's (§10.1), and a person's silence is no fault (§12.2) — it was
+    said "the system is stuck on its own move" after 1801 s (rdl tr-1, 2026-11-23)."""
+    e, agents = _plan_question(tmp_path, monkeypatch, None)
+    assert I.system_mover(e, agents, TaskId("root"), "plan") is None
+    assert not _owed_past_the_bound(e, agents, monkeypatch)
+
+
+def test_control_the_systems_own_plan_question_past_its_bound_is_reported(tmp_path, monkeypatch):
+    e, agents = _plan_question(tmp_path, monkeypatch, Mode.AUTO)
+    assert I.system_mover(e, agents, TaskId("root"), "plan") is not None
+    reports = _owed_past_the_bound(e, agents, monkeypatch)
+    assert len(reports) == 1 and "plan" in reports[0]["text"] and reports[0]["node"] == "root"
 
 
 def test_a_question_that_closes_starts_its_clock_over(tmp_path, monkeypatch):
