@@ -169,6 +169,7 @@ def test_his_page_passes_a_seam_he_issued_as_it_is(door):
 
 def test_his_issue_of_a_seam_installs_the_criterion_read_against_his_words(door):
     e, _ = door
+    e.workforce.publish_roster({"engineering": "llm-executor"})      # …a role: a human's node gets none (`_by_an_agent`)
     _his_seam(e)
     assert any(c.name == INTENT for c in e.graph.get_task(TaskId("root.eng")).spec.criteria)
     assert all(c.name != INTENT for c in e.graph.get_task(TaskId("root")).spec.criteria)

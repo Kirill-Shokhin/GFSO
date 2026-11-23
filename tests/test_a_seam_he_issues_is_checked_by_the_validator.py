@@ -1,10 +1,11 @@
-"""A seam the person issues is checked by the project's validator, always, before its result reaches him (the author,
-2026-11-20: «по gfso на шве (то есть перед тем как принести результат мне) должен стоять обязательный. который
-проверит на соответствие исходному замыслу и соответствие всем явным критериям и не даст сказать готово … и мне не
-придется держать в памяти критерии неедльной давности … и система заставит уходить на реворк после непрохождения шва»).
+"""A seam the person issues whose check he gave the project's validator is checked by it before its result reaches him
+(the author, 2026-11-20: «по gfso на шве (то есть перед тем как принести результат мне) должен стоять обязательный.
+который проверит на соответствие исходному замыслу и соответствие всем явным критериям и не даст сказать готово … и
+мне не придется держать в памяти критерии неедльной давности … и система заставит уходить на реворк после
+непрохождения шва»). Who checks is his appointment, at a seam too (2026-11-23: «издатель назначает валидатора и
+точка»): by default himself, and the validator between him and an agent working in its chat (`validation.his_check`).
 
-At every node he issues to another name the validator checks each delivery against every criterion, his words'
-included, and nobody turns that off. The check stands before the delivery: the holder's DELIVER of a tree is refused
+Where the validator checks it, it checks each delivery against every criterion. The check stands before the delivery: the holder's DELIVER of a tree is refused
 while the validator's latest check of that tree failed or none was made, naming what failed and the lift — rework, have
 it checked again (`validate_result` on the node at work), deliver the tree that passed (§12.16 (ii): a standing verdict
 under the current criteria indicts that tree). Once delivered, his PASS stands on that check; past a FAIL of the
@@ -12,6 +13,7 @@ validator's his own hand does not turn it into a pass. The system makes none of 
 from __future__ import annotations
 
 import contextlib
+import json
 import subprocess
 
 import pytest
@@ -19,16 +21,18 @@ import pytest
 import gfso.packets as P
 import gfso.tools as T
 import gfso.tools_llm as TL
-from gfso.config import CALLER, Principal
+from gfso.config import CALLER, STANDING, Principal
 from gfso.core.protocol.invariants import INTENT
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.delegate import Dispatcher, ensure_dispatcher
 from gfso.engine import validation as V
+from gfso.engine.verdicts import observations
 from gfso.roster import AgentRegistry
 from gfso.signin import PAGE
 from tests.support import REGISTER, a_repository, criterion, instrument_passes, make_engine
 
 SEAM, HOLDER = "root.eng", "engineering"
+HUMAN = "yana"     # …on no roster, in no chat: a human (`roster`: unlisted ids are humans)
 #: the holder's own console
 CONSOLE = Principal(HOLDER, (HOLDER,), "tok-eng", "token")
 
@@ -54,9 +58,11 @@ def _call(p, verb, e, *a, **kw):
         return TL.TOOLS[verb](e, *a, **kw)
 
 
-def _issued(tmp_path, staffed: bool = True, mode=None):
+def _issued(tmp_path, staffed: bool = True, mode=None, checker: str = "validator", holder: str = HOLDER,
+            in_chat: bool = False):
     """His root and a seam he issues from it to `engineering` from his page — under `mode`, none by default — with,
-    where `staffed`, the project's validator registered; and the answer his issue got."""
+    where `staffed`, the project's validator registered, where `in_chat` its holder working in its chat before the
+    issue, and `checker` his appointment of who checks it (None: none made); and the answer his issue got."""
     a_repository(tmp_path)    # …where his roles work: a repository, as every directory a role is named in
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
@@ -68,13 +74,17 @@ def _issued(tmp_path, staffed: bool = True, mode=None):
     if staffed:
         assert not TL.register_agent(e, "p-val", "llm-validator", workdir=str(tmp_path)).get("refused")
         ensure_dispatcher(e).stop()
+    if in_chat:
+        e.performs_in_chat(holder)
     _call(PAGE, "create_task", e, "root", {"description": "his goal", "criteria": [criterion("g")]}, assignee="user")
     covers = [c.name for c in e.graph.get_task(TaskId("root")).spec.criteria]     # …his words' too, under a mode
-    out = _call(PAGE, "decompose", e, "root", [{"task_id": SEAM, "assignee": HOLDER, "covers": covers,
+    out = _call(PAGE, "decompose", e, "root", [{"task_id": SEAM, "assignee": holder, "covers": covers,
                                                 "spec": {"description": "a direction", "criteria": [criterion("d")]}}],
                 accepted_risks=REGISTER)
     e.wait_idle()
-    T.signal(e, SEAM, "ACCEPT", HOLDER)
+    if checker is not None:
+        assert _call(PAGE, "set_checker", e, SEAM, checker, agent="user")["checker"] == checker
+    T.signal(e, SEAM, "ACCEPT", holder)
     return e, out
 
 
@@ -90,9 +100,9 @@ def _checked(e, tree, passes=True):
         instrument_passes(e, TaskId(SEAM), validator="p-val") if passes else _fails(e)
 
 
-def _delivers(e, tree=None):
+def _delivers(e, tree=None, holder: str = HOLDER):
     """The holder's DELIVER — of `tree` as the system records a chat's commit, or of a place recording none."""
-    out = T.signal(e, SEAM, "DELIVER", HOLDER, result="it holds", self_validation="PASS",
+    out = T.signal(e, SEAM, "DELIVER", holder, result="it holds", self_validation="PASS",
                    **({"_recorded": (tree, f"c-{tree}", None)} if tree else {}))
     e.wait_idle()
     return out
@@ -104,30 +114,139 @@ def _state(e):
 
 # ── 1. the validator checks every delivery of his seam, and nobody removes it ───────────────────────────────────────
 
-def test_the_validator_checks_his_seam_against_every_criterion_his_words_included(tmp_path):
+def test_the_validator_he_appointed_checks_his_seam_against_every_criterion(tmp_path):
     e, _ = _issued(tmp_path)
     t = e.graph.get_task(TaskId(SEAM))
     assert V.owed_observer(e.graph, t) is not None
     assert e.observes_by_itself(TaskId(SEAM)) and e.checker(TaskId(SEAM)) == "validator"
-    assert {c.name for c in t.spec.criteria} == {"d", INTENT}
+    assert {c.name for c in t.spec.criteria} == {"d"}, "a human's node: no criterion of his words pinned to this git"
 
 
 def test_his_seam_is_checked_by_the_validator_where_its_holder_works_in_a_chat_too(tmp_path):
-    e, _ = _issued(tmp_path)
-    e.performs_in_chat(HOLDER)
+    e, _ = _issued(tmp_path, checker=None, in_chat=True)
     assert e.scope_at(SEAM) is not None
     assert e.observes_by_itself(TaskId(SEAM)) and e.checker(TaskId(SEAM)) == "validator"
 
 
-def test_no_one_turns_the_validator_off_at_his_seam_and_he_may_ask_it_again(tmp_path):
-    e, _ = _issued(tmp_path)
-    e.performs_in_chat(HOLDER)
-    off = _call(PAGE, "set_checker", e, SEAM, "self", agent="user")
-    assert off.get("refused") and "validator checks every delivery" in off["error"], off
+@pytest.mark.parametrize("later", ["performs_in_chat", "registered"])
+def test_a_human_on_the_record_that_becomes_an_agent_of_the_system_is_checked_by_the_validator(tmp_path, later):
+    """Monotone, the safe way: once the name works in a chat or is registered, the work is an agent's, and the validator
+    checks it by default — his bare PASS no longer closes it."""
+    e, _ = _issued(tmp_path, checker=None, holder=HUMAN)
+    if later == "performs_in_chat":
+        e.performs_in_chat(HUMAN)
+    else:
+        e.workforce.publish_roster({**e.workforce.roster(), HUMAN: "llm-executor"})
+    assert V.his_check(e.graph, e.graph.get_task(TaskId(SEAM))) == "validator" and e.persons_seam(SEAM)
+    _delivers(e, holder=HUMAN)
+    assert not _call(PAGE, "signal", e, SEAM, "PASS", "user").get("accepted")
+
+
+def test_a_human_on_the_record_stays_one_where_no_roster_is_published_now(tmp_path):
+    e, _ = _issued(tmp_path, checker=None, holder=HUMAN)
+    e.graph.roster = None
+    assert V.his_check(e.graph, e.graph.get_task(TaskId(SEAM))) == "self" and not e.persons_seam(SEAM)
+    _delivers(e, holder=HUMAN)
+    assert _call(PAGE, "signal", e, SEAM, "PASS", "user")["state"] == "DONE"
+
+
+def test_a_node_issued_before_records_were_kept_is_classified_once_at_its_first_read(tmp_path):
+    """A human's node issued before who executes it was recorded: its first read classifies it from the roster as it
+    stands and writes the record, and his bare PASS closes it."""
+    e, _ = _issued(tmp_path, checker=None, holder=HUMAN)
+    e._storage.store_critique(V.executes_key(SEAM), "[]")          # …as a node handed over before this record
+    assert V.his_check(e.graph, e.graph.get_task(TaskId(SEAM))) == "self"
+    assert json.loads(e._storage.get_critique(V.executes_key(SEAM))) == [{"assignee": HUMAN, "human": True}]
+    _delivers(e, holder=HUMAN)
+    assert _call(PAGE, "signal", e, SEAM, "PASS", "user")["state"] == "DONE"
+
+
+def test_a_human_that_became_an_agent_stays_one_after_it_is_unregistered(tmp_path):
+    """The switch to an agent is recorded when read: an agent's session delivered, its name unregistered after, and the
+    validator still checks it."""
+    e, _ = _issued(tmp_path, checker=None, holder=HUMAN)
+    roster = e.workforce.roster()
+    e.workforce.publish_roster({**roster, HUMAN: "llm-executor"})
+    assert V.his_check(e.graph, e.graph.get_task(TaskId(SEAM))) == "validator"
+    _delivers(e, holder=HUMAN)
+    e.workforce.publish_roster(roster)
+    assert V.his_check(e.graph, e.graph.get_task(TaskId(SEAM))) == "validator" and e.persons_seam(SEAM)
+    assert not _call(PAGE, "signal", e, SEAM, "PASS", "user").get("accepted")
+
+
+def test_a_node_from_before_the_record_that_an_agent_worked_reads_as_an_agents(tmp_path):
+    """No record, its executor since dropped from the roster: a session of the system's on its ledger shows an agent
+    worked it, so the validator checks it."""
+    e, _ = _issued(tmp_path, mode=Mode.SEMI, checker=None)
+    _delivers(e)
+    e._storage.log_usage({"ts": "2026-11-20T10:00:00", "stage": "executor", "model": "m", "node_id": SEAM})
+    e._storage.store_critique(V.executes_key(SEAM), "[]")          # …as a node handed over before this record
+    e.workforce.publish_roster({k: v for k, v in e.workforce.roster().items() if k != HOLDER})
+    assert V.his_check(e.graph, e.graph.get_task(TaskId(SEAM))) == "validator" and e.persons_seam(SEAM)
+    assert not _call(PAGE, "signal", e, SEAM, "PASS", "user").get("accepted")
+
+
+def test_a_node_handed_over_with_no_roster_is_an_agents_for_good(tmp_path):
+    """Before a roster is published nobody is a human: the ASSIGN records an agent, and a roster published after its
+    delivery, the name not on it, turns no validator off."""
+    e, _ = _issued(tmp_path, staffed=False, checker=None, holder="ext")
+    assert e.graph.roster is None
+    e.workforce.publish_roster({"p-val": "llm-validator"})
+    assert V.his_check(e.graph, e.graph.get_task(TaskId(SEAM))) == "validator"
+    _delivers(e, holder="ext")
+    assert not _call(PAGE, "signal", e, SEAM, "PASS", "user").get("accepted")
+
+
+@pytest.mark.parametrize("first, then", [(HUMAN, "exec-1"), ("exec-1", HUMAN)])
+def test_a_reassign_hands_the_words_criterion_with_the_check_to_the_new_del(tmp_path, first, then):
+    """One classification, at each hand-over: the words criterion is there iff the Del is an agent of the system, as the
+    checker is the validator — a re-ASSIGN is a new version, its criteria re-consented (§12.3)."""
+    a_repository(tmp_path)
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    e.project_name = "p"
+    e.workforce.publish_roster({"exec-1": "llm-executor"})
+    _call(PAGE, "create_task", e, "root", {"description": "his goal", "criteria": [criterion("g")]}, assignee="user")
+    _call(PAGE, "decompose", e, "root", [{"task_id": SEAM, "assignee": first, "covers": ["g"],
+                                          "spec": {"description": "a direction", "criteria": [criterion("k")]}}],
+          accepted_risks=REGISTER)
+    e.wait_idle()
+    assert not _call(PAGE, "reassign", e, SEAM, then).get("refused")
+    e.wait_idle()
+    t = e.graph.get_task(TaskId(SEAM))
+    words = INTENT in {c.name for c in t.spec.criteria}
+    assert str(t.assignee) == then and words == (then == "exec-1"), [c.name for c in t.spec.criteria]
+    assert V.his_check(e.graph, t) == ("validator" if then == "exec-1" else "self")
+    assert not [p for c in t.spec.criteria for p in c.check if "git" in p.command] or then == "exec-1"
+
+
+def test_with_no_roster_a_read_records_nothing_and_takes_no_one_for_a_human(tmp_path):
+    e, _ = _issued(tmp_path, checker=None, holder=HUMAN)
+    e._storage.store_critique(V.executes_key(SEAM), "[]")
+    e.graph.roster = None
+    assert V.his_check(e.graph, e.graph.get_task(TaskId(SEAM))) == "validator"
+    assert e._storage.get_critique(V.executes_key(SEAM)) == "[]"
+
+
+def test_an_agent_of_the_system_unregistered_after_its_delivery_is_still_checked_by_the_validator(tmp_path):
+    e, _ = _issued(tmp_path, mode=Mode.SEMI, checker=None)
+    _delivers(e)
+    e.workforce.publish_roster({k: v for k, v in e.workforce.roster().items() if k != HOLDER})
+    assert e.persons_seam(SEAM)
+    assert not _call(PAGE, "signal", e, SEAM, "PASS", "user").get("accepted")
+
+
+def test_he_turns_the_validator_off_at_his_seam_and_on_again(tmp_path):
+    """Who checks is his appointment at a seam too (the author, 2026-11-23: «издатель назначает валидатора и точка»):
+    the default between him and an agent in its chat is the validator, and his word changes it either way."""
+    e, _ = _issued(tmp_path, checker=None, in_chat=True)
+    assert not _call(PAGE, "set_checker", e, SEAM, "self", agent="user").get("refused")
+    assert not e.persons_seam(SEAM) and V.owed_observer(e.graph, e.graph.get_task(TaskId(SEAM))) is None
     assert not _call(PAGE, "set_checker", e, SEAM, "validator", agent="user").get("refused")
-    # …and his asking leaves its record, though who checks does not change (Thm 11: his decision, his record)
-    assert [m["checker"] for m in e.checker_choices(TaskId(SEAM))] == ["validator"]
-    assert e.checker(TaskId(SEAM)) == "validator"
+    assert [m["checker"] for m in e.checker_choices(TaskId(SEAM))] == ["self", "validator"]
+    assert e.persons_seam(SEAM) and e.checker(TaskId(SEAM)) == "validator"
+    off = _call(CONSOLE, "set_checker", e, SEAM, "self", user_said="сам", agent=HOLDER)
+    assert off.get("refused") and "not the issuer" in off["error"], "its executor appoints nothing"
 
 
 # ── 2. before the result reaches him: the holder's delivery waits for the check of its tree ─────────────────────────
@@ -409,10 +528,43 @@ def test_a_check_of_an_earlier_round_does_not_stand_for_the_tree_in_this_one(tmp
     assert not out.get("accepted") and "has not checked this tree" in out["error"], out
 
 
-def test_his_seam_is_his_by_who_issued_it_not_by_who_holds_its_parent_now(tmp_path):
-    e, _ = _issued(tmp_path)
-    e._storage.update_task(TaskId("root"), assignee="someone-else")
+def test_a_seam_is_its_parents_holders_and_moves_with_him(tmp_path):
+    """One reading of the issuer: Del(parent), the role moving at its change (§10.1). His root handed to bob, the seam
+    under it is bob's: no longer the person's, nor his to appoint its checker — and nobody's under no mode, where no PASS
+    waits for a chosen validator."""
+    e, _ = _issued(tmp_path, checker=None)
+    e._storage.update_task(TaskId("root"), assignee="bob")
+    t = e.graph.get_task(TaskId(SEAM))
+    assert not e.persons_seam(SEAM) and V.his_check(e.graph, t) is None
+    mine = _call(PAGE, "set_checker", e, SEAM, "validator", agent="user")
+    assert mine.get("refused") and "'bob'" in mine["error"], mine
+    for checker in ("self", "validator"):
+        bobs = TL.set_checker(e, SEAM, checker, user_said="так", agent="bob")
+        assert bobs.get("refused") and "under a mode" in bobs["error"], bobs
+    assert not e.checker_choices(TaskId(SEAM))
+
+
+def test_under_semi_his_agent_lifts_no_validator_and_signs_no_bare_pass(tmp_path):
+    """His chat connection signs as his name: a node it gives a registered executor is checked by the validator, and
+    from that connection neither `set_checker('self')` nor a PASS stands for his act — only his page does."""
+    e, _ = _issued(tmp_path, mode=Mode.SEMI, checker=None)
     assert e.persons_seam(SEAM)
+    off = _call(STANDING, "set_checker", e, SEAM, "self", user_said="сам", agent="user")
+    assert off.get("refused") and "page" in off["error"], off
+    assert not e.checker_choices(TaskId(SEAM))
+    _delivers(e)
+    assert not _call(STANDING, "signal", e, SEAM, "PASS", "user").get("accepted")
+    assert _state(e) == "VALIDATING"
+
+
+def test_his_own_check_is_his_act_and_a_bare_pass_by_his_name_is_not(tmp_path):
+    """Where he keeps the check himself his PASS counts only as his act: his page, or his words."""
+    e, _ = _issued(tmp_path, checker=None, holder=HUMAN)
+    assert V.his_check(e.graph, e.graph.get_task(TaskId(SEAM))) == "self"
+    _delivers(e, holder=HUMAN)
+    bare = _call(STANDING, "signal", e, SEAM, "PASS", "user")
+    assert not bare.get("accepted") and "user_said" in bare["error"], bare
+    assert _call(STANDING, "signal", e, SEAM, "PASS", "user", user_said="принимаю")["state"] == "DONE"
 
 
 def test_a_runs_record_names_the_tree_its_claim_named_when_it_began(tmp_path):
@@ -468,5 +620,98 @@ def test_a_validator_registered_where_no_commit_records_a_tree_is_told_his_seams
     (sub := repo / "sub").mkdir()
     assert "seam_boundary" not in TL.register_agent(e, "p-val3", "llm-validator", workdir=str(sub))
     assert "seam_boundary" not in TL.register_agent(e, "p-val4", "llm-validator", workdir=str(repo))
+
+
+# ── 9. who checks is his appointment: himself by default, the validator in his chat ───────────────────────────────
+
+def _his_own_check(e, tid=SEAM):
+    """His reading of the delivery, recorded by his hand: the check he makes as its issuer (§10.2)."""
+    return T.record_verdict(e, tid, "PASS", reviewer="user", observed={
+        c.name: {"note": f"checked `{c.name}` by hand against what was handed in: it holds",
+                 "ran": [p.command for p in c.check]}
+        for c in e.graph.get_task(TaskId(tid)).spec.criteria})
+
+
+def test_a_node_he_issues_to_a_human_is_checked_by_him_and_his_pass_needs_no_validator(tmp_path):
+    e, _ = _issued(tmp_path, checker=None, holder=HUMAN)
+    assert not e.persons_seam(SEAM) and V.owed_observer(e.graph, e.graph.get_task(TaskId(SEAM))) is None
+    assert "staff" not in _delivers(e, holder=HUMAN)
+    # …his bare PASS: check and signature both his, one person's (§10.2)
+    assert _call(PAGE, "signal", e, SEAM, "PASS", "user")["state"] == "DONE"
+    assert not [r for r in observations(e._storage, TaskId(SEAM)) if r.get("validator") == "p-val"]
+
+
+def test_a_humans_node_he_fails_goes_to_rework_on_his_criteria(tmp_path):
+    e, _ = _issued(tmp_path, checker=None, holder=HUMAN)
+    _delivers(e, holder=HUMAN)
+    assert _call(PAGE, "signal", e, SEAM, "FAIL", "user", failed_criteria=["d"])["state"] == "REWORKING"
+
+
+def test_a_registered_role_he_issues_to_is_checked_by_the_validator_by_default(tmp_path):
+    """Any agent of the system — his own in his chat, a registered role — is checked by the system's validator unless he
+    appoints himself; a semi delivery does not wait on his hand."""
+    e, _ = _issued(tmp_path, mode=Mode.SEMI, checker=None)
+    assert e.persons_seam(SEAM) and e.checker(TaskId(SEAM)) == "validator"
+    assert not _call(PAGE, "set_checker", e, SEAM, "self", agent="user").get("refused")
+    assert not e.persons_seam(SEAM)
+
+
+def test_a_validator_he_appoints_on_a_humans_node_is_owed_before_his_pass(tmp_path):
+    e, _ = _issued(tmp_path, holder=HUMAN)
+    assert e.persons_seam(SEAM) and e.checker(TaskId(SEAM)) == "validator"
+    assert _delivers(e, holder=HUMAN).get("accepted")
+    with contextlib.suppress(ValueError):
+        _his_own_check(e)
+    out = _call(PAGE, "signal", e, SEAM, "PASS", "user")
+    assert not out.get("accepted") and "observ" in out["error"], out
+    instrument_passes(e, TaskId(SEAM), validator="p-val")
+    assert _call(PAGE, "signal", e, SEAM, "PASS", "user")["state"] == "DONE"
+
+
+def test_a_humans_node_carries_no_pin_reading_this_repositorys_git(tmp_path):
+    """Its work is met in meetings and other repositories: a pin over this `git log` decides nothing of it."""
+    e, _ = _issued(tmp_path, checker=None, holder=HUMAN)
+    crits = e.graph.get_task(TaskId(SEAM)).spec.criteria
+    assert INTENT not in {c.name for c in crits}
+    assert not [p for c in crits for p in c.check if "git" in p.command], crits
+
+
+def _solo_root_delivered(mode=Mode.SOLO):
+    """His own root under `mode`, held and worked by his agent in his chat, delivered."""
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    e.project_name = "p"
+    e.set_mode(mode, None, AgentId("user"))
+    T.create_task(e, "root", {"description": "his goal", "criteria": [criterion("g")]})
+    T.signal(e, "root", "ACCEPT", "user")
+    T.signal(e, "root", "DELIVER", "user", result="ran g: it holds", self_validation="PASS")
+    e.wait_idle()
+    return e
+
+
+def test_between_him_and_his_agent_in_his_chat_the_validator_checks_by_default():
+    e = _solo_root_delivered()
+    assert V.his_check(e.graph, e.graph.get_task(TaskId("root"))) == "validator"
+    out = _call(PAGE, "signal", e, "root", "PASS", "user")
+    assert not out.get("accepted") and "observ" in out["error"], out
+    e.stop()
+
+
+@pytest.mark.parametrize("mode", [Mode.SOLO, Mode.SEMI])
+def test_between_him_and_his_agent_in_his_chat_his_own_check_suffices_where_he_appoints_himself_on_his_page(mode):
+    """His agent signs as his name there: lifting the validator from its connection would be the executor choosing its
+    own checker (§10.3), so it is his hand alone — his page; the validator back is admitted from anywhere."""
+    e = _solo_root_delivered(mode)
+    off = _call(STANDING, "set_checker", e, "root", "self", user_said="сам проверю", agent="user")
+    assert off.get("refused") and "page" in off["error"], off
+    assert not e.checker_choices(TaskId("root")), "a refused choice wrote it"
+    if mode == Mode.SOLO:     # …under semi his root waits for its split before any delivery
+        assert not _call(PAGE, "signal", e, "root", "PASS", "user").get("accepted")
+    assert not _call(STANDING, "set_checker", e, "root", "validator", user_said="проверяй", agent="user").get("refused")
+    assert not _call(PAGE, "set_checker", e, "root", "self", agent="user").get("refused")
+    assert V.his_check(e.graph, e.graph.get_task(TaskId("root"))) == "self"
+    if mode == Mode.SOLO:
+        assert _call(PAGE, "signal", e, "root", "PASS", "user")["state"] == "DONE"
+    e.stop()
 
 

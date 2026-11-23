@@ -12,7 +12,7 @@ from gfso.engine.verdicts import criterion_version, observations, refuted_versio
 from gfso.engine.findings import regression, ruling_defect, standing_rulings
 
 
-from gfso.core.types import (Mode, Probe, Signal, SignalData, State, CriticVerdict, DoneReason, TaskId,
+from gfso.core.types import (Mode, Probe, Signal, SignalData, Stage, State, CriticVerdict, DoneReason, TaskId,
                              TERMINAL_STATES, Verdict, passed, settled_positive)
 from gfso.core.protocol.fsm import available_signals, not_admissible_here
 from gfso.core.protocol.validation import Role, required_role
@@ -499,30 +499,117 @@ def observes_by_itself(graph: Graph, task) -> bool:
     return not outside_the_scopes(graph, task) and observed_here(graph, task)
 
 
-#: why the validator checks a seam the person issues, in his words
-HIS_WORD_ON_THE_SEAM = ("a seam the person issued, and before its result is brought to him the project's validator "
-                        "checks it against every criterion, his words' included — the author, 2026-11-20: «на шве … "
-                        "должен стоять обязательный … и не даст сказать готово»")
+#: why the validator checks a seam the person issues where it is his checker, in his words
+HIS_WORD_ON_THE_SEAM = ("a seam the person issued whose check is the project's validator's — his appointment, or the "
+                        "default between him and his own agent in his chat — so before its result is brought to him the "
+                        "validator checks it against every criterion, his words' included (the author, 2026-11-20: «на "
+                        "шве … должен стоять обязательный … и не даст сказать готово»; 2026-11-23: «издатель назначает "
+                        "валидатора и точка»)")
 #: the lift where no validator is registered to observe his seams (`Engine.staffs_his_seam`)
 STAFF_HIS_SEAMS = ("registering the project's validator makes it observe each delivery by itself — "
                    "`register_agent(\"<project>-val\", \"llm-validator\", workdir=<the repository>)`")
 
 
-def issued_by(graph: Graph, task) -> Optional[str]:
-    """Who issued `task`'s standing version — the signer of the ASSIGN that installed it, as the log records it (§10.1);
-    the issuer now where the log holds none."""
-    last = next((e for e in reversed(graph.audit.get_entries(task.id)) if e.signal == Signal.ASSIGN and not e.rejected),
-                None) if graph.audit is not None else None
-    return str(last.source) if last is not None and last.source else graph.issuer_of(task.id)
+def chat_seam(graph: Graph, task) -> bool:
+    """Is `task` the seam between the person and his own agent working in his chat — the top of the `in_chat` mode it
+    lies under (`held_in_chat`: his root under solo/semi, a scope's top), issued by a name of his?"""
+    return (task is not None and held_in_chat(graph, task) and str(mode_at(graph, task)[1].id) == str(task.id)
+            and str(graph.issuer_of(task.id) or "") in PERSONS_NAMES)
+
+
+def his_check(graph: Graph, task) -> Optional[str]:
+    """Who checks a node the person issues — "validator" or "self", himself — or None at a node he does not issue.
+    His appointment (`set_checker`), at a seam too: the check is the issuer's to make or to appoint, the signature his
+    either way (§10.2), and a seam asks only that it is not the executor's (§10.3). Where he appointed none, by who
+    executes it: the system's validator over any agent of the system — his own in his chat (`chat_seam`), a registered
+    role —, himself over a human, whose work is met in meetings and other repositories: as recorded when the node was
+    handed to it (`executed_by_a_human`). The author,
+    2026-11-23: «издатель он сам по определению валидатор если не назначил другого … для солоинчат между человеком и им
+    по умолчанию должен стоять системный валидатор». None too under AUTO, where his name's moves are the system's
+    (`party_kind`) and the mode's validator checks."""
+    if task is None or not (chat_seam(graph, task) or his_seam(graph.issuer_of(task.id), task.assignee)):
+        return None
+    if party_kind(graph, str(graph.issuer_of(task.id)), graph.roster or {}) == "machine":
+        return None
+    if (made := chosen_checker(graph._storage, task.id)) is not None:
+        return made
+    return "validator" if validator_chosen(graph, task) or not executed_by_a_human(graph, task) else "self"
 
 
 def persons_seam(graph: Graph, task) -> bool:
-    """Is `task` a seam the person issues — his name the signer of its version, another's its Del (`his_seam`) — at any
-    depth, under any mode? Every seam he issues is his by that act, whatever mode is set after it: the validator observes
-    every delivery, its FAIL binds his signature and its observation is owed before it (`owed_observer`,
-    `observation_blocker`) — his word, «перед тем как принести результат мне»: the check is mandatory and he may add to
-    it, never remove it. A node the system's holder issues below him is the mode's."""
-    return task is not None and his_seam(issued_by(graph, task), task.assignee)
+    """Is `task` a seam the person issues to another name — his name its issuer, Del(parent) (§10.1: the role moving
+    with a change of Del(parent)), another's its Del (`his_seam`), at any depth, under any mode — whose check is not his own (`his_check`): the validator's, by his
+    appointment or its default, or under AUTO the mode's? There the validator observes every delivery, its FAIL binds
+    his signature and its observation is owed before it (`owed_observer`, `observation_blocker`), «перед тем как
+    принести результат мне». Where he checks it himself his PASS is the check and the signature, and no validator's
+    record is owed. A node the system's holder issues below him is the mode's."""
+    return (task is not None and his_seam(graph.issuer_of(task.id), task.assignee)
+            and his_check(graph, task) != "self")
+
+
+def a_human(graph: Graph, name) -> bool:
+    """Is `name` a human outside the system NOW — none of the person's names, on the published roster not, working in
+    no chat here? Unlisted ids are humans (`roster`); before a roster is published nobody is taken for one by absence
+    (`waits_on_a_person`). Read once, at the ASSIGN that hands a node to it (`classify_executor`)."""
+    n = str(name or "")
+    return (bool(n) and n not in PERSONS_NAMES and graph.roster is not None and n not in graph.roster
+            and n not in in_chat_names(graph))
+
+
+def executes_key(task_id) -> str:
+    """Where who executes a node is recorded at each ASSIGN that moved its Del (`classify_executor`)."""
+    return f"executes:{task_id}"
+
+
+def classify_executor(graph: Graph, task, human: Optional[bool] = None) -> None:
+    """Record who executes `task` — a human or an agent of the system — at the ASSIGN installing its version, where its
+    Del is new: the version's fact, read by every reader of it (`executed_by_a_human`), never the roster at a later
+    move, where an unregistration, a connection's `act_as` or a roster not yet published flipped who checks mid-node.
+    `human` where the reader already knows it; else read now (`a_human`: with no roster published, an agent)."""
+    if task is None or not task.assignee:
+        return
+    made = json.loads(graph._storage.get_critique(executes_key(task.id)) or "[]")
+    if made and made[-1]["assignee"] == str(task.assignee) and (human is None or made[-1]["human"] == human):
+        return
+    human = a_human(graph, task.assignee) if human is None else human
+    made.append({"assignee": str(task.assignee), "human": human})
+    graph._storage.store_critique(executes_key(task.id), json.dumps(made))
+
+
+def an_agent_now(graph: Graph, name) -> bool:
+    """Does `name` read as an agent of the system now — on the published roster, or working in a chat here?"""
+    return str(name or "") in (graph.roster or {}) or str(name or "") in in_chat_names(graph)
+
+
+def worked_by_an_agent(graph: Graph, task) -> bool:
+    """Does anything show an agent of the system worked `task` — its Del one now (`an_agent_now`), or a session of the
+    system's spent on the node (an executor's or its consent, on the usage ledger)?"""
+    return an_agent_now(graph, task.assignee) or any(
+        str(r.get("node_id") or "") == str(task.id) and r.get("stage") in (Stage.EXECUTOR, Stage.CONSENT)
+        for r in graph._storage.get_usage(limit=10 ** 9))
+
+
+def executed_by_a_human(graph: Graph, task) -> bool:
+    """Was `task`'s Del a human when it was handed to it (`classify_executor`), and does it still read as one? One way
+    only, and on the record: a human on the record that has since registered or works in a chat is recorded an agent
+    of the system then, for good — an unregistration after does not turn the validator off again —, and an agent never
+    reads human. A node with no record at all — handed over before records were kept — is classified once, at this
+    read: an agent where anything shows one worked it (`worked_by_an_agent`), else a human; before a roster is
+    published nothing is written and nobody is a human."""
+    if task is None:
+        return False
+    made = json.loads(graph._storage.get_critique(executes_key(task.id)) or "[]")
+    if not made:
+        if graph.roster is None:
+            return False
+        classify_executor(graph, task, human=not worked_by_an_agent(graph, task))
+        return executed_by_a_human(graph, task)
+    if not (made[-1]["assignee"] == str(task.assignee) and made[-1]["human"]):
+        return False
+    if an_agent_now(graph, task.assignee):
+        classify_executor(graph, task, human=False)
+        return False
+    return True
 
 
 class StaleRun(ValueError):
@@ -557,9 +644,12 @@ def standing_check(graph: Graph, audit, task, tree: Optional[str]) -> Optional[d
 
 
 def owed_observer(graph: Graph, task) -> Optional[str]:
-    """Why the instrument observes this node whatever its issuer chooses — None where who checks is his choice."""
+    """Why the instrument observes this node — None where it is not owed there. At a node the person issues, by his
+    appointment or its default (`his_check`)."""
     if persons_seam(graph, task):
         return f"it is {HIS_WORD_ON_THE_SEAM}"
+    if his_check(graph, task) == "self":
+        return None
     if graph.is_public(task):
         return "it is a seam: its result crosses into another scope (§10.3)"
     if _validate_internal():
@@ -663,8 +753,9 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
     the system observes every delivery whoever holds it, and a mode is where the instrument is staffed
     (C-12). The second is lifted by the refused party's own move, `validate_result` (§12.16 (ii)). With no
     mode a seam keeps the older rule below it (a current PASS on the record, whoever recorded it) —
-    the appointed requirement is C-12's, and it came with the modes. A seam the person issues owes the validator
-    in any mode, and its FAIL binds him (`persons_seam`): his lift is the FAIL, and its holder's a repair (§12.16 (ii))."""
+    the appointed requirement is C-12's, and it came with the modes. A seam the person issues whose check is the
+    validator's owes it in any mode, and its FAIL binds him (`persons_seam`): his lift is the FAIL, and its holder's a
+    repair (§12.16 (ii)); where he checks it himself (`his_check`), nothing is owed but his own record."""
     if task is None:
         return None
     st, his = observation_standing(graph, task, audit), persons_seam(graph, task)
@@ -1063,7 +1154,10 @@ def _pass_rules(signal_data: SignalData, graph: Graph, audit) -> None:
         # requirement it now meets is one it already met. What is refused is a signature standing
         # on nothing — which is what the whole gate is for.
         _on_roster = str(signal_data.source or "") in graph.authorized_validators
-        if task is not None and graph.is_public(task):
+        # …save where he checks it himself (`his_check`): check and signature are both his, one person's, and his PASS —
+        # with his words from a connection, or from his page — carries both (§10.2); a FAIL of his stays a FAIL (Inv-3)
+        if (task is not None and graph.is_public(task)
+                and not (his_check(graph, task) == "self" and str(signal_data.source or "") in PERSONS_NAMES)):
             rec = graph.exec_verdict_record(signal_data.task_id)
             it, ro, rev = generation_of_task(task)
             # The question "does a CURRENT pass stand here" has one owner (`record_stands`); what stays
@@ -1564,7 +1658,8 @@ def persons_node(graph: Graph, task) -> bool:
         return False
     if (kind := mode_kind(graph)) is None:
         return his_seam(graph.issuer_of(task.id), task.assignee)
-    return graph.get_parent(task.id) is None and kind in (Mode.SOLO, Mode.SEMI)
+    # …and under a mode, a node whose check he keeps himself (`his_check`): his PASS there is the check, so it is his act
+    return graph.get_parent(task.id) is None and kind in (Mode.SOLO, Mode.SEMI) or his_check(graph, task) == "self"
 
 
 def pause_record(graph: Graph) -> Optional[dict]:

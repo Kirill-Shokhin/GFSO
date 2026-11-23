@@ -93,10 +93,10 @@ def _in_its_chat(e, workdir):
     assert not TL.register_agent(e, "p-val", "llm-validator", workdir=str(workdir)).get("refused")
 
 
-def _shared(tmp_path, scoped: bool = True, workdir=None):
+def _shared(tmp_path, scoped: bool = True, workdir=None, roster=None):
     """The author's one graph: his root, the node he holds beside the other streams' tops and a node of the standing
     agent's, `engineering`'s direction issued by him from his page under it — and, where `scoped`, `engineering`
-    working in its chat (`_in_its_chat`)."""
+    working in its chat (`_in_its_chat`); `roster` the roles published before his issue."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     e.project_name = "p"
@@ -109,6 +109,8 @@ def _shared(tmp_path, scoped: bool = True, workdir=None):
     e.wait_idle()
     if scoped:
         _in_its_chat(e, workdir or tmp_path)
+    if roster is not None:
+        e.workforce.publish_roster(roster)
     _call(PAGE, "decompose", e, Y, [{"task_id": X, "spec": {"description": X, "criteria": [criterion(HOLDER)]},
                                      "assignee": HOLDER, "covers": ["stream"]}], accepted_risks=REGISTER, agent="user")
     e.wait_idle()
@@ -192,15 +194,16 @@ def test_inside_the_scope_a_node_goes_to_its_holder_and_a_third_party_is_refused
 
 
 def test_inside_the_scope_the_holders_parts_self_verify_and_its_top_is_checked_by_the_validator(tmp_path):
-    """Solo in_chat below the seam: the holder's own nodes self-verify (§10.3). Its top — a seam he issued — is
-    observed by the project's validator on every delivery, and he cannot turn it off (the author, 2026-11-20: «на шве
-    … должен стоять обязательный»)."""
+    """Solo in_chat below the seam: the holder's own nodes self-verify (§10.3). Its top — a seam he issued to an agent
+    in its chat — is observed by the project's validator on every delivery by default (the author, 2026-11-23: «для
+    солоинчат между человеком и им по умолчанию должен стоять системный валидатор»), and who checks it is his
+    appointment: «издатель назначает валидатора и точка»."""
     e = _shared(tmp_path)
     _split(e, X, ASK, HOLDER, HOLDER)
     assert e.held_in_chat(TaskId(ASK)) and not e.observed_here(TaskId(ASK))
     assert e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "validator"
-    assert _call(PAGE, "set_checker", e, X, "self", agent="user").get("refused")
-    assert e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "validator"
+    assert not _call(PAGE, "set_checker", e, X, "self", agent="user").get("refused")
+    assert not e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "independent"
 
 
 @bash
@@ -252,10 +255,13 @@ def test_a_plan_at_the_top_is_checked_and_gone_on_its_contract_as_issued(tmp_pat
 
 def test_his_issue_of_a_seam_installs_the_criterion_whoever_holds_it(tmp_path):
     """His ASSIGN of a seam is his own act on it, the counterpart of his go in his own project: the criterion read
-    against his words is on by default (the author, 2026-11-19), whether its holder works in a chat or not."""
-    e, bare = _shared(tmp_path), _shared(tmp_path / "bare", scoped=False)
+    against his words is on by default (the author, 2026-11-19), whether its holder works in a chat or is a registered
+    role — and not on a human's node, whose work no pin here reads and which he checks himself."""
+    e, bare = _shared(tmp_path), _shared(tmp_path / "bare", scoped=False, roster={})
     assert INTENT in [c.name for c in e.graph.get_task(TaskId(X)).spec.criteria]
-    assert INTENT in [c.name for c in bare.graph.get_task(TaskId(X)).spec.criteria]
+    assert INTENT not in [c.name for c in bare.graph.get_task(TaskId(X)).spec.criteria], "unlisted, in no chat: a human"
+    role = _shared(tmp_path / "role", scoped=False, roster={HOLDER: "llm-executor"})
+    assert INTENT in [c.name for c in role.graph.get_task(TaskId(X)).spec.criteria]
 
 
 def test_the_tops_packet_changes_only_on_the_persons_words(tmp_path):

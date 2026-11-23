@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso.api.server import create_app
+from gfso.config import CALLER, Principal
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.engine.verdicts import observations
 from tests.support import committed, criterion, instrument_passes, make_engine, parts_held, REGISTER
@@ -377,26 +378,31 @@ def test_who_checks_is_read_on_the_node():
     e.stop()
 
 
-def test_at_a_seam_who_checks_is_no_choice():
-    """A part another executor holds is a seam: issued by the person, the project's validator checks it, staffed or
-    not, and his PASS waits for it (the author, 2026-11-20: «на шве … должен стоять обязательный»), so it reads
-    "validator", never "self"; under a mode the validator checks every delivery there whatever its issuer says, so the
-    choice is neither offered nor taken (ui's critic)."""
+def test_at_a_seam_he_issues_who_checks_is_his_appointment():
+    """A part a registered executor holds is a seam: issued by the person, who checks it is his appointment there too
+    (the author, 2026-11-23: «издатель назначает валидатора и точка») — the system's validator over an agent of the
+    system by default, its PASS waiting for it, never for the executor's self-check; on his words himself, his bare
+    PASS then being check and signature (§10.2). The choice is offered at the seam, and its executor appoints nothing."""
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     e.project_name = "p"
+    e.workforce.publish_roster({"exec-1": "llm-executor"})
     _split(e, executor="exec-1")
     e.wait_idle()
-    assert T.get_task(e, "kid")["checker"] == "validator", "his seam: the validator's, staffed or not"
+    assert T.get_task(e, "kid")["checker"] == "validator", "an agent of the system: the validator by default"
     assert not T.signal(e, "kid", "ACCEPT", "exec-1").get("refused")
     T.signal(e, "kid", "DELIVER", "exec-1", result="ran `check k`: OK", self_validation="PASS")
     assert not T.signal(e, "kid", "PASS", "user").get("accepted"), "the seam's PASS stood on the executor's self-check"
-    assert "set_checker" not in T.available_actions(e, "kid", agent="user")["moves"]
-    e.set_mode(Mode.SOLO, None, AgentId("user"))
-    assert T.get_task(e, "kid")["checker"] == "validator"
-    assert TL.set_checker(e, "kid", "self", user_said="сам", agent="user").get("refused"), "a seam's check waived"
-    assert e.observed_here(TaskId("kid"))
-    assert "set_checker" not in T.available_actions(e, "kid", agent="user")["moves"]
+    assert T.available_actions(e, "kid", agent="user")["moves"].get("set_checker") == "user"
+    assert TL.set_checker(e, "kid", "self", user_said="сам", agent="exec-1").get("refused"), "its executor appoints nothing"
+    assert TL.set_checker(e, "kid", "self", user_said="сам", agent="user").get("refused"), "his name, not his page"
+    token = CALLER.set(Principal("user", ("user",), "session", "signed in", "local"))      # …his page
+    try:
+        assert TL.set_checker(e, "kid", "self", agent="user")["checker"] == "self"
+    finally:
+        CALLER.reset(token)
+    assert T.get_task(e, "kid")["checker"] == "independent" and not e.observed_here(TaskId("kid"))
+    assert T.signal(e, "kid", "PASS", "user")["state"] == "DONE"
     e.stop()
 
 

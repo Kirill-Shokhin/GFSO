@@ -3504,17 +3504,32 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
             **({} if out.get("refused") else _short_supplied(engine))}
 
 
-def _his_intent(engine: Engine, criteria: list, seam: bool) -> list:
+def _his_intent(engine: Engine, criteria: list, seam: bool, agent: bool = True) -> list:
     """`criteria` as the person's act on a seam he issues to another (`seam`, `persons_node`) installs them — its first
     ASSIGN or a revision he makes: with `answers_the_persons_words` where `intent_check` holds there and they do not
     carry it (his 11-19 «по умолчанию»). The counterpart of his go on his own root; never written by a move of the
     system's, nor mapped: CHECK-1 flags it uncovered at the revision (§12.10), and the seam's holder maps it by its own
     re-admission. While `intent_check` holds, a revision of his that leaves it out gets it back: it is his by default,
-    and the page's switch turns it off. A call no door served is the system's own, never his act."""
-    if not seam or CALLER.get() is None or not engine.intent_check(seam=True) or any(
-            c.get("name") == INTENT for c in criteria):
+    and the page's switch turns it off. Present iff the seam's Del is an agent of the system (`agent`, `_by_an_agent`):
+    dropped where it is a human. A call no door served is the system's own, never his act."""
+    if not seam or CALLER.get() is None:
+        return criteria
+    if not agent:
+        return [c for c in criteria if c.get("name") != INTENT]
+    if not engine.intent_check(seam=True) or any(c.get("name") == INTENT for c in criteria):
         return criteria
     return [*criteria, json.loads(json.dumps(INTENT_CRITERION))]
+
+
+def _by_an_agent(engine: Engine, held, task=None) -> bool:
+    """Does `held` execute a seam of his as an agent of the system — the one classification the default checker reads
+    too (`validation.classify_executor`, `executed_by_a_human`): read now at an issue or a re-ASSIGN, the very reading
+    its ASSIGN records; as recorded at a revision of `task`'s version. A human's work — meetings, another repository —
+    leaves nothing here a pinned probe could read: the words criterion's pin read this repository's `git log`, deciding
+    nothing of that work, and a criterion pinning no runnable probe decides nothing either (A1). He checks a human's
+    node himself by default, reading his own words; a criterion restating them adds no check, so his criteria there are
+    the ones he writes."""
+    return not (engine.executed_by_a_human(task.id) if task is not None else engine.a_human(held))
 
 
 def _his_criteria_mapped(engine: Engine, parent_id, children, mappings) -> list:
@@ -3548,10 +3563,10 @@ def _with_his_intent(fn, *, issued: bool):
     `Engine._the_persons_packet`)."""
     sig = inspect.signature(fn)
 
-    def spec(e, s, seam):
+    def spec(e, s, seam, agent):
         """`s` with its criteria as his act installs them, where it names criteria."""
-        return {**s, "criteria": _his_intent(e, list(s["criteria"]), seam)} if isinstance(s, dict) and "criteria" in s \
-            else s
+        return ({**s, "criteria": _his_intent(e, list(s["criteria"]), seam, agent)}
+                if isinstance(s, dict) and "criteria" in s else s)
 
     @functools.wraps(fn)
     def _call(*a, **kw):
@@ -3561,25 +3576,27 @@ def _with_his_intent(fn, *, issued: bool):
             p = e.graph.get_task(TaskId(str(at["parent_id"])))
             seam = lambda held: p is not None and his_seam(p.assignee, held)
             if "children" in at:
-                at["children"] = [{**c, "spec": spec(e, c["spec"], seam(c.get("assignee")))}
+                at["children"] = [{**c, "spec": spec(e, c["spec"], seam(c.get("assignee")),
+                                                     _by_an_agent(e, c.get("assignee")))}
                                   if isinstance(c, dict) and "spec" in c else c
                                   for c in _his_criteria_mapped(e, at["parent_id"], at["children"], at.get("mappings"))]
             else:
-                at["spec"] = spec(e, at.get("spec"), seam(at.get("assignee")))
+                at["spec"] = spec(e, at.get("spec"), seam(at.get("assignee")), _by_an_agent(e, at.get("assignee")))
         elif "assignee" in at and not issued:
-            # …a re-ASSIGN making a node a seam of his: the criterion comes with his act, as one version before it — a
-            # version moving Del alone carries no criteria
+            # …a re-ASSIGN handing a seam of his to another Del: the words criterion follows the new Del as its ASSIGN
+            # will classify it — added for an agent of the system, dropped for a human —, as one version before it (§12.3:
+            # a version moving Del alone carries no criteria)
             t = e.graph.get_task(TaskId(str(at["task_id"])))
-            seam = t is not None and not e.persons_seam(t.id) and his_seam(e.graph.issuer_of(t.id), at["assignee"])
-            if seam and (now := _his_intent(e, its_criteria(t), True)) != its_criteria(t):
+            if t is not None and his_seam(e.graph.issuer_of(t.id), at["assignee"]) and (
+                    now := _his_intent(e, its_criteria(t), True, _by_an_agent(e, at["assignee"]))) != its_criteria(t):
                 _tools.edit_criteria(e, str(t.id), now, agent=str(e.graph.issuer_of(t.id)))
         elif not issued and (t := e.graph.get_task(TaskId(str(at["task_id"])))) is not None and t.parent_id \
                 and his_seam(e.graph.issuer_of(t.id), t.assignee):
-            # …his revision is a version he signs, so it is his seam by `persons_seam`'s own rule; a root's is its go's
+            # …his revision is a version he signs, so it is his seam by `his_seam`'s own rule; a root's is its go's
             if "criteria" in at:
-                at["criteria"] = _his_intent(e, list(at["criteria"] or ()), True)
+                at["criteria"] = _his_intent(e, list(at["criteria"] or ()), True, _by_an_agent(e, t.assignee, t))
             else:
-                at["spec"] = spec(e, at.get("spec"), True)
+                at["spec"] = spec(e, at.get("spec"), True, _by_an_agent(e, t.assignee, t))
         out = fn(**at)
         # …and a seam of his issued where no validator is staffed: named at its issue, not found missing at his PASS
         if issued and at.get("parent_id") and (lift := next(filter(None, (
@@ -3752,23 +3769,25 @@ may_make_a_project = _tools.may_make_a_project
 
 
 def set_checker(engine: Engine, task_id: str, checker: str = "validator", user_said: str = "", agent: str = "") -> dict:
-    """WHO CHECKS a node below the root's seam — `"self"`, you its holder (the default there, §10.3; `validate_result`
-    still checks it whenever you call it), or `"validator"`, the project's validator observing each delivery by itself,
-    its PASS standing on that record. Either way the signature is yours, its issuer's (§10.2). The person's choice: pass
-    their words asking for it as `user_said`. At a seam the validator always checks — not a choice. Below a mode scope's
-    top it is that top's holder's own choice, the inner node's issuer (§10.3): no words of the person's."""
+    """WHO CHECKS a node — `"self"`, its issuer himself (`validate_result` still checks it whenever called), or
+    `"validator"`, the project's validator observing each delivery by itself, its PASS standing on that record. Either
+    way the signature is the issuer's (§10.2). The person's choice: pass their words asking for it as `user_said`. At a
+    node he issues it is his at a seam too, §10.3 asking there only that the check is not the executor's: by default
+    himself, and the validator between him and his own agent in his chat. Below a mode scope's top it is that top's
+    holder's own choice, the inner node's issuer (§10.3): no words of the person's."""
     inside = (s := engine.scope_at(task_id)) is not None and s["top"] != str(task_id)
     if not inside and not str(user_said).strip() and not ((p := CALLER.get()) is not None and p.a_page):
         return {"refused": True, "error": "who checks a node is the person's to choose: ask them, and pass their words "
                                           "asking for it as `user_said`"}
     try:
-        held = engine.set_checker(TaskId(task_id), str(checker), AgentId(agent or _agent_id()), user_said)
+        held = engine.set_checker(TaskId(task_id), str(checker), AgentId(agent or _agent_id()), user_said,
+                                  on_his_page=(p := CALLER.get()) is not None and p.a_page)
     except ValueError as e:
         return {"refused": True, "error": str(e)}
     return {"task_id": task_id, "checker": checker, "checked_by_the_validator": held,
             "say": (f"the validator now checks each delivery of {task_id}, and its PASS stands on that record; you "
                     f"sign it" if checker == "validator" else
-                    f"{task_id} is checked by you, its holder, and you sign it; `validate_result` checks it when called")}
+                    f"{task_id} is checked by you, its issuer, and you sign it; `validate_result` checks it when called")}
 
 
 def canon(engine: Engine, section: str = "") -> dict:

@@ -30,7 +30,7 @@ from .findings import regression, ruled
 from .audit import AuditLog, AuditEntry, VERSION_INSTALLING, consented_on_current_version
 from .verdicts import store_verdict
 from .events import EventBus
-from .validation import pause_record, validate_signal, ValidationError
+from .validation import classify_executor, pause_record, validate_signal, ValidationError
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +142,23 @@ def record_refusal(signal_data: SignalData, state: State, why: str, audit: Audit
         **_payload_fields(signal_data),
     ))
     events.emit_reject(signal_data.task_id, signal_data.signal, state)
+
+
+def _keep_the_moves_facts(signal_data: SignalData, graph: Graph, task_id: TaskId) -> None:
+    """What an accepted move leaves on the record beside its log entry: who executes a node an ASSIGN handed over
+    (`classify_executor`), and a delivery's pointer."""
+    if signal_data.signal == Signal.ASSIGN:
+        classify_executor(graph, graph.get_task(task_id))
+    if signal_data.signal == Signal.DELIVER and signal_data.result:
+        try:  # the deliverable pointer must survive a server restart (it is the validator's input)
+            graph._storage.store_deliver_result(task_id, signal_data.result)
+        except Exception as e:
+            # A WARNING IS NOT A RETRY, and this pointer is load-bearing: it is what a validator reads
+            # after a restart. The fallback below is real (`_last_deliver_result` reads the audit log,
+            # which the same step has already appended), so the delivery is not lost — but if that
+            # log entry is ever the thing that fails, this line is the only trace left.
+            log.warning(f"{task_id}: DELIVER result not persisted ({e}) — validation falls back to "
+                        f"the audit log, which is the only copy left of what was delivered")
 
 
 def _keep_the_self_check(signal_data, graph, task_id, audit) -> None:
@@ -357,16 +374,7 @@ def process_signal(
     # fourteen signals. Measured 2026-08-20 on the human door: "the panel shows the one thing he did
     # not do." A transition is the cheapest true line there is — who moved what, and where it went.
     _log_the_transition(graph, task_id, signal_data, state, new_state)
-    if signal_data.signal == Signal.DELIVER and signal_data.result:
-        try:  # the deliverable pointer must survive a server restart (it is the validator's input)
-            graph._storage.store_deliver_result(task_id, signal_data.result)
-        except Exception as e:
-            # A WARNING IS NOT A RETRY, and this pointer is load-bearing: it is what a validator reads
-            # after a restart. The fallback below is real (`_last_deliver_result` reads the audit log,
-            # which the same step has already appended), so the delivery is not lost — but if that
-            # log entry is ever the thing that fails, this line is the only trace left.
-            log.warning(f"{task_id}: DELIVER result not persisted ({e}) — validation falls back to "
-                        f"the audit log, which is the only copy left of what was delivered")
+    _keep_the_moves_facts(signal_data, graph, task_id)
     _keep_the_self_check(signal_data, graph, task_id, audit)
     events.emit_transition(task_id, state, new_state, signal_data.signal)
 

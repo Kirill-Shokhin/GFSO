@@ -83,7 +83,9 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          HEARD_ON, IN_CHAT, in_chat_names as _in_chat_names, mode_scopes as _mode_scopes, mode_at as _mode_at, scope_at as _scope_at,
                          outside_the_scopes, heard_on as _heard_on, goal_top as _goal_top, persons_node as _persons_node,
                          observes_by_itself as _observes_by_itself, would_be_a_top as _would_be_a_top,
-                         persons_seam as _persons_seam, STAFF_HIS_SEAMS, fails_on_this_version, StaleRun)
+                         persons_seam as _persons_seam, his_check as _his_check, a_human as _a_human,
+                         executed_by_a_human as _executed_by_a_human,
+                         STAFF_HIS_SEAMS, fails_on_this_version, StaleRun)
 from .events import EventBus, PlanWatch, TransitionCallback, ErrorCallback, RejectCallback
 from .loop import _guard_context, event_loop, record_refusal, refresh_checks, timeout_monitor
 
@@ -3421,10 +3423,14 @@ class Engine:
         t = self._graph.get_task(task_id)
         return t is not None and _held_in_chat(self._graph, t)
 
-    def set_checker(self, task_id: TaskId, checker: str, author: AgentId, said: str) -> list:
-        """Who checks `task_id`'s deliveries — "self", its holder, or "validator", the instrument, its PASS then standing
-        on that record: the issuer's choice where no seam owes the instrument (§10.2, §10.3), the signature his either
-        way; on the person's words, heard over the goal. The ids whose issuer chose the validator."""
+    def set_checker(self, task_id: TaskId, checker: str, author: AgentId, said: str, on_his_page: bool = False) -> list:
+        """Who checks `task_id`'s deliveries — "self", its issuer, or "validator", the instrument, its PASS then standing
+        on that record: the issuer's appointment (§10.2) — at a node the person issues, a seam too (`his_check`): §10.3
+        asks there only that the check is not the executor's, and no executor appoints it, the author being its issuer;
+        elsewhere where no seam owes the instrument. The signature his either way; on the person's words, heard over
+        the goal. At a node the person issues his agent signs as his name too, and may be its executor: his check moves
+        away from the validator only `on_his_page`, his own act; to it from anywhere. The ids whose issuer chose the
+        validator."""
         if checker not in CHECKERS:
             raise ValueError(f"checker is one of {', '.join(CHECKERS)}, not '{checker}'")
         if (t := self._graph.get_task(task_id)) is None:
@@ -3432,18 +3438,21 @@ class Engine:
         if str(author) != str(self._graph.issuer_of(task_id)):
             raise ValueError(f"'{author}' is not the issuer of {task_id}: who checks it is its issuer's choice — "
                              f"'{self._graph.issuer_of(task_id)}' (§10.2)")
-        if _mode_at(self._graph, t) is None and not _persons_seam(self._graph, t):
-            raise ValueError(f"who checks {task_id} is chosen under a mode: with none set, no PASS waits for a "
-                             f"validator's record (`set_mode`)")
-        if (why := _owed_observer(self._graph, t)) is not None:
-            if _persons_seam(self._graph, t) and checker == "validator":
-                self._record_checker(task_id, checker, author, said)
-                return self.validators_chosen()      # …his seam: his word adds a check, never removes the validator's
-            raise ValueError(f"the validator checks every delivery of {task_id}, not its issuer's to choose: {why}")
+        if checker != "validator" and not on_his_page and _his_check(self._graph, t) is not None:
+            raise ValueError(f"{task_id} is a seam the person issues: the validator stops checking it only on his page — "
+                             f"his own act; his name on a connection is his agent's too, and may be the executor's (§10.3)")
+        at = _mode_at(self._graph, t)
+        if _his_check(self._graph, t) is None:
+            if at is None:
+                raise ValueError(f"who checks {task_id} is chosen under a mode: with none set, no PASS waits for a "
+                                 f"validator's record (`set_mode`)")
+            if (why := _owed_observer(self._graph, t)) is not None:
+                raise ValueError(f"the validator checks every delivery of {task_id}, not its issuer's to choose: {why}")
         self._record_checker(task_id, checker, author, said)
         held = self.validators_chosen()
         # …heard over the top of the mode it lies under — its scope's, in a shared graph — where his words are read
-        self.hear(_mode_at(self._graph, t)[1].id, "checker", said, node=str(task_id), checker=checker)
+        if at is not None:
+            self.hear(at[1].id, "checker", said, node=str(task_id), checker=checker)
         return held
 
     def _record_checker(self, task_id, checker: str, author, said: str) -> None:
@@ -3471,8 +3480,16 @@ class Engine:
         return self.mode() is not None or self.workforce.has_an_instrument()
 
     def persons_seam(self, task_id) -> bool:
-        """Is this node a seam the person issues, the validator owed at it (`validation.persons_seam`)?"""
+        """Is this node a seam the person issues, the validator owed at it by his check (`validation.persons_seam`)?"""
         return _persons_seam(self._graph, self._graph.get_task(TaskId(str(task_id))))
+
+    def a_human(self, name) -> bool:
+        """Is `name` a human outside the system (`validation.a_human`)?"""
+        return _a_human(self._graph, name)
+
+    def executed_by_a_human(self, task_id) -> bool:
+        """Was this node's Del a human when it was handed to it (`validation.executed_by_a_human`)?"""
+        return _executed_by_a_human(self._graph, self._graph.get_task(TaskId(str(task_id))))
 
     def staffs_his_seam(self, task_id) -> Optional[str]:
         """The lift where `task_id` is a seam the person issues and no validator is staffed to observe it — None
@@ -3482,13 +3499,16 @@ class Engine:
 
     def checker_choosable(self, task_id: TaskId) -> bool:
         """Is who checks this node its issuer's to choose — a mode over it, so a chosen validator's record gates the PASS
-        (`validation.observation_blocker`), and nothing owing the instrument there (`set_checker`)?"""
+        (`validation.observation_blocker`), and nothing owing the instrument there — or a node the person issues, whose
+        check is his appointment at a seam too (`set_checker`)?"""
         t = self._graph.get_task(task_id)
-        return t is not None and _mode_at(self._graph, t) is not None and _owed_observer(self._graph, t) is None
+        return t is not None and (_his_check(self._graph, t) is not None or _mode_at(self._graph, t) is not None
+                                  and _owed_observer(self._graph, t) is None)
 
     def checker(self, task_id: TaskId, staffed: Optional[bool] = None) -> str:
         """Who checks this node's deliveries, read off the gates its PASS meets: "validator" where a staffed one observes
-        each by itself, and at a seam the person issues, whose PASS waits for it staffed or not (`persons_seam`);
+        each by itself, and at a seam the person issues whose check he gave it, its PASS waiting for it staffed or not
+        (`persons_seam`);
         "independent" at a seam none observes — the PASS needs a verdict not the executor's (`validate_result`, or the
         issuer's own record, §10.3); else "self", its holder's self-check closing it."""
         t = self._graph.get_task(task_id)
