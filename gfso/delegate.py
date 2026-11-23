@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from gfso import tools_llm as T
+from gfso.engine.frontier import refuted_reading, reopen_is_the_systems, uncovered
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.engine.validation import whole_waits_for_its_parts
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, agent_id as _config_agent_id, agents_path, max_sessions, provider, validator_retry_model
@@ -163,6 +164,18 @@ def confirm_system_cancellations(engine, agents: "AgentRegistry", in_flight=lamb
         if cfg.get("kind") == "llm-executor" and not in_flight(t):
             _signal(engine, t.id, Signal.CONFIRM_CANCEL, str(t.assignee),
                     in_flight="cancelled by its issuer; the workspace stands as the last round left it")
+
+
+def reopen_refuted_passes(engine, agents) -> None:
+    """The machine issuer's reopen of a refuted pass while R′'s gate is open (§12.14: REOPEN is the issuer's re-ASSIGN,
+    bounded by `max_reopens`): where the system holds that issuer role (`frontier.reopen_is_the_systems`) it is a move
+    only the system can make, and unmade it left the run silent. A person's stays theirs (`reopen_unmade`)."""
+    for r in refuted_reading(engine, engine.refuted_passes()):
+        if r.open and reopen_is_the_systems(engine, r, agents):
+            try:
+                engine.reopen(r.at.id, AgentId(str(engine.graph.issuer_of(r.at.id))))
+            except ValueError as e:
+                engine.emit_info("delegate", f"{r.at.id}: its reopen for '{r.node}' was refused — {e}")
 
 
 def _standing_instrument_verdict(engine, task_id: TaskId) -> Optional[dict]:
@@ -1453,6 +1466,7 @@ class Dispatcher:
                               self._cap.closing, ISSUER_VERBS, self._issuer_attempts, self._issuer_owed, self._issuer_turns_ended)
         if self._engine.mode() is not None:
             confirm_system_cancellations(self._engine, self._agents, lambda t: str(t.id) in self._running)
+            reopen_refuted_passes(self._engine, self._agents)
         started = []
         out = self._engine.next_steps()
         # A NODE THE PLAN GATE HOLDS BACK IS NOT A STEP — it is in `waiting`, because offering an
@@ -2053,10 +2067,12 @@ class Dispatcher:
 
     def _over(self) -> bool:
         """Every node settled and the result landed — asked only once a start has read what its last process left
-        (`_rejoin`): a parent's acceptance settles none of its children (§11.3), so a root's DONE alone is not this."""
+        (`_rejoin`): a parent's acceptance settles none of its children (§11.3), so a root's DONE alone is not this; nor
+        over a refuted pass the goal still rests on (`frontier.uncovered`), whose reopen may be the system's to make."""
         joins, graph = self._engine.joins, self._engine.graph
         return (self._rejoined_once and not joins.joining_nodes() and not joins.unjoined_roots()
                 and bool(tasks := self._engine.all_tasks()) and not self._engine.open_nodes()
+                and not uncovered(self._engine)
                 # …a DONE readable before its join is marked: `root_landed` reads that as being joined
                 and all(joins.root_landed(t) for t in tasks if t.state == State.DONE and graph.get_parent(t.id) is None))
 

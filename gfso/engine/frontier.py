@@ -13,7 +13,7 @@ from gfso.config import ONE_CALL, agent_id as _config_agent_id, how_it_is_waited
 from gfso.core.graph.model import party_kind, root_of
 from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, WORK_STATES, Task, TaskId,
                              Verdict, Wait, settled_positive)
-from .moves import Move
+from .moves import Move, door_holder
 from .parking import USERS_WAY
 from .validation import users_criteria, _l0_holes, _l2_undischarged, hole_kind, l2_gate_on, observation_blocker
 
@@ -772,13 +772,30 @@ class Refuted(NamedTuple):
     reopen would unmake — the refuted node, or the nearest settled whole above it whose parent still moves, since a
     part under a settled whole is not reopened (§12.7's issuing condition) —, `mover` that parent (its holder is
     `at`'s issuer, whose move the reopen is, §10.1), `open` whether R′'s gate on `at` is still open, `above` the
-    ancestors of `at`, `consumers` the Dep consumers of the refuted node and of `at`."""
+    ancestors of `at`, `consumers` the Dep consumers of the refuted node and of `at`, `over` the ancestor whose PASS
+    was re-earned over it (`re_earned_over`) — then nothing is open on it."""
     node: str
     at: Task
     mover: Optional[Task]
     open: bool
     above: frozenset
     consumers: frozenset
+    over: Optional[str] = None
+
+
+def re_earned_over(engine, n) -> Optional[str]:
+    """The nearest ancestor whose standing PASS rests on a delivery made after the record refuting `n` — its verdict
+    re-earned by fresh contact over the whole `n` is in (§12.14: a REOPEN leads into OFFERED, not DONE) — or None. Read
+    by the log's order (`log_at`), never the clock; without the log or the record's place, None: the stricter side."""
+    g = engine.graph
+    rec, audit = g.exec_verdict_record(TaskId(n)) or {}, g.audit
+    if audit is None or "log_at" not in rec:
+        return None
+    a = g.get_parent(TaskId(n))
+    while a is not None and not (settled_positive(a) and not (engine.closure_of(a.id) or {}).get("refuted")
+                                 and audit.last_at(a.id, signal=Signal.DELIVER) > int(rec["log_at"])):
+        a = g.get_parent(a.id)
+    return str(a.id) if a is not None else None
 
 
 def refuted_reading(engine, ids) -> list:
@@ -792,27 +809,45 @@ def refuted_reading(engine, ids) -> list:
         while a is not None:
             above.add(str(a.id))
             a = engine.graph.get_parent(a.id)
-        on = {n, str(m.id)}
-        out.append(Refuted(n, m, p, not engine.graph.is_consumed(m) and m.reopens < m.max_reopens, frozenset(above),
-                           frozenset(str(e.to_id) for e in deps if str(e.from_id) in on)))
+        on, over = {n, str(m.id)}, re_earned_over(engine, n)
+        out.append(Refuted(n, m, p, not over and not engine.graph.is_consumed(m) and m.reopens < m.max_reopens,
+                           frozenset(above), frozenset(str(e.to_id) for e in deps if str(e.from_id) in on), over))
     return out
 
 
 def uncovered(engine, root_id=None) -> list[str]:
-    """The refuted passes the split has not moved past (§12.14's plan legs): what COMPLETE is never answered over. A
-    re-admission covering around one, or a version mapping it to nothing, has left it out of what the goal rests on;
-    its record stays on the log for good, but no answer waits on it any more."""
+    """The refuted passes the split has not moved past (§12.14's plan legs) and no ancestor's PASS was re-earned over
+    (`re_earned_over`): what COMPLETE is never answered over. A re-admission covering around one, or a version mapping
+    it to nothing, has left it out of what the goal rests on; a whole reopened and passed again over a fresh delivery
+    has re-earned what rested on it. Its record stays on the log for good, but no answer waits on it any more."""
     return [n for n in engine.refuted_passes(root_id)
-            if not engine.graph.is_consumed(engine.graph.get_task(TaskId(n)), resting=False)]
+            if not engine.graph.is_consumed(engine.graph.get_task(TaskId(n)), resting=False)
+            and not re_earned_over(engine, n)]
+
+
+def withheld_over(rs: list, tid) -> list:
+    """The refuted passes of `rs` whose reopen is open below `tid`: a PASS on `tid` signs over them (§12.8) — the one
+    reading the frontier's SIGN NO PASS and the machine issuer's own signature share (`issuer.signal_ok`)."""
+    return [r for r in rs if r.open and str(tid) in r.above]
+
+
+def reopen_is_the_systems(engine, r: Refuted, registered=None) -> bool:
+    """Is the reopen of `r.at` the system's own move — a mode set and `at`'s issuer a machine (`party_kind`)? REOPEN is
+    the issuer's re-ASSIGN (§12.14), so who makes it is read off who holds the issuer role (§10.1), never a count."""
+    return engine.mode() is not None and engine.issuer_kind(r.at.id, registered) == "machine"
 
 
 def recovery_said(engine, r: Refuted) -> str:
     """The one recovery a refuted pass has now, in the words the door takes (`Engine.offer`): the reopen of `at` while
-    R′'s gate is open; past it, its issuer's re-decomposition around it — at a root, a new goal (§12.14)."""
+    R′'s gate is open; past it, its issuer's re-decomposition around it — at a root, a new goal (§12.14); none once an
+    ancestor's PASS was re-earned over it."""
     under = "" if str(r.at.id) == r.node else f" ('{r.node}' stands under it)"
+    if r.over:
+        return (f"for '{r.node}', '{r.over}' re-earned its PASS over it by fresh contact on a later delivery "
+                f"(§12.14): nothing waits on it")
     if r.open:
         return engine.offer(Move("reopen", str(r.at.id), f"`reopen('{r.at.id}')`{under}, its issuer's move",
-                                 unmade=True), lead=f"for '{r.node}', recovery is ")
+                                 unmade=not reopen_is_the_systems(engine, r)), lead=f"for '{r.node}', recovery is ")
     if r.mover is None:
         return f"for '{r.node}', past its reopen recovery is a new goal (`use_project`)"
     return engine.offer(Move("decompose", str(r.mover.id), f"re-decomposition of '{r.mover.id}' around "
@@ -828,14 +863,25 @@ WITHHOLDS = ("While it can be reopened, what rests on it waits for that — no D
 
 
 def refuted_said(engine, root_id=None) -> dict:
-    """`refuted_passes` beside any frontier answer, as data, and their recoveries in one note."""
+    """`refuted_passes` beside any frontier answer, as data, and their recoveries in one note — and `reopen_unmade`, the
+    open reopens the mode locks at the door and the system does not make, and `recovery_unmade`, the ones past their
+    reopen the goal still rests on (`uncovered`), whose re-decomposition around them — at a root, a new goal — nothing
+    in the system makes and the mode locks at the door: no party in the graph can make either, so they are the run's
+    customer's to hear (`tools_llm.needs_its_customer`); unsaid, COMPLETE never came and the run stood silent."""
     if not (ids := engine.refuted_passes(root_id)):
         return {}
+    rs, held = refuted_reading(engine, ids), set(uncovered(engine, root_id)) if engine.mode() is not None else set()
+    unmade = [f"'{r.at.id}' for '{r.node}'" for r in rs if r.open and not reopen_is_the_systems(engine, r)
+              and door_holder(engine, "reopen", str(r.at.id)) is not None]
+    past = [f"'{r.node}' — " + (f"a new goal (`use_project`)" if r.mover is None else
+                                f"a re-decomposition of '{r.mover.id}' around '{r.at.id}'")
+            for r in rs if r.node in held and not r.open
+            and (r.mover is None or door_holder(engine, "decompose", str(r.mover.id)) is not None)]
     return {"refuted_passes": ids,
             "refuted_passes_note": (f"{', '.join(ids)} stand(s) at PASS while the current recorded verdict for it is "
                                     f"FAIL (`get_verdict`); the record stays on the log (q_V's later fail, §15.4). "
-                                    + "; ".join(recovery_said(engine, r) for r in refuted_reading(engine, ids))
-                                    + f". {WITHHOLDS}.")}
+                                    + "; ".join(recovery_said(engine, r) for r in rs) + f". {WITHHOLDS}."),
+            **({"reopen_unmade": unmade} if unmade else {}), **({"recovery_unmade": past} if past else {})}
 
 
 #: the steps on the ancestors of a reopenable refuted pass that carry it upward — a verdict there is answered apart
@@ -889,11 +935,11 @@ def over_refuted_passes(engine, cands: list, tasks, held: list) -> list:
     reopen is open, the steps that carry it upward or build on it wait and a PASS over it is turned into the FAIL that
     signs over nothing; past it, nothing waits — the parent's own check reads its delivered result (§12.8) — and the
     steps over it carry the record as data. Every other node's steps stay."""
-    rs = refuted_reading(engine, engine.refuted_passes())
+    rs = [r for r in refuted_reading(engine, engine.refuted_passes()) if not r.over]
     live, kept, waits = [r for r in rs if r.open], [], {}
     for c in cands:
         tid = str(c[1].id)
-        over = [r for r in live if tid in r.above]
+        over = withheld_over(live, tid)
         if (on := [r for r in live if tid in r.consumers]) and c[2] in _BUILD_ON:
             waits[tid] = _waits_on_recovery(engine, c[1], on)
         elif over and c[2] in _CARRY_UP:

@@ -3288,6 +3288,11 @@ def needs_its_customer(out: dict) -> Optional[str]:
     mine = [s for s in out.get("steps") or () if s.get("mine") and not s.get("optional")]
     run = (out.get("run") or {}).get("state")
     return ("the root is settled" if out.get("complete") else f"{len(mine)} move(s) are yours" if mine
+            # …a refuted pass's reopen the mode locks and nobody in the system makes (`frontier.refuted_said`)
+            else (f"a pass its later FAIL refutes waits on a reopen nobody in the system makes under this mode: "
+                  f"{', '.join(u)} (`get_verdict`)") if (u := out.get("reopen_unmade"))
+            else (f"a pass its later FAIL refutes is past its reopen, and its recovery nothing in the system makes: "
+                  f"{'; '.join(p)} (`get_verdict`)") if (p := out.get("recovery_unmade"))
             else f"the run is stuck: {str(out.get('directive') or '')[:400]}" if out.get("stuck")
             else f"the run is {run}" if run in ("stopping", "stopped") else None)
 

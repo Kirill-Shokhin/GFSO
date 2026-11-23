@@ -532,9 +532,10 @@ def test_landing_again_moves_the_accepted_branch(tmp_path):
 
 # ── its edges ──
 
-def test_nothing_moves_a_refuted_pass_under_auto_and_the_directive_says_so(tmp_path, monkeypatch):
-    """Who holds the way back: under AUTO the door refuses it from anyone and nothing in the system makes it. The state
-    stands, and it stops the whole-graph frontier, so nothing new starts."""
+def test_under_auto_the_system_reopens_a_refuted_pass_whose_issuer_role_it_holds(tmp_path, monkeypatch):
+    """Who holds the way back: under AUTO the door refuses it from anyone, and the goal's issuer is the customer whose
+    moves the system makes (`party_kind`), so the reopen is the system's (§12.14: the issuer's re-ASSIGN). Left unmade,
+    the run stood silent on it."""
     e, agents = _delivered_whole(tmp_path)
     monkeypatch.setattr(DG, "clear_workspaces", lambda *a: None)
     d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None)
@@ -547,12 +548,12 @@ def test_nothing_moves_a_refuted_pass_under_auto_and_the_directive_says_so(tmp_p
         rec = dict(e.get_exec_verdict(TaskId("root")), verdict=Verdict.FAIL, failed_criteria=["g"], reopens=0)
         e._graph._storage.store_exec_verdict(TaskId("root"), json.dumps(rec))
         assert e.refuted_passes() == ["root"], "the probe made no refuted pass"
-        d.dispatch_once()
-        e.wait_idle()
-        assert e.graph.get_state(TaskId("root")) == State.DONE and e.graph.get_task(TaskId("root")).reopens == 0
         out = e.next_steps()
         assert out["complete"] is False and out["refuted_passes"] == ["root"] and not out.get("steps"), out
-        assert "nothing in the system makes" in out["directive"] and "made without you" not in out["directive"], out
+        assert "made without you" in out["directive"] and "nothing in the system makes" not in out["directive"], out
+        d.dispatch_once()
+        e.wait_idle()
+        assert e.graph.get_state(TaskId("root")) == State.OFFERED and e.graph.get_task(TaskId("root")).reopens == 1
     finally:
         e.stop()
 

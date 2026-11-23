@@ -52,7 +52,7 @@ from .verdicts import (store_verdict, criterion_version, refuted_versions, ledge
 from .findings import (disputed_findings, ever_pinned, finding_rulings, keep_files, keep_unrun, lay_files, not_reproduced, record_not_reproduced,
                        released, return_finding as _return_finding, ruled, unrun,
                        regression as standing_regression, round_stands, standing_rulings)
-from .frontier import Frontier
+from .frontier import Frontier, uncovered
 from .claims import Claims
 from .joins import Joins
 from .moves import Move, door_holder
@@ -3195,10 +3195,11 @@ class Engine:
 
     def nothing_left(self) -> bool:
         """The goal's end as the engine reads it: there is work, and none of it is still under way — every node settled,
-        no verdict or review running, no pass its own record refutes, every passed root's result landed. Vacuous on no
-        work, which is a goal not yet stated, never one ended. Read where the mode's hold on the project lapses."""
+        no verdict or review running, no refuted pass the goal still rests on (`frontier.uncovered`), every passed root's
+        result landed. Vacuous on no work, which is a goal not yet stated, never one ended. Read where the mode's hold on
+        the project lapses."""
         tasks = self.all_tasks()
-        return (bool(tasks) and not self.open_nodes() and not self.refuted_passes() and not self.joins.joining_nodes()
+        return (bool(tasks) and not self.open_nodes() and not uncovered(self) and not self.joins.joining_nodes()
                 and not any(self.claims.validation_in_flight(t.id) or self.claims.review_in_flight(t.id) for t in tasks)
                 and all(self.joins.root_landed(t) for t in tasks if t.parent_id is None and t.state == State.DONE))
 

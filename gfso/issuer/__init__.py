@@ -58,6 +58,7 @@ from gfso.decompose.extract import extract_spec
 from gfso.decompose.seams import seam_problems
 from gfso.engine import findings, loose_finding_key
 from gfso.engine.audit import on_current_version
+from gfso.engine.frontier import refuted_reading, withheld_over
 from gfso.engine.parking import USERS_WAY
 from gfso.engine.validation import is_auto_root, party_kind, users_criteria, users_plan
 from gfso.packets import SHOWN_FINDINGS, must_show, answered_challenges, answers_given, as_shown, capped, list_key, outside_text
@@ -188,7 +189,16 @@ def signal_ok(engine, task_id: TaskId, sig: Signal, source: str, _why: "list | N
               **kw) -> bool:
     """Send one signal for the system; a party's own comes by the door (`tools.signal`). True when the FSM took it. `_why`
     collects the refusal, when a caller intends to SAY it rather than only log it — the reason existed and reached the
-    log alone."""
+    log alone. A PASS over a refuted part whose reopen is open is refused here, by the rule the frontier withholds it by
+    (`frontier.withheld_over`): it settles the whole the part would be reopened under (§12.8, §12.14); a FAIL is not."""
+    if sig == Signal.PASS and (over := withheld_over(refuted_reading(engine, engine.refuted_passes()), task_id)):
+        why = (f"no PASS on {task_id}: {', '.join(r.node for r in over)} below it stand(s) at PASS while the current "
+               f"recorded verdict for it is FAIL, and can still be reopened — a PASS here settles the whole it would be "
+               f"reopened under; its FAIL signs over nothing (§12.8, §12.14)")
+        log.warning(why)
+        if _why is not None:
+            _why.append(why)
+        return False
     entry = engine.send_signal_sync(SignalData(signal=sig, task_id=task_id,
                                                source=AgentId(source), **kw))
     ok = bool(entry and not entry.rejected)
