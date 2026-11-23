@@ -1,7 +1,7 @@
 // Wiring: the page's start, its refresh policy, and the one dispatch from `data-action` controls and
 // live messages to the units that own them. No unit imports another's handlers; they meet here.
 import {$, esc, coded, ages, phone} from './dom.js';
-import {PROJECT, TASK, GOAL, FOCUS, getJSON, post, singleFlight, whenMoved, movedBy, pushStep} from './api.js';
+import {PROJECT, TASK, GOAL, FOCUS, TOP, getJSON, post, singleFlight, whenMoved, movedBy, pushStep} from './api.js';
 import {S, kept, keep, signsAs, hereIn, mineShown, procs, inView, inside, goTo, goUp as up} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap, terminal, FM} from './vocab.js';
@@ -54,7 +54,7 @@ const refreshGraph = singleFlight(async () => {
 // a chosen node outside the new part lets its panel go
 const moveTo = singleFlight(async () => {
     // …nor the node gone into: its panel stood over the part it opened, its link dead (critic)
-    if (focus().select && (!inView(focus().select) || focus().select === FOCUS)) point('select', null);
+    if (focus().select && (!inView(focus().select) || focus().select === TOP)) point('select', null);
     untip(); rebuildRun(); $('mine-name').value = mineShown(); await drawGraph(true, true);   // «Mine» follows the view's top
     if (focus().select && isHidden(focus().select)) point('select', null);   // …nor one folded away in the part come to (critic)
     paintDeck(); drawHeader(); });

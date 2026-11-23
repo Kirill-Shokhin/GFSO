@@ -1,9 +1,9 @@
 // What the page knows between reads: the last graph read and who signs. WHICH node is selected is
 // store.js's — one source for every view.
 import {$} from './dom.js';
-import {PROJECT, FOCUS, openFocus} from './api.js';
+import {PROJECT, FOCUS, TOP, topOf, openFocus} from './api.js';
 import {childrenOf, depths, ancestorsIn, rootOf} from './tree.js';
-import {cancelled, statusLabel, delivered} from './vocab.js';
+import {cancelled, statusLabel, delivered, contested, closedByFail} from './vocab.js';
 import {runNow, heldByPerson, inWork} from './run.js';
 import {bare} from './fmt.js';
 
@@ -83,19 +83,62 @@ export const whoOwes = (t, role) => role === 'executor' ? t.assignee || ''
     : role === 'issuer' && t.parent_id && S.graph.mode?.mode !== 'auto' ? taskOf(t.parent_id).assignee || '' : '';
 // IN THIS VIEW: the whole graph, or in a view of one part (`?focus=`) that part and what lies under it — one rule for every
 // count the header and the deck give, so a view of a part counts the part (the header said 105/434 over Engineering's view)
-export const inView = id => !FOCUS || id === FOCUS || ancestorsIn(S.tasks)(id).includes(FOCUS);
+// …and in a view of «N closed» (`closed:<part>`), the part and the parts its group holds, with all under them
+export const inView = id => { if (!FOCUS || id === TOP) return true;
+    const chain = [id, ...ancestorsIn(S.tasks)(id)], i = chain.indexOf(TOP);
+    return i > 0 && (FOCUS === TOP || closedOf(TOP).some(t => t.id === chain[i - 1])); };
+// QUIET: settled and asking nothing, inside it included — what «N closed» gathers. What asks keeps a node and every node
+// above it drawn: a live one, a contested PASS, one closed by FAIL, a PASS by hand on what the system holds (critic 2,
+// 11-19). One reading for the drawing's groups and for the view that opens one.
+let quietOf = null, quietIds = new Set();
+export const quiet = () => { const nodes = S.graph.nodes || [];
+    if (quietOf === nodes) return quietIds;
+    const up = ancestorsIn(nodes), asks = new Set();
+    const asking = n => !(n.state === 'DONE' || n.state === 'ABANDONED') || contested(n.closure || {}) || closedByFail(n) || (n.closure?.by_hand && handAsks(n));
+    for (const n of nodes) if (asking(n)) [n.id, ...up(n.id)].forEach(a => asks.add(a));
+    quietOf = nodes; quietIds = new Set(nodes.filter(n => !asks.has(n.id)).map(n => n.id));
+    return quietIds; };
 export const viewTasks = () => FOCUS ? S.tasks.filter(t => inView(t.id)) : S.tasks;
 // the server's processes on what is in the view (a process on no node is the project's, so a part's view leaves it out)
 export const viewProcs = () => FOCUS ? procs().filter(w => w.task_id && inView(w.task_id)) : procs();
 // THE VIEW'S OWN TREE, the part as its top (no parent): the part's run is built over it (model.js `S.viewRun`) for the
 // deck's figures; the project's facts stay on the project's run (critic, three rounds)
-const asTop = t => t.id === FOCUS ? {...t, parent_id: null} : t;
+const asTop = t => t.id === TOP ? {...t, parent_id: null} : t;
 export const viewTree = () => FOCUS ? viewTasks().map(asTop) : S.tasks;
 export const viewNodes = () => FOCUS ? S.graph.nodes.filter(n => inView(n.id)).map(asTop) : S.graph.nodes;
 // a part opened as its own view, the goal's being the whole graph; up: the part above the one viewed
-export const inside = (id, part) => !part || id === part || (!!id && ancestorsIn(S.tasks)(id).includes(part));
-export const goTo = (id, up = false) => openFocus(id && taskOf(id).parent_id ? id : '', up);
-export const goUp = () => goTo(taskOf(FOCUS).parent_id, true);
+// …a view of «N closed» stands inside its part
+// …a group's view holds the parts its group holds, and what lies under them — never its own part (critic: Back after Up
+// into a group skipped the part's view, counted inside its own group)
+export const inside = (id, part) => { const g = topOf(part), x = topOf(id);
+    if (part !== g) return id === part || closedOf(g).some(t => [x, ...ancestorsIn(S.tasks)(x)].includes(t.id));
+    return !part || x === part || (!!x && ancestorsIn(S.tasks)(x).includes(part)); };
+export const goTo = (id, up = false) => openFocus(id && (id !== topOf(id) || taskOf(id).parent_id) ? id : '', up);   // …or «N closed»'s view
+// what the view's top is called, one word for every place that names it (Progress, Spend's levels, the done mark) — the goal
+// in its own «N closed» too
+export const topWord = () => FOCUS && taskOf(TOP).parent_id ? 'the part' : 'the goal';
+// THE PARTS A NODE'S «N CLOSED» HOLDS, the one rule the drawing, its view and every way to it read: its cancelled parts
+// always (the author, 11-23: «отмененные задачи также по умолчанию не уходят в отдельную группу») — a cancelled part is no
+// work —, and its done ones three or more (11-19: «уже закрытые задачи сейчас в ряд стоят и … будут мешать»); a lone done
+// part or two keep their own nodes, the work's result (critic: one hidden in «1 closed»). Save the done parts of a closed
+// node that is the view's own top — the goal of a finished graph, a settled part gone into: gathered, the view would be
+// the node and its group, a second press at every level of a settled branch (critics).
+const CLOSED_AT = 3;
+export const closedOf = p => { if (!p) return [];
+    const xs = childrenOf(S.tasks, p).filter(t => quiet().has(t.id));
+    const top = FOCUS === TOP && p === (TOP || rootOf(S.tasks)?.id) && quiet().has(p);
+    return xs.length >= CLOSED_AT && !top ? xs : xs.filter(cancelled); };
+// THE VIEW A NODE IS DRAWN IN, one step down from its parent: the parent's own, or its «N closed» where it is gathered there
+export const whereDrawn = id => { const p = taskOf(id).parent_id || '';
+    return closedOf(p).some(t => t.id === id) ? `closed:${p}` : p; };
+// THE STEPS DOWN TO THIS VIEW, each a view: every part below the goal, its group's view before it where it is gathered — a
+// part opened from «N closed» goes up into that group, the way it came (critic: Up skipped it, Back did not)
+export const pathSteps = () => { if (!FOCUS) return [];
+    const steps = [], ids = [...ancestorsIn(S.tasks)(TOP).reverse().slice(1), ...taskOf(TOP).parent_id ? [TOP] : []];
+    for (const id of ids) { const w = whereDrawn(id); if (w !== topOf(w)) steps.push(w); steps.push(id); }
+    if (FOCUS !== TOP) steps.push(FOCUS);
+    return steps; };
+export const goUp = () => goTo(pathSteps().at(-2) || '', true);
 export const hasKids = id => childrenOf(S.tasks, id).some(t => !cancelled(t));
 
 // What this browser keeps for its viewer — wrapped, because a browser with site data blocked THROWS on the accessor.
@@ -122,7 +165,7 @@ export const minePerformer = n => signsAs().length > 0 && (!n || owns(n));
 export const mineNames = () => {
     if (S.mineName === '*') return signsAs();
     if (owns(S.mineName)) return [S.mineName];
-    const top = (FOCUS ? taskOf(FOCUS) : rootOf(S.tasks))?.assignee;
+    const top = (FOCUS ? taskOf(TOP) : rootOf(S.tasks))?.assignee;
     return owns(top) ? [top] : signsAs();
 };
 // what the choice of name shows: the one the view holds, else «all»

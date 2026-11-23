@@ -6,7 +6,7 @@ import {S, taskOf, nowOf, kept, keep, inView, inWorkOf} from './state.js';
 import {bucketOf, cancelled, contested, closedByFail} from './vocab.js';
 import {failingNow} from './run.js';
 import {depths, ancestorsIn, childrenOf} from './tree.js';
-import {FOCUS} from './api.js';
+import {FOCUS, TOP} from './api.js';
 
 let folding = false, plan = null;
 // …remembered per view, so a move back to a part seen before lays it out once, not twice
@@ -46,7 +46,7 @@ export const decidedBefore = (g, canvas) => {
 // edge of the view, faint and alone, with its Dep edge — cut, the author's own part showed a flat row of calls while 17
 // nodes elsewhere waited on them (critic 3). A part that is not in the graph (a stale link) shows the whole.
 export function viewed(g) {
-    if (!FOCUS || !g.nodes.some(n => n.id === FOCUS)) return g;
+    if (!FOCUS || !g.nodes.some(n => n.id === TOP)) return g;
     const keep = new Set(g.nodes.filter(n => inView(n.id)).map(n => n.id));      // one rule of what is in the view (state.js)
     // …a WAIT, an edge with neither end settled: one whose end is done or cancelled orders nothing still to come (§11.5 reads
     // no edge one of whose ends is settled), and the cancelled parts of the author's own view drew twenty nodes from
@@ -54,7 +54,7 @@ export function viewed(g) {
     const live = id => { const s = g.nodes.find(n => n.id === id)?.state; return s !== 'DONE' && s !== 'ABANDONED'; };
     const across = g.edges.filter(e => e.type !== 'parent-child' && keep.has(e.source) !== keep.has(e.target) && live(e.source) && live(e.target));
     const outside = new Set(across.map(e => keep.has(e.source) ? e.target : e.source));
-    return {...g, nodes: [...g.nodes.filter(n => keep.has(n.id)).map(n => n.id === FOCUS ? {...n, parent_id: null} : n),
+    return {...g, nodes: [...g.nodes.filter(n => keep.has(n.id)).map(n => n.id === TOP ? {...n, parent_id: null} : n),
                           ...g.nodes.filter(n => outside.has(n.id)).map(n => ({...n, parent_id: null, outside: true}))],
             edges: [...g.edges.filter(e => keep.has(e.source) && keep.has(e.target)), ...across]};
 }

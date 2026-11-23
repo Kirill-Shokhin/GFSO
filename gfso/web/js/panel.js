@@ -5,8 +5,8 @@
 // nothing here sends anything.
 import {$, el, esc, coded, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
-import {task, FOCUS} from './api.js';
-import {S, hasKids, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, atTheGo, personHolds} from './state.js';
+import {task, FOCUS, TOP, topOf} from './api.js';
+import {S, hasKids, whereDrawn, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, atTheGo, personHolds} from './state.js';
 import {bucketOf, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label, enteredWord} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
@@ -52,10 +52,12 @@ function head({d, rounds}) {
         + `<span class="pn-id"${PANEL.full(d.id)}>${esc(d.id)}</span></div>`
         // GOING DOWN into a part, said where the eye lands first: a link inside the panel's table went unseen (the author,
         // 2026-11-17: «я так и не понял как падать внутрь ноды»); the goal's own view is the whole graph: nothing to go to
-        + (hasKids(d.id) && d.id !== FOCUS && d.parent_id ? `<button class="pn-down" data-action="view" data-id="${esc(d.id)}"${PANEL.openView}>`
+        + (hasKids(d.id) && d.id !== TOP && d.parent_id ? `<button class="pn-down" data-action="view" data-id="${esc(d.id)}"${PANEL.openView}>`
             + `Open its ${childrenOf(S.tasks, d.id).filter(t => t.state !== 'ABANDONED').length} parts ↓</button>` : '')
         // …and a node chosen where the graph does not draw it (In work, a report): its part one press away, never moved to unasked
-        + (isHidden(d.id) ? `<button class="pn-down" data-action="view" data-id="${esc(d.parent_id || '')}">Show it on the graph →</button>` : '')
+        // …folded, or gathered into «N closed»: gone to the view it is drawn in, whatever view is open (`whereDrawn`) — its
+        // parent's was the target, where it stood in a group, and pressed again it stayed (critic)
+        + (isHidden(d.id) || whereDrawn(d.id) !== topOf(whereDrawn(d.id)) ? `<button class="pn-down" data-action="view" data-id="${esc(whereDrawn(d.id))}">Show it on the graph →</button>` : '')
         + `<div class="pn-grid">`
         // …the goal as the person gave it, on the root: a tap on the header's goal opens this panel, never its hover (critic)
         + prop('As given', !d.parent_id && asGiven(d) ? `<span class="pn-given">${esc(asGiven(d))}</span>` : '')

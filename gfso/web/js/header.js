@@ -3,8 +3,8 @@
 // popover carries the meanings the server sends beside them.
 import {$, esc, coded, data, tally, daily, phone} from './dom.js';
 import {H, QUALITY, GRADES, doing, hover, PLAN} from './hints.js';
-import {post, GOAL, PROJECT, FOCUS} from './api.js';
-import {S, taskOf, asGiven, heard, signsAs, lift, reader, mineNames, mineShown, viaWord, procs, begun, stateWord, issuerIsPerson, partyKind, viewTasks, inView, intentOn, agentName} from './state.js';
+import {post, GOAL, PROJECT, FOCUS, TOP} from './api.js';
+import {S, taskOf, asGiven, heard, signsAs, lift, reader, mineNames, mineShown, viaWord, procs, begun, stateWord, issuerIsPerson, partyKind, viewTasks, inView, inside, intentOn, agentName} from './state.js';
 import {label, closureNote, contested, MODES, terminal, delivered, modelName, cancelled, goalWord, nameOf} from './vocab.js';
 import {GAP, at, busyNow, PROC_KIND} from './run.js';
 import {dur, trim, cap, pct, stamp, clockAt, spoken} from './fmt.js';
@@ -24,8 +24,9 @@ const named = id => taskOf(id).name ? `${taskOf(id).name} (${id})` : id;
 // спрятаны между букв … статус стоит через тире»). A cancelled part is not owed, so it leaves N: counted, a finished
 // goal read "11 of 12" forever.
 function standing(root) {
-    const parts = viewTasks().filter(t => !isRoot(t) && t.id !== FOCUS && !cancelled(t)), k = parts.filter(delivered).length;   // closed by FAIL is not done: the engine holds its consumers (settled_positive)
-    const said = s => label(s).toLowerCase(), word = stateWord(root).toLowerCase(), it = FOCUS ? 'the part' : 'the goal';
+    // …over the part's own tree in a view of its «N closed»: its closed parts alone read «35/35 done» on a part not done (critic)
+    const parts = (FOCUS !== TOP ? S.tasks.filter(t => inside(t.id, TOP)) : viewTasks()).filter(t => !isRoot(t) && t.id !== TOP && !cancelled(t)), k = parts.filter(delivered).length;   // closed by FAIL is not done: the engine holds its consumers (settled_positive)
+    const said = s => label(s).toLowerCase(), word = stateWord(root).toLowerCase(), it = taskOf(TOP).parent_id ? 'the part' : 'the goal';   // the goal's «N closed» stands on the goal
     // …the node's word is the one rule every view says (vocab ROWS, by the log) — the header said «Accepted» beside a strip
     // and a panel saying «in progress» (critic)
     const phrase = {
@@ -91,9 +92,9 @@ async function goal() {
     const done = delivered(root);
     // left: WHICH goal and who holds its work; where it stands goes to the middle, beside what needs a person —
     // the brand's dot marking the one real done: the goal delivered
-    const word = FOCUS ? '' : goalWord(root);       // a part's view stands where the part stands, the goal closed or not (critic)
+    const word = taskOf(TOP).parent_id ? '' : goalWord(root);       // a part's view stands where the part stands, the goal closed or not (critic)
     status = word ? `<span class="hd-verdict${word === 'failed' ? ' bad' : ''}">${word}${done ? '<i class="brand-dot"></i>' : ''}</span>${landedAt(root)}`
-        : standing(FOCUS ? taskOf(FOCUS) : root);   // a view of one part stands where the part stands (critic)
+        : standing(FOCUS ? taskOf(TOP) : root);   // a view of one part stands where the part stands (critic)
     const hd = heard(), ni = hd.not_imported || [];
     return `<button class="hd-root"${data({action: 'select', id: root.id})}${H.root(full, asGiven(root))}>${esc(short)}</button>`
         // …a project with work and no mode is put under one from here too: set_mode refuses an agent there as well

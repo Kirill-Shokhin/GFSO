@@ -15,13 +15,16 @@ export const leave = () => { location.search = ''; };
 // френдли - быстрым и интуитивным. тогда раскрытие окажется лишней функцией»): a move is no load — the same graph and
 // log are drawn again from the new part (`whenMoved`, main.js), the address and the browser's Back follow it.
 export let FOCUS = q.get('focus') || '';
-// what the view's top is called, one word for every place that names it (Progress, Spend's levels, the done mark)
-export let TOP_WORD = FOCUS ? 'the part' : 'the goal';
+// «N CLOSED» OPENS AS A VIEW OF ITS OWN, `closed:<part>`: that part's closed parts drawn whole, the part their top — a list
+// in a tip could not be read past a few names nor sent to rework (the author, 2026-11-23: «как минимум просто как поддерево
+// это должно открываться и все»). TOP is the node the view stands on, the part itself in either view.
+export const topOf = f => String(f || '').replace(/^closed:/, '');
+export let TOP = topOf(FOCUS);
 let moved = () => {}, within = () => false;
 // `inside(id, part)`: id is the part or lies under it — the tree is the page's (state.js), not this door's
 export const whenMoved = (f, inside) => { moved = f; within = inside; };
 const at = id => { id = id || ''; if (id === FOCUS) return false;
-    FOCUS = id; TOP_WORD = FOCUS ? 'the part' : 'the goal'; moved(); return true; };
+    FOCUS = id; TOP = topOf(id); moved(); return true; };
 const address = id => { const p = new URLSearchParams(location.search); p.delete('task');
     id ? p.set('focus', id) : p.delete('focus'); return '?' + p; };
 const focusHere = () => new URLSearchParams(location.search).get('focus') || '';

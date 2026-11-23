@@ -1,6 +1,6 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc, tally} from './dom.js';
-import {S, taskOf, whoOwes, mineNames, keep, inWorkOf, viewTasks, stateWord, handAsks, hasKids, goTo, goUp} from './state.js';
+import {S, taskOf, whoOwes, mineNames, keep, inWorkOf, viewTasks, stateWord, handAsks, hasKids, goTo, goUp, quiet, inView, inside, whereDrawn, closedOf, pathSteps} from './state.js';
 import {bucketOf, contested, cancelled, nameOf, criteriaOf, delivered, closedByFail} from './vocab.js';
 import {banner} from './overlays.js';
 import {tip, untip, TOUCH} from './tip.js';
@@ -10,7 +10,7 @@ import {card, TIP, waitWords, failedWords} from './hints.js';
 import {css, beat} from './draw.js';
 import {childrenOf, ancestorsIn} from './tree.js';
 import {planChanged, decide, decidedBefore, foldInto, isHidden, foldOf, asking, viewed} from './fold.js';
-import {FOCUS} from './api.js';
+import {FOCUS, TOP, topOf, openFocus} from './api.js';
 
 // Leaf tokens are hex literals (draw.js css).
 const [INK, SOFT, FAINT, PAPER, BG, ACC, TOMB, TOMB_LINE] = ['--ink', '--ink-soft', '--ink-faint', '--paper', '--bg', '--acc', '--ui-tomb', '--ui-tomb-line'].map(css);
@@ -67,7 +67,7 @@ function home() {
     if (cy.zoom() >= FLOOR) return;
     const asks = askingOf(cy.nodes());
     // …the view's own top in a view of one part, whose nodes all have parents (critic 4)
-    atFloor(asks.length ? asks : FOCUS && cy.getElementById(FOCUS).length ? cy.getElementById(FOCUS) : cy.nodes().filter(n => !taskOf(n.id()).parent_id));
+    atFloor(asks.length ? asks : FOCUS && cy.getElementById(TOP).length ? cy.getElementById(TOP) : cy.nodes().filter(n => !taskOf(n.id()).parent_id));
     // …and no side stands blank while the plan runs off the other (the goal centred: half a canvas empty above a plan cut
     // below); never further than the plan's own edge, so what was centred stays in sight
     const b = cy.elements().renderedBoundingBox(BODY), m = 24;
@@ -127,8 +127,10 @@ export async function initGraph() {
     // (author, 2026-10-25: «то срабатывают сразу то только через повторное нажатие»; reproduced with a 4 px move).
     // …and its hover tip goes: it repeats what the panel the click opens says, over it (audit E3)
     cy.on('select', 'node', evt => {
-        // «N closed» is no node of the graph: a press names its parts (the tap's tip, kept: an untip here wiped it — critic)
-        if (isClosedGroup(evt.target.id())) { evt.target.unselect(); return; }
+        // «N closed» is no node of the graph: a press opens it (its tap), it is never chosen
+        // …nor is the node a double-click's second click lands on in the group's view it went into (critic: rdl's goal opened
+        // its panel over «2 closed» 3 of 3 times)
+        if (isClosedGroup(evt.target.id()) || Date.now() - entered < 2 * DBL) { evt.target.unselect(); return; }
         untip(); point('select', evt.target.id()); });
     // …and a tap on the node already selected picks it again: its row in the deck, scrolled away, is brought back
     cy.on('tap', 'node', evt => evt.target.id() === focus().select && rebring());
@@ -147,8 +149,11 @@ export async function initGraph() {
     cy.on('mouseout', 'edge', () => untip());
     // …a finger's tap on a fold's tag passes to the canvas (an arrow under it said its meaning over the move): not an arrow's
     cy.on('tap', 'edge', evt => TOUCH.matches && !pressed?.id && edgeTip(evt));
-    // …a press on «N closed» names its parts where it was pressed (a select carries no pointer)
-    cy.on('tap', 'node.closed-group', evt => { const g = groupsDrawn[evt.target.id()], o = evt.originalEvent?.changedTouches?.[0] ?? evt.originalEvent; if (g && o) tip(groupTip(g), o); });
+    // …a press on «N closed» GOES INTO IT, by mouse or finger: a view of those parts drawn whole, each chosen, read and sent to
+    // rework from its own panel. A list in its tip, which this press showed, grew past reading and named no part to act on
+    // (the author, 2026-11-23: «не открывается как поддерево … если n будет большим то этот список всплывающий станет
+    // большим и не полным»)
+    cy.on('tap', 'node.closed-group', evt => { untip(); entered = Date.now(); const id = evt.target.id(); moving(() => openFocus(id)); });
     cy.on('mouseover mousemove', 'node', evt => {
         const t = taskOf(evt.target.id()), g = groupsDrawn[evt.target.id()];
         if (t.id) tip(nodeTip(t), evt.originalEvent); else if (g) tip(groupTip(g), evt.originalEvent);
@@ -162,7 +167,8 @@ export async function initGraph() {
         // …a node chosen elsewhere opens its panel and moves no view: In work moved the page into the node's part while the
         // graph's own tap did not — two logics (the author, 2026-11-17). Its part is gone to on a second press (`bring`) or
         // the panel's «Show it on the graph»
-        if (key === 'bring' && st.select && isHidden(st.select)) { goTo(taskOf(st.select).parent_id); return; }
+        // …and one gathered into «N closed» is gone to in that group's view — either straight to the view it is drawn in
+        if (key === 'bring' && st.select && (isHidden(st.select) || groupOf(st.select))) { goTo(whereDrawn(st.select)); return; }
         // …a part gathered into «N closed» lights its group, kept in sight (critic: a chosen gathered part was nowhere)
         const at = st.select && (groupOf(st.select) || st.select);
         if (at) cy.getElementById(at).addClass('chosen-in');
@@ -232,7 +238,9 @@ export async function initGraph() {
     // …with a mouse: under a finger the first tap opens the node's panel over the screen, so a double-tap would have to beat
     // the panel to move (the author, 11-15: «надо обходить другую функцию скоростью»); a finger goes down by the fold's tag
     // or the panel's own «From this part down»
-    const opening = id => TOUCH.matches ? framing(subtree(cy.getElementById(id))) : id === FOCUS ? moving(goUp) : hasKids(id) && taskOf(id).parent_id ? moving(() => goTo(id)) : framing(subtree(cy.getElementById(id)));
+    // …and a double-click on «N closed» goes in once: its first click went in, its second landed on the view's top, centred
+    // under the pointer, and went up again (critic: rdl's «2 closed» bounced back every time)
+    const opening = id => isClosedGroup(id) || Date.now() - entered < 2 * DBL ? null : TOUCH.matches ? framing(subtree(cy.getElementById(id))) : id === TOP ? moving(goUp) : hasKids(id) && taskOf(id).parent_id ? moving(() => goTo(id)) : framing(subtree(cy.getElementById(id)));
     // THE TAG GOES DOWN, and its press opens no panel: under a finger the same tap also reached the node beneath
     const goDown = goTo;
     // the press's hold on selection ends with it, however it ends; a second finger makes it a pinch, no press (critic: a stuck hold left no node selectable)
@@ -312,6 +320,7 @@ function subtree(n) {
 const BODY = {includeLabels: false, includeOverlays: false, includeUnderlays: false};   // the node itself
 const DBL = 400;   // ms: a second press within it makes a double-click
 let pressed = null;                    // where the last press on the canvas began, and the fold's tag under it
+let entered = 0;                       // when a press last went into «N closed»
 let drawn = '', drawnIn = null;       // the node set last drawn, and whose: a redraw of the same keeps the view
 // framed whole and not yet touched: a change of size re-frames it (the deck takes its height after the first
 // drawing, and the graph's foot sat under it); once the reader taps, zooms or a node is chosen, the view is theirs
@@ -396,39 +405,38 @@ export const annotate = () => { if (cy?.nodes().length && fresh) home(); placeBa
 // The canvas height the drawn graph needs for its labels to read (zoom ≈ 0.8), framing included.
 export const graphNeeds = () => cy && cy.nodes().length ? cy.elements().boundingBox().h * 0.8 + 70 : 0;
 
-// CLOSED PARTS IN ONE: the parts of a node that are settled (done, or cancelled) and ask nothing stand as one node «N closed»
-// once there are CLOSED_AT of them — a row of them stood beside the work and would only grow (the author, 2026-11-19: «уже
-// закрытые задачи сейчас в ряд стоят и более того впоследствии будут мешать»). The record keeps each where it closed (no act
-// moves a settled node, §11.5); the view gathers them. What asks stays drawn: a PASS its record contradicts, a node closed by
-// FAIL, one with live parts inside (critic). The group never unfolds in place — that re-laid the whole graph, refused by the
-// author 11-15 — its parts are named in its tip and on a press, and a chosen part lights its group.
-const CLOSED_AT = 3;
-const settled = s => s === 'DONE' || s === 'ABANDONED';
+// CLOSED PARTS IN ONE: the parts of a node that are settled and ask nothing stand as one node «N closed», which ones being
+// `closedOf`'s (state.js: three of them, else the cancelled ones alone).
+// The record keeps each where it closed (no act moves a settled node, §11.5); the view gathers them. What asks stays drawn
+// (`quiet`, state.js). The group never unfolds in place — that re-laid the whole graph, refused by the author 11-15 — a press
+// goes into it as into a part (`closed:<part>`, api.js), and a chosen part lights its group.
 const closedId = p => `closed:${p}`;
 export const isClosedGroup = id => String(id).startsWith('closed:');
 let gathered = {};                                   // a gathered part's id → its group's id, as last drawn
 export const groupOf = id => gathered[id];
 function gatherClosed(nodes, rep) {
-    // what asks, the node's own or a part's folded inside it, keeps the node drawn: a live part, a contested PASS, a node
-    // closed by FAIL, a PASS by hand on what the system holds (`handAsks`, its dotted border the only signal) — critic 2
-    const up = ancestorsIn(nodes), asks = new Set();
-    const asking = n => !settled(n.state) || contested(n.closure || {}) || closedByFail(n) || (n.closure?.by_hand && handAsks(n));
-    for (const n of nodes) if (asking(n)) [n.id, ...up(n.id)].forEach(a => asks.add(a));
-    const quiet = n => !asks.has(n.id);
-    const kids = {}, groups = [];
+    const up = ancestorsIn(nodes), groups = [];
     gathered = {};
-    for (const n of nodes) if (n.parent_id && rep[n.id] === n.id && quiet(n)) (kids[n.parent_id] ??= []).push(n);
-    // …top down, a gathered part taking its whole subtree: closed parts under a group hung off it, one by one or as a second
-    // group (critic 3); nothing that asks is under a quiet part, since what asks marks every ancestor
-    for (const [p, xs] of Object.entries(kids).sort(([a], [b]) => up(a).length - up(b).length)) {
-        if (xs.length < CLOSED_AT || p in gathered) continue;
+    // which parts gather is `closedOf`'s (state.js); here, which drawn nodes they take with them. The parts of the view's own
+    // top in a view of its «N closed» are what it opened to, drawn whole
+    const parents = [...new Set(nodes.filter(n => n.parent_id && rep[n.id] === n.id).map(n => n.parent_id))]
+        .filter(p => !(FOCUS !== TOP && p === TOP)).sort((a, b) => up(a).length - up(b).length);
+    // …top down, a gathered part taking its whole subtree: closed parts under a group hung off it (critic 3)
+    for (const p of parents) {
+        const xs = closedOf(p).map(t => nodes.find(n => n.id === t.id)).filter(n => n && rep[n.id] === n.id);
+        if (p in gathered || !xs.length) continue;
         const into = new Set(xs.map(n => n.id)), id = closedId(p);
         for (const k of Object.keys(rep)) if (into.has(rep[k]) || up(k).some(a => into.has(a))) { rep[k] = id; gathered[k] = id; }
         groups.push({id, parts: xs});
     }
     return groups;
 }
-const groupTip = g => card(`${g.parts.length} closed`, g.parts.map(n => `${nameOf(n)} — ${stateWord(n).toLowerCase()}`));
+// …its tip says what a press does, a list of every part being what the view it opens shows
+// …and what is inside, counted by how each closed
+const groupTip = g => { const k = g.parts.filter(cancelled).length, d = g.parts.length - k;
+    // …one count a row, as a fold's tag tells its own (TIP.fold), never two threaded into one line (critic 6)
+    return card(`${g.parts.length} closed`, [d && `${d} done`, k && `${k} cancelled`,
+        'A press opens them as a view of their own: each part whole, with its panel']); };
 let groupsDrawn = {};
 
 // The nodes standing under the fold as it is, and their edges; what could not be drawn is returned.
@@ -441,7 +449,10 @@ function place(g) {
                 classes: [tomb.has(n.id) && 'cancelled', n.outside && 'outside'].filter(Boolean).join(' ') || undefined});
     groupsDrawn = Object.fromEntries(groups.map(k => [k.id, k]));
     for (const k of groups)
-        cy.add({data: {id: k.id, label: `${k.parts.length} closed`, state: 'DONE', ...styleOf('DONE')}, classes: 'closed-group'});
+        // …a group of cancelled parts alone looks as they do, never as done work (critics: rdl's two read as its darkest node;
+        // a done fill under the tombstone's grey left its words unreadable)
+        { const tomb = k.parts.every(cancelled), s = tomb ? 'ABANDONED' : 'DONE';
+          cy.add({data: {id: k.id, label: `${k.parts.length} closed`, state: s, ...styleOf(s)}, classes: tomb ? 'closed-group cancelled' : 'closed-group'}); }
     // ONE BAD EDGE MUST NOT COST THE WHOLE PICTURE: a dangling edge threw before the layout ran and
     // left fifteen nodes stacked at the origin (2026-09-06). Draw what can be drawn, SAY what cannot.
     // an edge into a folded part is drawn to the node it is folded into — once, and never inside one fold
@@ -464,17 +475,20 @@ const laid = animate => new Promise(done => { const lay = cy.layout({...LAYOUT, 
 // THE PATH OVER A VIEW OF ONE PART: where it stands in the whole, each step a way up — the context a cut would lose
 let pathEl;
 function drawPath() {
-    const t = FOCUS && taskOf(FOCUS);
+    const t = FOCUS && taskOf(TOP);
     pathEl ??= $('cy').parentElement.insertBefore(Object.assign(document.createElement('nav'), {className: 'cy-path'}), $('cy'));
     pathEl.hidden = !t?.id;
     if (!t?.id) return;
-    const up = ancestorsIn(S.tasks)(t.id).reverse().slice(1);   // the goal is the whole graph: named once, first
+    // the goal is the whole graph, named once, first; then each step down (`pathSteps`), «N closed» among them where a part
+    // was gathered — the last is this view
+    const steps = pathSteps(), up = steps.slice(0, -1);
+    const said = id => id !== topOf(id) ? `${closedOf(topOf(id)).length} closed` : nameOf(taskOf(id)) || id;
     // …and ONE plain way up first, a step as one click on a tag is a step down: on a desk the way up was the path's small
     // links or a double-click on the part's top (the author, 2026-11-18: «на пк удобнее вниз ходить чем вверх»)
     pathEl.innerHTML = `<button class="cy-up" data-focus="${esc(up.at(-1) || '')}"><i>↑</i>Up</button>`
         + `<button data-focus=""${TIP.pathWhole}>The whole graph</button>`
-        + up.map(id => `<span>›</span><button data-focus="${esc(id)}">${esc(nameOf(taskOf(id)) || id)}</button>`).join('')
-        + `<span>›</span><b>${esc(nameOf(t) || t.id)}</b>`;
+        + up.map(id => `<span>›</span><button data-focus="${esc(id)}">${esc(said(id))}</button>`).join('')
+        + `<span>›</span><b>${esc(said(steps.at(-1)))}</b>`;
     pathEl.onclick = e => { const b = e.target.closest('[data-focus]'); if (b) goTo(b.dataset.focus, true); };   // the path goes up
 }
 
@@ -488,6 +502,13 @@ export async function drawGraph(found, anew = false) {
             cy.elements().remove();
             return;
         }
+        // a part sent back to work from «N closed» is closed no more: the view goes to its part, where it stands now, chosen
+        // still — kept here, it left the canvas under its open panel (critic)
+        const sel = focus().select;
+        if (FOCUS !== TOP && sel && !inView(sel) && inside(sel, TOP)) { goTo(TOP, true); return; }
+        // …and a group's view that holds nothing — its last part reopened, its part settled, an old link — is its part's
+        // (critic: one lone node under «0 closed»)
+        if (FOCUS !== TOP && !closedOf(TOP).length) { goTo(TOP, true); return; }
         const g = viewed(S.graph);
         drawing = true;
         // a move to another part: the last part's marks go with it, not left over the new drawing while it is laid (critic)
@@ -508,6 +529,9 @@ export async function drawGraph(found, anew = false) {
             }
         }
         const undrawable = place(g);
+        // a move lets go of a node its new view gathers into «N closed» (register §12): Up from a group's view left its part
+        // chosen, its panel open over the group (critic)
+        if (anew && focus().select && groupOf(focus().select)) point('select', null);
         // the same nodes drawn again keep the view; so does a plan that changed under a view the reader has touched (the view
         // is theirs: a push moved it, critic 7); an untouched one, or another project, is framed anew
         const key = cy.nodes().map(n => n.id()).sort().join('|');
@@ -519,7 +543,9 @@ export async function drawGraph(found, anew = false) {
             // …a move to another part is drawn in place, never flown in from the last part's positions: a part flew in from the
             // side, another opened centred (the author, 2026-11-17: «то прилетает сбоку граф то сразу по центру»)
             await laid(!kept && !anew);
-            if (kept) cy.viewport(view); else { home(); fresh = true; }
+            // …and a node chosen before a move (a gathered or folded part brought from the deck) is brought into sight in it:
+            // the framing showed what asks and left it beside the canvas (critic: x = −1055 in a 1060 px canvas)
+            if (kept) cy.viewport(view); else { home(); fresh = true; const s = focus().select && cy.getElementById(focus().select); if (anew && s?.length) { inSight(s); fresh = false; } }
         }
         // a redraw removes and re-adds every node, and the chosen one lost its border while its panel stayed open
         if (focus().select) cy.getElementById(focus().select).select();

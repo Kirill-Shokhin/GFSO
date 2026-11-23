@@ -2,8 +2,8 @@
 // part unfolds into its parts. Each track counts one node's criteria passing at its own verdicts — a part's PASS is its
 // issuer's signature at that seam, the root's PASS the goal delivered — never a sum across a level, which added parts
 // of unrelated parents (author, 2026-10-25). Counts, not percentages: a share is not a verdict (canon §7.4).
-import {TOP_WORD} from './api.js';
 import {esc, unseen, tallySvg} from './dom.js';
+import {topWord} from './state.js';
 import {TIP, CELLS} from './hints.js';
 import {label, cancelled, delivered, closedByFail} from './vocab.js';
 import {failingNow} from './run.js';
@@ -55,7 +55,7 @@ function tracks(el, run, name, tasks, hot) {
         const lx = 8 + Math.max(r.d - 1, 0) * INDENT;
         const caret = r.kids && r.d ? `<tspan class="pg-caret">${shown(r.id, r.d, hot) ? '▾' : '▸'} </tspan>` : '';
         // a name cut to the track's width: the whole of it on hover (the caret makes the text differ, so only when cut)
-        const title = r.d ? name(r.id) : `${TOP_WORD}'s criteria`, fits = 34 - Math.max(r.d - 1, 0) * 2;
+        const title = r.d ? name(r.id) : `${topWord()}'s criteria`, fits = 34 - Math.max(r.d - 1, 0) * 2;
         // A CANCELLED PART owes nothing: its track is kept for its history, faint as its tombstone on the graph, and says
         // the word where a count would read as work left undone («0 of 1» on a DONE parent — the author, 2026-10-31)
         const gone = cancelled(tasks.find(t => t.id === r.id));
@@ -73,7 +73,7 @@ function tracks(el, run, name, tasks, hot) {
     // mark said under the tracks, clear of the labels
     const H = y + 18, root = rs.find(r => !r.d);
     const miles = (root ? tr[root.id].marks : []).filter(m => m.signal === 'PASS').map(m => `<g class="pg-mile"><line x1="${f.X(m.t)}" x2="${f.X(m.t)}" y1="${TOP - 8}" y2="${H}"/>
-        <text x="${f.X(m.t) - 4}" y="${H - 3}" text-anchor="end">${TOP_WORD.slice(4)} done ${hm(m.t)}</text></g>`).join('');
+        <text x="${f.X(m.t) - 4}" y="${H - 3}" text-anchor="end">${topWord().slice(4)} done ${hm(m.t)}</text></g>`).join('');
     return `<svg class="pg" width="${W}" height="${H}">${f.ticks(TOP - 6, H - 14, TOP - 10)}${f.folds(TOP - 6, H - 14, H - 3)}${miles}${body}</svg>`;
 }
 
@@ -92,8 +92,8 @@ function coverage(run, nodes, tasks) {
     const rows = run.criteria.names[root.id].map(c => `<tr><th${c.length > 30 ? TIP.cell(c) : ''}>${esc(trim(c, 30))}</th>
         ${kids.map(k => cell(c, k)).join('')}<td class="cv-self">${self[c] === 'pass' || self[c] === 'fail' ? glyph(self[c].toUpperCase())
             : `<span${TIP.noValue((run.rounds[root.id] || []).some(r => r.verdict) ? 'current' : 'unchecked')}>⊥</span>`}</td></tr>`).join('');
-    return `<table class="pg-cov"><thead><tr><th class="sec">${TOP_WORD}'s criteria</th>
-        ${kids.map(k => `<th class="kid" data-node="${esc(k)}"${name(k).length > 14 ? TIP.cell(name(k)) : ''}><span>${esc(trim(name(k), 14))}</span></th>`).join('')}<th class="kid"><span>${TOP_WORD}</span></th></tr></thead>
+    return `<table class="pg-cov"><thead><tr><th class="sec">${topWord()}'s criteria</th>
+        ${kids.map(k => `<th class="kid" data-node="${esc(k)}"${name(k).length > 14 ? TIP.cell(name(k)) : ''}><span>${esc(trim(name(k), 14))}</span></th>`).join('')}<th class="kid"><span>${topWord()}</span></th></tr></thead>
         <tbody>${rows}</tbody></table>
         <p class="pg-legend">${CELLS.filter(([k]) => k !== 'gone' || kids.some(x => kind(x) === 'gone')).map(([k, t]) => `<i class="cv cv-${k}"></i>${t}`).join(' ')}</p>`;
 }
@@ -121,7 +121,7 @@ export function render(el, run, nodes, tasks) {
         const i = g.dataset.m.lastIndexOf(':'), id = g.dataset.m.slice(0, i), L = run.criteria.track[id], m = L.marks[+g.dataset.m.slice(i + 1)];
         const r = (run.rounds[m.node] || []).find(r => r.at === m.t);
         tip(TIP.verdict(m.signal, r, m.t, {own: m.failed, edges: []}, m, L.total,
-            unseen(g.closest('.pg-track')?.querySelector('.pg-level')) && (id === rootOf(tasks)?.id ? `${TOP_WORD}'s criteria` : name(id))), e);
+            unseen(g.closest('.pg-track')?.querySelector('.pg-level')) && (id === rootOf(tasks)?.id ? `${topWord()}'s criteria` : name(id))), e);
     }, untip);
     bringSelected(el, id => tr.querySelector(`.pg-track[data-node="${CSS.escape(id)}"] .pg-band`));
 }

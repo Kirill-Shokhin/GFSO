@@ -19,8 +19,7 @@
 //   work.js  — the line under the Models table naming sessions that spent nothing (content, not a hint).
 import {esc} from './dom.js';
 import {dur, hm, hms, usd, money, NOT_REPORTED, tok, pct, cap, plural} from './fmt.js';
-import {S, agentName} from './state.js';
-import {TOP_WORD} from './api.js';
+import {S, agentName, topWord} from './state.js';
 import {statesIn, label, TOKENS, WRITES, nameOf} from './vocab.js';
 
 // ── the renderers ──
@@ -265,7 +264,7 @@ export const KIND = {
 // a role's sessions counted in words — «46 executions», «9 issuer turns» — so a count needs no line explaining it
 export const sessionsOf = (kind, n) => plural(n, KIND[kind]?.count || kind);
 // the tree's levels by what they are: the goal (the root), its parts, then parts of parts, one level down each time
-export const levelName = d => +d === 0 ? TOP_WORD : +d === 1 ? 'its parts' : `parts, level ${d}`;
+export const levelName = d => +d === 0 ? topWord() : +d === 1 ? 'its parts' : `parts, level ${d}`;
 export const roundsLine = rs => !rs.length ? '' : plural(rs.length, 'round')
     + (rs.some(r => r.verdict === 'FAIL') ? `, ${rs.filter(r => r.verdict === 'FAIL').length} failed` : '');
 // What a node waits on (run.js waits), for every view that says it: "Floor compiler", "its 2 parts", "the executor".
