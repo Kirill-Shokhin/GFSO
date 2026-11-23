@@ -2941,7 +2941,10 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
             continue
         if role == "issuer":
             continue
-        if s["mine"] and s.get("action") in SPAWNABLE_ACTIONS and (hands := engine.hands_of(a)):
+        # …a leaf's: a taken whole's step is its holder's own choice of the part to start, which no hands perform
+        # (they skip a node with children) — told "performed by", the console stopped with the whole owed (critic, 11-23)
+        if s["mine"] and s.get("action") in SPAWNABLE_ACTIONS and (hands := engine.hands_of(a)) and not (
+                s.get("action") == Action.EXECUTE and engine.graph.get_active_children(TaskId(s["task_id"]))):
             # DISPATCH: consent is the holder's, the work its hands' — told so, or it builds the node in its chat
             s["directive"] = ((f"ACCEPT it (consent is yours); then {hands} performs it in a clean session in the "
                                f"node's place — do not build it yourself. | contract: ")

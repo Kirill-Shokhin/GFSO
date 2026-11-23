@@ -54,6 +54,11 @@ def _keeps(e) -> dict:
     return dict(ln.split() for ln in out.splitlines())
 
 
+def _why(e) -> list:
+    """What the keep said on the feed where it failed — a red seen only in another's run names its cause."""
+    return [r["message"] for r in e.pipeline_log() if r.get("source") == "delivery"]
+
+
 def _deliver(e, repo, text: str, **kw) -> tuple[str, dict]:
     (repo / "f.txt").write_text(text)
     head = _commit(repo, "f.txt")
@@ -68,7 +73,7 @@ def test_a_host_delivery_is_kept_in_the_systems_store_and_outlives_its_place(tmp
     _take(e, repo)
     head, out = _deliver(e, repo, "v1\n")
     assert out["accepted"], out
-    assert _keeps(e) == {f"{ST.KEEP}{head}": head}, "the delivery is not kept by its id in the project's store"
+    assert _keeps(e) == {f"{ST.KEEP}{head}": head}, ("the delivery is not kept by its id in the project's store", _why(e))
     assert json.loads(e.graph.setting(ST.KEPT + head))["place"] == str(repo)
     e.stop()                                                  # …its observer's run ends first: Windows holds a cwd open
     _gone(repo)
@@ -145,7 +150,7 @@ def test_an_unregistered_chat_names_the_work_tree_it_committed_in(tmp_path):
                              place=str(repo))
     _kept()
     assert out["accepted"] and e.delivered(TaskId("root"))[1] == head, out
-    assert _keeps(e) == {f"{ST.KEEP}{head}": head}
+    assert _keeps(e) == {f"{ST.KEEP}{head}": head}, _why(e)
     e.stop()
 
 

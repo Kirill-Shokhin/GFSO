@@ -52,6 +52,27 @@ def step_role(engine, task: Optional[Task], action) -> str:
     return "executor"
 
 
+def _carry_on(engine, t, kids, nm, _deps_ready, gated: bool):
+    """THE MOVE A TAKEN WHOLE'S EXECUTOR CAN MAKE NOW (Inv-8: EXECUTING's owner is the executor) — or None. The
+    frontier read every taken node with unfinished parts as "its frontier is elsewhere": nine of his seams taken by a
+    stream gave zero steps, and the hold reading the frontier let the console go with every one owed (the author,
+    2026-11-23: «держать хук должен на шве»). The move is the work's own, read off the states: a part offered to
+    this holder that he can take now — its producers passed, its parent's plan not holding it — or one not yet
+    issued, whatever stands offered to others or is in work beside it. With none, his moves wait on another's
+    (a part's consent, delivery or producer: their clock, their steps, or the walk's own end naming who waits on
+    whom) — DELIVER, BLOCK and CHALLENGE stay open to him, and nothing holds him on them."""
+    takeable = [str(k.id) for k in kids if k.state == State.IDLE or (
+        k.state == State.OFFERED and k.assignee == t.assignee and _deps_ready(k.id)
+        and not (gated and engine.execution_blocked_by(k.id) is not None))]
+    if not takeable:
+        return None
+    return (6, t, Action.EXECUTE,
+            f"CARRY ON '{t.id}' ({nm}): taken, and a part of it is yours to start now: "
+            f"{', '.join(takeable[:5])}{' …' if len(takeable) > 5 else ''} — ACCEPT the one whose work starts "
+            f"(split it first where its take asks a split; issue one not yet issued). The whole's own moves stay yours: DELIVER it when it holds, BLOCK on what "
+            f"stops it, CHALLENGE its contract.")
+
+
 class NodeSteps:
     """The move one node owes now, and its words: whose it is, which verb, what the directive says — read off the node,
     its children and its record. The frontier asks it per node; it walks nothing."""
@@ -296,7 +317,8 @@ class NodeSteps:
             # "TAKE" / "EXECUTE" / "FIX AND RE-DELIVER" here cost a refused call and, worse, tell the holder
             # to do the work by hand (critic rounds 8, 9, 16). With children the step is on them; without,
             # it is the split, the holder's own act (§11.5).
-            return (None if kids and not all(_passed(k) for k in kids) else
+            return ((_carry_on(self.engine, t, kids, nm, _deps_ready, self.engine._validate) if t.state == State.EXECUTING else None)
+                    if kids and not all(_passed(k) for k in kids) else
                     (2, t, Action.REVISE, f"{self._held_step_verb(t, kids)} '{t.id}' ({nm}) — {_held}"))
         elif self.engine.in_rework(t) and (_refusal := self.engine._redelivery_refusal(t)):
             # THE DIRECTIVE MUST NOT ASK FOR A DELIVERY THE GATE WILL REFUSE. When the failed
@@ -446,7 +468,9 @@ class NodeSteps:
                     f"CONFIRM cancellation of '{t.id}' ({nm}): signal CONFIRM_CANCEL, reporting the in-flight "
                     f"state at cancellation (what was done/undone) via `in_flight`.")
         else:
-            return None  # EXECUTING with unfinished children, terminal, or IDLE → its frontier is elsewhere
+            # EXECUTING with unfinished children: its holder's move where he can make one now (`_carry_on`), else
+            # elsewhere; terminal or IDLE: none
+            return _carry_on(self.engine, t, kids, nm, _deps_ready, self.engine._validate) if t.state == State.EXECUTING and kids else None
 
         return cand
 
@@ -1278,7 +1302,8 @@ class Frontier:
         steps = []
         for _, t, action, directive in result:
             step = self.steps._step_out(t, action, directive)
-            step["parallel_ok"] = action == "execute"
+            # …a leaf's alone: a taken parent carried on through its parts is no work to hand a subagent
+            step["parallel_ok"] = action == "execute" and not self.engine.graph.get_active_children(t.id)
             steps.append(step)
         # …AND WHAT IS WAITING, which the list alone never showed. A node held by the dependency
         # order is simply ABSENT from the steps — correct, it is not actionable — so a reader saw

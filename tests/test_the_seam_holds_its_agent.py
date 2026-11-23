@@ -375,7 +375,7 @@ def test_with_no_server_the_console_stops_and_is_told(monkeypatch, capsys):
 
 
 def test_it_is_installed_once_in_the_places_own_settings_kept_out_of_git(tmp_path):
-    """Run twice, one Stop entry, another project's its own, the ceiling on at 75 by default; with no window known
+    """Run twice, one Stop entry, another project's its own, the ceiling on at 60 by default; with no window known
     install says the ceiling is inert where the statusline measures none; removed, the person's own hooks stay; the file
     git ignores. CONTROL: the project's entry not matched — two entries; the inert line unsaid — red."""
     repo = tmp_path / "repo"
@@ -390,7 +390,7 @@ def test_it_is_installed_once_in_the_places_own_settings_kept_out_of_git(tmp_pat
     assert "inert" not in H.install(repo, "p", window=1_000_000)
     cmds = [h["command"] for g in json.loads(s.read_text())["hooks"]["Stop"] for h in g["hooks"]]
     assert sorted(c.split(f"-m {H.MARK} ")[1] for c in cmds if H.MARK in c) == [
-        "p --ceiling 75 --window 1000000", "p2 --ceiling 75"], cmds
+        "p --ceiling 60 --window 1000000", "p2 --ceiling 60"], cmds
     assert "mine" in cmds
     assert subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", ".claude/settings.local.json"]).returncode == 0
     H.install(repo, "p2", remove=True)

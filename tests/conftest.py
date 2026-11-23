@@ -140,11 +140,14 @@ def _own_state_home():
     # sessions' files into ~/.claude/gfso-sessions (2026-11-15); a test that sets its own keeps it
     prior_cfg = os.environ.get("CLAUDE_CONFIG_DIR")
     os.environ["CLAUDE_CONFIG_DIR"] = str(Path(mine) / "claude")
+    # …nor a server's state: a validator's probe running this suite inherits the server's environment, and a data
+    # directory or database named there outranks the home — the suite's stores were laid in the live server's data
+    prior_state = {n: os.environ.pop(n, None) for n in ("GFSO_DATA_DIR", "GFSO_DB_PATH")}
     E._DISK_WATCH.set()                                 # …nor a watch beside each worker's: a test runs its own
     E._WATCH.set()
     yield
     _sweep(Path(mine))
-    for name, was in (("GFSO_HOME", prior), ("CLAUDE_CONFIG_DIR", prior_cfg)):
+    for name, was in (("GFSO_HOME", prior), ("CLAUDE_CONFIG_DIR", prior_cfg), *prior_state.items()):
         if was is None:
             os.environ.pop(name, None)
         else:

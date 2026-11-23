@@ -13,7 +13,7 @@ them to the system), the observation of a delivery (the seam's validator's step:
 nothing), a stopped run, a settled root, a subagent's stop or a driven CLI hold nothing, nor does a
 connection whose taken name was refused or a console that signs as no one (no gfso connection, or one that took no
 name); with no server, or no such
-project, it says so and lets the console stop. At or above a fill ceiling (`CEILING`, 75% unless `--ceiling` says
+project, it says so and lets the console stop. At or above a fill ceiling (`CEILING`, 60% unless `--ceiling` says
 otherwise, 0 off; the window the statusline's measure, else `--window`, else `CLAUDE_CTX_WINDOW`, never guessed — with
 none it is inert) it lets this one stop through, recording nothing, so a session can close; the next console is held
 again. It signals nothing and writes nothing; a run that fails says nothing. The person installs it, in one place
@@ -43,10 +43,11 @@ TIMEOUT_S = 15
 #: the most ids one reminder names in a list; its length, and a rework line's directive head
 SHOWN, CAP, GIST = 3, 800, 100
 #: the statusline's measure when present — Claude Code hands the window to the statusline, never to a hook: one file a
-#: session, {size, used, ts}, read while fresh
-STATUSLINE, FRESH_S = Path.home() / ".claude" / "ctx", 120
+#: session, {size, used, ts}, read while fresh — as long as the session kit's watchdog reads it (its `stale_sec`): read
+#: fresh for 120 s against the watchdog's 600, a file 2–10 min old let both hooks block, or both let go (critic, 11-23)
+STATUSLINE, FRESH_S = Path.home() / ".claude" / "ctx", 600
 #: the fill, in percent, past which a stop goes through so a session can close — the person's number; 0 turns it off
-CEILING = 75.0
+CEILING = 60.0         # …where the session kit's watchdog demands the closing: one number, or the two pull apart
 
 
 def _ask(project: str) -> dict:
