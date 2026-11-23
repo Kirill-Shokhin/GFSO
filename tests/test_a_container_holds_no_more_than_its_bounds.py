@@ -140,6 +140,19 @@ def test_a_linked_directory_is_measured_as_its_entry_never_walked_into(tmp_path,
     assert kib is not None and 1024 <= kib < 1100, f"what the place holds, not what its link names: {kib}"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows tells no blocks; elsewhere `st_blocks` reads what is allocated")
+def test_a_sparse_file_is_measured_by_what_it_holds_not_its_apparent_size(tmp_path):
+    """No `st_blocks` on Windows: read by its apparent size, a sparse file (`fsutil sparse setflag`, no admin) seeked to
+    50 GiB read 50 GiB held where `du` read 64 KiB, and the guard passed a tree bomb that large (critic, ran)."""
+    (f := tmp_path / "sparse.bin").write_bytes(b"")
+    subprocess.run(["fsutil", "sparse", "setflag", str(f)], check=True, capture_output=True)
+    with open(f, "r+b") as out:
+        out.seek(8 * 2 ** 30)
+        out.write(b"x")
+    kib = W.du_kib(SimpleNamespace(run=_ran_here, python=sys.executable), tmp_path)
+    assert kib is not None and kib < 1024, f"what it holds on disk, not 8 GiB: {kib}"
+
+
 _DU = shutil.which("du") or (Path(g).resolve().parents[1] / "usr" / "bin" / "du.exe"
                              if (g := shutil.which("git")) and os.name == "nt" else None)
 

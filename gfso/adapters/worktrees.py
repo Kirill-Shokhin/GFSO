@@ -264,7 +264,8 @@ def _laid_kib(ex, at, commit: str, limit: int, stores) -> int | None:
 
 
 #: what the working directory holds on disk, in KiB, as `du -sk .` reads it: allocated blocks, a file of many links once, one
-#: vanishing mid-walk no stop; where no blocks are told (Windows), its size by the cluster. A linked directory — a symlink, a
+#: vanishing mid-walk no stop; where no blocks are told (Windows), its allocated size by the cluster — not its apparent one, which
+#: a sparse or compressed file raised by 50 GiB past `du` (critic, ran). A linked directory — a symlink, a
 #: junction — is its entry, never walked into: walked, one to the place itself never ended, one to elsewhere read ×360 (critic, ran)
 _HELD = r"""
 import os, stat
@@ -280,8 +281,16 @@ def held(p):
             return False
         seen.add((s.st_dev, s.st_ino))
     b = getattr(s, "st_blocks", None)
-    size += b * 512 if b is not None else -(-s.st_size // 4096) * 4096
+    size += b * 512 if b is not None else -(-on_disk(p, s) // 4096) * 4096
     return stat.S_ISDIR(s.st_mode) and not getattr(s, "st_file_attributes", 0) & 0x400
+def on_disk(p, s):
+    if os.name != "nt" or not stat.S_ISREG(s.st_mode):     # …a link is its entry, never what it names
+        return s.st_size
+    import ctypes
+    k, high = ctypes.WinDLL("kernel32", use_last_error=True), ctypes.c_ulong()
+    k.GetCompressedFileSizeW.restype = ctypes.c_ulong
+    low = k.GetCompressedFileSizeW(ctypes.c_wchar_p(os.path.abspath(p)), ctypes.byref(high))
+    return s.st_size if low == 0xFFFFFFFF and ctypes.get_last_error() else (high.value << 32) + low
 for d, dirs, names in os.walk(".", onerror=lambda e: None):
     for n in names:
         held(os.path.join(d, n))
