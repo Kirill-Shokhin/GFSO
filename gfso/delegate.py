@@ -1295,8 +1295,13 @@ class Dispatcher:
                 if self._claim(self._scope_key(members, "sv:")):
                     started.append(f"validate-scope:{top.id}")
                     self._signing.add(str(top.id))
-                    threading.Thread(target=self._validate_scope_guarded,
-                                     args=(top.id, self._scope_key(members), sign), daemon=True).start()
+                    try:
+                        threading.Thread(target=self._validate_scope_guarded,
+                                         args=(top.id, self._scope_key(members), sign), daemon=True).start()
+                    except BaseException:      # …a thread never started would skip its top for good (Inv-8)
+                        self._signing.discard(str(top.id))
+                        self._seen.discard(self._scope_key(members, "sv:"))
+                        raise
             elif ready and self._claim(self._scope_key(members)):
                 started.append(f"scope:{top.id}")
                 threading.Thread(target=self._scope_guarded,
@@ -1382,9 +1387,14 @@ class Dispatcher:
         """The scope's one validation under the concurrency cap. A run that yields no verdict gets one more;
         after that the scope's top waits for its issuer, as a node's validation does."""
         vkey = "sv:" + key
-        queued = [self._engine.claims.queue_validation(m.id) for m in self._engine.scope_members(top_id)
-                  if m.state == State.VALIDATING]
-        try:
+        queued: list = []
+        try:              # …the queueing inside: raised before the `finally`, it left the top skipped for good (Inv-8)
+            try:
+                queued += [self._engine.claims.queue_validation(m.id) for m in self._engine.scope_members(top_id)
+                           if m.state == State.VALIDATING]
+            except BaseException:
+                self._seen.discard(vkey)     # …no run began: its claim freed, the next pass validates it
+                raise
             self._validate_scope_body(top_id, key, vkey, sign)
         finally:
             for q in queued:

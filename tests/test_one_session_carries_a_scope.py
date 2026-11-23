@@ -227,6 +227,21 @@ def test_no_session_starts_while_its_scope_is_being_signed(tmp_path, monkeypatch
     test_a_part_that_fails_is_reworked_with_its_whole_in_one_session_as_a_leaf_would_be(tmp_path)
 
 
+def test_a_validation_that_fails_before_it_runs_leaves_its_scope_owed(tmp_path, monkeypatch):
+    """A raise while the scope's validation is queued left its top marked as signing for good: every later pass
+    skipped it, three deliveries VALIDATING with no owner's move made (Inv-8; critic over b6cd3af)."""
+    e, agents = _project(tmp_path)
+    queue, raised = e.claims.queue_validation, []
+    monkeypatch.setattr(e.claims, "queue_validation",
+                        lambda tid: queue(tid) if raised else (raised.append(tid), (_ for _ in ()).throw(OSError("once")))[1])
+    validator = _Validator(e)
+    d = _dispatcher(e, agents, _LLM(_delivered("root.a", "root.b", "root")), validator, [])
+    _drive(e, d, lambda: e.graph.get_state(TaskId("root")) == State.DONE)
+    assert raised and _states(e) == {t: "DONE" for t in _NODES}, (raised, _states(e))
+    assert not d._signing
+    e.stop()
+
+
 def test_a_part_that_fails_again_fails_its_whole_again(tmp_path):
     """Each failed round of the part is a failed round of the whole — as each failing round of a leaf is its own."""
     e, agents = _project(tmp_path)

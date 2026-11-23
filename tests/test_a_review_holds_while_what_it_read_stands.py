@@ -124,6 +124,19 @@ def test_a_dispute_answers_one_finding_and_leaves_with_it(e):
     assert "conflict: kid, kid2 — back" in finding_keys(_review(e)), "a dispute gone does not come back"
 
 
+def test_a_dispute_stays_on_its_own_finding_whatever_order_they_come_in(e):
+    """Two conflicts between the same children: the one disputed keeps its dispute when the checker lists them the
+    other way round — the order traded them, and the argued one came back open (critic over bf9efb4)."""
+    e._llm.conflicts = [{"between": ["kid", "kid2"], "why": "formats clash"},
+                        {"between": ["kid", "kid2"], "why": "ordering clash"}]
+    _review(e)
+    e.dispute_review_finding(TaskId("root"), "conflict: kid, kid2 — formats clash", "answered", AgentId("user"))
+    e._llm.conflicts = list(reversed(e._llm.conflicts))
+    rec = _review(e)
+    assert [k for k in finding_keys(rec) if k.startswith("conflict:")] == ["conflict: kid, kid2 — ordering clash"]
+    assert "conflict: kid, kid2 — formats clash" in (rec.get("disputes") or {})
+
+
 # (c) a verdict stands while what its review read stands
 
 def test_activity_inside_a_child_leaves_the_parents_review_current(e):

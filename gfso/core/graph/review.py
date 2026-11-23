@@ -110,13 +110,18 @@ def carried_disputes(before: dict, rec: dict) -> dict:
         what, about = (d["what"], d["about"]) if d.get("what") and isinstance(d.get("about"), dict) else old.get(k, (None, None))
         if what is not None and about is not None:
             pool.append((k, d, what, about))
-    out = {}
-    for k, what, about in _findings(rec):
-        hit = next((x for x in pool if x[2] == what and _stands(x[3], about)), None)
-        if hit is not None:
-            pool.remove(hit)
-            was, d = hit[0], hit[1]
-            out[k] = {**d, "what": what, "about": hit[3], **({} if was == k else {"was": was})}
+    out, found = {}, _findings(rec)
+    # …every finding's own key first, then what is about the same thing: in one greedy pass two conflicts between the
+    # same sides traded disputes by the order the checker listed them in (critic over bf9efb4)
+    for same_key in (True, False):
+        for k, what, about in found:
+            if k in out:
+                continue
+            hit = next((x for x in pool if (x[0] == k or not same_key) and x[2] == what and _stands(x[3], about)), None)
+            if hit is not None:
+                pool.remove(hit)
+                was, d = hit[0], hit[1]
+                out[k] = {**d, "what": what, "about": hit[3], **({} if was == k else {"was": was})}
     return out
 
 
