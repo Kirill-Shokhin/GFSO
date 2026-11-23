@@ -46,7 +46,7 @@ from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace, 
                              join_whole, land_accepted, left_to_merge, made, node_workspace, results_a_split_waits_on, root_created,
                              session_scope, stands, where_it_runs)
 from gfso.packets import _EXECUTOR_STATES, _scope_order
-from gfso.sessions import unattended_here, run_consent, run_executor, run_scope_executor
+from gfso.sessions import unattended_here, run_consent, run_executor, run_scope_executor, stale
 
 log = logging.getLogger(__name__)
 
@@ -1360,8 +1360,8 @@ class Dispatcher:
         before = sum(self._engine.accepted_moves(m.id) for m in members)
         try:
             out = self._scope_runner(self._engine, top_id, executor_id, self._agents)
-            if isinstance(out, dict) and out.get("status") in ("not_consented", "too_late"):
-                return                    # a member re-offered before the session began: it waits for the holder
+            if isinstance(out, dict) and out.get("status") in ("not_consented", "too_late", "stale"):
+                return                    # a member re-offered or moved before the session began: not this round's
             if (sum(self._engine.accepted_moves(m.id) for m in members) == before
                     and not any(self._engine.parking.contested_reason(m.id) for m in members)):
                 self._one_retry_then_park(top_id, "u:", f"the scope session reported "
@@ -1520,24 +1520,19 @@ class Dispatcher:
         against the new criteria, and the run that did the right work having its DELIVER refused by
         the FSM. Both `revise` and `reopen` land the node in OFFERED, which is an executor state, so
         the state check catches neither."""
+        if not (why := stale(self._engine, task_id, expect_gen, executor_id, states)):
+            return True
+        if executor_id is not None:
+            self._free_if_moved(task_id, executor_id)
+        self._engine.emit_info("delegate", f"{task_id}: queued run is stale ({why}) — slot released")
+        return False
+
+    def _free_if_moved(self, task_id: TaskId, executor_id: str) -> None:
+        """A stale run's ROUND freed where Del moved: a reassignment moves no generation counter, so the round key is
+        unchanged and a released slot would otherwise be a claim nobody ever spends — the node would sit forever."""
         t = self._engine.graph.get_task(task_id)
-        if t is None or t.state.name not in states or generation_of_task(t) != tuple(expect_gen):
-            why = ("the node is gone" if t is None else
-                   f"its state is {t.state.name}, not {' or '.join(states)}" if t.state.name not in states else
-                   f"its generation is {generation_of_task(t)}, not {tuple(expect_gen)}")
-            self._engine.emit_info("delegate", f"{task_id}: queued run is stale ({why}) — slot released")
-            return False
-        if executor_id is not None and str(t.assignee) != str(executor_id):
-            # …and the ROUND is freed with it. A reassignment moves no generation counter, so the
-            # round key is unchanged and a released slot would otherwise be a claim nobody ever
-            # spends: the node would sit forever, which is the same stall by another road.
+        if t is not None and str(t.assignee) != str(executor_id):
             self._seen.discard(self._round_key(t))
-            self._engine.emit_info(
-                "delegate", f"{task_id}: queued run is stale — it was queued for '{executor_id}' and "
-                            f"Del is now '{t.assignee}'; slot released, the next pass dispatches it "
-                            f"to the executor that holds it")
-            return False
-        return True
 
     def _one_retry_then_park(self, task_id: TaskId, tag: str, what: str, claim: str | None = None,
                              cut: bool = False, limit: bool = False, ended: str | None = None,
@@ -1676,6 +1671,8 @@ class Dispatcher:
                 out = self._runner(self._engine, task_id, executor_id, self._agents)
                 if isinstance(out, dict) and out.get("status") in ("not_consented", "too_late"):
                     return                # re-offered before its session began: the round waits for the holder
+                if isinstance(out, dict) and out.get("status") == "stale":
+                    return self._free_if_moved(task_id, executor_id)   # moved by another party in its preamble
                 # DID THE NODE LEAVE THE EXECUTOR'S HANDS? Asked of the GRAPH, not of the report's
                 # status word: an unparsed report, an undefined status and a signal the FSM refused
                 # (a DELIVER with an empty summary, a BLOCK, the ACCEPT) all end the round with the

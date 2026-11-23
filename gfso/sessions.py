@@ -79,6 +79,20 @@ def _session_cap(engine, tasks) -> int | None:
 MIN_SESSION_S = 60
 
 
+def stale(engine, task_id: TaskId, gen: tuple, executor_id: str | None = None,
+          states: tuple = _EXECUTOR_STATES) -> str:
+    """Why a run of `task_id` for version `gen` by `executor_id` is no longer owed, '' while it is: the node is still
+    in a work state (`states`), at that version, held by that Del (Inv-1: the executor is bound only to the version
+    he accepted, §12.3). Asked at the slot and again right before the session is spawned — the preamble between
+    them takes seconds, in which another party may deliver, revise, reassign or cancel the node."""
+    t = engine.graph.get_task(task_id)
+    return ("the node is gone" if t is None else
+            f"its state is {t.state.name}, not {' or '.join(states)}" if t.state.name not in states else
+            f"its generation is {generation_of_task(t)}, not {tuple(gen)}" if generation_of_task(t) != tuple(gen) else
+            f"it was queued for '{executor_id}' and Del is now '{t.assignee}'"
+            if executor_id is not None and str(t.assignee) != str(executor_id) else "")
+
+
 def _too_late(engine, node_id, cap) -> dict | None:
     """A session that cannot report before its deadline is not spawned: the clock hands the node to its issuer."""
     if cap is None or cap >= MIN_SESSION_S:
@@ -246,6 +260,9 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     seen, cap = _observed(engine, task_id, [task], cwd, cap, _cb)
     if late := _too_late(engine, task_id, cap):
         return late
+    if why := stale(engine, task_id, started_on, task.assignee):   # …the last moment before the session is paid for
+        engine.emit_info("delegate", f"{task_id}: run is stale ({why}) — no session spawned")
+        return {"task_id": str(task_id), "status": "stale", "why": why}
     _fresh_disk(engine, agents, cwd)
     _cb(f"{task_id}: executor {executor_id} spawned (workdir={cwd or 'cwd'}"
         + (f", cap {cap}s" if cap else "") + ")…")
@@ -360,6 +377,7 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
     cfg = performer(engine, agents, executor_id)[1] or {}
     order = _scope_order(engine, engine.scope_members(top_id))
     started_on = {str(t.id): generation_of_task(t) for t in order}   # before the place is entered (see run_executor)
+    held = {str(t.id): t.assignee for t in order}
     todo = [t for t in order if t.state.name in _EXECUTOR_STATES]
     if not todo:
         return {"task_id": str(top_id), "status": "nothing_open"}
@@ -376,6 +394,14 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
     seen, cap = _observed(engine, top_id, todo, cwd, cap, _cb)
     if late := _too_late(engine, top_id, cap):
         return late
+    # …each node asked again at the last moment before the session is paid for (see run_executor): one moved by
+    # another party meanwhile is not worked: out of the packet, whose blocks are this snapshot, and of the signals
+    moved = {k: why for t in todo if (why := stale(engine, t.id, started_on[k := str(t.id)], held[k]))}
+    for k, why in moved.items():
+        engine.emit_info("delegate", f"{k}: run is stale ({why}) — not worked by the scope session")
+    todo, order = ([t for t in ts if str(t.id) not in moved] for ts in (todo, order))
+    if not todo:
+        return {"task_id": str(top_id), "status": "stale", "why": "; ".join(moved.values())}
     _fresh_disk(engine, agents, cwd)
     _cb(f"{top_id}: one executor session ({executor_id}) for the scope's open node(s) "
         f"{', '.join(str(t.id) for t in todo)}" + (f", cap {cap}s" if cap else "") + "…")
