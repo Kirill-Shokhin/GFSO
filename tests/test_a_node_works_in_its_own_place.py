@@ -285,13 +285,16 @@ def test_a_delivery_holding_a_nested_repository_is_refused_with_its_cause_until_
     e.on_info(lambda src, msg: said.append(msg))
     where: dict = {}
     sessions = {"a": _Nester("a", {"a.c": "A\n"}, inner_commit), "b": _Executor("b", {"b.c": "B\n"})}
-    _run(e, agents, sessions, lambda: any("delivery held" in m for m in said)
-         or any(x.signal.name == "DELIVER" for x in e.audit_log(TaskId("a"))), validated=where)
+    d = _run(e, agents, sessions, lambda: any("delivery held" in m for m in said)
+             or any(x.signal.name == "DELIVER" for x in e.audit_log(TaskId("a"))), validated=where)
     assert checked == any("NOT delivered" in m and cause in m and "(dep)" in m for m in said)
     if checked:
         assert e.graph.get_state(TaskId("a")) in (State.EXECUTING, State.REWORKING)
         assert not any(x.signal.name == "DELIVER" for x in e.audit_log(TaskId("a"))), "nothing recorded as delivered"
-        _run(e, agents, sessions, lambda: "a" in where, validated=where)
+        # …by the SAME dispatcher: the held round's retry may already be claimed by it (the hold lands while a round
+        # runs), and a second one on this engine claimed it again — two sessions of `a` in one place, the later one's
+        # packet, built over the lifted delivery, read here
+        _drive(e, d, lambda: "a" in where)
         assert "NOT handed in" in sessions["a"].packet and cause in sessions["a"].packet
         assert _git(base, "show", "gfso/p/a:dep/d.c") == "D", "its files are in the delivered tree"
     e.stop()
