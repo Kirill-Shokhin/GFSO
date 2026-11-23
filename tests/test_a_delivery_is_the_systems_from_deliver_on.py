@@ -33,6 +33,8 @@ def _kept():
     """Every keep started, ended: the keep is the system's act after DELIVER, in the background."""
     for t in [t for t in threading.enumerate() if t.name.startswith(ST.KEEPING)]:
         t.join(120)
+        # …a keep still running reads as no keep at all: the validator's runs read {} with nothing on the feed
+        assert not t.is_alive(), f"{t.name} still running after 120 s: the keep was slow, not refused"
 
 
 def _gone(place) -> None:
