@@ -141,9 +141,13 @@ def _drive(e, d, until=lambda: False, rounds=200, wait=True, pause=0.03) -> None
     last rounds wait for it, the wait bounded, unless a test holds its session on purpose. By which threads, not how many:
     a thread an earlier test left behind ending hid a session still at work. The bound is on a STILL work, not on all of
     it: every child process a session runs comes and goes with threads of its own, and a run of ~480 of them outlasted a
-    fixed 120 s on an oversubscribed machine with its work moving all along (its validator inside `git write-tree`)."""
+    fixed 120 s on an oversubscribed machine with its work moving all along (its validator inside `git write-tree`).
+    The threads that are not its are those before the dispatcher's first drive, not this one's: the pass that met an
+    earlier drive's `until` had started the next round's session, which this drive then read as an earlier test's and
+    did not wait for (once in 48 under -n 8, the second round still in its preamble at the assert)."""
     # …and a ceiling over the whole, so a session that never stops starting processes fails its test, never hangs it
-    before, end, done, seen = set(threading.enumerate()), time.monotonic() + 120, 0, set()
+    before = d.__dict__.setdefault("_threads_before_drive", set(threading.enumerate()))
+    end, done, seen = time.monotonic() + 120, 0, set()
     ceiling = time.monotonic() + 900
     while done < rounds:
         d.dispatch_once()
@@ -212,6 +216,15 @@ def test_a_part_that_fails_is_reworked_with_its_whole_in_one_session_as_a_leaf_w
     assert "Already" not in rework.split("`root.b`")[1].split("##")[0], "the re-presented consumer is work again"
     assert "Already" not in rework.split("`root`")[-1].split("##")[0], "the failed whole is work again too"
     e.stop()
+
+
+def test_no_session_starts_while_its_scope_is_being_signed(tmp_path, monkeypatch):
+    """The signatures move the nodes one at a time: between the part's FAIL and its consumer's re-presentation the
+    scope reads as a part to rework beside two deliveries, and a session started there worked the part alone — the
+    round split over three sessions (once in three full suites under load; every time with the signing slowed)."""
+    represent = D._represent
+    monkeypatch.setattr(D, "_represent", lambda *a: time.sleep(0.5) or represent(*a))
+    test_a_part_that_fails_is_reworked_with_its_whole_in_one_session_as_a_leaf_would_be(tmp_path)
 
 
 def test_a_part_that_fails_again_fails_its_whole_again(tmp_path):

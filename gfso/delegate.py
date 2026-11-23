@@ -757,6 +757,7 @@ class Dispatcher:
         self._scope_validate = scope_validator or _auto_validate_scope
         self._consent = consent_runner or run_consent
         self._running: set[str] = set()   # nodes whose executor round is running right now
+        self._signing: set[str] = set()   # scope tops whose one validation is queued, running or signing
         self._issuer_attempts: dict = {}   # (node generation, question) → (unproductive settles, not before)
         self._issuer_turns_ended: set = set()   # …the same keys, where a turn ended and left its question standing
         self._issuer_owed: dict = {}       # (node, question) → (owed since, versions reported stuck, last move)
@@ -1277,7 +1278,10 @@ class Dispatcher:
                 tops[str(top.id)] = top
         for top in tops.values():
             members = self._engine.scope_members(top.id)
-            if any(str(m.id) in self._running or self._being_rewritten(m.id) for m in members):
+            # …nor while its validation signs: `_sign_scope` moves the nodes one by one, and a session started between a
+            # part's FAIL and its consumer's re-presentation worked the part alone — one round paid as two sessions
+            if (str(top.id) in self._signing
+                    or any(str(m.id) in self._running or self._being_rewritten(m.id) for m in members)):
                 continue
             ready = self._scope_ready(top, members)
             # …and a delivery does not wait for what cannot come now: with no session to start (a sibling's dispute
@@ -1290,6 +1294,7 @@ class Dispatcher:
                     continue
                 if self._claim(self._scope_key(members, "sv:")):
                     started.append(f"validate-scope:{top.id}")
+                    self._signing.add(str(top.id))
                     threading.Thread(target=self._validate_scope_guarded,
                                      args=(top.id, self._scope_key(members), sign), daemon=True).start()
             elif ready and self._claim(self._scope_key(members)):
@@ -1384,6 +1389,8 @@ class Dispatcher:
         finally:
             for q in queued:
                 self._engine.claims.dequeue_validation(q)
+            self._signing.discard(str(top_id))
+            self._dirty.set()            # …what the signatures opened is dispatched now, not at the next poll
 
     def _validate_scope_body(self, top_id: TaskId, key: str, vkey: str, sign: bool) -> None:
         """The scope's validation round under the cap (`_validate_scope_guarded`)."""
