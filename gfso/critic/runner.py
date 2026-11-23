@@ -28,7 +28,7 @@ from typing import Optional
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import CHECKER_READINGS, ROOT_ID, SUFFICIENCY_READINGS
 from gfso.core.graph.projection import input_files, pinned_lines, probe_view
-from gfso.core.graph.review import progress_baseline
+from gfso.core.graph.review import carried_disputes, goal_key, progress_baseline, read_stamp, review_read, side_id
 from gfso.core.types import CriticVerdict, Stage, State, TaskId
 from gfso.engine.validation import _EXEC_GATING_CHECKS
 from gfso.adapters.llm.stats import calls_of, fan, readings, refused_by_limit, tag_stage
@@ -110,13 +110,17 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
     only (the mechanical layer gate) — the engine is an argument, not a host."""
     used = llm or engine._llm
     n0 = len(calls_of(used))          # this round's calls only: the engine's provider carries every earlier one
+    _was = engine.graph.get_task(node_id)
+    # what this round reads, stamped before it reads: an edit landing while the checker runs is one it did not read
+    _read = {"read": review_read(engine._graph, _was), "read_stamp": read_stamp(engine._graph, _was),
+             "goal_key": goal_key(_was)} if _was is not None else {}
     critique = critique_node(engine, node_id, used)
     _node = engine.graph.get_task(node_id)
     rec = {**asdict(critique),   # + review provenance: re-validation UX needs "who reviewed, when"
            # …and the GOAL the obligations were mined out of. The sufficiency check asks a question
            # about this text; when it has not changed, later rounds re-check the answers instead of
            # re-reading it (see `_goal_changed`).
-           "goal_text": (_node.spec.description if _node is not None else ""),
+           "goal_text": (_was.spec.description if _was is not None else ""), **_read,
            # …and WHICH PLAN was reviewed, so the next round can tell "this is the same plan" from
            # "this is a different one". Without it a criterion already ruled sufficient was
            # re-litigated every round, and the gate answered differently about an unchanged object.
@@ -165,7 +169,8 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
         rec["goal_text"] = _goal_read_in(_before)
         rec["undecided_obligations"] = list(_before.get("undecided_obligations") or ())
         rec["goal_read"] = rec["goal_text"] is not None       # the reading carried is still a reading
-        rec.update({k: _before[k] for k in ("goal_obligations", "deciders") if k in _before})
+        rec.pop("goal_key", None)
+        rec.update({k: _before[k] for k in ("goal_obligations", "deciders", "goal_key") if k in _before})
     elif _node is not None:
         rec.update(_goal_record(engine, _node, critique.undecided_obligations, _before or None))
     # …AND THE PROGRESS BASELINE IS THE LAST ROUND THAT MEASURED. Compared against a round that read nothing, the
@@ -173,6 +178,10 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
     rec["measured"] = critique.semantic_covered is not None
     if not rec["measured"] and _before:
         rec["baseline_findings"] = progress_baseline(_before)
+    # …AND A DISPUTE STANDS WHILE ITS FINDING RECURS: the argument answered a finding, not a round, and re-stated each
+    # round it cost twenty runs to assemble one graph (tr-4, rdl)
+    if _carried := carried_disputes(_before, rec):
+        rec["disputes"] = _carried
     # …and a round the account's limit refused read nothing: stored, it erased the verdicts carried on an unchanged plan
     stored = bool(critique.gate_passed or critique.criteria_verdicts or critique.undecided_obligations
                   or not _before) and not refused_by_limit(calls_of(used)[n0:])
@@ -194,7 +203,9 @@ def review_decomposition(engine, node_id: TaskId, llm=None) -> NodeCritique:
         # nothing for the checker to say about them, and that is a current answer, not a missing one.
         # A round that passed the gate has stored its own record (above), so what `verified` vouches for is
         # always this round's reading — a "no verdict" reading included, which the gate reads as not clean.
-        engine._graph.update_task(node.id, verified=bool(critique.gate_passed))
+        # …and of the plan as it read it: one moved while the checker ran is not the plan this verdict is about
+        engine._graph.update_task(node.id, verified=bool(critique.gate_passed) and (
+            not _read or read_stamp(engine._graph, node) == _read["read_stamp"]))
     _log_critique(engine, critique)
     return critique
 
@@ -374,9 +385,7 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
                         undecided_obligations=short, goal_read=True)
 
 
-def _side(said) -> str:
-    """The node a conflict's side names — `root.wc (wc-counts)`: the id before its criterion's gloss."""
-    return str(said).split()[0] if str(said).split() else ""
+_side = side_id
 
 
 def _settled(engine, said, nid) -> bool:
@@ -617,7 +626,7 @@ def record_goal_reading(engine, task, obligations) -> None:
     engine._graph._storage.store_critique(task.id, json.dumps({
         **asdict(NodeCritique(str(task.id), gate_passed=False, undecided_obligations=tuple(obligations), goal_read=True)),
         **_goal_record(engine, task, obligations, None),
-        "goal_text": task.spec.description, "measured": False, "by": "authoring",
+        "goal_text": task.spec.description, "goal_key": goal_key(task), "measured": False, "by": "authoring",
         "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}))
 
 
@@ -652,7 +661,10 @@ def _goal_changed(prior: Optional[dict], task) -> bool:
     grown to fifty-one criteria, $19.44 spent on the gate, and NOT ONE executor call — the run died
     before any code was written. When the goal has not moved, later rounds re-check the obligations
     already named instead of mining the text again."""
-    return prior is None or _goal_read_in(prior) is None or str(_goal_read_in(prior)) != str(task.spec.description)
+    if prior is None or (read := _goal_read_in(prior)) is None:
+        return True
+    # keyed by what the reading reads (`goal_key`: the scope exclusions with the text); a record older than the key, by text
+    return prior["goal_key"] != goal_key(task) if prior.get("goal_key") else str(read) != str(task.spec.description)
 
 
 def _goal_read_in(rec: dict) -> Optional[str]:

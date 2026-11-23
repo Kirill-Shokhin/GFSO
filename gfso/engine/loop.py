@@ -23,7 +23,7 @@ from gfso.core.protocol.validation import required_role, Role
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (clock_off_s, dep_scope, keep_the_beat, non_leaf_ids, project_now, time_holds,
                                    project_state_bound, standing_split)
-from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation
+from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation, retire_if_moved
 from gfso.core.handlers import run_all_checks, recommend
 
 from .findings import regression, ruled
@@ -437,8 +437,8 @@ def refresh_checks(graph: Graph, node_id: Optional[TaskId], stale_review: bool =
     deps, deadlines = dep_scope(graph, node_id)
     graph.store_check_results(
         node_id, run_all_checks(node, kids, deps, non_leaf_ids(graph, kids), deadlines))
-    if stale_review and graph.get_task(node_id).verified:   # the decomposition changed: a stored Level-2 verdict is no longer current
-        graph.update_task(node_id, verified=False)
+    # a stored Level-2 verdict is current while what its review read stands; a record older than its stamp, as the door says
+    retire_if_moved(graph, node_id, unstamped=stale_review)
 
 
 def _execute_effects(

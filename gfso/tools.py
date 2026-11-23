@@ -296,8 +296,8 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
 def get_review(engine: Engine, task_id: str) -> dict:
     """The stored L2 review record (review_decomposition's LAST verdict: per-criterion
     sufficient/insufficient/uncertain + conflicts + model + ts) with its freshness: `verified` is
-    True while the decomposition is UNCHANGED since the review — any shape change (criteria,
-    mappings, deps, a child's re-ASSIGN) auto-stales it. review=null ⇒ never reviewed. Reading is
+    True while what the review READ is unchanged — the node's goal, criteria, coverage and register,
+    its children's criteria, the Dep edges between them; a child's re-ASSIGN, scope or split does not stale it. review=null ⇒ never reviewed. Reading is
     free (no LLM); re-run `review_decomposition` to refresh — or for a second opinion pass a
     stronger model (review_decomposition(model="opus"))."""
     t = engine.graph.get_task(TaskId(task_id))
@@ -932,7 +932,8 @@ def dispute_finding(engine: Engine, task_id: str, criterion: Union[str, list], w
     """Record why ONE Level-2 finding is wrong — the alternative to fixing the plan (which does not
     discharge a finding: it retires the whole verdict, and `review_decomposition` must speak again). Execution is
     gated on every finding of the CURRENT review being discharged: either the plan changes (which
-    stales the review — re-run it) or the finding is disputed HERE, in writing. The checker is an
+    stales the review — re-run it) or the finding is disputed HERE, in writing; a dispute stands over later
+    reviews while its finding recurs. The checker is an
     a-priori approximation (§9.9) and can be wrong; what the system refuses is skipping it
     silently. `criterion` = the flagged parent criterion exactly as `get_review` names it (a
     conflict is disputed as "conflict: <a>, <b>", and an obligation the sufficiency check named as

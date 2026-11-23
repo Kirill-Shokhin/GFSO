@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from gfso.core.types import AcceptedRiskItem, Task, CheckResult, DepEdge, Verdict, register_of, set_aside_of
+from gfso.core.types import AcceptedRiskItem, Task, CheckResult, DepEdge, Verdict, register_of
 
 
 # === Sentinel markers — typed values, not bare string literals at use-sites ===
@@ -135,7 +135,8 @@ def build(
             assignee=c.assignee,
             criteria=tuple(CriterionView(cc.name, cc.description, tuple(map(probe_view, cc.check or ())))
                            for cc in c.spec.criteria),
-            accepted_risks=tuple(n.item for n in set_aside_of(c)),
+            # the packet's pre-fill, its issuer's word: the child's own split's register bounds its claim, not this split's
+            accepted_risks=tuple(n.item for n in c.spec.set_aside),
             name=c.spec.name,
         )
         for c in children

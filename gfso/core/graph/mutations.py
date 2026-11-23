@@ -24,6 +24,7 @@ def _type_revision(task: Task, effect: MutateGraph, criteria_changed: bool, del_
         task.reassign_reason_typed = True
         if r == RevisionReason.CAPABILITY_MISMATCH:
             task.reassign_capability_mismatch = True
+from .review import read_stamp
 from .model import Graph, logged_declarations, project_deadline_s, project_now, replaces_key, root_issuer_key
 from gfso.core.types import settled_positive
 from gfso.config import default_deadline_s
@@ -169,6 +170,17 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
     return []
 
 
+def retire_if_moved(graph, node_id, unstamped: bool = True) -> None:
+    """Stale `node_id`'s Level-2 verdict where what its review read has moved since (`read_stamp`). A record older than
+    the stamp cannot say what it read, and stales as the door that asks says (`unstamped`)."""
+    t = graph.get_task(node_id) if node_id else None
+    if t is None or not t.verified:
+        return
+    stamp = (json.loads(graph._storage.get_critique(t.id) or "null") or {}).get("read_stamp")
+    if (unstamped if stamp is None else stamp != read_stamp(graph, t)):
+        graph.update_task(t.id, verified=False)
+
+
 def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[TaskId]:
     """Apply a renegotiated spec via the sanctioned CHALLENGE channel (ACCEPT_CHALLENGE, §11.2/§14.3).
 
@@ -217,16 +229,11 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
     # issuer's accepting version's to grant (Φ3), the dispute loop bounded by the deadline (Φ2). Reset only where a
     # field moved, the engine closed a loop the canon leaves to the issuer and to the clock (critic B1, F2).
     task.iteration = 0
-    if effect.spec is not None and effect.spec != task.spec:
-        # A NEW CONTRACT IS A CHANGED PLAN, whichever signal installs it: the Level-2 verdicts over this
-        # node's own split and over its parent's were read against the old criteria. A revision staled
-        # them (`Engine.revise`); ACCEPT_CHALLENGE — the issuer's answer to a dispute, which §11.3 has install
-        # a packet exactly as an ASSIGN does — did not, so a child's weakened criteria stood under a
-        # parent verdict no checker had read (reproduced).
-        task.verified = False
-        if task.parent_id is not None and (parent := graph.get_task(task.parent_id)) is not None                 and parent.verified:
-            parent.verified = False
-            graph.save_task(parent)
+    # A NEW CONTRACT MAY CHANGE A PLAN, whichever signal installs it: the Level-2 verdicts over this node's own split and
+    # over its parent's stale where what they read moved (`retire_if_moved`, below). A revision staled them
+    # (`Engine.revise`); ACCEPT_CHALLENGE — the issuer's answer to a dispute, which §11.3 has install a packet exactly as an
+    # ASSIGN does — did not, so a child's weakened criteria stood under a parent verdict no checker had read (reproduced).
+    new_contract = effect.spec is not None and effect.spec != task.spec
     if effect.spec is not None:
         task.spec = effect.spec
     # THE DEADLINE IS A PACKET FIELD, and Inv-1 names it among the four a revision exists to change.
@@ -275,6 +282,8 @@ def _apply_spec(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list
             if new:
                 parent.criterion_mappings = parent.criterion_mappings + new
                 graph.save_task(parent)
+    for nid in (task.id, task.parent_id):
+        retire_if_moved(graph, nid, unstamped=new_contract)
     return []
 
 

@@ -24,7 +24,7 @@ from gfso.core.protocol.procedure import (criteria_without_procedure, findings_a
 from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
-from gfso.core.graph.review import finding_keys
+from gfso.core.graph.review import SESSION_FIT, finding_keys
 from gfso.core.graph.model import (chosen_checker, PAUSE_KEY, hands_of, party_kind, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer, logged_criteria, parent_waits)
 from gfso.engine.audit import VERSION_INSTALLING, on_current_version
@@ -113,8 +113,8 @@ def _l2_undischarged(graph: Graph, node) -> Optional[list[str]]:
     real Level-2 verdict belongs to contact (q_D). Two exits, and they are NOT symmetric — which is
     what two doors reported as "the obligations are frozen at first reading" (wave 26, 2026-09-06):
     RECORDING why the finding is wrong (`dispute_finding`) discharges it where it stands, while
-    CHANGING the plan RETIRES the verdict instead (any edit stales the review — the record and its
-    disputes die with it), so a fix leaves `None` here and execution stays shut until a fresh review
+    CHANGING what the review read RETIRES the verdict instead (its disputes stand only on findings
+    the next review names again), so a fix leaves `None` here and execution stays shut until a fresh review
     speaks. That is fail-closed and deliberate — a lowered criterion and an added coverage look
     alike until the checker reads them — but the doors used to promise discharge and deliver a
     re-run, and the refusals now say the two-step shape out loud."""
@@ -190,7 +190,7 @@ def session_fit(graph: Graph, task_id) -> Optional[dict]:
     """The decomposer's recorded count and judgement for a node (`Engine.record_session_fit`), or None. Only his: a
     count of equal FAILs is no measure of κ (§3.7), so a `refuted` key an earlier engine stored beside it reads as
     nothing."""
-    raw = graph._storage.get_setting(f"session_fit:{task_id}")
+    raw = graph._storage.get_setting(f"{SESSION_FIT}{task_id}")
     try:
         return json.loads(raw) if raw else None
     except (ValueError, TypeError):

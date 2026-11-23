@@ -26,10 +26,10 @@ from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_chi
                                    non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, checker_choices_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, keep_the_beat, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
-from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair, stand_ins_index
+from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair, retire_if_moved, stand_ins_index
 from gfso.core.handlers.structural import run_structural
 from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_stands_refuted
-from gfso.core.graph.review import finding_keys, progress_baseline
+from gfso.core.graph.review import SESSION_FIT, finding_about, finding_keys, progress_baseline
 from gfso.core.graph.projection import build as build_projection, render as render_projection
 from gfso.core.protocol.fsm import available_signals, not_admissible_here, transition
 from gfso.core.protocol.validation import required_role, Role
@@ -1115,9 +1115,10 @@ class Engine:
         it where it stands (fixing the plan RETIRES the verdict instead, and needs a fresh review). The checker is an approximation over the faithfulness
         axis (§9.9) and can be wrong; what the system refuses is a SILENT skip, so the dispute is
         written into the review record with its author and time (§19.3: an explicit falsifiable claim
-        instead of an unstated one). It dies with that record — any edit to the decomposition stales
-        the review, and the next `review_decomposition` overwrites it, so a dispute never launders a
-        finding across plan versions: it must be re-stated against the fresh verdict.
+        instead of an unstated one). It stands while its finding recurs: the next `review_decomposition`
+        carries it onto the finding about the same thing — criterion, children in conflict, obligation
+        (`core.graph.review.carried_disputes`), one dispute to one finding — and drops it with a finding
+        that does not recur.
 
         Refused when there is no current verdict, or when the named criterion is not one the checker
         actually flagged (nothing to dispute)."""
@@ -1161,7 +1162,7 @@ class Engine:
             raise ValueError(f"{criterion!r} is already disputed on {node_id} — open: "
                              f"{', '.join(sorted(flagged - set(rec['disputes']))) or '(none)'}")
         rec.setdefault("disputes", {})[criterion] = {
-            "why": why, "by": str(agent),
+            "why": why, "by": str(agent), **finding_about(rec, criterion),
             "ts": datetime.now().isoformat(sep=" ", timespec="seconds")}
         self._storage.store_critique(node_id, json.dumps(rec))
         return {"task_id": str(node_id), "disputed": criterion,
@@ -3378,8 +3379,11 @@ class Engine:
         if after and ((self.session_fit(task_id) or {}).get("after") or {}).get("producers") != after.get("producers") and (
                 why := _deferral_refused(self._graph, task_id, after)):
             raise ValueError(why)
-        self._storage.store_setting(f"session_fit:{task_id}", json.dumps(
+        self._storage.store_setting(f"{SESSION_FIT}{task_id}", json.dumps(
             {"volume": volume, "fits": False if after else fits} | ({"after": after} if after else {})))
+        # …and its deferral is a part of its parent's plan, read by the parent's review (`review_read`)
+        if (t := self._graph.get_task(task_id)) is not None:
+            retire_if_moved(self._graph, t.parent_id, unstamped=False)
 
     def split_waits_on(self, task_id: TaskId, *, standing: bool = False) -> list[str]:
         """The parts this node's deferred split waits on whose results do not yet stand (`validation.split_waits_on`);
