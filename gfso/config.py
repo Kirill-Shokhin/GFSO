@@ -927,6 +927,10 @@ def sufficiency_at_authoring() -> bool:
 # says "nothing yet", and because every transport has a ceiling of its own that would cut it less politely.
 WAIT_MAX_SECONDS = 600.0
 WAIT_POLL_SECONDS = 2.0
+#: A door's call to a verb that runs a model (`tools_llm._off_the_call`) answers within this: what the verb answers by
+#: then is its answer — a refusal, a duplicate, a short run —, past it the call says the run goes on. A validator held its
+#: caller's console for minutes, until the client moved the call to the background (the author, 2026-11-24).
+ANSWER_WITHIN_SECONDS = 5.0
 
 
 def select_project(name: str) -> None:

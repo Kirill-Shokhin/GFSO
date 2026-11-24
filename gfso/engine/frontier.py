@@ -581,9 +581,15 @@ class NodeSteps:
         if not self.engine.persons_seam(t.id) or party_kind(self.engine.graph, str(t.assignee),
                                                             self.engine.graph.roster or {}) == "machine":
             return ""
+        # …and the check that landed last, named: a wait woken by it read the same step for a PASS and a FAIL
+        rec = self.engine.current_exec_verdict(t.id) or {}
+        tree, verdict, failed = str(rec.get("tree") or ""), rec.get("verdict") or "undecided (⊥)", \
+            ", ".join(map(str, rec.get("failed_criteria") or ()))
+        landed = (f" The last check, of tree {tree[:12]}, is {verdict}" + (f" on {failed}" if failed else "")
+                  + f" (`get_verdict('{t.id}')`)." if tree else "")
         return (f" Its DELIVER waits for the validator's check of the tree you hand in: commit the work, have it "
                 f"checked — `validate_result('{t.id}')` judges your committed tree — and DELIVER that tree once its "
-                f"check passes; a tree a FAIL named is not handed in again.")
+                f"check passes; a tree a FAIL named is not handed in again." + landed)
 
     def _bottom_attempts(self, task) -> int:
         """How many instrument reports on THIS delivery were refused as ⊥, or 0.
@@ -1471,6 +1477,15 @@ class Frontier:
             # generation or waited four minutes not knowing whether silence meant work or
             # nobody (measured 2026-08-21). It is not an actionable step while the instrument
             # holds it; the frontier says so and moves on.
+            return True
+        if self.engine.judges_before_delivery(t.id):
+            # …and a check of the holder's committed tree before its delivery: its DELIVER is refused while it runs, so
+            # the step is no move, and the server's wait waits on the verdict rather than answering this step again
+            held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee, kind="validator",
+                             waits_on=("the check of its committed tree before its delivery",),
+                             why="a validation of the tree its holder will hand in is running",
+                             opens_with=f"nothing: its verdict arrives by itself, `get_verdict('{t.id}')` reads "
+                                        f"it").as_dict())
             return True
         return False
 

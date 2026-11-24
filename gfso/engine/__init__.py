@@ -152,6 +152,10 @@ def _via_said() -> str:
     return f" via {v}" if (v := caller_via()) else ""
 
 
+class CheckRunning(RuntimeError):
+    """A check of a node's committed tree before its delivery is running already (`Engine.judging_before_delivery`)."""
+
+
 class Engine:
     """GFSO Engine — single entry point for building systems on the protocol.
 
@@ -213,6 +217,7 @@ class Engine:
         self._audit = AuditLog(storage)   # persists + hydrates when the storage carries audit methods
         #: {node: (tree, commit, build)} a check before its delivery is judging now (`judging_before_delivery`)
         self._judging: dict = {}
+        self._judging_lock = threading.Lock()
         self._graph.judging = self._judging   # …and no DELIVER of that node lands meanwhile (`unchecked_at_his_seam`)
         self._graph.audit = self._audit   # R′'s finality reads consumption off the log (`Graph.is_consumed`)
         self._started = False
@@ -4049,12 +4054,18 @@ class Engine:
     def judging_before_delivery(self, task_id, tree: str, commit: str):
         """A check of `task_id`'s committed tree before its DELIVER: the validation judges that commit as delivered
         (`delivered`), and its record names the tree (`record_exec_verdict`) — no state moves. At a seam the person
-        issues, its DELIVER waits for that check to pass (`validation.unchecked_at_his_seam`)."""
-        self._judging[str(task_id)] = (tree, commit, None)
+        issues, its DELIVER waits for that check to pass (`validation.unchecked_at_his_seam`). A claim: taken at once,
+        `CheckRunning` where another holds it, and let go by its taker alone — two checks started together each set and
+        cleared it, the second's end took the first's tree from under its run."""
+        with self._judging_lock:
+            if str(task_id) in self._judging:
+                raise CheckRunning(str(task_id))
+            self._judging[str(task_id)] = (tree, commit, None)
         try:
             yield
         finally:
-            self._judging.pop(str(task_id), None)
+            with self._judging_lock:
+                self._judging.pop(str(task_id), None)
 
     def accepted_artifact(self, task_id: TaskId):
         """The tree of `accepted_delivery`."""
@@ -4167,6 +4178,11 @@ class Engine:
         empty frontier read as a dead graph."""
         out = []
         for t in self.all_tasks():
+            if self.judges_before_delivery(t.id):
+                out.append({"task_id": str(t.id), "state": t.state.name,
+                            "why": "has its committed tree checked before its delivery — a validation is running",
+                            "opens_with": "nothing: its verdict arrives by itself"})
+                continue
             if self.claims.review_in_flight(t.id):
                 out.append({"task_id": str(t.id), "state": t.state.name,
                             "why": "has its plan being checked — a Level-2 review of this version "

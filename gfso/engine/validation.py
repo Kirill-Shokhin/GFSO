@@ -1528,7 +1528,7 @@ def unchecked_at_his_seam(graph: Graph, task, artifact, audit=None) -> Optional[
         return None
     if str(task.id) in graph.judging:
         return (f"cannot DELIVER {task.id}: a check of its committed tree before the delivery is running now — wait for "
-                f"its verdict (the `validate_result` call returns it), then DELIVER the tree it passed")
+                f"its verdict (`get_verdict` reads it once it lands; `gfso wait` waits on it), then DELIVER the tree it passed")
     if not artifact:
         return None
     rec = standing_check(graph, audit, task, artifact)

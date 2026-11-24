@@ -144,7 +144,9 @@ export async function aiReview({id}) {
     const r = post('/api/run/review_decomposition', {task_id: id});
     if (!(await act(r.then(x => x.clone()), {what: 'Review refused', ok: null}))) try {
         const d = await (await r).json();
-        if (!d.gate_passed) notice('Gate FAILED — fix L0/L1 first:\n' + (d.l0l1_failures || []).join('\n'), 'bad');
+        // …a check past a few seconds runs on in the server (`tools_llm._off_the_call`): its verdict lands on the panel
+        if (d.running) notice('The L2 check runs on in the server; its verdict lands in the L2-review section of the panel.');
+        else if (!d.gate_passed) notice('Gate FAILED — fix L0/L1 first:\n' + (d.l0l1_failures || []).join('\n'), 'bad');
         else if ((d.criteria_verdicts || []).length) {
             const lines = [...d.criteria_verdicts.map(v => `${mark(v.verdict)} ${v.criterion} — ${v.why}`),
                            ...(d.conflicts || []).map(c => `⚡ conflict [${(c.between || []).join(', ')}]: ${c.why}`)];

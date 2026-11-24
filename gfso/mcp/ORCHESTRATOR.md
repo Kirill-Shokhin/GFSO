@@ -171,7 +171,8 @@ stops with that cause.
    verdict PASS — a FAIL verdict blocks it, a rework or a reopen stales it (verifier ≠ executor).
    So after such a DELIVER either (a) a registered `llm-validator` auto-validates it (register one
    once — recommended), signing the verdict itself only where the system holds the issuer's role
-   (`auto`, a registered issuer), or (b) you call `validate_result(task_id, workdir=…)`; where the
+   (`auto`, a registered issuer), or (b) you call `validate_result(task_id, workdir=…)`, which answers at once while the validator
+   runs in the server, its verdict read by `get_verdict(task_id)` once it lands; where the
    verdict is yours, relay it: `PASS`, or
    `FAIL(failed_criteria=<copied from the report>)` → the node returns as a `rework` step — fix
    exactly those criteria and re-deliver (max_iterations bounds the cycle). A `verdict: null`

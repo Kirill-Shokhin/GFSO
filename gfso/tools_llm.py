@@ -23,7 +23,7 @@ import threading
 import time
 import contextvars
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from pathlib import Path
 from datetime import datetime
 from dataclasses import asdict
@@ -58,7 +58,7 @@ from gfso.core.graph.model import (MAX_ITERATIONS_CEILING, bounds_refusal, proje
                                    project_state_bound, witnessed_count)
 from gfso.engine.loop import state_bound_left
 from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut, what_stopped
-from gfso.engine import PERSONS_WORDS, Engine
+from gfso.engine import PERSONS_WORDS, CheckRunning, Engine
 from gfso import signin, tools as _tools
 from gfso.serverctl import open_the_page
 from gfso.tools import _agent_id
@@ -67,7 +67,8 @@ from gfso.config import WRITTEN_IN_THE_CALL as _config_written_in_the_call
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso import config as _config_module
 from gfso.config import (DEFAULT_EXECUTION, DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, executions,
-                         validation_batch, validate_internal, state_bound, WAIT_MAX_SECONDS, WAIT_POLL_SECONDS)
+                         validation_batch, validate_internal, state_bound, WAIT_MAX_SECONDS, WAIT_POLL_SECONDS,
+                         ANSWER_WITHIN_SECONDS)
 from gfso.packets import (BUILT, UNCOPIED, TECH_REPORT, _last_deliver_result, _scope_validator_packet, _validator_packet, file_tech_reports,
                           owed_probes, snapshot_note)
 from gfso.llm import session_calls
@@ -173,7 +174,8 @@ def review_decomposition(engine: Engine, task_id: str, model: Optional[str] = No
     the formal CHECK-8 can't see. ADVISORY: never auto-fixes — fix via the FSM verbs or consciously
     declare ACCEPTED_RISKS. The hole-hunt («what's missing from the space») is NOT this verb — that is the
     DECOMPOSER's question: run auto_decompose (refine). Use this on externally-authored or hand-edited
-    graphs; the UI's «AI review» button is this verb."""
+    graphs; the UI's «AI review» button is this verb. Answers at once: a check running past a few seconds goes on in
+    the server, its verdict read by `get_review(task_id)` once it lands."""
     _cb = emit_cb(engine, "review")
     # ONE CHECK PER VERSION OF THE PLAN. The verb spends a model run, and nothing stopped a second
     # caller (or the frontier's own directive) from starting another over the same unchanged plan —
@@ -887,8 +889,9 @@ def _before_its_delivery(engine: Engine, task_id: str, workdir, validator) -> Op
     holder's place a repository's top with a commit —, the refusal naming what is missing, or None: no such check here,
     the validation as it always was."""
     t = engine.graph.get_task(TaskId(task_id))
-    if (t is None or t.state not in (State.EXECUTING, State.REWORKING) or not engine.persons_seam(t.id)
-            or engine.judges_before_delivery(t.id)):
+    # …a check already running is not skipped here: the claim answers it (`CheckRunning`) — skipped, a second call in
+    # the same instant fell to the plain path on a node at work and could leave no verdict (critic over d7f8dc5)
+    if t is None or t.state not in (State.EXECUTING, State.REWORKING) or not engine.persons_seam(t.id):
         return None
     place = (workdir or _delegation().validator_workdir(engine, _delegation().default_agents(), t.id)
              or _registered_workdir(engine, task_id, validator))
@@ -911,8 +914,11 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
                   _llm=None, _progress=None, _spawn=None) -> dict:
     """Validate EXECUTION (≠ `review_decomposition`, which checks the decomposition PLAN): spawn ONE independent
     read-only validator agent (Read/Bash/Glob/Grep — it RUNS tests; executed evidence outranks assessment)
-    against the node's criteria + the executor's DELIVER report, returning per-criterion verdicts and
-    `failed_criteria`. Call it while the node is VALIDATING, after every delivery. This tool is the
+    against the node's criteria + the executor's DELIVER report, recording per-criterion verdicts and
+    `failed_criteria`. Call it while the node is VALIDATING, after every delivery. Answers at once: a refusal or a
+    run already in flight as itself, else `{running, checks: {tree, commit}}` while the validator runs on in the
+    server (minutes) — its verdict lands on the record, `get_verdict(task_id)` reads it, the node is in flight on
+    `next_steps` meanwhile, and a second call starts no other; the one wait on it is the server's (`gfso wait`). This tool is the
     EVIDENCE INSTRUMENT — it never signals ITSELF: you (the issuer) read the report and send PASS or
     FAIL(failed_criteria=...) (verifier = issuer, §10.3; the validator is a fresh context, never the
     work's executor). One case looks otherwise and is not: when a `llm-validator` ROLE is registered
@@ -924,18 +930,38 @@ def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = N
     read the old sentence and waited to be asked for a PASS that was never coming.) `deliverable` defaults to the node's last DELIVER result from the audit log —
     pass it explicitly if the server restarted since delivery. `workdir` defaults to the registered
     workdir of the node's Del (or of `validator`) — pass it only when the work is somewhere the roster does not say. `verdict: null` = the validator's report
-    did not parse; NEVER read that as pass — the raw report_text is attached for your own assessment.
+    did not parse; NEVER read that as pass — the raw report_text is attached for your own assessment
+    (`get_verdict` shows what a refused report did manage to check).
 
     At a seam the person issued, called by its holder while the node is at work (EXECUTING, REWORKING), it checks the
     holder's committed tree before the delivery: the same validator over that commit, recorded as a check of that tree,
     no state moved. Its DELIVER of that tree is admitted once that check passes (`validation.unchecked_at_his_seam`)."""
+    if engine.judges_before_delivery(task_id):
+        return _a_check_running(engine, task_id)
     if (before := _before_its_delivery(engine, task_id, workdir, validator)) is not None:
         if before.get("error"):
             return before
-        with engine.judging_before_delivery(task_id, before["tree"], before["commit"]):
-            out = validate_result(engine, task_id, deliverable or before["deliverable"], model, before["workdir"],
-                                  validator, _llm, _progress, _spawn)
+        with ExitStack() as held:
+            try:      # …the claim on the check, taken at once: a second started with it starts nothing
+                held.enter_context(engine.judging_before_delivery(task_id, before["tree"], before["commit"]))
+            except CheckRunning:
+                return _a_check_running(engine, task_id)
+            out = _validated(engine, task_id, deliverable or before["deliverable"], model, before["workdir"],
+                             validator, _llm, _progress, _spawn)
         return {**out, "checked_before_delivery": {"tree": before["tree"], "commit": before["commit"]}}
+    return _validated(engine, task_id, deliverable, model, workdir, validator, _llm, _progress, _spawn)
+
+
+def _a_check_running(engine: Engine, task_id: str) -> dict:
+    """The answer to a check asked while one of the node's committed tree before its delivery runs."""
+    tree, commit = (engine.delivered(TaskId(task_id)) or (None, None))[:2]
+    return {"task_id": task_id, "inflight": True, "verdict": None, "checks": {"tree": tree, "commit": commit},
+            "note": f"a check of {task_id}'s committed tree before its delivery is running now: this call started "
+                    f"nothing, and its verdict lands by itself — `get_verdict('{task_id}')` reads it"}
+
+
+def _validated(engine: Engine, task_id: str, deliverable, model, workdir, validator, _llm, _progress, _spawn) -> dict:
+    """The validator run `validate_result` makes, once whether it checks a tree before its delivery is decided."""
     _stop, _ctx = _ready_to_validate(engine, task_id, deliverable, workdir, validator, model,
                                  _llm, _progress)
     if _stop is not None:
@@ -1739,6 +1765,49 @@ def _childrens_executor(engine: Engine, root_id: str, assignee: str, executor: O
     return executor or str(kid)
 
 
+#: {project: [node]} — the nodes an authoring is writing now (`_alone_on_its_subtree`)
+_AUTHORING: dict = {}
+_AUTHORING_LOCK = threading.Lock()
+
+
+def _lineage(engine: Engine, node: str) -> set:
+    """`node` and every node above it."""
+    out, t = {str(node)}, engine.graph.get_task(TaskId(node))
+    while t is not None and t.parent_id:
+        out.add(str(t.parent_id))
+        t = engine.graph.get_task(t.parent_id)
+    return out
+
+
+def _alone_on_its_subtree(fn):
+    """ONE AUTHORING PER SUBTREE, at the authoring's own entry, so every path to it is held: a request, a refine, a plan
+    file's go, the page, the system's own split. While one writes a node, another on it, above it or below it is refused
+    — two writers on one split killed the authoring (gb-coreutils-tnq7tv040, 2026-10-30)."""
+    sig = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def _call(*a, **kw):
+        at = sig.bind_partial(*a, **kw).arguments
+        engine, node = at["engine"], str(at.get("root_id") or ROOT_ID)
+        mine = _lineage(engine, node)
+        with _AUTHORING_LOCK:
+            held = _AUTHORING.setdefault(engine.project_name or DEFAULT_PROJECT, [])
+            if (other := next((n for n in held if n in mine or node in _lineage(engine, n)), None)) is not None:
+                where = "that node" if other == node else "in its subtree" if other in mine else "above it"
+                return {"refused": True, "task_id": node,
+                        "error": f"an authoring is writing {other} now, and {node} is {where}: one split has one "
+                                 f"writer — this call started nothing; `next_steps` and `get_graph` read what it "
+                                 f"builds, and an authoring here may be asked once it has ended"}
+            held.append(node)
+        try:
+            return fn(*a, **kw)
+        finally:
+            with _AUTHORING_LOCK:
+                held.remove(node)
+    return _call
+
+
+@_alone_on_its_subtree
 def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                    assignee: Optional[str] = None, executor: Optional[str] = None,
                    depth: int = 1, model: Optional[str] = None, fast: bool = False,
@@ -1780,7 +1849,8 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
 
     `plan` is THE GO on a plan file (`plan` / `refine_plan`, a path or the text): the project is built from the goal
     and the plan the file holds, exactly or refused; from then on contact may repair it, for the system wrote it. Under
-    `solo` and `semi` the go is the person's: `user_said`, their own words agreeing to the plan they were shown."""
+    `solo` and `semi` the go is the person's: `user_said`, their own words agreeing to the plan they were shown.
+    One authoring per subtree: while one writes a node, one on it, above it or below it is refused."""
     if (yours := _a_new_roots_go(engine, root_id, request, plan, spec, model, user_said)) is not None:
         return yours
     if (unjudged := _no_place_at_the_go(engine)) is not None:
@@ -2915,6 +2985,62 @@ def _tracked(name, fn):
         with _inflight(name, at.get("engine"), at.get("task_id") or at.get("root_id", ROOT_ID)):
             return fn(*a, **kw)
     return wrapper
+
+
+def _off_the_call(name: str, fn, lands):
+    """`fn`, a verb that runs a model, at a door: run in a thread of the server's, as a plan is written (`_once`). What it
+    answers within ANSWER_WITHIN_SECONDS is the call's answer — a refusal, a run already in flight, a short run —; past
+    that the call answers that it runs, and where its result lands (`lands(engine, node)`), and the run goes on, in flight
+    under its node (`_inflight`), an error it ends with unread said on the feed. A call held for minutes held its client's
+    turn, and the person with it: the one wait on a run is the server's (`POST /api/wait`). On the CLI's direct path it
+    runs in the call: no thread would outlive its process."""
+    sig, answered = inspect.signature(fn), _answering(fn)
+
+    @functools.wraps(fn)
+    def _call(*a, **kw):
+        if _config_written_in_the_call.get():
+            return fn(*a, **kw)
+        at = sig.bind_partial(*a, **kw).arguments
+        engine, node = at.get("engine"), str(at.get("task_id") or ROOT_ID)
+        gone, out = threading.Event(), Future()
+        if (shown := kw.get("_progress")) is not None:      # …the door's progress ends with its call
+            kw["_progress"] = lambda msg: None if gone.is_set() else shown(msg)
+
+        def run():
+            got = answered(*a, **kw)
+            out.set_result(got)
+            if gone.is_set() and isinstance(got, dict) and got.get("error") and engine is not None:
+                engine.emit_info(name, f"{node}: {name} ended with no result: {str(got['error'])[:400]}")
+        threading.Thread(target=contextvars.copy_context().run, args=(run,), daemon=True, name=f"gfso-{name}").start()
+        try:
+            return out.result(timeout=ANSWER_WITHIN_SECONDS)
+        except TimeoutError:
+            gone.set()
+        said = lands(engine, node)
+        return {"task_id": node, "running": name, **said,
+                "waited": f"answered at {ANSWER_WITHIN_SECONDS:.0f} s, the run going on in the server",
+                "say": f"`{name}` runs on in the server, past this call: {said['lands']}. "
+                       + how_it_is_waited(engine.project_name if engine is not None else None, "it is yours to read")}
+    return _call
+
+
+def _validation_runs(engine, node) -> dict:
+    """What a validation running past its call checks, and where its verdict lands."""
+    tree, commit = ((engine.delivered(TaskId(node)) if engine is not None else None) or (None, None))[:2]
+    return {"checks": {"tree": tree, "commit": commit},
+            "lands": f"its verdict lands on the record, `get_verdict('{node}')` reads it; while it runs `next_steps` "
+                     f"names the node waiting on it, and validate_result again starts no other"}
+
+
+#: The verbs that run a model inside them, each answering at a door at once (`_off_the_call`), and where what they run
+#: lands. In process — the dispatcher's own validation, an issuer's review (`SYSTEM_TOOLS`) — each answers its result.
+#: `auto_decompose` still runs in its call: an authoring past its call must be shown where the wait and the frontier
+#: read it, and its subtree held while it writes, before it may leave the call.
+OFF_THE_CALL = {
+    "validate_result": _validation_runs,
+    "review_decomposition": lambda engine, node: {
+        "lands": f"its verdict lands on the record, `get_review('{node}')` reads it, and the plan's gate opens on it"},
+}
 
 
 def _answering(fn):
@@ -4092,7 +4218,9 @@ def _signed(name: str, fn):
 
 # The COMPLETE transport registry the doors bind — every verb wrapped so none of them can raise
 # into one (`_answering`, above), each signed by its call's credential (`_signed`).
-TOOLS = {name: _answering(_signed(name, _mode_lock(name, fn))) for name, fn in _RAW_TOOLS.items()}
+TOOLS = {name: _answering(_signed(name, _mode_lock(name, _off_the_call(name, fn, OFF_THE_CALL[name])
+                                                   if name in OFF_THE_CALL else fn)))
+         for name, fn in _RAW_TOOLS.items()}
 # The same verbs for the system's own in-process moves: answering, never locked — the mode hands the
 # work TO the system, so a lock here refused its own validation of every AUTO delivery (measured live).
 SYSTEM_TOOLS = {name: _answering(fn) for name, fn in _RAW_TOOLS.items()}
