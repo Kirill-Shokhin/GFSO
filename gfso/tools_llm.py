@@ -3530,6 +3530,13 @@ def wait_for_the_customer(engine: Engine, root_id: Optional[str] = None, actor: 
         if done["written"] or done["failed"]:          # …what the wait was about first
             why = needs_its_customer({"plans": done})
         if why or engine.now() >= deadline:
+            # …a wait woken by an end says the plans as they stand after the ends were read: a writing that ended between
+            # the two reads woke it and was still listed writing in the step read before it. Not at the deadline: a plan
+            # ending there would be said, marked told and never wake the next wait
+            if why:
+                out, plans = {**out, "plans": (p := plans_of(engine.project_name).get("plans", {}))}, p
+                if not plans:
+                    out.pop("plans")
             said_a_plan(engine.project_name, out)
             # …and what each writing it wakes on came to, whole, as its handle reads it
             ended = sorted({*done["written"], *done["failed"],

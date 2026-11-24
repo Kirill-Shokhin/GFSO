@@ -439,6 +439,60 @@ def test_two_authorings_of_one_project_are_each_listed_and_each_wakes_the_wait(m
         e.stop()
 
 
+def test_a_writing_ending_between_the_waits_two_reads_is_not_said_writing(monkeypatch):
+    """The wait reads the steps, then the writings' ends: one ending between the two wakes it, and its reply must not
+    list it writing beside its answer (1 in 7 runs of the test above, before)."""
+    gates = _dying_at(monkeypatch, "root.a", "root.b")
+    e = _split(("root.a", "root.b"))
+    ends, first = TL._ends, []
+
+    def ended_meanwhile(project, handles):
+        if not first:
+            first.append(1)
+            gates["root.a"].set()
+            deadline = time.time() + 20
+            while TL._kept.record(project, ha).get("state") != "failed" and time.time() < deadline:
+                time.sleep(0.02)
+        return ends(project, handles)
+    try:
+        ha, hb = (_asked(e, request=n, root_id=n)["writing"] for n in ("root.a", "root.b"))
+        monkeypatch.setattr(TL, "_ends", ended_meanwhile)
+        woke = TL.wait_for_the_customer(e, seconds=20)
+        assert ha in woke["answers"] and woke["plans"].get("writing") == [hb], woke
+    finally:
+        for g in gates.values():
+            g.set()
+        e.stop()
+
+
+def test_a_writing_ending_as_a_wait_runs_out_still_wakes_the_next_wait(monkeypatch):
+    """A writing ending after the wait read the ends, at its deadline: that reply wakes nobody, so it must not mark the
+    writing told — the next wait wakes on it (critic over f3b81dd: said and marked at the deadline, it woke none)."""
+    gates = _dying_at(monkeypatch, "root.a")
+    e = _split(("root.a",))
+    ends = TL._ends
+
+    def ending_after_the_read(project, handles):
+        got = ends(project, handles)
+        if not gates["root.a"].is_set():
+            gates["root.a"].set()
+            deadline = time.time() + 20
+            while TL._kept.record(project, ha).get("state") != "failed" and time.time() < deadline:
+                time.sleep(0.02)
+        return got
+    try:
+        ha = _asked(e, request="root.a", root_id="root.a")["writing"]
+        monkeypatch.setattr(TL, "_ends", ending_after_the_read)
+        first = TL.wait_for_the_customer(e, seconds=0)
+        assert not first.get("needs_you"), first
+        monkeypatch.setattr(TL, "_ends", ends)
+        again = TL.wait_for_the_customer(e, seconds=5)
+        assert ha in again.get("needs_you", ""), again
+    finally:
+        gates["root.a"].set()
+        e.stop()
+
+
 def test_a_short_authoring_beside_a_plan_being_written_leaves_the_wait_on_the_plan(monkeypatch):
     """A `plan` writes; an authoring of the same project refused in its call meanwhile must not take the plan off the
     record: the wait still wakes on the plan's end."""
