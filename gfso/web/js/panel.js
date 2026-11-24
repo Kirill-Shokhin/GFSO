@@ -6,7 +6,7 @@
 import {$, el, esc, coded, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task, FOCUS, TOP, topOf} from './api.js';
-import {S, hasKids, whereDrawn, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, atTheGo, personHolds} from './state.js';
+import {S, hasKids, whereDrawn, inView, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, atTheGo} from './state.js';
 import {bucketOf, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label, enteredWord} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
@@ -57,7 +57,9 @@ function head({d, rounds}) {
         // …and a node chosen where the graph does not draw it (In work, a report): its part one press away, never moved to unasked
         // …folded, or gathered into «N closed»: gone to the view it is drawn in, whatever view is open (`whereDrawn`) — its
         // parent's was the target, where it stood in a group, and pressed again it stayed (critic)
-        + (isHidden(d.id) || whereDrawn(d.id) !== topOf(whereDrawn(d.id)) ? `<button class="pn-down" data-action="view" data-id="${esc(whereDrawn(d.id))}">Show it on the graph →</button>` : '')
+        // …and only where it is NOT drawn here: a part inside an open group's view had it, going nowhere (the author, 11-24:
+        // «для детей подпись show in graph ничего не делает»)
+        + (notDrawnHere(d.id) ? `<button class="pn-down" data-action="view" data-id="${esc(whereDrawn(d.id))}">Show it on the graph →</button>` : '')
         + `<div class="pn-grid">`
         // …the goal as the person gave it, on the root: a tap on the header's goal opens this panel, never its hover (critic)
         + prop('As given', !d.parent_id && asGiven(d) ? `<span class="pn-given">${esc(asGiven(d))}</span>` : '')
@@ -67,7 +69,7 @@ function head({d, rounds}) {
         + prop('Replaces', (d.replaces || []).map(x => esc(nameOf(taskOf(x)) || x)).join(', '))
         + prop('Moved to', (d.replaced_by || []).map(x => esc(nameOf(taskOf(x)) || x)).join(', '))
         + prop('Del', `<code>${esc(d.assignee ? agentName(d.assignee) : '—')}</code>`)
-        + prop('Checked by', checkedBy(d))
+        + prop(...checkRow(d))
         + prop('Round', n ? `<b class="pn-fig">${n}</b>${inWork ? ' in work' : ''}` : '')
         + prop('Result', !d.parent_id && delivered(d) && S.graph.landed ? `<code${H.landed(S.graph.landed)}>${esc(S.graph.landed.branch || S.graph.landed.path)}</code>` : '')
         // a deadline only where it still binds (audit D18)
@@ -79,7 +81,9 @@ function head({d, rounds}) {
         // WHO RAN IT: the model is the node's real executor, its validator another party (author, 2026-10-25)
         + `<div class="pn-by" id="pn-by">${signedBy(S.run, d.id)}</div></div>`
         + (d.state === 'ESCALATED' ? `<div class="pn-note check-skip"${PANEL.escalated}>issuer decides: raise the bound, change the criteria, or cancel</div>` : '')
-        + (note ? `<div class="pn-note ${bad ? 'check-fail' : 'check-skip'}"${bad ? PANEL.contested : ''}>`
+        // …the closing's note only where it contradicts: who checked is the Checker row («asserted by hand — X, not an
+        // instrument» repeated it, the author, 11-24: «это что значит»)
+        + (note && bad ? `<div class="pn-note ${bad ? 'check-fail' : 'check-skip'}"${bad ? PANEL.contested : ''}>`
                   + `${bad ? '⚠ ' : ''}${note}</div>` : '');
 }
 
@@ -244,18 +248,9 @@ const foot = (note, btns) => `<div class="pn-foot">${note}${btns ? `<div class="
 const signed = pairs => [...pairs.reduce((g, [n, b]) => g.set(n, [...(g.get(n) || []), b]), new Map())]
     .map(([n, bs]) => `<span class="act-as"${PANEL.signedAs(n)}>as <b>${esc(agentName(n))}</b></span>${bs.join('')}`).join('');
 
-// Who ran a node, in one line for its panel: by role, each model with its sessions on it.
-// A node whose own sessions are booked nowhere — run inside a scope's session booked to its top, or done by the
-// user's agent or a person, whose model the system is not told — is signed by who delivered it, and says so.
-const deliveredBy = (run, id) => { const by = (run?.rounds[id] || []).map(r => r.by).filter(Boolean).at(-1);
-    // …where the person's agent performs what the person holds (in_chat), their chat IS where it ran: «no session» read as a lack
-    const sc = nodeOf(id).scope, chat = sc ? (S.graph.scopes || {})[sc]?.perform === 'in_chat' : S.graph.mode?.perform === 'in_chat' && personHolds(taskOf(id));
-    return by && !run.work.byNode[id]?.exec ? [prop('Executed by', `<b>${esc(agentName(by))}</b> <span class="wk-none">${chat
-        ? 'in their own chat — its model is not reported here' : 'no session booked to this node — its model is not reported here'}</span>`)] : []; };
 // who ran it, one grid row per role: «Executed by · haiku 5.5 ×12»
 const ROLE_ORDER = ['plan', 'consent', 'exec', 'issuer', 'val'];   // executed, issued, validated — one order on every node
 const signedBy = (run, id) => [
-    ...deliveredBy(run, id),
     ...Object.entries(run?.work.byNode[id] || {}).sort(([a], [b]) => ROLE_ORDER.indexOf(a) - ROLE_ORDER.indexOf(b)).map(([kind, ms]) =>
         prop(KIND[kind]?.by.replace(/^./, c => c.toUpperCase()) + ' by',
              Object.entries(ms).map(([m, n]) => `<b${PANEL.model(m)}>${esc(modelName(m))}</b>${n > 1 ? `<sup>×${n}</sup>` : ''}`).join(', '))),
@@ -272,16 +267,27 @@ const dispute = ({d}) => { const w = WHY[d.state], c = w && [...(d.audit || [])]
 // author, 11-20: «решает кто будет валидировать; если сам то сам и ставит подпись»). The engine says who checks now
 // (`checker`, on the graph read only where it is the validator) and offers the choice only where one exists — a part the
 // person's chat holds below the root; a seam owes the validator, no box there (critic)
+// a node this view does not draw: outside it, folded into a part, or gathered into a «N closed» other than this view
+const notDrawnHere = id => { const w = whereDrawn(id);
+    return !inView(id) || isHidden(id) || (w !== topOf(w) && w !== FOCUS); };
 // …read off the node's own record (`checker`: validator · self · independent · an appointed name), on every node its issuer
 // gave out, as a row beside Del: it said nothing where the issuer checks or a name was appointed, and the graph read carries
 // it only for the validator (the author, 2026-11-24: «не вижу галочки … чтобы понимать какой валидатор прикреплен к ноде»)
 const checkerOf = d => d.checker || (S.graph.nodes || []).find(n => n.id === d.id)?.checker || 'self';
-// …before its check, while the node is open: closed, the panel says what checked it, and the setting beside that record
-// contradicted it on 59 of 221 closed parts (critic)
-const checkedBy = d => { if (!d.parent_id || terminal(d.state)) return '';
+// …a role, as Del is: the CHECKER — on an open node the one the issuer set, on a closed one the one its closing records
+// (the setting beside a closed node contradicted that record on 59 of 221, critic; the author, 11-24: «есть исполнитель
+// есть проверяющий. зачем тебе формы времени»)
+const whoName = who => owns(who) ? 'you' : agentName(who);
+function checkRow(d) {
+    if (!d.parent_id || d.state === 'ABANDONED') return ['', ''];
+    if (terminal(d.state)) { const cl = d.closure || {};
+        // …the executor checking its own work said so, by hand or not: «X, by hand» under «Del: X» hid it (critic, 190 of them)
+        return ['Checker', cl.validator ? esc(cl.provenance === 'instrument' ? PANEL.byValidator
+            : cl.validator === d.assignee ? PANEL.bySelf(whoName(cl.validator)) : PANEL.byHand(whoName(cl.validator))) : '']; }
     const who = checkerOf(d), issuer = taskOf(d.parent_id).assignee || '';
-    return esc(who === 'validator' ? PANEL.byValidator : who === 'independent' ? PANEL.byApart
-        : who === 'self' ? (owns(issuer) ? PANEL.byYou : PANEL.byIssuer(agentName(issuer))) : PANEL.byNamed(agentName(who))); };
+    return ['Checker', esc(who === 'validator' ? PANEL.byValidator : who === 'independent' ? PANEL.byApart
+        : who === 'self' && issuer === d.assignee ? PANEL.bySelf(whoName(issuer)) : whoName(who === 'self' ? issuer : who))];
+}
 // …and its issuer's choice of it where one exists, the box
 function checkSetting({d, acts}) {
     if (!d.parent_id || !owns(acts?.moves?.set_checker)) return '';
