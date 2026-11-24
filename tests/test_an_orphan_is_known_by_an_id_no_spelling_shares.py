@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import gfso.runtime as RT
+from gfso import signin
 from gfso.adapters import execution as E, resources as R
 from gfso.api.server import create_app
 from gfso.core.types import PROJECT_ID
@@ -47,6 +48,9 @@ def home(tmp_path, monkeypatch):
         made["containers"].append(_docker_out("create", "--mount", f"type=volume,src={v},dst=/v", IMAGE, "true").strip())
 
     c = TestClient(create_app(reg.engine(), registry=reg), base_url="http://127.0.0.1:8000")
+    # …signed in where its state now lies: the suite's session is held in the home it left, and a removal is a move —
+    # signed by no one it was refused 403 (CI live group, 2026-11-23)
+    c.cookies.set(signin.COOKIE, signin.redeem(signin.code()))
     yield reg, c, volume, mounting
     for eng in reg._engines.values():
         eng.stop()
