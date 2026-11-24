@@ -229,10 +229,21 @@ PERSON = "user"
 AGENT = "agent"
 #: the person's names, now and before 0.4.0: no role, console or token is born under either
 PERSONS_NAMES = frozenset({AGENT, PERSON})
+#: THE SYSTEM PARTY: a machine by what it is (`party_kind`), never by a mode — the issuer of a goal the person hands
+#: over whole, recorded at its root's creation (§10.4's autonomous level: the LLM the issuer, the person «oversight at
+#: the level above»), acting for him. Registered by this name, not on the roster: no role, console or token is born
+#: under it, and no person signs in as it
+SYSTEM = "system"
+#: the names a node is issued in the person's name under: his own, and the system party's acting for him
+FOR_THE_PERSON = PERSONS_NAMES | {SYSTEM}
 
 
 def reserved_refusal(name) -> str | None:
-    """Why `name` cannot be born as a role's, a console's or a token's name, or None: it is the person's."""
+    """Why `name` cannot be born as a role's, a console's or a token's name, or None: it is the person's, or the
+    system party's."""
+    if str(name) == SYSTEM:
+        return (f"{SYSTEM!r} is reserved: it names the system party, the issuer of a goal handed over whole — never a "
+                f"role, a console or a token. Choose a name of its own (`<project>-exec`, `engineering`).")
     if str(name) not in PERSONS_NAMES:
         return None
     return (f"{str(name)!r} is reserved: it names this installation's person (`{PERSON}`; `agent` before 0.4.0), "

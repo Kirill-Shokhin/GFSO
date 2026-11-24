@@ -51,7 +51,10 @@ def _build(path: Path, me: str, mode) -> None:
     T.signal(e, "kid", "DELIVER", "bob", result="built k")
     e.wait_idle()
     T.record_verdict(e, "kid", "FAIL", failed_criteria=["k"], reviewer=me, observed={"k": "ran check k: no output"})
-    if mode is not None:
+    if mode == Mode.AUTO:       # …as an earlier build stored a switch into AUTO over his held work
+        e._storage.store_setting("mode", json.dumps({"mode": "auto", "boundary": None, "by": me, "seq": 1,
+                                                     "log_at": len(e._audit)}))
+    elif mode is not None:
         e.set_mode(mode, None, AgentId(me))
     e.stop()
     storage.close()

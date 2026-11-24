@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover
     _lowlevel = None
 
 from gfso import updates
-from gfso.config import (CALLER, CLIENT, CLIENT_HEADER, CLIENT_KINDS, DEFAULT_PROJECT, LEASE_HEADER, PERSONS_NAMES,
+from gfso.config import (CALLER, CLIENT, CLIENT_HEADER, CLIENT_KINDS, DEFAULT_PROJECT, LEASE_HEADER, FOR_THE_PERSON,
                          STANDING, agent_id, caller_id, client_kind, how_it_is_waited, ONE_CALL, ROOT_ID, project_by_env)
 from gfso.core.types import Action
 from gfso.engine import Engine
@@ -546,7 +546,7 @@ def _issued_by_the_person(engine, name: str) -> bool:
     or a root self-assigned to it — made at a door, every caller of which is the person locally; the system's roles
     split, they make no root."""
     g = engine.graph
-    return any(str(t.assignee) == name and (str(i := g.issuer_of(t.id)) in PERSONS_NAMES
+    return any(str(t.assignee) == name and (str(i := g.issuer_of(t.id)) in FOR_THE_PERSON
                                             or (g.get_parent(t.id) is None and str(i) == name))
                for t in g.all_tasks())
 

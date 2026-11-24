@@ -27,13 +27,20 @@ def e():
     eng.stop()
 
 
-@pytest.mark.parametrize("mode, kind", [(None, "person"), (Mode.SOLO, "holder"), (Mode.SEMI, "holder"),
-                                        (Mode.AUTO, "machine")])
+@pytest.mark.parametrize("mode, kind", [(None, "person"), (Mode.SOLO, "holder"), (Mode.SEMI, "holder")])
 def test_the_standing_agent_holds_by_the_mode(e, mode, kind):
     if mode is not None:
         e.set_mode(mode, None, AgentId("user"))
     assert e.issuer_kind(TaskId("root")) == kind
     assert e.holder_signs(TaskId("root")) is (kind == "holder")
+
+
+def test_no_mode_re_types_the_person_a_machine(e):
+    """Under AUTO the system party is the machine (`SYSTEM`), never the person re-typed by the project's mode: his own
+    root, held by him, keeps him its issuer through the switch into AUTO — a holder, his moves at his own door."""
+    e.set_mode(Mode.AUTO, None, AgentId("user"))
+    assert str(e.graph.issuer_of(TaskId("root"))) == "user"
+    assert e.issuer_kind(TaskId("root")) == "holder" and e.mode_holder("root", "issuer") is None
 
 
 def test_a_role_under_the_users_own_id_does_not_make_it_a_machine(e):

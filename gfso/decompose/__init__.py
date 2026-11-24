@@ -30,7 +30,7 @@ from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.storage.memory import MemoryStorage
 from gfso.core.types import HOST, Criteria, PlaceUnavailable, Probe, Signal, Stage, TaskId
 from gfso.engine import Engine
-from gfso.core.graph.model import root_of
+from gfso.core.graph.model import root_of, signs_as
 from gfso.core.protocol.invariants import quoted_in
 from gfso.core.protocol.procedure import admission_defects, criterionless
 from gfso.adapters.llm.stats import calls_of, fan, refused_by_limit
@@ -1097,7 +1097,7 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
     existing = engine.graph.get_task(TaskId(root_id))
     note = None
     _refuse_what_cannot_be_built(engine, root_id, existing, request, spec)
-    held = existing is not None and author is not None and str(author) != str(engine.graph.issuer_of(existing.id))
+    held = existing is not None and author is not None and not signs_as(engine.graph.issuer_of(existing.id), author)
     given = spec
     contract = _the_request(existing, request, held)    # the contract before this authoring: what its criteria are judged by
     agree = _Agreement(llm, engine, root_id, contract, given is None, held, root=system_root)

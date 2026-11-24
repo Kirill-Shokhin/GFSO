@@ -30,7 +30,7 @@ from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask
 from gfso.inflight import _inflight, being_rewritten, in_flight
 from gfso.adapters.verifiers import evaluate_unittest
-from gfso.core.graph.model import generation_of_task
+from gfso.core.graph.model import generation_of_task, signs_as
 from gfso.core.protocol.procedure import BOUND_SPENT, criterionless, probes_from as _checks_of
 from gfso.core.types import (HOST, TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
                              Verdict, Action, Mode, PlaceUnavailable,
@@ -1013,7 +1013,7 @@ class Dispatcher:
                 + ("; `validate_result` checks it first when asked" if self._engine.held_in_chat(task.id) else "")
                 + (f"; `set_checker('{s['task_id']}', 'validator')` on the person's words has the validator "
                    f"check every delivery" if self._engine.checker_choosable(task.id)
-                   and str(self._engine.graph.issuer_of(task.id)) == _config_agent_id() else "") + ".")
+                   and signs_as(self._engine.graph.issuer_of(task.id), _config_agent_id()) else "") + ".")
 
     def _say_it_waits_for_its_children(self, s: dict, task) -> None:
         """Say, once per open set, which children a delivered parent is still aggregating."""

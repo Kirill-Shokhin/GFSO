@@ -19,6 +19,7 @@ import pytest
 
 import gfso.tools as T
 import gfso.tools_llm as TL
+from gfso.config import SYSTEM
 from gfso import issuer as I
 from gfso.decompose.build import build_graph_live
 from gfso.delegate import ISSUER_VERBS
@@ -84,11 +85,12 @@ def test_with_no_mode_nothing_changes():
 
 
 def test_auto_hands_every_node_to_the_system_and_keeps_the_customer_as_the_roots_issuer():
+    """…the root's issuer is the system party acting for the customer (§10.4's autonomous level), never its executor."""
     e = _engine(Mode.AUTO)
     root, kid = _goal(e)
     assert str(root.assignee) == "exec-1"
     assert str(kid.assignee) == "exec-2", "a child under its own parent's executor would have no seam"
-    assert str(e.graph.issuer_of(TaskId("root"))) == "user", \
+    assert str(e.graph.issuer_of(TaskId("root"))) == SYSTEM, \
         "the root's executor would be its own issuer — answering its own disputes (§10.3)"
     assert "elsewhere" not in {str(a) for a in e.workforce.executor_pool()}, "another project's executor"
 
@@ -153,7 +155,7 @@ class _FakeLLM:
 def test_under_auto_the_system_answers_the_roots_questions_and_may_not_narrow_its_criteria():
     e = _engine(Mode.AUTO)
     root, _ = _goal(e)
-    assert I.system_mover(e, _Roster(), TaskId("root"), "escalation") == "user", \
+    assert I.system_mover(e, _Roster(), TaskId("root"), "escalation") == SYSTEM, \
         "under AUTO the system moves for the customer"
     spec = I.spec_with(root, [{"name": "g", "description": "G, loosened", "check": [
         {"behaviour": "b", "command": "test -d . && echo 0", "expect": "0"}]}])

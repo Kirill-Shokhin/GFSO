@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Callable, Optional
 
 from gfso.core.types import (
     Signal, State, SignalData, SignalOutcome, Refusal, VOLUME,
@@ -22,7 +22,7 @@ from gfso.core.types import (
 )
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
-                                   start_waits,
+                                   start_waits, signs_as, persons_over, issuer_moves_key,
                                    non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, checker_choices_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, keep_the_beat, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
@@ -41,7 +41,7 @@ from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_n
                                           claim_digest)
 
 from gfso.config import (
-                         PIPELINE_PAGE, USAGE_PAGE, LIMIT_RETRY_S, PERSONS_NAMES, CALLER,
+                         PIPELINE_PAGE, USAGE_PAGE, LIMIT_RETRY_S, PERSONS_NAMES, SYSTEM, CALLER,
                          MODEL_DEFAULT, VERDICT_FIELD_CHARS, agent_id as _config_agent_id, caller_via,
                          state_timeout as _config_state_timeout)
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
@@ -110,6 +110,9 @@ PERSONS_ACTS = ("request", "go", "revise", "verdict", "answer")
 LIFTS = ("until", "place", "account")
 #: How long what the place probe said stands for R′'s gate (`place_down`): each asking is a container of its own.
 PLACE_SEEN_S = 60
+#: set once the roots an earlier build created under AUTO read their issuer as the system party
+#: (`Engine._the_system_party_where_auto_created`)
+SYSTEM_PARTY_READ = "system_party_read"
 
 
 # live token ticks ("<stage>: N tokens · Ss") update in place — WS-only, never persisted
@@ -253,6 +256,7 @@ class Engine:
                                                                                "the monitor's next tick")),
             name="gfso-timeout-monitor")
 
+        self._the_system_party_where_auto_created()
         self._recover_orphans()
 
     def _recover_orphans(self) -> None:
@@ -553,10 +557,52 @@ class Engine:
     def record_root_issuer(self, task_id: TaskId, issuer: AgentId) -> None:
         """Record who issues a root about to be created — the goal's issuer, when the root's Del is
         someone else (`Graph.issuer_of`). Only before the root exists: a goal's issuer is fixed by its
-        creation, and changing it afterwards would re-attribute every move already on the log."""
+        creation, and changing it afterwards would re-attribute every move already on the log. A goal the person
+        hands over under AUTO is issued by the system party acting for him (§10.4: autonomous, the LLM the issuer, he
+        «oversight at the level above»), and so recorded."""
         if self._graph.get_task(task_id) is not None:
             raise ValueError(f"'{task_id}' exists — its issuer was fixed when it was created")
+        if str(issuer) in PERSONS_NAMES and self.mode_kind() == Mode.AUTO:
+            issuer = AgentId(SYSTEM)
         self._storage.store_setting(root_issuer_key(task_id), str(issuer))
+
+    def _move_root_issuer(self, root: Task, to: AgentId, author, why: str) -> None:
+        """Hand the issuer role of the root `root` to `to`, logged where it moved (`issuer_moves_key`): the moves
+        already on the log keep their signers, the ones from here on are `to`'s (§10.1: a change of who holds the role
+        moves it at that change; §10.4: switching is who occupies the role)."""
+        was = str(self._graph.issuer_of(root.id))
+        log = json.loads(self._storage.get_setting(issuer_moves_key(root.id)) or "[]")
+        self._storage.store_setting(issuer_moves_key(root.id), json.dumps([*log, {
+            "log_at": len(self._audit), "from": was, "to": str(to), "by": str(author), "why": why}]))
+        self._storage.store_setting(root_issuer_key(root.id), str(to))
+        self.emit_info("mode", f"{root.id}'s issuer is {to}, was {was}: {why}")
+
+    def issuer_at(self, task_id: TaskId, at: int) -> Optional[AgentId]:
+        """Who held the node's issuer role at log position `at`: a root's as its moves had it (`issuer_moves_key`) —
+        the `from` of the first move logged after `at` —, else its issuer now."""
+        if self._graph.get_parent(task_id) is None:
+            for m in json.loads(self._storage.get_setting(issuer_moves_key(task_id)) or "[]"):
+                if m["log_at"] > at:
+                    return AgentId(m["from"])
+        return self._graph.issuer_of(task_id)
+
+    def _the_system_party_where_auto_created(self) -> None:
+        """THE LEGACY READING, once, under the AUTO record standing now: a root an earlier build recorded under the
+        person's name, read as a machine through the mode — every one of them gets the move a switch into AUTO makes now
+        (`_hand_over`), the same rule; only the logged reason differs, by whether its first ASSIGN is at or after where
+        the record began (`log_at`): created under it, or switched into it by an earlier build. Its logged ASSIGN keeps
+        its signer (Inv-7), and the person signs as the system party (`signs_as`). Removed when a scan finds no stored
+        project it moves."""
+        rec = _project_mode(self._graph) or {}
+        if rec.get("mode") != Mode.AUTO.value or self._storage.get_setting(SYSTEM_PARTY_READ):
+            return
+        began = rec.get("log_at") if isinstance(rec.get("log_at"), int) else 0
+        entries = self._audit.get_entries()
+        first = lambda t: next((i for i, e in enumerate(entries) if e.task_id == t.id and e.signal == Signal.ASSIGN
+                                and not e.rejected), -1)
+        self._hand_over(True, "migration", lambda t: "created under AUTO, issued by the system party acting for the "
+                        "person" if first(t) >= began else "switched into AUTO by an earlier build")
+        self._storage.store_setting(SYSTEM_PARTY_READ, "1")
 
     def tally(self, key: str, add: int = 0) -> int:
         """A counter kept with the project (its settings), surviving a restart — `add` bumps it first."""
@@ -663,6 +709,7 @@ class Engine:
         if scopes := self.mode_scopes():
             raise ValueError(f"seams the person issued here are held in their holders' chats (under "
                              f"{', '.join(scopes)}): a project mode beside them would answer who holds a node twice")
+        was = self.mode_kind()
         # numbered and stamped: a mode switched and switched back leaves a DIFFERENT record, so a reader
         # comparing records (an experiment's validity check, an audit) sees that it moved at all
         rec = {"mode": mode.value, "boundary": boundary, "by": str(author),
@@ -681,7 +728,35 @@ class Engine:
         self._storage.store_setting("mode", json.dumps(rec))
         self.emit_info("mode", f"mode set to {mode.value}"
                        + (f" (boundary {boundary})" if boundary is not None else "") + f" by {author}")
+        if (mode == Mode.AUTO) != (was == Mode.AUTO):
+            self._hand_over(mode == Mode.AUTO, author,
+                            lambda t: f"the mode switched from {was.value if was else 'none'} to {mode.value}")
         return self.mode()
+
+    def _hand_over(self, into_auto: bool, author, why: Callable[[Task], str]) -> None:
+        """THE ONE RULE a goal changes hands by with AUTO — at a switch of mode and on the one-time reading of a stored
+        AUTO project (`_the_system_party_where_auto_created`): a root handed over, its Del not his, moves its issuer
+        role — into AUTO from the person to the system party, out of it back to him (`why(root)` logged). A root he
+        holds himself keeps him its issuer, its own executor (§10.1), and its parts keep him theirs, Del(root) (Inv-7;
+        a stand-in from above is excluded, §12.13, and a change of Del is a revision, Inv-1, which neither act is): the
+        system makes no move of his, so they are his at his own door (`mode_holder`), said on the feed."""
+        frm, to = (PERSONS_NAMES, AgentId(SYSTEM)) if into_auto else ({SYSTEM}, AgentId(_config_agent_id()))
+        for t in self._graph.all_tasks():
+            if (self._graph.get_parent(t.id) is None and str(t.assignee) not in PERSONS_NAMES
+                    and str(self._graph.issuer_of(t.id)) in frm):
+                self._move_root_issuer(t, to, author, why(t))
+        if into_auto and (his := self._his_live_work()):
+            one = len(his) == 1
+            self.emit_info("mode", f"{', '.join(his)} {'is' if one else 'are'} yours under auto — you hold or issue "
+                                   f"{'it' if one else 'them'}, and the system makes none of your moves: "
+                                   f"{'it waits' if one else 'they wait'} on you, your verdict, answer or cancel at "
+                                   f"your own door")
+
+    def _his_live_work(self) -> list[str]:
+        """The live nodes the person holds, or whose parts he issues (Del(parent) his, §10.1)."""
+        return [str(t.id) for t in self._graph.active_tasks()
+                if str(t.assignee) in PERSONS_NAMES
+                or self._graph.get_parent(t.id) is not None and str(self._graph.issuer_of(t.id)) in PERSONS_NAMES]
 
     def hear(self, root_id, act: str, said: str, **with_it) -> None:
         """The words recorded over the goal `root_id` on an act of it — the person's request, their words at each go, on
@@ -2480,7 +2555,7 @@ class Engine:
         it to a producer (§15.2). Anyone else is refused before anything is written, naming whose act it is (§12.16
         (ii)). `None` is the engine's own act inside one the issuer made (the machine issuer's promotion)."""
         issuer = self._graph.issuer_of(to_id)
-        if agent is not None and str(agent) != str(issuer):
+        if agent is not None and not signs_as(issuer, agent):
             raise ValueError(f"'{agent}' is not the issuer of {to_id}: a dependency of {to_id} is a part of its "
                              f"parent's split, declared or removed only by the split's holder — '{issuer}' (§11.5, "
                              f"§10.1); a node that waits on something it was not given reports it by BLOCK (§11.3)")
@@ -2749,7 +2824,7 @@ class Engine:
             if st == State.CANCELLING:
                 why = ("a node in CANCELLING takes no revision (§12.3). "
                        "Let it settle first — the cancellation handshake decides.")
-            elif str(agent) != str(issuer):
+            elif not signs_as(issuer, agent):
                 why = (f"'{agent}' is not the issuer of {task_id} — its issuer is '{issuer}' (the "
                        f"parent's Del, or the node's own for a root), and a contract is revised by "
                        f"the side that set it (§11.2).")
@@ -3311,17 +3386,28 @@ class Engine:
         the door admits it. THE MODE LOCK: the doors refuse by it (`tools_llm._mode_lock`), and every surface that offers
         a move reads it, so none offers what the door then refuses (UI stream 2026-10-26: under AUTO the customer was
         offered the system's dispute). `ruling` is a ruling on a CHALLENGE — the user's own where it rules a finding
-        out of his goal, which the system does not."""
-        if self.mode() is None or (ruling and node and self.users_dispute(TaskId(node))):
+        out of his goal, which the system does not. A role the person holds himself is his door's under any mode: the
+        system makes no move of his (`party_kind`'s holder), so a lock there leaves its owner no move (Inv-8)."""
+        if self.mode() is None or (ruling and node and self.users_dispute(TaskId(node))) or self._his_role(node, role):
             return None
         owner = self.owner_of(node, role)
         machine = str(owner) if owner is not None and AgentId(owner) in self.workforce.executor_pool() else None
-        return machine or ("system" if self.mode_kind() == Mode.AUTO else None)
+        return machine or (SYSTEM if self.mode_kind() == Mode.AUTO else None)
 
     def owner_of(self, node, role: Optional[str]) -> Optional[str]:
-        """The party the FSM takes a move on `node` from: its issuer for the issuer's, its Del for the split's."""
+        """The party a door takes a move on `node` from: its issuer for the issuer's — the person over the system party
+        acting for him (`persons_over`) —, its Del for the split's."""
         t = self._graph.get_task(TaskId(node)) if node else None
-        return None if t is None or role is None else self._graph.issuer_of(t.id) if role == "issuer" else t.assignee
+        return None if t is None or role is None else persons_over(self._holder(t, role))
+
+    def _holder(self, t: Task, role: str) -> Optional[AgentId]:
+        """Who holds `role` on `t` as recorded — its issuer for the issuer's, its Del for the split's."""
+        return self._graph.issuer_of(t.id) if role == "issuer" else t.assignee
+
+    def _his_role(self, node, role: Optional[str]) -> bool:
+        """Does the person hold `role` on `node` himself — not the system party acting for him?"""
+        t = self._graph.get_task(TaskId(node)) if node and role else None
+        return t is not None and str(self._holder(t, role)) in PERSONS_NAMES
 
     def offer(self, *moves: Move, sep: str = ", or ", lead: str = "") -> str:
         """THE ONE WAY A SENTENCE OFFERS A MOVE: the words of each move the door takes (after `lead`), and for those the
@@ -3350,7 +3436,8 @@ class Engine:
         """Is this node's verdict its HOLDER's to sign on the observation? Under SOLO or SEMI the user's
         agent holds nodes, and where it is a node's issuer the verdict is its decision, not the
         instrument's: the issuer decides, the validator observes (the author, 2026-09-27). The instrument
-        still runs and records. AUTO is not here — there the system makes every issuer move."""
+        still runs and records. Under AUTO only a node the person issues himself is here — the system party's are the
+        system's to sign."""
         return self.issuer_kind(task_id) == "holder"
 
     def validated_by_instrument(self, task_id: TaskId) -> bool:
@@ -3439,7 +3526,7 @@ class Engine:
             raise ValueError(f"checker is one of {', '.join(CHECKERS)}, not '{checker}'")
         if (t := self._graph.get_task(task_id)) is None:
             raise ValueError(f"task {task_id} not found")
-        if str(author) != str(self._graph.issuer_of(task_id)):
+        if not signs_as(self._graph.issuer_of(task_id), author):
             raise ValueError(f"'{author}' is not the issuer of {task_id}: who checks it is its issuer's choice — "
                              f"'{self._graph.issuer_of(task_id)}' (§10.2)")
         if checker != "validator" and not on_his_page and _his_check(self._graph, t) is not None:

@@ -8,6 +8,7 @@ import sqlite3
 import threading
 
 from gfso import delegate as D, issuer as I, tools as T
+from gfso.config import SYSTEM
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.api.models import audit_to_out
 from gfso.core.types import AgentId, Mode, Signal, State, TaskId, Verdict
@@ -172,13 +173,14 @@ def test_a_re_presentation_is_marked():
 
 
 def test_under_auto_the_go_is_the_customers_and_the_plan_below_it_the_systems():
-    """The measured shape: row 1 the customer's go, signed `agent`; rows 2-5 the split, signed by the root's executor."""
+    """The measured shape: row 1 the customer's go, signed by the root's issuer — the system party acting for him —
+    and not marked the system's own; rows 2-5 the split, signed by the root's executor."""
     e = _engine(Mode.AUTO)
     e.record_root_issuer(TaskId("root"), AgentId("user"))
     build_graph_live(_split(False, whole=False), "the goal", e, assignee="exec-1")
     e.wait_idle()
     go = _rows(e, "root", Signal.ASSIGN)[0]
-    assert str(go.source) == "user" and not go.by_system
+    assert str(go.source) == SYSTEM and not go.by_system
     kids = e.graph.get_active_children(TaskId("root"))
     assert kids and all(_one(e, k.id, Signal.ASSIGN).by_system for k in kids)
     assert {str(_one(e, k.id, Signal.ASSIGN).source) for k in kids} == {"exec-1"}

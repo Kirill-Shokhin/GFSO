@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from typing import Optional
 
-from gfso.config import PERSON, PERSONS_NAMES, agent_id as _config_agent_id, flag, reserved_refusal
+from gfso.config import FOR_THE_PERSON, PERSON, PERSONS_NAMES, agent_id as _config_agent_id, flag, reserved_refusal
 from gfso.config import validate_internal as _validate_internal
 from gfso.engine.verdicts import criterion_version, observations, refuted_versions
 from gfso.engine.findings import regression, ruling_defect, standing_rulings
@@ -25,7 +25,7 @@ from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import SESSION_FIT, finding_keys
-from gfso.core.graph.model import (chosen_checker, PAUSE_KEY, hands_of, party_kind, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+from gfso.core.graph.model import (chosen_checker, PAUSE_KEY, hands_of, party_kind, signs_as, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer, logged_criteria, parent_waits)
 from gfso.engine.audit import VERSION_INSTALLING, on_current_version
 
@@ -697,7 +697,7 @@ def observation_binds(graph: Graph, task) -> bool:
     must re-consent to, so binding would leave him none: there the signature reads the latest appointed
     record, and an earlier divergence stands on the ledger as a logged disagreement. Outside every mode scope it binds
     as with no scope: nothing starts there by itself, so every observation there was asked by its stream."""
-    return str(graph.issuer_of(task.id) or "") == str(task.assignee or "")
+    return signs_as(graph.issuer_of(task.id), task.assignee)
 
 
 def displaces_a_refutation(graph: Graph, task, recorder, by_hand) -> bool:
@@ -706,7 +706,7 @@ def displaces_a_refutation(graph: Graph, task, recorder, by_hand) -> bool:
     him to have. A run of the instrument, whatever name it is recorded under, or anyone else's record,
     stands BESIDE the refutation and does not undo it."""
     return (bool(by_hand) and not observation_binds(graph, task)
-            and str(recorder or "") == str(graph.issuer_of(task.id) or ""))
+            and signs_as(graph.issuer_of(task.id), recorder))
 
 
 def last_delivery(audit, task):
@@ -797,7 +797,7 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
                 "why": ("no appointed observer has observed this delivery — "
                         + ("it is a root its own executor issued: nothing above carries its verdict, so the "
                            "product's own check stands behind it (§10.2, §10.3)"
-                           if task.parent_id is None and graph.issuer_of(task.id) == task.assignee else
+                           if task.parent_id is None and signs_as(graph.issuer_of(task.id), task.assignee) else
                            why if (why := owed_observer(graph, task)) is not None else
                            "its issuer chose the validator to check it (§10.2, `set_checker`)")
                         + "; the executor's own self-check is evidence, not the observation, and a hand "
@@ -970,7 +970,7 @@ def whole_waits_for_its_parts(graph: Graph, task) -> bool:
     its departure from AND is read off the log (§12.8). At a seam the issuer can do nothing about another scope's
     children or split, so there the PASS is admitted and the departure said (`Engine.passes_over_open_parts`; sync
     audit, B-F4 = A-F2)."""
-    return task is not None and str(graph.issuer_of(task.id)) == str(task.assignee)
+    return task is not None and signs_as(graph.issuer_of(task.id), task.assignee)
 
 
 def parts_outside_the_delivery(graph: Graph, audit, task) -> set[str]:
@@ -1561,9 +1561,10 @@ HEARD_ON = "heard_on:"
 
 
 def his_seam(issuer, held) -> bool:
-    """Is a node issued by the person to another — issuer a name of his (`PERSONS_NAMES`), Del named and none of his?
+    """Is a node issued by the person to another — issuer a name of his or the system party's acting for him
+    (`FOR_THE_PERSON`), Del named and none of his?
     (A Del left unnamed defaults to its caller, his name under his node.)"""
-    return str(issuer or "") in PERSONS_NAMES and bool(held) and str(held) not in PERSONS_NAMES
+    return str(issuer or "") in FOR_THE_PERSON and bool(held) and str(held) not in PERSONS_NAMES
 
 
 def in_chat_names(graph: Graph) -> dict:
@@ -1957,7 +1958,7 @@ def signer_refusal(graph: Graph, task_id, signal: Signal, source) -> Optional[st
     if role == Role.ISSUER:
         issuer = graph.issuer_of(task_id)
         instrument = signal in (Signal.PASS, Signal.FAIL) and str(source) in graph.authorized_validators
-        if issuer and source != issuer and not (
+        if issuer and not signs_as(issuer, source) and not (
                 instrument and party_kind(graph, str(issuer), graph.roster) in ("machine", "legacy")):
             return (f"{source} is not issuer for {task_id} (issuer={issuer})"
                     + (f": a validator's check is recorded, and the verdict is {issuer}'s to sign (§10.2)"

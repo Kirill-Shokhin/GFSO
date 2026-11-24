@@ -11,6 +11,7 @@ from typing import Optional
 
 from gfso.engine import AdmissionRefused, Engine
 from gfso.config import ROOT_ID
+from gfso.core.graph.model import signs_as
 from gfso.core.protocol.procedure import probes_from as _checks_of
 from gfso.core.types import (
     Spec, Criteria, AcceptedRiskItem, CriterionMapping, TaskId, AgentId,
@@ -412,6 +413,6 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
     # AFTER the split, not before: the consent is to the goal AS SPLIT, and the engine's rules on it (a
     # held node in SEMI is not taken without a split) see the split that exists — accepted first, a build
     # that proposed no children left a childless root in work, past the rule (critic round 7).
-    if engine.graph.get_state(rid) == State.OFFERED and str(engine.graph.issuer_of(rid)) == str(root_actor):
+    if engine.graph.get_state(rid) == State.OFFERED and signs_as(engine.graph.issuer_of(rid), root_actor):
         engine.send_signal_sync(SignalData(signal=Signal.ACCEPT, task_id=rid, source=root_actor)); engine.wait_idle()
     return engine, rid, dropped

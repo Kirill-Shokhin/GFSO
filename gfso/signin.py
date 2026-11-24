@@ -20,7 +20,7 @@ import time
 from contextlib import closing, contextmanager
 from urllib.parse import urlparse
 
-from gfso.config import (AGENT, CALLER, LEASE_HEADER, LOCAL_PERSON, LOOPBACK_NAMES, PERSON, PERSONS_NAMES,
+from gfso.config import (AGENT, CALLER, LEASE_HEADER, LOCAL_PERSON, LOOPBACK_NAMES, PERSON, PERSONS_NAMES, SYSTEM,
                          PRINCIPAL_RE, STANDING, Principal, agent_id, bound_beyond_loopback, caller_id, closed_launch_name,
                          data_dir, launch_token, page_auth, protected, reserved_refusal)
 import psutil
@@ -34,7 +34,7 @@ COOKIE = "gfso_session"
 #: how long a one-time code from `gfso ui` opens the page
 CODE_S = 300
 #: names no person owns: the system, and the placeholder a verb signed by when it was given no name
-NOBODYS = frozenset({"system", "person"})
+NOBODYS = frozenset({SYSTEM, "person"})
 #: the shapes the system's roles are named in — an executor's (`exec-1`, `<project>-exec-2`, `<project>-exec`), a validator's (`val-1`,
 #: `ck-val-1`, `<project>-val`), a flag taken for a name (`--assignee`): a role the roster no longer holds is still one
 SYSTEM_SHAPE = re.compile(r"^-|(^|-)exec(-?\d+)?$|(^|-)val([-\d].*)?$")

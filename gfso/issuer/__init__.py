@@ -2490,11 +2490,18 @@ def refused_on_this_version(engine, task_id: TaskId, actor: str) -> str:
     """The engine's last refusal of this issuer's move on the node's CURRENT contract, read off the log — handed to its
     next turn, not only to the retry inside one settle: a sweep's first ask started blind, and one refusal (a probe
     rewrite admission refuses) came back 33 times over 180 min while each turn fell back to rejecting the dispute
-    (GB_sql_database_tn8rdk788 `value`). A contract installed since (ASSIGN, ACCEPT_CHALLENGE) starts clean."""
-    for e in reversed(engine.audit_log(task_id)):
+    (GB_sql_database_tn8rdk788 `value`). A contract installed since (ASSIGN, ACCEPT_CHALLENGE) starts clean. A refusal
+    is the role's: one signed by whoever held the issuer role the actor holds now, when it was logged (`issuer_at`: a
+    root's issuer moved by a switch of mode or the one-time reading of a stored AUTO project), is the actor's too."""
+    log, role = engine.audit_log(), str(actor) == str(engine.graph.issuer_of(task_id))
+    for i in range(len(log) - 1, -1, -1):
+        e = log[i]
+        if str(e.task_id) != str(task_id):
+            continue
         if not e.rejected and e.signal in (Signal.ASSIGN, Signal.ACCEPT_CHALLENGE):
             return ""
-        if e.rejected and str(e.source or "") == str(actor) and e.error:
+        if e.rejected and e.error and (str(e.source or "") == str(actor)
+                                       or role and str(e.source or "") == str(engine.issuer_at(task_id, i))):
             return f"An earlier {e.signal.name} of yours on this contract was refused: {e.error}"
     return ""
 

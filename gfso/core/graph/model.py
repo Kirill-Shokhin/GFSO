@@ -11,10 +11,11 @@ import time
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
-from gfso.config import BOUNDED_STATES, PERSON_BOUNDS, PERSON_DEADLINE_S, agent_id, default_deadline_s, state_bound
+from gfso.config import (BOUNDED_STATES, PERSON_BOUNDS, PERSON_DEADLINE_S, PERSONS_NAMES, SYSTEM, agent_id,
+                         default_deadline_s, state_bound)
 
 from gfso.core.types import (
-    TaskId, AgentId, Task, State, Signal, Verdict, Mode,
+    TaskId, AgentId, Task, State, Signal, Verdict,
     GuardContext, GraphContext, CheckResult, Recommendation,
     DispatchPayload, DepEdge, StoragePort, DEFAULT_MAX_ITERATIONS, TERMINAL_STATES,
 )
@@ -47,7 +48,7 @@ def recorded_by_an_appointed_observer(rec: dict | None, task, issuer) -> bool:
     if not rec or task is None:
         return False
     who = str(rec.get("validator"))
-    return who != str(task.assignee) and (not rec.get("by_hand") or who == str(issuer))
+    return who != str(task.assignee) and (not rec.get("by_hand") or signs_as(issuer, who))
 
 
 def generation_of_task(t) -> tuple:
@@ -142,6 +143,13 @@ def drops_key(task_id) -> str:
 def root_issuer_key(task_id) -> str:
     """The setting that records a root's issuer — the one spelling both writer and reader use."""
     return f"issuer:{task_id}"
+
+
+def issuer_moves_key(task_id) -> str:
+    """Where every move of a root's issuer after its creation is logged — [{log_at, from, to, by, why}] —: a switch of
+    the project's mode handing its live roots' issuer role over (`Engine.set_mode`), or the one-time reading of a root
+    an earlier build created under AUTO (`Engine._the_system_party_where_auto_created`)."""
+    return f"issuer_moves:{task_id}"
 
 
 #: The project's STOP, the user's: {by, at, why} while the system starts nothing in it, or absent.
@@ -267,16 +275,32 @@ def on_the_wall(graph: Optional["Graph"], at: datetime) -> datetime:
 
 def party_kind(graph: "Graph", party: str, registered=None) -> str:
     """WHO makes a party's issuer moves — the one owner of a question four places answered four ways (D-F9):
-    `holder` — the user's standing agent under SOLO/SEMI, whose moves the system never makes;
-    `machine` — the standing agent under AUTO (the customer, who does not intervene), or a registered participant;
+    `machine` — the system party (`SYSTEM`: the issuer of a goal handed over whole, recorded at its root's creation),
+    or a registered participant;
+    `holder` — the user's standing agent under a mode, whose moves the system never makes;
     `person` — the standing agent with no mode set, or anyone else unregistered: the system holds no role of theirs
     (§10.1: Del names the role's holder) and is passive — their moves come only when they write.
-    The standing agent is read first: a role registered under the user's own id does not make it a machine.
+    Read off what the party is: the person is never re-typed a machine by the project's mode (§10.4: autonomy is per
+    task and role, switching being who occupies it). The standing agent is read first: a role registered under the
+    user's own id does not make it a machine.
     `registered` is the registry consulted (the dispatcher's own; the engine's published roster by default)."""
+    if str(party) == SYSTEM:
+        return "machine"
     if str(party) == str(agent_id()):
-        mode = _mode(graph)
-        return "person" if not mode else "machine" if mode["mode"] == Mode.AUTO else "holder"
+        return "holder" if _mode(graph) else "person"
     return "machine" if (registered or {}).get(str(party)) is not None else "person"
+
+
+def signs_as(issuer, party) -> bool:
+    """Does `party` sign as `issuer` — the issuer itself, or the person over the system party acting for him (§10.4:
+    the autonomous level's human, «oversight at the level above»)?"""
+    return str(party or "") == str(issuer or "") or str(issuer) == SYSTEM and str(party) in PERSONS_NAMES
+
+
+def persons_over(party):
+    """The party a door takes `party`'s move from: the person over the system party acting for him, else `party` — a
+    door's caller is a person or an agent, never the system, whose own moves are made in process."""
+    return AgentId(agent_id()) if str(party) == SYSTEM else party
 
 
 def _mode(graph: Optional["Graph"]) -> Optional[dict]:

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import NamedTuple, Optional
 
 from gfso.config import agent_id
+from gfso.core.graph.model import persons_over
 from gfso.core.protocol.validation import SIGNAL_ROLES, Role
 from gfso.core.types import AgentId, TaskId
 from gfso.engine.validation import users_criteria
@@ -130,7 +131,7 @@ def role_holder(engine, verb: str, node, signal: Optional[str] = None) -> Option
         return None
     if _the_users_ruling(engine, verb, node):
         return str(agent_id())
-    return str(engine.graph.issuer_of(t.id) if role == "issuer" else t.assignee or "") or None
+    return str(persons_over(engine.graph.issuer_of(t.id)) if role == "issuer" else t.assignee or "") or None
 
 
 #: the rulings on a node's findings — what its PASS waits on (`findings`)

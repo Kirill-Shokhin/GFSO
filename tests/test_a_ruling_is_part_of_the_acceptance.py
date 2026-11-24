@@ -23,6 +23,8 @@ the signal (drop `retire_findings` from the log row) and the interleaving test g
 """
 from __future__ import annotations
 
+from gfso.config import SYSTEM
+
 import json
 
 import pytest
@@ -103,7 +105,7 @@ def test_the_system_still_rejects_an_auto_roots_dispute_naming_a_finding(tmp_pat
     e = _engine(Mode.AUTO)
     _auto_root(e)
     pid = _challenged_with_a_finding(e, "root", "g", reason="{pid} cannot be fixed without JOIN support")
-    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "user", "the system left the dispute to no one"
+    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == SYSTEM, "the system left the dispute to no one"
     llm = _ContactLLM({"decision": "reject", "justification": "the goal asks for joins: implement them"}, ran={"Bash": 1})
     out = I.answer_the_challenge(e, TaskId("root"), "user", _llm=llm, where=a_place(tmp_path))
     e.wait_idle()
@@ -130,7 +132,7 @@ def test_control_an_auto_roots_dispute_naming_no_finding_is_the_systems(tmp_path
     e = _engine(Mode.AUTO)
     _auto_root(e)
     _challenged_with_a_finding(e, "root", "g", reason="g cannot be decided as written")
-    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == "user"
+    assert I.system_mover(e, _Roster(), TaskId("root"), "dispute") == SYSTEM
     out = LOCKED["signal"](e, "root", "REJECT_CHALLENGE", "user", justification="it can")
     assert not out.get("accepted"), "the customer intervened in a dispute the system answers"
     e.stop()

@@ -139,8 +139,10 @@ def test_the_mode_records_how_the_holder_performs(tmp_path):
     assert e.hands_of("user") == "exec-1" and e.hands_of("exec-1") is None and e.hands_of("someone") is None
     e.set_mode(Mode.SOLO, None, AgentId("user"), hands=None)
     assert e.mode()["perform"] == "in_chat" and e.hands_of("user") is None
-    e.set_mode(Mode.AUTO, None, AgentId("user"), hands=None)
-    assert "perform" not in e.mode(), "under AUTO the user-agent holds nothing to perform"
+    # …into AUTO only once he holds nothing live: here his root is (`test_the_auto_roots_issuer_is_the_system_party`)
+    bare = make_engine()
+    bare.set_mode(Mode.AUTO, None, AgentId("user"), hands=None)
+    assert "perform" not in bare.mode(), "under AUTO the user-agent holds nothing to perform"
 
 
 def test_a_round_queued_for_a_node_that_is_offered_again_waits_for_the_holder(tmp_path):
