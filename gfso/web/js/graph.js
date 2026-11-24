@@ -1,5 +1,6 @@
 // The canvas: cytoscape, drawn from the graph read, every colour from the brand tokens (tokens.css).
 import {$, esc, tally} from './dom.js';
+import {suggestHeight} from './deck.js';
 import {S, taskOf, whoOwes, mineNames, keep, inWorkOf, viewTasks, stateWord, handAsks, hasKids, goTo, goUp, quiet, inView, inside, whereDrawn, closedOf, pathSteps} from './state.js';
 import {bucketOf, contested, cancelled, nameOf, criteriaOf, delivered, closedByFail} from './vocab.js';
 import {banner} from './overlays.js';
@@ -63,6 +64,7 @@ function atFloor(eles) {
     cy.center(b.w <= cy.width() - 48 && b.h <= cy.height() - 48 ? eles : eles.first());
 }
 function home() {
+    framedAt = canvasTop();
     fitCapped();
     if (cy.zoom() >= FLOOR) return;
     const asks = askingOf(cy.nodes());
@@ -75,6 +77,26 @@ function home() {
         : hi < size - m && lo < m ? Math.min(size - m - hi, m - lo) : 0;
     cy.panBy({x: slack(b.x1, b.x2, cy.width()), y: slack(b.y1, b.y2, cy.height())});
 }
+// FRAMED AGAIN, an untouched view (the run read, the canvas resized or moved): its nodes kept where they stand on the screen,
+// unless the new frame shows what that one does not — a recentring alone moved every node 44 px some 3 s after load, a
+// phone's header filled late pushed the canvas 52 px, and a press aimed before either met the background (the lost first press)
+let framedAt = null, sized = false;                    // the canvas's top on the screen when the view was last framed
+const canvasTop = () => $('cy').getBoundingClientRect().top;
+function rehome() {
+    const top = canvasTop(), kept = {zoom: cy.zoom(), pan: {x: cy.pan().x, y: cy.pan().y + (framedAt ?? top) - top}};
+    home();
+    const wanted = inFrame();
+    cy.viewport(kept);
+    // …and where it does, by the least pan that shows it at the zoom kept, if one does: re-zoomed, every node moved (a phone's
+    // canvas shortened by its header: 0.867 → 0.836)
+    if (![...wanted].every(id => inFrame().has(id))) {
+        const want = cy.collection([...wanted].map(id => cy.getElementById(id))), b = want.renderedBoundingBox(BODY);
+        if (b.w <= cy.width() - 48 && b.h <= cy.height() - 48) inSight(want); else home();
+    }
+    framedAt = top;
+}
+const inFrame = () => { const W = cy.width(), H = cy.height();
+    return new Set(cy.nodes().filter(n => { const b = n.renderedBoundingBox(BODY); return b.x1 >= 0 && b.y1 >= 0 && b.x2 <= W && b.y2 <= H; }).map(n => n.id())); };
 
 export async function initGraph() {
     // A canvas draws with whatever face is loaded NOW and never redraws for a late one: without this wait the
@@ -213,7 +235,7 @@ export async function initGraph() {
     addEventListener('pointerup', () => { held = false; }, true);
     // a double-click's own first click opens or closes the panel, and the frame is redone for the canvas it leaves
     const reseat = () => held ? (frame = setTimeout(reseat, 120))
-        : (cy.resize(), want ? framed() : fresh ? home() : inSight(cy.nodes(':selected')));
+        : (cy.resize(), want ? framed() : fresh ? rehome() : inSight(cy.nodes(':selected')));
     // WHILE THE DECK IS DRAGGED the canvas already spans what the deck can uncover and the deck slides over it (deck.js): one
     // resize at the drag's start, none under it, the view kept — a canvas resized after the drag left the uncovered strip
     // blank for a while (the author, 2026-11-17: «с задержкой в секунду перерисовывается то что под ней было»), resized on
@@ -221,7 +243,12 @@ export async function initGraph() {
     new ResizeObserver(() => { clearTimeout(frame);
         // …drawn in the same frame: a resize clears the canvas and the library redraws a frame later — the graph blinked (critic);
         // forceRender only asks for that later frame, the renderer's own render draws now (cytoscape pinned at 3.28.1)
-        if (document.body.classList.contains('deck-drag')) { cy.resize(); cy.renderer().render(); } else frame = setTimeout(reseat, 120); }).observe($('cy'));
+        if (document.body.classList.contains('deck-drag')) { cy.resize(); cy.renderer().render(); return; }
+        // …an untouched canvas pushed down (a phone's header filled late) keeps its nodes where they stand in this same frame:
+        // left to the frame's wait, every node stood 52 px off for a tenth of a second
+        const top = canvasTop();
+        if (fresh && framedAt !== null && top !== framedAt) { cy.resize(); cy.panBy({x: 0, y: framedAt - top}); framedAt = top; cy.renderer().render(); }
+        frame = setTimeout(reseat, 120); }).observe($('cy'));
     // a double-click's own first click opens or closes the panel: the frame waits for that resize and is drawn ONCE —
     // drawn at once and again after it, a node was zoomed twice (author, 2026-10-25)
     let wantT;
@@ -405,7 +432,7 @@ function placeBadges() {
 }
 let shown = '', drawing = false;
 // the run is read after the first drawing: an untouched view is framed again on what asks now
-export const annotate = () => { if (cy?.nodes().length && fresh) home(); placeBadges(); };
+export const annotate = () => { if (cy?.nodes().length && fresh) rehome(); placeBadges(); };
 // The canvas height the drawn graph needs for its labels to read (zoom ≈ 0.8), framing included.
 export const graphNeeds = () => cy && cy.nodes().length ? cy.elements().boundingBox().h * 0.8 + 70 : 0;
 
@@ -418,6 +445,8 @@ const closedId = p => `closed:${p}`;
 export const isClosedGroup = id => String(id).startsWith('closed:');
 let gathered = {};                                   // a gathered part's id → its group's id, as last drawn
 export const groupOf = id => gathered[id];
+// WHETHER THIS VIEW DRAWS A NODE, as the drawing stands: its own node, not a stub at the view's edge nor folded or gathered away
+export const drawnHere = id => !!cy && cy.getElementById(id).nonempty() && !cy.getElementById(id).hasClass('outside');
 function gatherClosed(nodes, rep) {
     const up = ancestorsIn(nodes), groups = [];
     gathered = {};
@@ -549,6 +578,9 @@ export async function drawGraph(found, anew = false) {
             await laid(!kept && !anew);
             // …and a node chosen before a move (a gathered or folded part brought from the deck) is brought into sight in it:
             // the framing showed what asks and left it beside the canvas (critic: x = −1055 in a 1060 px canvas)
+            // …the deck sized for this drawing BEFORE its first frame: sized after it, 2–4 s later, it took the canvas from under the
+            // frame and every node moved under a press aimed at one (critic: 213→358 px on a desk)
+            if (!sized) { sized = true; suggestHeight(graphNeeds()); cy.resize(); }
             if (kept) cy.viewport(view); else { home(); fresh = true; const s = focus().select && cy.getElementById(focus().select); if (anew && s?.length) { inSight(s); fresh = false; } }
         }
         // a redraw removes and re-adds every node, and the chosen one lost its border while its panel stayed open

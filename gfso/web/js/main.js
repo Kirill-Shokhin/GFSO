@@ -7,14 +7,14 @@ import {focus, watch, point} from './store.js';
 import {loadCheckMap, terminal, FM} from './vocab.js';
 import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
 import {isHidden} from './fold.js';
-import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate, graphNeeds} from './graph.js';
+import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate} from './graph.js';
 import {drawHeader, drawQuality, toggleReports, resolveReport, stopRun, startRun, setMode, setIntent} from './header.js';
 import {refreshProjects, offerNew, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject, listOnly, switchHostRuns, rereadHostRuns} from './projects.js';
 import {selectTask, panelOpened, closeSidebar, resign, openReader, closeReader} from './panel.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
 import * as author from './author.js';
 import * as goal from './goal.js';
-import {mountDeck, paint as paintDeck, onPipeline, onInflight, suggestHeight, foldDeck} from './deck.js';
+import {mountDeck, paint as paintDeck, onPipeline, onInflight, foldDeck} from './deck.js';
 import {connectWS} from './live.js';
 import {askProjectName, clearNotice, act} from './overlays.js';
 import {mountHints, LEAVING} from './hints.js';
@@ -57,7 +57,9 @@ const moveTo = singleFlight(async () => {
     if (focus().select && (!inView(focus().select) || focus().select === TOP)) point('select', null);
     untip(); rebuildRun(); $('mine-name').value = mineShown(); await drawGraph(true, true);   // «Mine» follows the view's top
     if (focus().select && isHidden(focus().select)) point('select', null);   // …nor one folded away in the part come to (critic)
-    paintDeck(); drawHeader(); });
+    paintDeck(); drawHeader();
+    // …and the panel kept is read again in the view come to: its «Show it on the graph» stood after its own press (critic)
+    if (focus().select) await selectTask(focus().select); });
 whenMoved(moveTo, inside);
 const refreshHeader = singleFlight(async () => { await loadFrontier(); await loadReports(); await drawHeader(); });
 const refreshQuality = singleFlight(async () => { await loadMetrics(); drawQuality(); });
@@ -80,7 +82,6 @@ async function firstLoad() {
     const asked = Promise.all([within(refreshQuality()), within(header).then(() => heard || drawHeader())]);
     const deck = Promise.all([within(run), asked, drawn]).then(() => { repaint(); painted = true; });
     await Promise.all([drawn, asked]);
-    suggestHeight(graphNeeds());
     if (TASK) point('select', TASK);                   // `?task=` makes one node linkable
     within(panelOpened()).then(() => deck).then(afterDeck);   // …the view framed on the canvas its panel leaves
 }

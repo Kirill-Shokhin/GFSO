@@ -5,15 +5,15 @@
 // nothing here sends anything.
 import {$, el, esc, coded, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
-import {task, FOCUS, TOP, topOf} from './api.js';
-import {S, hasKids, whereDrawn, inView, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, atTheGo} from './state.js';
+import {task, TOP} from './api.js';
+import {S, hasKids, whereDrawn, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, atTheGo} from './state.js';
 import {bucketOf, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label, enteredWord} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
 import {glyph, mark} from './draw.js';
 import {when as at_, stamp, trim, plural, spoken} from './fmt.js';
 import {childrenOf} from './tree.js';
-import {isHidden} from './fold.js';
+import {drawnHere} from './graph.js';
 
 const when = iso => at_(at(iso));
 const link = (facet, label) => `<button class="pn-link" data-action="read" data-facet="${facet}">${label} →</button>`;
@@ -267,9 +267,9 @@ const dispute = ({d}) => { const w = WHY[d.state], c = w && [...(d.audit || [])]
 // author, 11-20: «решает кто будет валидировать; если сам то сам и ставит подпись»). The engine says who checks now
 // (`checker`, on the graph read only where it is the validator) and offers the choice only where one exists — a part the
 // person's chat holds below the root; a seam owes the validator, no box there (critic)
-// a node this view does not draw: outside it, folded into a part, or gathered into a «N closed» other than this view
-const notDrawnHere = id => { const w = whereDrawn(id);
-    return !inView(id) || isHidden(id) || (w !== topOf(w) && w !== FOCUS); };
+// a node this view does not draw, as the drawing itself says (`drawnHere`): a rule of its own missed a part's subtree taken
+// into its group and offered the button on a group view's own top (sweep, 11-24)
+const notDrawnHere = id => !drawnHere(id);
 // …read off the node's own record (`checker`: validator · self · independent · an appointed name), on every node its issuer
 // gave out, as a row beside Del: it said nothing where the issuer checks or a name was appointed, and the graph read carries
 // it only for the validator (the author, 2026-11-24: «не вижу галочки … чтобы понимать какой валидатор прикреплен к ноде»)

@@ -177,9 +177,14 @@ export function paint() {
 
 // The deck's first height, when the person has not dragged one: what the graph leaves over at a
 // zoom its labels can be read at, within bounds — a wide plan keeps its graph, a small one gives room.
+// …and held to it while the stage changes under it, until the person drags one: sized at the first drawing, before a phone's
+// header had filled, it kept a height 51 px past its own share of the stage (critic)
+let needs = null;
 export function suggestHeight(graphNeeds) {
     if (pref.h) return;
     const d = $('deck'), stage = d.parentElement.clientHeight;
+    if (needs === null) new ResizeObserver(() => { if (!document.body.classList.contains('deck-drag')) suggestHeight(needs); }).observe(d.parentElement);
+    needs = graphNeeds;
     // …on a phone the deck holds the first screen's answer (what runs, what waits): half of it at least — at a quarter it
     // showed 131 px of body under a graph no fit makes readable (audit E1)
     const [lo, hi] = phone() ? [0.5, 0.6] : [0.25, 0.42];
