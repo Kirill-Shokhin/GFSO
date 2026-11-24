@@ -21,6 +21,7 @@ from gfso import tools_llm as TL
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.types import TaskId
 from gfso.engine import CheckRunning
+from gfso.mcp import server as M
 from gfso.runtime import ProjectRegistry
 from tests.test_every_verb_answers import _GOOD, _engine, _seeded
 from tests.test_validate_result import _delivered_node, _eng, _fenced
@@ -484,7 +485,7 @@ def test_every_node_a_move_names_is_held_and_a_switch_of_mode_waits(monkeypatch)
         edge = TL.TOOLS["add_dependency"](e, "root.core", "root.side", glue="its output")
         assert edge.get("refused") and edge["being_rewritten"] == h, edge
         switch = TL.TOOLS["set_mode"](e, "solo", user_said="solo, please")
-        assert switch.get("refused") and switch["being_rewritten"] == h, switch
+        assert switch.get("refused") and switch["being_rewritten"] == [h] and h in switch["error"], switch
         gates["root.core"].set()
         _settled(lambda: not e.authorings.held())
         assert "being_rewritten" not in TL.TOOLS["add_dependency"](e, "root.core", "root.side", glue="its output")
@@ -493,18 +494,90 @@ def test_every_node_a_move_names_is_held_and_a_switch_of_mode_waits(monkeypatch)
         e.stop()
 
 
-def test_a_new_project_whose_authoring_fails_past_its_call_is_unmade(monkeypatch, tmp_path):
-    """A project made for an authoring answered `{writing}` is unmade at its end when it failed and holds nothing: a
-    refused call unmade it, one that failed past its call left an empty project listed."""
+def test_a_new_project_whose_authoring_fails_past_its_call_stays_and_its_failure_says_how_to_remove_it(
+        monkeypatch, tmp_path):
+    """A project made by a call answered `{writing}` stays — its writing may still fill it, another may write there, a
+    wait may read it —; its failure, the project holding nothing, names how it is removed."""
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("GFSO_PROJECT", raising=False)
     gates = _dying_at(monkeypatch, "root")
     reg = ProjectRegistry()
     e = reg.engine("brand_new")
     try:
-        out = reg.kept_if_done(True, e, lambda: TL.TOOLS["auto_decompose"](e, request="a goal"))
-        assert out.get("writing") and reg.exists("brand_new"), out
+        h = reg.kept_if_done(True, e, lambda: TL.TOOLS["auto_decompose"](e, request="a goal"))["writing"]
         gates["root"].set()
-        _settled(lambda: not reg.exists("brand_new"))
+        _settled(lambda: not e.authorings.held())
+        assert reg.exists("brand_new")
+        said = TL.TOOLS["auto_decompose"](e, writing=h)["error"]
+        assert "project brand_new holds nothing: `delete_project('brand_new')` removes it" in said, said
     finally:
         gates["root"].set()
+        e.stop()
+
+
+def _waiting(e) -> tuple:
+    """The server's wait on `e`, run in a thread: (its thread, its answer to come)."""
+    got = Future()
+    t = threading.Thread(target=lambda: got.set_result(TL.wait_for_the_customer(e, seconds=20)), daemon=True)
+    t.start()
+    return t, got
+
+
+def test_a_plan_asked_anew_supersedes_the_one_before_and_its_end_wakes_no_wait(monkeypatch):
+    """A wait on a plan being written; the plan asked anew: the first is superseded, kept, and its end — written — is no
+    news; the wait wakes on the second's."""
+    gates = {r: threading.Event() for r in ("one", "two")}
+
+    def author(request, *a, **k):
+        assert gates[request.split()[0]].wait(30)
+        return Go._file()
+    monkeypatch.setattr(TL._planning, "author", author)
+    e = _engine()
+    try:
+        first = TL.TOOLS["plan"](e, request="one goal")["writing"]
+        t, woke = _waiting(e)
+        time.sleep(0.5)
+        second = TL.TOOLS["plan"](e, request="two goal")["writing"]
+        gates["one"].set()
+        time.sleep(3)
+        assert not woke.done(), woke.result()
+        gates["two"].set()
+        t.join(30)
+        assert second in woke.result()["needs_you"] and first not in woke.result()["needs_you"], woke.result()
+    finally:
+        for g in gates.values():
+            g.set()
+        e.stop()
+
+
+def test_a_failed_writing_someone_else_read_wakes_the_wait_as_not_written(monkeypatch):
+    """The wait's writing fails and another caller reads it before the wait looks again: it wakes as not written."""
+    gates = _dying_at(monkeypatch, "root.core")
+    e = _split()
+    try:
+        h = _asked(e, request="the core", root_id="root.core")["writing"]
+        t, woke = _waiting(e)
+        time.sleep(0.5)
+        gates["root.core"].set()
+        _settled(lambda: not e.authorings.held())
+        assert TL.TOOLS["auto_decompose"](e, writing=h).get("error")
+        t.join(30)
+        assert woke.result()["needs_you"].startswith("a plan asked for was not written") and h in \
+            woke.result()["needs_you"], woke.result()
+    finally:
+        gates["root.core"].set()
+        e.stop()
+
+
+def test_under_auto_the_writings_say_names_its_handle_at_the_mcp_door(monkeypatch):
+    """The MCP door's say for the go under `auto` must not replace an authoring's `{writing}` say: its handle is the one
+    way to its answer."""
+    e = _engine()
+    monkeypatch.setattr(e, "mode", lambda *a: {"mode": "auto"})
+    out = {"writing": "auto_decompose-0123456789", "root_id": "root", "running": "auto_decompose",
+           "say": 'The plan is being written: `auto_decompose(writing="auto_decompose-0123456789")` answers it'}
+    try:
+        said = M._with_ui_link("auto_decompose", dict(out), "p", e)["say"]
+        assert 'auto_decompose(writing="auto_decompose-0123456789")' in said, said
+    finally:
+        e.stop()

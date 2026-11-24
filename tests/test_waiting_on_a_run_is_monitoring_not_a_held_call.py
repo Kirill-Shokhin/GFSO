@@ -64,6 +64,20 @@ def test_what_the_server_says_needs_you_is_what_it_prints():
     assert r.returncode == 0 and "1 move(s) are yours" in r.stdout and "- root: PASS or FAIL" in r.stdout
 
 
+def test_a_writings_answer_is_printed_and_its_handle_is_what_reads_it_whole():
+    """The wait woke on a writing: what it came to is printed, bounded, and the line does not say «nothing to read again
+    over MCP» where its handle is the way to it whole."""
+    h = "auto_decompose-0123456789"
+    srv, _ = _serve([{"steps": [], "needs_you": f'a plan asked for is written: `auto_decompose(writing="{h}")` answers it',
+                      "answers": {h: {"root_id": "root", "holes": ["the part 'io' has no check"], "text": "x" * 5000}}}])
+    try:
+        r = _wait(srv.server_address[1])
+    finally:
+        srv.shutdown()
+    assert r.returncode == 0 and "nothing to read again" not in r.stdout, r.stdout
+    assert f"- {h}: " in r.stdout and "the part 'io' has no check" in r.stdout and "reads it whole" in r.stdout, r.stdout
+
+
 def test_the_wait_ends_on_each_of_its_exits_and_not_before():
     """One wait, on the server: the root settled, a move of the caller's, `stuck`, the run stopped."""
     for answer, said in (({"complete": True}, "the root is settled"),

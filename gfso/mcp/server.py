@@ -247,6 +247,8 @@ def _link_and_say(name: str, out: dict, project, engine) -> None:
                       "role on claude-haiku-5-5, the most tested and cheap, say if another suits; only what is committed "
                       f"enters; their branch is not touched and the result comes as branch "
                       f"`gfso/{out.get('active') or '<project>'}/accepted`.")
+    if out.get("writing"):
+        return                  # …a writing's own `say` names its handle, the one way to its answer
     if name == "auto_decompose" and out.get("root_id") and not out.get("error") and engine is not None             and (engine.mode() or {}).get("mode") == "auto":
         if (opened := open_the_page(project or out.get("active"))) is not False:
             out["page_opened"] = opened

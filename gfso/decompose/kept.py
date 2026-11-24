@@ -16,6 +16,8 @@ from gfso.config import DEFAULT_PROJECT, data_dir, write_atomic
 
 #: how long an answer is kept once read or superseded
 KEPT_S = 3600
+#: the state of a writing a later one of its slot replaced: kept, its end no news
+SUPERSEDED = "superseded"
 
 
 def _dir(kind: str) -> Path:
@@ -41,8 +43,9 @@ def answer(handle: str) -> dict | None:
 def keep_answer(project: str, handle: str, out: dict) -> None:
     """Keep the written answer `out` under `handle`, let go at once if `project` no longer waits on it: written first
     and let go after, a sweep between the two kept a superseded answer for good."""
+    rec = record(project, handle) or {"state": SUPERSEDED}
     _write(_dir("answers") / f"{handle}.json",
-           {"answer": out, "at": time.time(), **({} if record(project, handle) else {"let_go": True})})
+           {"answer": out, "at": time.time(), **({"let_go": True} if rec.get("state") == SUPERSEDED else {})})
 
 
 def _path(project: str) -> Path:
@@ -63,21 +66,27 @@ def record(project: str, handle: str) -> dict | None:
 
 
 def open_writing(project: str, handle: str, slot: str) -> None:
-    """`project` waits on the writing `handle` anew; it supersedes the one of its `slot` before (a plan asked anew), and
-    those read are let go."""
-    recs = records(project)
-    for h in [h for h, r in recs.items() if h != handle and (r.get("slot") == slot or r.get("read"))]:
-        let_go(h)
-        del recs[h]
+    """`project` waits on the writing `handle` anew; the one of its `slot` before is SUPERSEDED (a plan asked anew), kept
+    so a wait on it knows it ended as no news; one read or superseded KEPT_S ago is dropped."""
+    now, recs = time.time(), records(project)
+    recs = {h: r for h, r in recs.items()
+            if not ((r.get("read") or r.get("state") == SUPERSEDED) and now - float(r.get("at") or 0) >= KEPT_S)}
+    for h, r in recs.items():
+        if h != handle and r.get("slot") == slot and r.get("state") != SUPERSEDED:
+            let_go(h)
+            recs[h] = {**r, "state": SUPERSEDED, "at": now}
     _write(_path(project), {**recs, handle: {"state": "writing", "told": False, "read": False, "slot": slot,
-                                             "at": time.time()}})
+                                             "at": now}})
 
 
 def mark(project: str, handle: str, **flags) -> None:
     """Set `flags` on the writing `handle`, if `project` still waits on it; a read answer starts its KEPT_S."""
     recs = records(project)
     if handle in recs:
-        _write(_path(project), {**recs, handle: {**recs[handle], **flags}})
+        if recs[handle].get("state") == SUPERSEDED:
+            flags.pop("state", None)           # …its end is no news: it stays superseded
+        _write(_path(project), {**recs, handle: {**recs[handle], **flags,
+                                                 **({"at": time.time()} if flags.get("read") else {})}})
     if flags.get("read") or handle not in recs:
         let_go(handle)          # …read, or no longer one its project waits on
 

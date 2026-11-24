@@ -2364,12 +2364,12 @@ def _slot(key: tuple) -> str:
     return f"{key[0]}:{key[2]}" if key[0] == "auto_decompose" else "plan"
 
 
-def at_its_end(handle: str, fn) -> None:
-    """`fn(answer)` once the writing `handle` names has ended — at once if it has; nothing once it is read."""
+def _ends(project, handles) -> dict:
+    """{handle: its state} of each writing of `handles` `project` waits on, a writing the server lost read `failed`."""
     with _PLANNING_LOCK:
-        w = next((w for w in _PLANNING.values() if w.handle == handle), None)
-    if w is not None:
-        w.answer.add_done_callback(lambda f: fn(f.result()))
+        live, recs = {w.handle for w in _PLANNING.values()}, _kept.records(project)
+    return {h: "failed" if r.get("state") == "writing" and h not in live else r.get("state")
+            for h in handles if (r := recs.get(h))}
 
 
 def _answer_of(key: tuple, started: bool = False) -> dict:
@@ -2431,7 +2431,7 @@ def _written_in_its_thread(key: tuple, w: _Writing, write, engine) -> None:
             _kept.keep_answer(key[1], w.handle, out)
             _kept.mark(key[1], w.handle, state="written")     # …or let go, its project waiting on another now
             _PLANNING.pop(key, None)
-    w.answer.set_result(out)            # …outside the lock: what waits on its end (`at_its_end`) may read the channel
+    w.answer.set_result(out)
 
 
 #: how long a writing takes, by its verb, as its answer says it
@@ -2455,7 +2455,7 @@ def plans_of(project) -> dict:
     with _PLANNING_LOCK:
         live = {w.handle for w in _PLANNING.values()}
         for h, rec in _kept.records(project).items():
-            if rec.get("read"):
+            if rec.get("read") or rec.get("state") == _kept.SUPERSEDED:
                 continue
             state = rec.get("state") if rec.get("state") != "writing" or h in live else "failed"
             out.setdefault("writing" if state == "writing" else "unread" if rec.get("told") else state, []).append(h)
@@ -3078,6 +3078,9 @@ def _written_past_its_call(fn):
             """The authoring, its subtree let go at its end, an error past the call said on the feed."""
             with engine.authorings.writing(node):
                 out = _answering(fn)(*a, **kw)
+            if out.get("error") and not engine.all_tasks():
+                out["error"] = (f"{out['error']} — project {engine.project_name} holds nothing: "
+                                f"`delete_project('{engine.project_name}')` removes it")
             if gone.is_set() and out.get("error"):
                 engine.emit_info("auto_decompose", f"{node}: the authoring {handle} ended with no plan: "
                                                    f"{str(out['error'])[:400]}")
@@ -3516,18 +3519,21 @@ def wait_for_the_customer(engine: Engine, root_id: Optional[str] = None, actor: 
         plans = out.get("plans") or {}
         why, writing = needs_its_customer(out), set(plans.get("writing") or ())
         if first:
-            first, stood, watched = False, why, writing
+            first, stood, watched = False, why, set()
         # …a wait on a writing is about the writing: what already stood when it began does not end it, and each one it
-        # saw writing ends it at its end, whoever else was told of it meanwhile
+        # saw writing ends it when ITS record ends — written or failed, whoever else read it meanwhile —; one superseded
+        # (asked anew) ends nothing, the one asked anew is watched in its place
         if why and why == stood and writing:
             why = None
-        if not why and (gone := sorted(watched - writing)):
-            why = "a plan asked for is written: " + "; ".join(
-                f'`{h.rsplit("-", 1)[0]}(writing="{h}")` answers it' for h in gone)
+        ends = _ends(engine.project_name, watched := watched | writing)
+        done = {k: sorted(h for h, s in ends.items() if s == k) for k in ("written", "failed")}
+        if done["written"] or done["failed"]:          # …what the wait was about first
+            why = needs_its_customer({"plans": done})
         if why or engine.now() >= deadline:
             said_a_plan(engine.project_name, out)
             # …and what each writing it wakes on came to, whole, as its handle reads it
-            ended = sorted({*(watched - writing), *(h for k in ("written", "failed", "unread") for h in plans.get(k) or ())})
+            ended = sorted({*done["written"], *done["failed"],
+                            *(h for k in ("written", "failed", "unread") for h in plans.get(k) or ())})
             return {**out, "waited_seconds": round(engine.now() - began, 1),
                     **({"answers": {h: _by_handle(h, engine.project_name, read=False) for h in ended}}
                        if why and ended else {}),
@@ -4323,8 +4329,14 @@ def _held_while_written(name: str, fn):
             return fn(*a, **kw)                  # the door answers a malformed call in its own terms
         engine = at["engine"]
         if name == "set_mode":
-            held = next(iter(engine.authorings.held().items()), None) if at.get("mode") else None
-            return fn(*a, **kw) if held is None else _refused_while_written(engine, held[0], held)
+            if not at.get("mode") or not (held := engine.authorings.held()):
+                return fn(*a, **kw)
+            return {"refused": True, "being_rewritten": [h or n for n, h in held.items()],
+                    "error": "being_rewritten: a switch of mode hands roots between the person and the system party, "
+                             "and it waits for every authoring of the project — " + "; ".join(
+                                 f"{n}" + (f" (`auto_decompose(writing=\"{h}\")`)" if h else "") for n, h in held.items())
+                             + " — this call started nothing; it may be made once they have ended (`gfso wait` wakes "
+                               "on each), or after `stop_project`"}
         for node in _named(at):
             if (other := engine.authorings.over(node, above and node == str(at.get("parent_id")))) is not None:
                 return _refused_while_written(engine, node, other)

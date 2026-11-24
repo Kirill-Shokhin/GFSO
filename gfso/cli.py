@@ -646,8 +646,14 @@ def _wait(args) -> int:
                   f"server: `gfso up`, then wait again", flush=True)
             return 2
         if why := out.get("needs_you"):
-            print(f"{why} — the move follows here whole, nothing to read again over MCP; the page: "
-                  f"{serverctl.ui_link(args.project)}", flush=True)
+            print(f"{why} — " + ("" if "(writing=" in why else "the move follows here whole, nothing to read again "
+                                                                 "over MCP; ")
+                  + f"the page: {serverctl.ui_link(args.project)}", flush=True)
+            # …and what each writing it woke on came to, as its handle reads it — bounded: its handle reads it whole
+            for h, said in list((out.get("answers") or {}).items())[:3]:
+                said = json.dumps(said, ensure_ascii=False)
+                print(f"- {h}: {said[:3000]}" + (f" … (cut: `{h.rsplit('-', 1)[0]}(writing=\"{h}\")` reads it whole)"
+                                                  if len(said) > 3000 else ""), flush=True)
             # …whole: a verdict to sign carries each criterion's line the person is shown before their PASS, and cut at
             # 400 characters it sent the client to `get_verdict` for them (e2e5 G_3); at 3000 it lost the signal line under
             # the head's "whole" (critic over a8c6035) — the step bounds itself (`Engine.persons_verdict`)
