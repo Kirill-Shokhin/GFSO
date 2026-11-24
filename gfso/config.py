@@ -986,6 +986,11 @@ def subprocess_env(*, credential: dict | None = None, extra: dict | None = None)
     # …and room to answer: the CLI's default 32k output cap cut a plan of 14 parts, and the model's re-emission after
     # the cut is what was kept (AUTO haiku 4.5 sql_database, GB_sql_database_tmu9cb784)
     env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "64000")
+    # …and long paths for every git it runs, as the system's own git has them (`worktrees.APART`): a validator's checks
+    # under its round's copy passed Windows' 260 and git alone broke there (2026-11-24)
+    if os.name == "nt":
+        n = int(env.get("GIT_CONFIG_COUNT") or 0)
+        env.update({"GIT_CONFIG_COUNT": str(n + 1), f"GIT_CONFIG_KEY_{n}": "core.longpaths", f"GIT_CONFIG_VALUE_{n}": "true"})
     if extra:
         env.update({k: str(v) for k, v in extra.items() if v is not None})
     return env

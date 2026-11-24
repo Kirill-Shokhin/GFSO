@@ -523,8 +523,20 @@ def test_inside_a_top_the_checker_is_the_holders_choice_and_its_pass_needs_no_wo
     out = _call(CONSOLE, "set_checker", e, TASK, agent=HOLDER)
     assert out.get("checker") == "validator", out
     _delivered(e, TASK, HOLDER)
+    no = _call(CONSOLE, "signal", e, TASK, "PASS", HOLDER)
+    assert no.get("error") and not no.get("confirm_needed"), "a PASS the gate refuses is never offered as signable"
     instrument_passes(e, TaskId(TASK), validator="p-val")
     assert _call(CONSOLE, "signal", e, TASK, "PASS", HOLDER)["state"] == "DONE"
+
+
+def test_the_holders_appointment_says_what_runs(tmp_path, monkeypatch):
+    """Appointing the validator promises a check that runs: by itself where one is staffed, else the call that makes
+    it — never «checks each delivery» with nothing to run."""
+    e = _stream(tmp_path)
+    assert "by itself" in _call(CONSOLE, "set_checker", e, TASK, agent=HOLDER)["say"]
+    monkeypatch.setattr(type(e), "validator_staffed", lambda self: False)
+    say = _call(CONSOLE, "set_checker", e, TASK, agent=HOLDER)["say"]
+    assert "now checks" not in say and f"validate_result('{TASK}')" in say, say
 
 
 def test_a_direction_he_adds_later_is_a_top_carrying_the_criterion_his_act_installs(tmp_path):

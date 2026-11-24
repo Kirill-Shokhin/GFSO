@@ -9,6 +9,7 @@ import inspect
 import json
 import os
 import shutil
+import subprocess
 import threading
 import time
 
@@ -81,8 +82,17 @@ def test_a_host_delivery_is_kept_in_the_systems_store_and_outlives_its_place(tmp
     _gone(repo)
     (fresh := tmp_path / "fresh").mkdir()
     _git(fresh, "init", "-q")
-    ST.lay(e, None, head, fresh, "refs/heads/got")
+    try:
+        ST.lay(e, None, head, fresh, "refs/heads/got")
+    except OSError as x:      # …red only in the validator's runs (`not our ref`): what the store held at that moment
+        store = _store(e)
+        pytest.fail(f"{x}; store {store} ({len(store)} chars) keeps {_keeps(e)}; "
+                    f"commit there: {not _git_rc(store, 'cat-file', '-e', head + '^{commit}')}; feed {_why(e)}")
     assert _git(fresh, "show", "got:f.txt") == "v1", "the delivery is not read back by its id once its place is gone"
+
+
+def _git_rc(at, *args) -> int:
+    return subprocess.run(["git", "-C", str(at), *args], capture_output=True).returncode
 
 
 def test_a_second_delivery_does_not_overwrite_the_first(tmp_path):
@@ -153,6 +163,7 @@ def test_an_unregistered_chat_names_the_work_tree_it_committed_in(tmp_path):
     _kept()
     assert out["accepted"] and e.delivered(TaskId("root"))[1] == head, out
     assert _keeps(e) == {f"{ST.KEEP}{head}": head}, _why(e)
+    assert os.path.samefile(TL._registered_workdir(e, "root", None), repo), "the validator is sent where it delivered"
     e.stop()
 
 

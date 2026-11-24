@@ -236,7 +236,9 @@ def test_a_validation_that_fails_before_it_runs_leaves_its_scope_owed(tmp_path, 
                         lambda tid: queue(tid) if raised else (raised.append(tid), (_ for _ in ()).throw(OSError("once")))[1])
     validator = _Validator(e)
     d = _dispatcher(e, agents, _LLM(_delivered("root.a", "root.b", "root")), validator, [])
-    _drive(e, d, lambda: e.graph.get_state(TaskId("root")) == State.DONE)
+    # …and its mark freed: the validation's thread frees it after the signature that made the root DONE (ubuntu CI read
+    # it in between, 2026-11-23); bounded by the drive's rounds, a mark never freed still fails
+    _drive(e, d, lambda: e.graph.get_state(TaskId("root")) == State.DONE and not d._signing)
     assert raised and _states(e) == {t: "DONE" for t in _NODES}, (raised, _states(e))
     assert not d._signing
     e.stop()

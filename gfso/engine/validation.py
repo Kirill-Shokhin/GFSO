@@ -709,11 +709,20 @@ def displaces_a_refutation(graph: Graph, task, recorder, by_hand) -> bool:
             and str(recorder or "") == str(graph.issuer_of(task.id) or ""))
 
 
+def last_delivery(audit, task):
+    """The last admitted DELIVER of `task` on the log, or None."""
+    return next((e for e in reversed(audit.get_entries(task.id)) if e.signal == Signal.DELIVER and not e.rejected),
+                None) if audit is not None and task is not None else None
+
+
 def delivered_tree(audit, task) -> Optional[str]:
     """The tree the last DELIVER of `task` recorded, or None."""
-    last = next((e for e in reversed(audit.get_entries(task.id)) if e.signal == Signal.DELIVER and not e.rejected),
-                None) if audit is not None and task is not None else None
-    return last.artifact if last is not None else None
+    return (last := last_delivery(audit, task)) and last.artifact
+
+
+def delivered_repository(audit, task) -> Optional[str]:
+    """The repository the last DELIVER of `task` recorded its commit in, or None."""
+    return (last := last_delivery(audit, task)) and last.repository
 
 
 def observation_standing(graph: Graph, task, audit, tree: Optional[str] = None) -> dict:

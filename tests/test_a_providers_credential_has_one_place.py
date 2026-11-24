@@ -336,3 +336,18 @@ def test_a_sign_in_that_did_not_finish_says_so_and_keeps_nothing(monkeypatch, ca
     monkeypatch.setattr("builtins.input", lambda prompt="": print(prompt))
     assert doctor.sign_in_here() == 1
     assert "did not finish" in capsys.readouterr().out and credentials.get("claude") is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows' 260-character path limit")
+def test_every_git_a_model_child_runs_has_long_paths(monkeypatch):
+    """A validator's checks run under its round's copy, past Windows' 260: git alone broke there while the system's
+    own git, with `core.longpaths`, did not (2026-11-24). A model child's environment carries it, beside any config the
+    server's own environment already counts."""
+    monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
+    env = subprocess_env()
+    assert (env["GIT_CONFIG_COUNT"], env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]) == ("1", "core.longpaths", "true")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "user.name")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "x")
+    env = subprocess_env()
+    assert env["GIT_CONFIG_COUNT"] == "2" and env["GIT_CONFIG_KEY_0"] == "user.name" and env["GIT_CONFIG_KEY_1"] == "core.longpaths"

@@ -92,7 +92,10 @@ def DROPPED() -> set:
     return {k for k in os.environ if SECRET_ENV.search(k)} | {"GFSO_SERVING"}
 
 
-ADDED ={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"}
+#: …and on Windows long paths for every git it runs (`config.subprocess_env`)
+ADDED = {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
+         **({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.longpaths", "GIT_CONFIG_VALUE_0": "true"}
+            if os.name == "nt" else {})}
 
 
 def _env_change(env: dict) -> tuple[set, dict]:

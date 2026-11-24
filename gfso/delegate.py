@@ -24,7 +24,7 @@ from typing import Optional
 from gfso import tools_llm as T
 from gfso.engine.frontier import refuted_reading, reopen_is_the_systems, uncovered
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
-from gfso.engine.validation import whole_waits_for_its_parts
+from gfso.engine.validation import delivered_repository, whole_waits_for_its_parts
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, agent_id as _config_agent_id, agents_path, max_sessions, provider, validator_retry_model
 from gfso.llm import llm_factory
 from gfso.places import cheap_to_ask
@@ -394,11 +394,15 @@ def validator_workdir(engine, agents: AgentRegistry, task_id: TaskId,
                    agents.validator_for(executor, project=engine.project_name))
     # …and before the roster's directory, the node's OWN place when it has one: the roster names the base every
     # executor branches from, where a sibling may be mid-edit — the torn read a node workspace exists against
+    # …and last but the oracle the repository its last DELIVER recorded (its main worktree's top): a chat registered
+    # nowhere is validated with no workdir passed by hand, while a judge registered below that top keeps its directory
+    recorded = delivered_repository(engine.graph.audit, task)
     return (node_workspace(engine, agents, task_id)
             or (agents.get(executor or "") or {}).get("workdir")
             or _children_workdir(engine, agents, task_id)
             or next((wd for who in roster_side
                      if who and (wd := (agents.get(str(who)) or {}).get("workdir"))), None)
+            or (recorded if recorded and execution_of(engine, agents).files.is_dir(recorded) else None)
             or _oracle_workdir(engine, vcfg or {}))
 
 

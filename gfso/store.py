@@ -221,23 +221,32 @@ def _take(engine, ex, commit: str, src, at, pack: Optional[str] = None) -> None:
                       timeout=TAKE_S, into_env=subprocess_env(extra=W.NO_CONFIG))
     if _whole(store, ex, commit):
         return
-    here = at if at is not None else LocalExecution()
+    with W.one_at_a_time(store):
+        rc, err, r = _stream(at if at is not None else LocalExecution(), src, commit, into, store, _tips(store, ex))
+        if rc or r.returncode or not _whole(store, ex, commit):
+            raise OSError(f"{commit[:12]} could not be taken from {src} into the project's store: "
+                          f"{(err or r.stderr or r.stdout or 'not whole there').strip()[-300:]}")
+
+
+def _stream(here, src, commit: str, into, dst, tips: list[str]):
+    """`commit` and its ancestry down to `tips` streamed from the git at `src` (read where `here` runs) into the one at
+    `dst` (where `into` runs), EVERY OBJECT HASHED AGAIN as `dst` takes it in (`index-pack --strict`): one pipe between
+    the two gits, no upload-pack — no config of a remote side to carry (a fetch by id from the store was refused `not
+    our ref` in a validator's round while the store advertised the commit, 2026-11-24) — and the list of `tips` laid in
+    the source's temp as a file, the system's write. (rc, err, result) of the pipe."""
     src_ex = here.session(str(src))
     listed = Path(here.temp_of(str(src))) / f"gfso-held-{uuid.uuid4().hex}"
-    with W.one_at_a_time(store), here.system_writes(str(listed.parent)):
+    with here.system_writes(str(listed.parent)):
         try:
-            here.files.write_bytes(str(listed), "".join(f"{t}\n" for t in _tips(store, ex)).encode())
-            rc, err, r = src_ex.pipe(
+            here.files.write_bytes(str(listed), "".join(f"{t}\n" for t in tips).encode())
+            return src_ex.pipe(
                 [src_ex.shell() or "bash", "-c", _PACK, "sh", str(len(W.APART)), *W.APART, commit, str(listed)],
                 cwd=str(src), into=into,
-                into_cwd=store, into_args=["git", *W.APART, "index-pack", "--stdin", "--fix-thin", "--strict"],
+                into_cwd=str(dst), into_args=["git", *W.APART, "index-pack", "--stdin", "--fix-thin", "--strict"],
                 timeout=TAKE_S, env=subprocess_env(extra={**W.NO_CONFIG, **NO_LAZY_FETCH, "GIT_NO_REPLACE_OBJECTS": "1"}),
                 into_env=subprocess_env(extra=W.NO_CONFIG))
         finally:
             here.files.remove_matching(str(listed.parent), [listed.name])
-        if rc or r.returncode or not _whole(store, ex, commit):
-            raise OSError(f"{commit[:12]} could not be taken from {src} into the project's store: "
-                          f"{(err or r.stderr or r.stdout or 'not whole there').strip()[-300:]}")
 
 
 def keep(engine, ex, commit: str, src, place, at=None, first=lambda: None, pack: Optional[str] = None
@@ -405,10 +414,12 @@ def give(engine, ex, commit: str, place, at=None) -> None:
         elif why := W.to_host(store, KEEP + commit, place, ex):
             raise OSError(f"{place} could not take {commit[:12]} from the project's store: {why}")
         return
-    got = W.git(place, "-c", "fetch.fsckObjects=true", "fetch", "-q", "--no-tags", "--no-write-fetch-head",
-                "--upload-pack", "git -c uploadpack.allowAnySHA1InWant=true upload-pack", store, commit, execution=at)
-    if got.returncode:
-        raise OSError(f"{place} could not take {commit[:12]} from the project's store: {got.stderr.strip()[-300:]}")
+    rc, err, r = _stream(LocalExecution(), store, commit, at if at is not None else LocalExecution(), place,
+                         W.git(place, "for-each-ref", "--format=%(objectname)", execution=at).stdout.split())
+    if rc or r.returncode or W.git(place, "rev-list", "--objects", "--missing=error", "-1", commit,
+                                   execution=at).returncode:
+        raise OSError(f"{place} could not take {commit[:12]} from the project's store: "
+                      f"{(err or r.stderr or r.stdout or 'not whole there').strip()[-300:]}")
 
 
 def lay(engine, ex, commit: str, place, ref: str, at=None) -> None:

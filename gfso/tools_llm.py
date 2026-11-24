@@ -680,7 +680,7 @@ _LIVE_ROUNDS: set = set()
 
 
 def _round_epoch(name: str) -> int:
-    """The second a validation's round was made in, read off its name (`<node>_<epoch>`); 0 where it carries none."""
+    """The second a validation's round was made in, read off its name (`<node digest>_<epoch>`); 0 where it carries none."""
     tail = name.rsplit("_", 1)[-1]
     return int(tail) if tail.isdigit() else 0
 
@@ -707,7 +707,11 @@ def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None, 
         # …a round of its own, never one an earlier validation in the same second holds: its batches are made fresh
         at = int(time.time())
         # …one path component, whatever the id spells: `db/schema` had a place and no round, a node stuck with no validator run (critic, ran)
-        while ex.files.exists(scratch := str(root / f"{node_key(task_id)}_{at}")):
+        # …named by a digest of the node, not its id: the copy and the work its checks make lie below, and a long id put
+        # their paths past Windows' 260 — `git init` refused in the validator's round alone, three validations of one
+        # node read {} where the system's own run, in a short temp, passed (2026-11-22..24)
+        key = hashlib.sha256(str(task_id).encode()).hexdigest()[:10]
+        while ex.files.exists(scratch := str(root / f"{key}_{at}")):
             at += 1
         ex.files.mkdir(scratch)
         if graph is not None:              # …in the record of the rounds standing, as it goes (`findings.record_round`)
@@ -3784,9 +3788,12 @@ def set_checker(engine: Engine, task_id: str, checker: str = "validator", user_s
                                   on_his_page=(p := CALLER.get()) is not None and p.a_page)
     except ValueError as e:
         return {"refused": True, "error": str(e)}
+    by_itself = engine.observes_by_itself(TaskId(task_id)) and engine.validator_staffed()
     return {"task_id": task_id, "checker": checker, "checked_by_the_validator": held,
-            "say": (f"the validator now checks each delivery of {task_id}, and its PASS stands on that record; you "
-                    f"sign it" if checker == "validator" else
+            "say": ((f"the validator now checks each delivery of {task_id} by itself" if by_itself else
+                     f"no validator here observes {task_id} by itself: after each delivery call "
+                     f"validate_result('{task_id}')") + ", and its PASS stands on that record; you sign it"
+                    if checker == "validator" else
                     f"{task_id} is checked by you, its issuer, and you sign it; `validate_result` checks it when called")}
 
 
@@ -3807,7 +3814,8 @@ def unchecked_self_pass(engine: Engine, tid, source) -> str:
     t = engine.graph.get_task(tid)
     if t is None or engine.graph.get_parent(tid) is None or t.state != State.VALIDATING or str(t.assignee) != str(source) \
             or str(engine.graph.issuer_of(tid)) != str(source) or engine.persons_seam(tid) \
-            or engine.issued_by_the_person(tid):
+            or engine.issued_by_the_person(tid) or engine.pass_blocked_by(tid):
+        # …a PASS the gate refuses is told by its refusal, never offered as signable
         return ""
     if (rec := engine.current_exec_verdict(tid)) and str(rec.get("validator") or "") not in ("", str(source)):
         return ""
