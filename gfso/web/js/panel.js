@@ -41,7 +41,7 @@ const pill = (d, v) => `<span class="pn-pill k-${bucketOf(d.state)}${v === 'fail
 // a property is a label and its value, one row of the grid; an absent one is no row
 const prop = (k, html, attrs = '') => html ? `<div class="pn-k">${k}</div><div class="pn-v"${attrs}>${html}</div>` : '';
 
-function head({d, rounds}) {
+function head({d, vr, rounds}) {
     const v = vNow(d, d.audit), name = nameOf(d), note = closureNote(d.closure), bad = contested(d.closure), live = !terminal(d.state);
     // the round is an ordinal, its figure the eye looks for; «in work» where the page's one reading has it, whoever holds it
     // (audit D8: a parent waiting on its parts is not; JOINT in-work rework 11-18), no round 0 (D9)
@@ -69,7 +69,7 @@ function head({d, rounds}) {
         + prop('Replaces', (d.replaces || []).map(x => esc(nameOf(taskOf(x)) || x)).join(', '))
         + prop('Moved to', (d.replaced_by || []).map(x => esc(nameOf(taskOf(x)) || x)).join(', '))
         + prop('Del', `<code>${esc(d.assignee ? agentName(d.assignee) : '—')}</code>`)
-        + prop(...checkRow(d))
+        + prop(...checkRow(d, vr))
         + prop('Round', n ? `<b class="pn-fig">${n}</b>${inWork ? ' in work' : ''}` : '')
         + prop('Result', !d.parent_id && delivered(d) && S.graph.landed ? `<code${H.landed(S.graph.landed)}>${esc(S.graph.landed.branch || S.graph.landed.path)}</code>` : '')
         // a deadline only where it still binds (audit D18)
@@ -218,7 +218,8 @@ function actions({d, acts, vr}) {
     // …and why a move is not offered, each in the engine's own sentence (`withheld`, and `why_none` when nothing is):
     // a missing button said nothing (a probe: a Reject Challenge withheld for a Level-2 verdict the page never named);
     // `gate` also carries asides written for an agent's verbs, which a person's buttons already perform (critic)
-    const why = [...Object.values(acts?.withheld || {}), ...(!open.length && acts?.why_none ? [acts.why_none] : [])];
+    // …each sentence once: on a closed node `why_none` is the same refusal as `withheld.ASSIGN`, and it stood twice (register critic, 11-24)
+    const why = [...new Set([...Object.values(acts?.withheld || {}), ...(!open.length && acts?.why_none ? [acts.why_none] : [])])];
     const gate = why.map(w => `<div class="pn-note check-skip">${esc(spoken(w))}</div>`).join('');
     if (!m?.mode) { const btns = signed([...open, ...moves]); return btns || gate ? foot(gate, btns) : ''; }
     const steps = (S.mySteps?.get(d.id) || []).filter(x => x.mine);
@@ -278,14 +279,17 @@ const checkerOf = d => d.checker || (S.graph.nodes || []).find(n => n.id === d.i
 // (the setting beside a closed node contradicted that record on 59 of 221, critic; the author, 11-24: «есть исполнитель
 // есть проверяющий. зачем тебе формы времени»)
 const whoName = who => owns(who) ? 'you' : agentName(who);
-function checkRow(d) {
+// the model of the verdict that CLOSED the node: `closed_on` where a later record landed on top of it, else the record itself
+// (engineering, 11-24); a self-report or a hand carries none (critic: a later FAIL's Sonnet named over a self-reported PASS)
+const closingModel = vr => { const m = (vr?.closed_on || vr)?.validator_model; return m ? modelName(m) : ''; };
+function checkRow(d, vr) {
     if (!d.parent_id || d.state === 'ABANDONED') return ['', ''];
     if (terminal(d.state)) { const cl = d.closure || {};
         // …the executor checking its own work said so, by hand or not: «X, by hand» under «Del: X» hid it (critic, 190 of them)
-        return ['Checker', cl.validator ? esc(cl.provenance === 'instrument' ? PANEL.byValidator
+        return ['Checker', cl.validator ? esc(cl.provenance === 'instrument' ? PANEL.byValidator(closingModel(vr))
             : cl.validator === d.assignee ? PANEL.bySelf(whoName(cl.validator)) : PANEL.byHand(whoName(cl.validator))) : '']; }
     const who = checkerOf(d), issuer = taskOf(d.parent_id).assignee || '';
-    return ['Checker', esc(who === 'validator' ? PANEL.byValidator : who === 'independent' ? PANEL.byApart
+    return ['Checker', esc(who === 'validator' ? PANEL.byValidator(S.validatorModel?.model && modelName(S.validatorModel.model), S.validatorModel?.byDefault) : who === 'independent' ? PANEL.byApart
         : who === 'self' && issuer === d.assignee ? PANEL.bySelf(whoName(issuer)) : whoName(who === 'self' ? issuer : who))];
 }
 // …and its issuer's choice of it where one exists, the box

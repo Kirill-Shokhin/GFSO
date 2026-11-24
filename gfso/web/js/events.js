@@ -79,11 +79,13 @@ let query = saved.query || '', shown = null;
 export function render(el, run, nodes, tasks, pipeline = []) {
     const name = run.name, by = streams(run, nodes, pipeline), ids = [...nodes.map(n => n.id), ...FOCUS ? [] : [RUN]];
     if (FOCUS) delete by[RUN];                     // a view of one part: the run's own lines are the whole project's, not the part's
-    // a kind's count over what is in view: the whole run, or the one node chosen
-    const count = (k, sel) => (sel ? [by[sel] || []] : Object.values(by)).reduce((n, rs) => n + rs.filter(r => r.kind === k).length, 0);
+    // a kind's count over what is in view: the whole run, or the one node chosen — and what the search finds, as the list shows
+    // it: counted without the search, a reload's chips read the run's totals over a list the kept search had narrowed (critic)
+    const hit = q => r => !q || said_(r.a || r.p).toLowerCase().includes(q);
+    const count = (k, sel, q = query.trim().toLowerCase()) => (sel ? [by[sel] || []] : Object.values(by)).reduce((n, rs) => n + rs.filter(r => r.kind === k && hit(q)(r)).length, 0);
     // …a redraw under the reader's typing keeps the box and the caret: each burst of narration took the search away (critic)
     const typing = el.querySelector('.ev-find'), caret = typing === document.activeElement ? typing.selectionStart : null;
-    el.innerHTML =`<div class="ev-bar">${Object.keys(KINDS).filter(k => count(k)).map(k => `<button class="ev-chip${on.has(k) ? ' on' : ''}" data-kind="${k}">${k}<b>${count(k)}</b></button>`).join('')}
+    el.innerHTML =`<div class="ev-bar">${Object.keys(KINDS).filter(k => count(k, null, '')).map(k => `<button class="ev-chip${on.has(k) ? ' on' : ''}" data-kind="${k}">${k}<b>${count(k)}</b></button>`).join('')}
         <input class="ev-find" type="search" placeholder="find in events…"><span class="ev-only"></span></div><div class="ev-groups"></div>`;
     const box = el.querySelector('.ev-groups'), find = el.querySelector('.ev-find');
     find.value = query;
@@ -95,14 +97,14 @@ export function render(el, run, nodes, tasks, pipeline = []) {
         if (sel !== shown) { shown = sel; if (sel) opened.add(`g|${sel}`); }
         // a group's time and its place among the newest are its newest row the filter shows: hidden narration (a
         // migration's batch) stamped every group one minute and put the goal's verdict last (critic)
-        const kept = Object.fromEntries(ids.map(id => [id, by[id].filter(r => on.has(r.kind) && (!q || said_(r.a || r.p).toLowerCase().includes(q)))]));
+        const kept = Object.fromEntries(ids.map(id => [id, by[id].filter(r => on.has(r.kind) && hit(q)(r))]));
         box.innerHTML = ids.filter(id => !sel || id === sel).sort((a, b) => (kept[b][0]?.t || 0) - (kept[a][0]?.t || 0)).map(id => {
             const rs = kept[id];
             if (!rs.length && (q || sel !== id)) return '';
             return `<details class="ev-group" data-key="${esc(`g|${id}`)}"${id === RUN ? '' : ` data-node="${esc(id)}"`}${opened.has(`g|${id}`) ? ' open' : ''}>${head(id, name(id), nodes.find(n => n.id === id), run, rs)}
                 <ol><li class="ev ev-cols"><span>time</span><span>signal</span><span>state</span><span>by</span></li>${rs.map((r, i) => days(rs, i) + row(r)).join('')}</ol></details>`;
         }).join('') || '<p class="ev-none">nothing matches</p>';
-        el.querySelectorAll('.ev-chip').forEach(c => c.querySelector('b').textContent = count(c.dataset.kind, sel));
+        el.querySelectorAll('.ev-chip').forEach(c => c.querySelector('b').textContent = count(c.dataset.kind, sel, q));
         el.querySelector('.ev-only').innerHTML = sel ? `only <b>${esc(name(sel))}</b> <button data-clear>show all</button>` : '';
     };
     el.querySelector('.ev-bar').onclick = e => {

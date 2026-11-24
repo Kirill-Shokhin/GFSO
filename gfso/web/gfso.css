@@ -1628,6 +1628,11 @@ button.rs-switch { cursor: pointer; min-height: 32px; }   /* a finger's target, 
 .header > .role-select:not(.mine-as)::after { content: '/'; font-family: var(--font-body); font-size: 15px; opacity: 0.35; margin-left: 4px; }
 .hd-goal { display: contents; }
 .hd-root { order: 2; padding: 0; }
+/* …and where the bar runs short (1024 with «Quality» shown) the goal's name gives way first, cut to its ellipsis and whole on
+   hover, and «Mine only» keeps one line (it broke over two). A bar crowded past that (calls naming stuck nodes) still shrinks
+   its centre: keeping the figures whole there pushed the calls out of it (critic) — open */
+.header .hd-root { flex: 0 1000 auto; min-width: 8ch; }
+.header .queue-toggle { white-space: nowrap; flex: none; }
 .hd-goal > .hd-left, .hd-goal > .hd-warn { order: 3; }
 /* a part's way down, under its name in the panel: a full-width button, the one move that changes the view */
 .pn-down { display: block; width: 100%; margin: 10px 0 4px; padding: 8px 12px; font: inherit; font-size: 13px; text-align: left; color: var(--ink); background: transparent; border: 1px solid var(--ink); border-radius: var(--radius); cursor: pointer; }

@@ -21,7 +21,9 @@ export const agentName = id => { const b = bare(id, S.project); return S.tasks.s
 // his console's move under the same name, which a typed signer never told (docs/notes/SIGN_IN.md)
 // …the page itself signs as `session` (signed in) or `local-peer` (its own account's process, no sign-in); a token's id starts `tok`
 export const viaWord = v => !v ? '' : v === 'session' || v === 'local-peer' ? 'on the page' : v === 'default' ? 'by a local client'
-    : String(v).startsWith('tok') ? 'by its token' : `by ${v}`;
+    : String(v).startsWith('tok') ? 'by its token'
+    // …a connection that took the name (`act_as`, signin.py `as:<lease>`): a raw lease hash stood in 203 rows (register critic, 11-24)
+    : String(v).startsWith('as:') ? 'by its connection' : `by ${v}`;
 export const moverOf = a => {
     const by = a.source && agentName(a.source);
     if (!a.by_system) return {word: by || (a.signal === 'TIMEOUT' ? 'clock' : ''), as: null, via: viaWord(a.via)};

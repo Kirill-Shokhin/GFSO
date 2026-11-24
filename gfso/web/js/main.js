@@ -68,6 +68,15 @@ const refreshDeck = singleFlight(async () => { await runRead(); paintDeck(); });
 const refreshAll = async () => { await refreshGraph(); goal.labelGoalButton(); await refreshQuality(); await refreshHeader(); };
 // A LOAD READS WHILE IT DRAWS: the rest needs the graph's read, not its drawing, which held every read behind it for over a
 // second on a phone. Nothing is painted over a drawing still under way: a chip pressed there would lose its unfolding.
+// THE HEADER'S HEIGHT, RESERVED BEFORE THE FIRST FRAME: on a phone it wraps to three rows once the project's reads fill it,
+// and filled after the graph was framed it pushed the canvas 45 px down under a finger aimed at a node (probe). The height
+// it last took for this project is held until it is filled, then let go: a header shorter than kept gives the canvas room,
+// which moves no node out of sight
+// …kept per project AND width: the height a portrait phone kept, reserved on its landscape, framed the graph under a header
+// twice its own and dropped it 3 s later (critic)
+const HEADER_KEY = `gfso.header.${PROJECT}.${innerWidth}`, headerBar = () => document.querySelector('.header');
+const headerReserved = () => { const h = kept(HEADER_KEY, Number); if (h) headerBar().style.minHeight = `${h}px`; };
+const headerFilled = () => { const b = headerBar(); b.style.minHeight = ''; keep(HEADER_KEY, String(b.offsetHeight)); };
 async function firstLoad() {
     const read = new Promise(go => { graphRead = go; }), drawn = refreshGraph();
     await Promise.race([read, drawn]);
@@ -77,7 +86,8 @@ async function firstLoad() {
     // from the graph; what comes late is painted when it comes
     let painted = false, heard = false;
     const repaint = () => { rebuildRun(); paintDeck(); }, late = () => { if (painted) repaint(); };
-    const header = refreshHeader().then(() => { heard = true; late(); });
+    // …the reserved height let go once the header itself is filled, not after the quality read too (3.8 s on this server)
+    const header = refreshHeader().then(() => { heard = true; headerFilled(); late(); });
     const run = runRead(); run.then(late);
     const asked = Promise.all([within(refreshQuality()), within(header).then(() => heard || drawHeader())]);
     const deck = Promise.all([within(run), asked, drawn]).then(() => { repaint(); painted = true; });
@@ -146,6 +156,7 @@ async function applyInFlight(list) {
 }
 // who works what is the log's (a node taken), never a party's connection (the author, 11-18: «никаких консольных
 // коннектов и костылей … инвариантно от исполнителя»; JOINT in-work rework, 11-18)
+// …and the server's model, the one its validator runs on by default (the panel's Checker row)
 const readInFlight = () => getJSON('/api/runtime').then(r => applyInFlight(r.in_flight))
     .catch(() => { /* the strip keeps its last count; the socket banner says when the server is gone */ });
 
@@ -327,10 +338,18 @@ async function init() {
     }
     // WHO THIS PAGE IS comes before anything it offers: every panel and the header draw its moves by it
     const checks = loadCheckMap();
+    // THE MODEL THIS PROJECT'S VALIDATOR RUNS ON, for the panel's Checker row, as the engine picks it: the validator registered for
+    // this project (or unscoped, `_validators_of`) on its own model — every mode registers one, on the project's system model —,
+    // else `validate_result` at a door, on the server's model unless its call names another (critic: the server's alone named
+    // Sonnet where an AUTO project's validator runs on Haiku, the header saying so)
+    Promise.all([getJSON('/api/runtime'), getJSON('/api/agents')]).then(([r, a]) => {
+        const v = Object.values(a.agents || {}).find(c => ['llm-validator', 'unittest-checker'].includes(c.kind) && [PROJECT, null, undefined].includes(c.project));
+        S.validatorModel = v ? {model: v.kind === 'llm-validator' ? v.model || r.system_model : null} : {model: r.system_model, byDefault: true};
+    }).catch(() => { /* the row says «the validator» */ });
     await whoAmI();
     if (S.me?.refused) return;
     await checks;
-    mountDeck();
+    mountDeck(); headerReserved();
     // A DISPLAY CLOCK, not a poll: while something runs, the ages it shows ("validating · 2m") and the open bars grow
     // with time and with nothing pushed — a session busy with tools streams no tokens. Minutes are the coarsest unit
     // shown, so 30 s keeps every figure within half its own step; no server read. A call booked in the ledger arrives

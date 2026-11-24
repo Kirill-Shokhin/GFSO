@@ -177,17 +177,25 @@ export function paint() {
 
 // The deck's first height, when the person has not dragged one: what the graph leaves over at a
 // zoom its labels can be read at, within bounds — a wide plan keeps its graph, a small one gives room.
-// …and held to it while the stage changes under it, until the person drags one: sized at the first drawing, before a phone's
-// header had filled, it kept a height 51 px past its own share of the stage (critic)
-let needs = null;
+// …and while the stage changes under it (a phone's header filled after the first frame), the deck gives or takes the
+// difference within its share, so the canvas the graph was framed on keeps its height: sized once, it kept a height 51 px
+// past its share (critic); sized again by the rule, the canvas shrank and the graph re-zoomed under the finger (probe)
+const share = () => phone() ? [0.5, 0.6] : [0.25, 0.42];
+let stageWas = null;
 export function suggestHeight(graphNeeds) {
     if (pref.h) return;
     const d = $('deck'), stage = d.parentElement.clientHeight;
-    if (needs === null) new ResizeObserver(() => { if (!document.body.classList.contains('deck-drag')) suggestHeight(needs); }).observe(d.parentElement);
-    needs = graphNeeds;
+    if (stageWas === null) new ResizeObserver(() => {
+        const now = d.parentElement.clientHeight, [lo, hi] = share();
+        if (pref.h || document.body.classList.contains('deck-drag') || now === stageWas) return;
+        const canvas = stageWas - d.offsetHeight;
+        d.style.height = `${Math.round(Math.max(now * lo, Math.min(now * hi, now - canvas)))}px`;
+        stageWas = now;
+    }).observe(d.parentElement);
+    stageWas = stage;
     // …on a phone the deck holds the first screen's answer (what runs, what waits): half of it at least — at a quarter it
     // showed 131 px of body under a graph no fit makes readable (audit E1)
-    const [lo, hi] = phone() ? [0.5, 0.6] : [0.25, 0.42];
+    const [lo, hi] = share();
     d.style.height = `${Math.round(Math.max(stage * lo, Math.min(stage * hi, stage - graphNeeds)))}px`;
 }
 

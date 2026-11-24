@@ -343,7 +343,10 @@ export const PANEL = {
     directive: text => hover(text),
     // …who checks the part is its issuer's choice, the signature theirs either way (§10.2; the author, 11-20, via engineering)
     checkAlways: "Checked by the validator (otherwise by you); you sign either way",
-    byValidator: 'the validator',
+    // …the system's validator is a model run: which one, as its record says on a closed node, and on an open one the project's
+    // registered validator's, else the server's «by default» — the call that starts it may name another (the author, 11-24:
+    // «у нас системный валидатор это конкретная модель»)
+    byValidator: (model, byDefault) => model ? `the validator, ${model}${byDefault ? ' by default' : ''}` : 'the validator',
     byApart: 'anyone but the executor',
     byHand: who => `${who}, by hand`,
     bySelf: who => `${who}, the executor itself`,
