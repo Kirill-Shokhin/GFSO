@@ -3124,7 +3124,8 @@ class Engine:
         t = self._graph.get_task(task_id)
         if t is None or not settled_positive(t):
             return None
-        rec = self.get_exec_verdict(task_id) or {}
+        # …the record it CLOSED on: a later one landed on top is evidence beside it, not who closed it (`closing_verdict`)
+        rec = self.closing_verdict(task_id) or self.get_exec_verdict(task_id) or {}
         displaced = self.overruled_verdict(task_id) or {}
         return {
             # by_hand / self / instrument / none — §10.3's three weights of evidence

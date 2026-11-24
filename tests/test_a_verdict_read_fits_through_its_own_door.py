@@ -480,3 +480,19 @@ def test_a_folded_criterion_list_keeps_every_name_it_promises():
                 f"{len(names)}")
     finally:
         e.stop()
+
+
+def test_the_closure_names_the_record_it_closed_on_not_a_later_one():
+    """A later record on a settled node is evidence beside the closing one (`closing_verdict`); the closure the panel's
+    checker row reads named the latest record's validator — a validator and model that closed nothing
+    (opr_seam_suite_race: closed on its executor's self-report, a later instrument FAIL on top)."""
+    e = make_engine(validate_signals=True, state_timeout=0)
+    e.start()
+    _a_node_validated_at_length(e)
+    T.signal(e, "kid", "PASS", "a-human")
+    e.wait_idle()
+    assert e.graph.get_task(TaskId("kid")).state.name == "DONE"
+    e.closing_verdict = lambda tid: {"verdict": "PASS", "validator": "a-reviewer", "by_hand": True}
+    e.get_exec_verdict = lambda tid: {"verdict": "FAIL", "validator": "validate_result", "by_hand": False}
+    closure = e.closure_of(TaskId("kid"))
+    assert closure["validator"] == "a-reviewer" and closure["by_hand"] is True, closure
