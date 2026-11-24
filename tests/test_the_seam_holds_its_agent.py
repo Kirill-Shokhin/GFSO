@@ -70,7 +70,8 @@ def test_its_own_step_holds_every_stop_naming_its_directive_verbatim_and_the_rea
     reason without the directive — red; `stop_hook_active` read as a release — red; `held_steps` saying the plan
     (`said_a_plan`) — red."""
     e = _held(tmp_path)
-    K.set_record("p", {"handle": "plan-a1b2", "state": "written"})
+    K.open_writing("p", "plan-a1b2", "plan")
+    K.mark("p", "plan-a1b2", state="written")
     with _as(CONSOLE):
         own = next(s for s in TL.next_steps(e)["steps"] if s.get("mine") and not s.get("optional"))
     out = _stop(e)

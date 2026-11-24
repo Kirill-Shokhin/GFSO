@@ -21,6 +21,7 @@ from gfso import tools_llm as TL
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.types import TaskId
 from gfso.engine import CheckRunning
+from gfso.runtime import ProjectRegistry
 from tests.test_every_verb_answers import _GOOD, _engine, _seeded
 from tests.test_validate_result import _delivered_node, _eng, _fenced
 from tests.support import REGISTER, a_repository, criterion
@@ -258,14 +259,14 @@ def test_a_check_before_the_delivery_is_a_claim_its_taker_alone_lets_go(tmp_path
 
 # ── an authoring ───────────────────────────────────────────────────────────────────────────────────────────────────
 
-def _split():
-    """A root split into one part, `root.core`, not split itself."""
+def _split(parts=("root.core",)):
+    """A root split into `parts` (`root.core` alone by default), none split itself."""
     e = _engine()
     TL.TOOLS["create_task"](e, "root", {"name": "root", "description": "the goal", "criteria": [criterion("c1", "it")]},
                             "user")
-    out = TL.TOOLS["decompose"](e, "root", [{"task_id": "root.core", "assignee": "user", "covers": ["c1"],
-                                             "spec": {"description": "the core", "criteria": [criterion("k", "K")]}}],
-                                accepted_risks=REGISTER)
+    out = TL.TOOLS["decompose"](e, "root", [{"task_id": p, "assignee": "user", "covers": ["c1"],
+                                             "spec": {"description": f"the part {p}", "criteria": [criterion("k", "K")]}}
+                                            for p in parts], accepted_risks=REGISTER)
     assert not out.get("error") if isinstance(out, dict) else out, out
     return e
 
@@ -401,3 +402,109 @@ def test_a_root_being_written_is_in_flight_before_the_graph_exists(monkeypatch):
         OPEN.set()
         _settled(lambda: not e.authorings.held())
         e.stop()
+
+
+# ── every writing of a project waited on, none held by nothing ─────────────────────────────────────────────────────
+
+def _dying_at(monkeypatch, *nodes) -> dict:
+    """An authoring of each of `nodes` that dies when its gate is set: {node: gate}."""
+    gates = {n: threading.Event() for n in nodes}
+
+    def dies(engine, request, root_id, **k):
+        assert gates[root_id].wait(30)
+        raise RuntimeError(f"{root_id} died")
+    monkeypatch.setattr(TL, "decompose_into", dies)
+    monkeypatch.setattr(TL, "ANSWER_WITHIN_SECONDS", 0.3)
+    return gates
+
+
+def test_two_authorings_of_one_project_are_each_listed_and_each_wakes_the_wait(monkeypatch):
+    """Two authorings on sibling nodes write at once: `next_steps` lists both, the wait wakes on the first's end with
+    its answer while the other is still listed writing, and again on the second's — one record per project lost one."""
+    gates = _dying_at(monkeypatch, "root.a", "root.b")
+    e = _split(("root.a", "root.b"))
+    try:
+        ha, hb = (_asked(e, request=n, root_id=n)["writing"] for n in ("root.a", "root.b"))
+        assert sorted(TL.next_steps(e)["plans"]["writing"]) == sorted([ha, hb])
+        gates["root.a"].set()
+        woke = TL.wait_for_the_customer(e, seconds=20)
+        assert ha in woke["needs_you"] and "root.a died" in woke["answers"][ha]["error"], woke
+        assert woke["plans"].get("writing") == [hb], woke
+        gates["root.b"].set()
+        assert hb in TL.wait_for_the_customer(e, seconds=20)["needs_you"]
+    finally:
+        for g in gates.values():
+            g.set()
+        e.stop()
+
+
+def test_a_short_authoring_beside_a_plan_being_written_leaves_the_wait_on_the_plan(monkeypatch):
+    """A `plan` writes; an authoring of the same project refused in its call meanwhile must not take the plan off the
+    record: the wait still wakes on the plan's end."""
+    gate = threading.Event()
+
+    def author(*a, **k):
+        assert gate.wait(30)
+        raise ValueError("the planner gave up")
+    monkeypatch.setattr(TL._planning, "author", author)
+    monkeypatch.setattr(TL, "ANSWER_WITHIN_SECONDS", 0.3)
+    monkeypatch.setattr(TL, "decompose_into", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no plan")))
+    e = _split()
+    try:
+        h = TL.TOOLS["plan"](e, request="another goal")["writing"]
+        assert _asked(e, request="the core", root_id="root.core").get("error")
+        gate.set()
+        woke = TL.wait_for_the_customer(e, seconds=20)
+        assert h in woke.get("needs_you", ""), woke
+    finally:
+        gate.set()
+        e.stop()
+
+
+def test_a_claim_with_no_writing_behind_it_is_let_go(monkeypatch):
+    """The channel refusing to start the writing (a store that cannot be written) leaves no subtree held by nothing."""
+    def cannot(*a, **k):
+        raise PermissionError("the plans' store is locked")
+    monkeypatch.setattr(TL, "_once", cannot)
+    e = _split()
+    try:
+        assert "the plans' store is locked" in _asked(e, request="the core", root_id="root.core")["error"]
+        assert not e.authorings.held()
+    finally:
+        e.stop()
+
+
+def test_every_node_a_move_names_is_held_and_a_switch_of_mode_waits(monkeypatch):
+    """An edge from the node being written to a sibling names it as its producer: refused; a switch of mode, which hands
+    roots between the person and the system party, waits for the authoring too."""
+    gates = _dying_at(monkeypatch, "root.core")
+    e = _split(("root.core", "root.side"))
+    try:
+        h = _asked(e, request="the core", root_id="root.core")["writing"]
+        edge = TL.TOOLS["add_dependency"](e, "root.core", "root.side", glue="its output")
+        assert edge.get("refused") and edge["being_rewritten"] == h, edge
+        switch = TL.TOOLS["set_mode"](e, "solo", user_said="solo, please")
+        assert switch.get("refused") and switch["being_rewritten"] == h, switch
+        gates["root.core"].set()
+        _settled(lambda: not e.authorings.held())
+        assert "being_rewritten" not in TL.TOOLS["add_dependency"](e, "root.core", "root.side", glue="its output")
+    finally:
+        gates["root.core"].set()
+        e.stop()
+
+
+def test_a_new_project_whose_authoring_fails_past_its_call_is_unmade(monkeypatch, tmp_path):
+    """A project made for an authoring answered `{writing}` is unmade at its end when it failed and holds nothing: a
+    refused call unmade it, one that failed past its call left an empty project listed."""
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("GFSO_PROJECT", raising=False)
+    gates = _dying_at(monkeypatch, "root")
+    reg = ProjectRegistry()
+    e = reg.engine("brand_new")
+    try:
+        out = reg.kept_if_done(True, e, lambda: TL.TOOLS["auto_decompose"](e, request="a goal"))
+        assert out.get("writing") and reg.exists("brand_new"), out
+        gates["root"].set()
+        _settled(lambda: not reg.exists("brand_new"))
+    finally:
+        gates["root"].set()

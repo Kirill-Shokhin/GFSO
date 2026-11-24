@@ -1,7 +1,7 @@
 """The plans asked for: the one each project waits on, and every written answer by its handle.
 
 A plan is written for minutes and its asker may come back hours later or after a restart (a chat hands the turn back),
-so both live on disk: `projects/<name>.json` — the project's latest plan, {handle, state, told, read, error} —
+so both live on disk: `projects/<name>.json` — the writings the project waits on, by handle (`records`) —
 `answers/<handle>.json` — a written answer, readable by its handle until KEPT_S after it is read or superseded — and
 `written/<name>.json` — the file last written for the project, {path, at}, what its page shows before the go."""
 from __future__ import annotations
@@ -39,31 +39,47 @@ def answer(handle: str) -> dict | None:
 
 
 def keep_answer(project: str, handle: str, out: dict) -> None:
-    """Keep the written answer `out` under `handle`, let go at once if `project` waits on another plan now: written
-    first and let go after, a sweep between the two kept a superseded answer for good."""
-    rec = record(project)
+    """Keep the written answer `out` under `handle`, let go at once if `project` no longer waits on it: written first
+    and let go after, a sweep between the two kept a superseded answer for good."""
     _write(_dir("answers") / f"{handle}.json",
-           {"answer": out, "at": time.time(), **({"let_go": True} if not rec or rec.get("handle") != handle else {})})
+           {"answer": out, "at": time.time(), **({} if record(project, handle) else {"let_go": True})})
 
 
-def record(project: str) -> dict | None:
-    """The plan `project` waits on — its latest asked — or None."""
-    return _read(_dir("projects") / f"{project or DEFAULT_PROJECT}.json")
+def _path(project: str) -> Path:
+    return _dir("projects") / f"{project or DEFAULT_PROJECT}.json"
 
 
-def set_record(project: str, rec: dict) -> None:
-    """Make `rec` the plan `project` waits on; the one it replaces stays readable by its handle until swept."""
-    if (was := record(project)) and was.get("handle") != rec.get("handle"):
-        let_go(was["handle"])
-    _write(_dir("projects") / f"{project or DEFAULT_PROJECT}.json", {**rec, "at": time.time()})
+def records(project: str) -> dict:
+    """{handle: {state, told, read, error, slot}} — every writing `project` waits on, each until read or superseded in
+    its slot; one project held two at once (two authorings on sibling nodes, an authoring beside a plan), and one record
+    lost the other's end. A record of the one-plan form before is read as its one writing."""
+    got = _read(_path(project)) or {}
+    return {got["handle"]: got} if "handle" in got else got
+
+
+def record(project: str, handle: str) -> dict | None:
+    """The writing `handle` names among those `project` waits on, or None."""
+    return records(project).get(handle)
+
+
+def open_writing(project: str, handle: str, slot: str) -> None:
+    """`project` waits on the writing `handle` anew; it supersedes the one of its `slot` before (a plan asked anew), and
+    those read are let go."""
+    recs = records(project)
+    for h in [h for h, r in recs.items() if h != handle and (r.get("slot") == slot or r.get("read"))]:
+        let_go(h)
+        del recs[h]
+    _write(_path(project), {**recs, handle: {"state": "writing", "told": False, "read": False, "slot": slot,
+                                             "at": time.time()}})
 
 
 def mark(project: str, handle: str, **flags) -> None:
-    """Set `flags` on the project's record, if it is still about `handle`; a read answer starts its KEPT_S."""
-    if (rec := record(project)) and rec.get("handle") == handle:
-        _write(_dir("projects") / f"{project or DEFAULT_PROJECT}.json", {**rec, **flags})
-    if flags.get("read") or not rec or rec.get("handle") != handle:
-        let_go(handle)          # …read, or no longer the one its project waits on
+    """Set `flags` on the writing `handle`, if `project` still waits on it; a read answer starts its KEPT_S."""
+    recs = records(project)
+    if handle in recs:
+        _write(_path(project), {**recs, handle: {**recs[handle], **flags}})
+    if flags.get("read") or handle not in recs:
+        let_go(handle)          # …read, or no longer one its project waits on
 
 
 def let_go(handle: str) -> None:
@@ -103,8 +119,8 @@ def documents(goal: str) -> list:
 
 def forget_project(project: str) -> None:
     """A deleted project waits on no plan, and shows none: a new one of its name inherits neither."""
-    if rec := record(project):
-        let_go(rec["handle"])
+    for h in records(project):
+        let_go(h)
     for kind in ("projects", "written"):
         (_dir(kind) / f"{project or DEFAULT_PROJECT}.json").unlink(missing_ok=True)
 

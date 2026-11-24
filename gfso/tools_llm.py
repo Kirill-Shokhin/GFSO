@@ -2350,13 +2350,26 @@ def _once(key: tuple, write, engine=None) -> dict:
             return dict(out)
         # …and a writing started anew is the record's anew, same handle or not: a re-ask after its failure or restart was
         # read kept `read` and the old error, and the plan written again was listed to no one (critic)
-        if (rec := _kept.record(project)) is None or rec.get("handle") != handle or key not in _PLANNING:
-            _kept.set_record(project, {"handle": handle, "state": "writing", "told": False, "read": False})
+        if _kept.record(project, handle) is None or key not in _PLANNING:
+            _kept.open_writing(project, handle, _slot(key))
         if started := key not in _PLANNING:
             w = _PLANNING[key] = _Writing(key)
             threading.Thread(target=contextvars.copy_context().run, args=(_written_in_its_thread, key, w, write, engine),
                              daemon=True, name=f"gfso-{key[0]}").start()
         return _answer_of(key, started)
+
+
+def _slot(key: tuple) -> str:
+    """What a writing supersedes when asked anew: the project's plan (`plan`, `refine_plan`), an authoring its node's."""
+    return f"{key[0]}:{key[2]}" if key[0] == "auto_decompose" else "plan"
+
+
+def at_its_end(handle: str, fn) -> None:
+    """`fn(answer)` once the writing `handle` names has ended — at once if it has; nothing once it is read."""
+    with _PLANNING_LOCK:
+        w = next((w for w in _PLANNING.values() if w.handle == handle), None)
+    if w is not None:
+        w.answer.add_done_callback(lambda f: fn(f.result()))
 
 
 def _answer_of(key: tuple, started: bool = False) -> dict:
@@ -2381,8 +2394,8 @@ def _by_handle(handle: str, project, read: bool = True) -> dict:
             if read:
                 _kept.mark(project, handle, read=True)
             return dict(out)
-        rec = _kept.record(project)
-        if rec and rec.get("handle") == handle and rec.get("state") in ("failed", "writing"):
+        rec = _kept.record(project, handle)
+        if rec and rec.get("state") in ("failed", "writing"):
             if read:
                 _kept.mark(project, handle, read=True)
             return {"refused": True, "error": rec.get("error") or "its writing was lost when the server restarted: "
@@ -2418,7 +2431,7 @@ def _written_in_its_thread(key: tuple, w: _Writing, write, engine) -> None:
             _kept.keep_answer(key[1], w.handle, out)
             _kept.mark(key[1], w.handle, state="written")     # …or let go, its project waiting on another now
             _PLANNING.pop(key, None)
-        w.answer.set_result(out)
+    w.answer.set_result(out)            # …outside the lock: what waits on its end (`at_its_end`) may read the channel
 
 
 #: how long a writing takes, by its verb, as its answer says it
@@ -2436,17 +2449,17 @@ def _being_written(handle: str, project, started: bool) -> dict:
 
 
 def plans_of(project) -> dict:
-    """The plan `project` waits on, as `next_steps` names it: `writing`; `written` or `failed`, not yet said (either ends
-    a wait); `unread`, said and not read. A writing the server lost at a restart is `failed`."""
+    """The writings `project` waits on, as `next_steps` names them: `writing`; `written` or `failed`, not yet said (either
+    ends a wait); `unread`, said and not read. A writing the server lost at a restart is `failed`."""
+    out: dict = {}
     with _PLANNING_LOCK:
-        rec = _kept.record(project)
-        if not rec or rec.get("read"):
-            return {}
-        h, state = rec["handle"], rec.get("state")
-        if state == "writing" and not any(w.handle == h for w in _PLANNING.values()):
-            state = "failed"
-    key = "writing" if state == "writing" else "unread" if rec.get("told") else state
-    return {"plans": {key: [h]}}
+        live = {w.handle for w in _PLANNING.values()}
+        for h, rec in _kept.records(project).items():
+            if rec.get("read"):
+                continue
+            state = rec.get("state") if rec.get("state") != "writing" or h in live else "failed"
+            out.setdefault("writing" if state == "writing" else "unread" if rec.get("told") else state, []).append(h)
+    return {"plans": out} if out else {}
 
 
 def plan(engine: Engine, request: str = "", model: Optional[str] = None, executor: Optional[str] = None,
@@ -3069,7 +3082,11 @@ def _written_past_its_call(fn):
                 engine.emit_info("auto_decompose", f"{node}: the authoring {handle} ended with no plan: "
                                                    f"{str(out['error'])[:400]}")
             return out
-        _once(key, write)
+        try:
+            _once(key, write)
+        except BaseException:          # …no writing behind the claim: never a subtree held by nothing (Inv-8)
+            engine.authorings.let_go(node)
+            raise
         with _PLANNING_LOCK:
             w = _PLANNING.get(key)
         if w is None or _settled_within([w.answer], ANSWER_WITHIN_SECONDS).done:
@@ -3497,20 +3514,20 @@ def wait_for_the_customer(engine: Engine, root_id: Optional[str] = None, actor: 
     while True:
         out = next_steps(engine, root_id, actor)
         plans = out.get("plans") or {}
-        why = needs_its_customer(out)
+        why, writing = needs_its_customer(out), set(plans.get("writing") or ())
         if first:
-            first, stood, writing = False, why, "writing" in plans
-        # …a wait on a plan being written is about the plan: what already stood when it began does not end it, and the
-        # plan written since does, whoever else was told of it meanwhile
-        if why and why == stood and "writing" in plans:
+            first, stood, watched = False, why, writing
+        # …a wait on a writing is about the writing: what already stood when it began does not end it, and each one it
+        # saw writing ends it at its end, whoever else was told of it meanwhile
+        if why and why == stood and writing:
             why = None
-        if not why and writing and "writing" not in plans and (done := plans.get("unread") or []):
+        if not why and (gone := sorted(watched - writing)):
             why = "a plan asked for is written: " + "; ".join(
-                f'`{h.rsplit("-", 1)[0]}(writing="{h}")` answers it' for h in done)
+                f'`{h.rsplit("-", 1)[0]}(writing="{h}")` answers it' for h in gone)
         if why or engine.now() >= deadline:
             said_a_plan(engine.project_name, out)
             # …and what each writing it wakes on came to, whole, as its handle reads it
-            ended = [h for k in ("written", "failed", "unread") for h in plans.get(k) or ()]
+            ended = sorted({*(watched - writing), *(h for k in ("written", "failed", "unread") for h in plans.get(k) or ())})
             return {**out, "waited_seconds": round(engine.now() - began, 1),
                     **({"answers": {h: _by_handle(h, engine.project_name, read=False) for h in ended}}
                        if why and ended else {}),
@@ -4281,13 +4298,22 @@ def _signed(name: str, fn):
 
 # The COMPLETE transport registry the doors bind — every verb wrapped so none of them can raise
 # into one (`_answering`, above), each signed by its call's credential (`_signed`).
+#: the arguments of a move that name a node
+_NODE_ARGS = ("task_id", "parent_id", "child_id", "from_id", "to_id", "blocker_task_id", "blocker_task_ids")
+
+
 def _held_while_written(name: str, fn):
-    """A move at a door on a node inside a subtree an authoring writes now — or, a split, on one above it — is refused
-    naming that authoring (`being_rewritten`): nothing lands in a subtree while it is written, and the refusal lifts when
-    the authoring ends (§12.16(ii)). `auto_decompose`'s own entry holds it for an authoring (`_alone_on_its_subtree`)."""
-    if (key := DOOR_KEYS.get(name, (None,))[0]) is None or name == "auto_decompose":
+    """A move at a door naming a node inside a subtree an authoring writes now — any node it names: an edge's two ends,
+    a blocker list — or, a split, one above it, is refused naming that authoring (`being_rewritten`): nothing lands in a
+    subtree while it is written, and the refusal lifts when the authoring ends (§12.16(ii)). A switch of mode waits for
+    every authoring of the project: it hands roots between the person and the system party (`Engine._hand_over`) under
+    the issuer the authoring was started for. `auto_decompose`'s own entry holds it for an authoring."""
+    if name != "set_mode" and (name not in DOOR_KEYS or name == "auto_decompose"):
         return fn
     sig, above = inspect.signature(fn), name == "decompose"
+
+    def _named(at: dict) -> list:
+        return [str(x) for k in _NODE_ARGS if at.get(k) for x in ([at[k]] if isinstance(at[k], str) else at[k])]
 
     @functools.wraps(fn)
     def _call(*a, **kw):
@@ -4295,8 +4321,13 @@ def _held_while_written(name: str, fn):
             at = sig.bind_partial(*a, **kw).arguments
         except TypeError:
             return fn(*a, **kw)                  # the door answers a malformed call in its own terms
-        if at.get(key) is not None and (other := at["engine"].authorings.over(str(at[key]), above)) is not None:
-            return _refused_while_written(at["engine"], str(at[key]), other)
+        engine = at["engine"]
+        if name == "set_mode":
+            held = next(iter(engine.authorings.held().items()), None) if at.get("mode") else None
+            return fn(*a, **kw) if held is None else _refused_while_written(engine, held[0], held)
+        for node in _named(at):
+            if (other := engine.authorings.over(node, above and node == str(at.get("parent_id")))) is not None:
+                return _refused_while_written(engine, node, other)
         return fn(*a, **kw)
     return _call
 

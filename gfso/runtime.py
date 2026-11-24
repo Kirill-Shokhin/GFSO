@@ -300,7 +300,8 @@ class ProjectRegistry:
     def kept_if_done(self, made: bool, eng: Engine, call, **kw):
         """`call(**kw)`'s answer — and a project `made` for it (`exists` false before) unmade if the call refused or raised:
         a refused `set_mode` on a new name made one, on every door (an empty graph listed among the person's, one per
-        name tried)."""
+        name tried). An authoring answered `{writing}` unmakes it at its end, where it failed and the project holds
+        nothing."""
         out = None
         try:
             out = call(**kw)
@@ -308,6 +309,9 @@ class ProjectRegistry:
         finally:
             if made and (out is None or is_refusal(out)):
                 self.unmake(eng.project_name)
+            elif made and isinstance(out, dict) and out.get("writing"):
+                _delegate().T.at_its_end(out["writing"], lambda got: is_refusal(got) and not eng.all_tasks()
+                                         and self.unmake(eng.project_name))
 
     def projects(self) -> list:
         """Every project held: its engine where this process has it open, else its record's path — read, never opened
