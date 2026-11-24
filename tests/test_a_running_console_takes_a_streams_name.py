@@ -281,6 +281,7 @@ def test_a_connection_logs_in_again_under_another_name_and_the_first_is_freed(go
 
 
 @pytest.mark.parametrize("name, why", [("nobody-assigned-me", "not a name of yours"), ("agent", "reserved"),
+                                       ("system", "reserved"), ("liveness", "reserved"),
                                        ("x-exec-1", "the system's")])
 def test_a_name_the_person_did_not_issue_is_refused(go, name, why):
     _, go = go

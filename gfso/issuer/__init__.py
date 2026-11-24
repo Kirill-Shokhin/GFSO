@@ -44,7 +44,7 @@ from gfso.adapters.worktrees import NODES as _NODES
 from gfso.adapters.llm.stats import is_limit, refused_by_limit, the_call_was_cut, what_stopped
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.inflight import being_rewritten
-from gfso.config import LIMIT_RETRY_S, agent_id as _config_agent_id
+from gfso.config import LIMIT_RETRY_S, WATCH, agent_id as _config_agent_id
 from gfso.core.graph.model import on_the_wall, project_max_iterations, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.handlers.structural import risks_naming_own_criteria
@@ -2182,16 +2182,34 @@ def backoff(waits: int) -> float:
 STUCK_S, STUCK_ANSWERS = 1800, FREE_ANSWERS
 
 
-def report_stuck(engine, questions, ledger: dict, owed: dict, now: float) -> list[str]:
+# The watch (`config.WATCH`, reserved) files its reports and signs their resolutions: a report is resolved by its
+# addressee or its author (`tech_reports.resolution_refusal`), and no party signs as the watch, so a report it did not
+# withdraw itself stood open for ever — 110 of 112 on one project, 79 of them the person's to close over a stall that
+# was never the system's (the author, 2026-11-24).
+
+#: `owed`'s mark that this run has settled what an earlier run of the server said: that run's `owed` went with it
+SETTLED = ("", "stored")
+_OWES = re.compile(r"it owes the (\w+) question on ")
+
+
+def report_stuck(engine, questions, ledger: dict, owed: dict, now: float, open_now=()) -> list[str]:
     """Each question the system has owed past STUCK_S, or answered STUCK_ANSWERS times in a row without moving it, said
     ONCE per node version as a TECH REPORT — the system reporting itself as an executor does; nothing else changes (the
     clock still owns the lapse, no verdict is invented). `owed` — (node, question) → (since, versions said, last move)
     — is the caller's across sweeps; a question that closes leaves it. A question MOVES when its node takes a new
     version or, where it moves by degrees (`_left_open`), when what it leaves open falls below the least seen on that
-    version; both counts — the time owed and the answers that left it standing — run from its last move."""
-    for k in set(owed) - set(questions):
+    version; both counts — the time owed and the answers that left it standing — run from its last move.
+
+    The watch resolves its own report itself (`_withdraw`) where what it said no longer holds: the node took a new
+    version, the question is still open with a mover other than the system (`open_now`, every open question), or it
+    is gone and the system owes nothing else on its node. Each question leaving `owed`, and its first sweep in a run,
+    settle so every report open — an earlier run's too."""
+    first = SETTLED not in owed
+    ended = set(owed) - set(questions) - {SETTLED}
+    for k in ended:
         del owed[k]
-    said = []
+    owed[SETTLED] = (now, frozenset(), None)
+    moved, filed, said = set(), set(), []
     for task_id, question in questions:
         task = engine.graph.get_task(task_id)
         since, done, move = owed.setdefault((task_id, question), (now, frozenset(), None))
@@ -2201,6 +2219,8 @@ def report_stuck(engine, questions, ledger: dict, owed: dict, now: float) -> lis
         waits, _, answers = ledger.get(gen, (0, 0.0, 0))
         left = _left_open(engine, task_id, question)
         if move is None or move[0] != gen:        # first seen, or a new version: the version is the move
+            if move is not None and done:
+                moved.add((str(task_id), question))
             since = since if move is None else now
             move = (gen, left, answers if move is None else 0)
         elif left is not None and (move[1] is None or left < move[1]):
@@ -2212,11 +2232,32 @@ def report_stuck(engine, questions, ledger: dict, owed: dict, now: float) -> lis
         if gen in done or (now - since < STUCK_S and stood < STUCK_ANSWERS):
             continue
         owed[(task_id, question)] = (since, done | {gen}, move)
-        engine.tech_report(f"the system is stuck on its own move: it owes the {question} question on {task_id} for "
-                           f"{now - since:.0f}s; {stood} answer(s) in a row left it standing, {waits} turn(s) went "
-                           f"unanswered", role="system", actor="liveness", task_id=task_id)
+        filed.add(engine.tech_report(f"the system is stuck on its own move: it owes the {question} question on "
+                                     f"{task_id} for {now - since:.0f}s; {stood} answer(s) in a row left it standing, "
+                                     f"{waits} turn(s) went unanswered", role="system", actor=WATCH,
+                                     task_id=task_id)["id"])
         said.append(str(task_id))
+    if first or ended or moved:
+        owing, open_now = {(str(t), q) for t, q in questions}, {(str(t), q) for t, q in open_now}
+        # …a question gone while the system still owes another on its node was masked or lapsed into it, not closed:
+        # `open_questions` keeps one per node, so a dispute lapsing into escalation by its clock left the dispute's
+        # report «closed» — the very stall the watch exists to say (critic, 2026-11-24)
+        _withdraw(engine, filed, lambda k: (
+            f"{k[0]} took a new version" if k in moved else
+            None if k in owing else
+            f"the system no longer owes the {k[1]} question on {k[0]}: its move is not the system's" if k in open_now
+            else None if any(t == k[0] for t, _ in owing) else
+            f"the system no longer owes the {k[1]} question on {k[0]}: it closed"))
     return said
+
+
+def _withdraw(engine, filed: set, how_of) -> None:
+    """Resolve, signed by the watch, each of its open reports (but those just `filed`) on a (node, question) `how_of`
+    says has ended — None where it still holds."""
+    for r in engine.tech_reports():
+        if (r.get("actor") == WATCH and r["id"] not in filed and (m := _OWES.search(r.get("text", "")))
+                and (how := how_of((str(r.get("node")), m[1])))):
+            engine.resolve_report(r["id"], how, WATCH)
 
 
 def _left_open(engine, task_id: TaskId, question: str) -> Optional[int]:
@@ -2237,7 +2278,7 @@ def _watched(engine, agents, ledger: dict, owed: Optional[dict], now: float) -> 
     questions = open_questions(engine)
     if owed is not None:
         report_stuck(engine, [(t, q) for t, q in questions if system_mover(engine, agents, t, q) is not None],
-                     ledger, owed, now)
+                     ledger, owed, now, questions)
     return questions
 
 

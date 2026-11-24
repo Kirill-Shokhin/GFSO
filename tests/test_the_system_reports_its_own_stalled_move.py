@@ -4,6 +4,8 @@ inputs looped 5 h (series 3) — both seen by a human, hours late. The sweep tha
 TECH REPORT per node version and question, nothing else changed."""
 import threading
 
+import pytest
+
 import gfso.issuer as I
 import tests.test_the_mode_decides_who_holds_what as M
 from gfso.core.types import Mode, TaskId
@@ -100,7 +102,7 @@ def test_a_question_that_closes_starts_its_clock_over(tmp_path, monkeypatch):
     _backdate(owed)
     q["now"] = []                      # answered: the question left before the next sweep
     sweep()
-    assert owed == {}
+    assert set(owed) == {I.SETTLED}
     q["now"] = [(TaskId("root"), "dispute")]
     sweep()
     assert not _stuck(e), "a question asked anew inherited the old one's time"
@@ -175,3 +177,102 @@ def test_answers_that_keep_a_plan_converging_are_not_counted_against_it(tmp_path
     for _ in range(I.STUCK_ANSWERS + 2):
         sweep()
     assert len(_stuck(e)) == 1
+
+
+# ── the watch withdraws what it said once it no longer holds: nobody signs as the watch, so a report it left open stood
+# for ever — 110 of 112 open on one project, 79 addressed to the person over a stall never the system's (2026-11-24)
+
+def _reported(e, agents, monkeypatch):
+    sweep, q, owed = _sweeper(e, agents, monkeypatch, {"status": "unavailable", "why": "x"})
+    sweep()
+    _backdate(owed)
+    sweep()
+    assert len(_stuck(e)) == 1
+    return sweep, q
+
+
+def _withdrawn(e):
+    return [r for r in e.tech_reports(resolved=True) if r["actor"] == I.WATCH and r.get("resolved_at")]
+
+
+def _said(question, node="root"):
+    return (f"the system is stuck on its own move: it owes the {question} question on {node} for 1801s; 0 answer(s) in "
+            f"a row left it standing, 0 turn(s) went unanswered")
+
+
+def test_a_report_is_withdrawn_when_its_question_closes(tmp_path, monkeypatch):
+    e, agents = _auto_goal(tmp_path)
+    sweep, q = _reported(e, agents, monkeypatch)
+    q["now"] = []
+    sweep()
+    (r,) = _withdrawn(e)
+    assert not _stuck(e) and r["resolved_by"] == I.WATCH
+    assert r["how"] == "the system no longer owes the dispute question on root: it closed"
+
+
+@pytest.mark.parametrize("said, now", [("dispute", "escalation"), ("repair", "dispute")])
+def test_a_question_lapsed_or_masked_into_another_the_system_owes_stays_reported(tmp_path, monkeypatch, said, now):
+    """`open_questions` keeps one question per node: a dispute lapsing by its clock into escalation, or a repair masked
+    by a dispute, leaves the node's stall standing — withdrawn as «closed», it hid the defect the watch exists to say."""
+    e, agents = _auto_goal(tmp_path)
+    sweep, q, owed = _sweeper(e, agents, monkeypatch, {"status": "unavailable", "why": "x"})
+    q["now"] = [(TaskId("root"), said)]
+    sweep()
+    _backdate(owed)
+    sweep()
+    assert len(_stuck(e)) == 1
+    q["now"] = [(TaskId("root"), now)]
+    sweep()
+    assert [said in r["text"] for r in _stuck(e)] == [True] and not _withdrawn(e)
+    q["now"] = []                      # …and once nothing the system owes stands on the node, it is withdrawn
+    sweep()
+    assert not _stuck(e) and len(_withdrawn(e)) == 1
+
+
+def test_a_report_is_withdrawn_when_its_move_is_no_longer_the_systems(tmp_path, monkeypatch):
+    e, agents = _auto_goal(tmp_path)
+    sweep, _ = _reported(e, agents, monkeypatch)
+    monkeypatch.setattr(I, "system_mover", lambda *a, **k: None)
+    sweep()
+    (r,) = _withdrawn(e)
+    assert not _stuck(e) and r["how"] == "the system no longer owes the dispute question on root: its move is not the system's"
+
+
+def test_a_report_is_withdrawn_when_its_node_takes_a_new_version(tmp_path, monkeypatch):
+    e, agents = _auto_goal(tmp_path)
+    sweep, _ = _reported(e, agents, monkeypatch)
+    root = e.graph.get_task(TaskId("root"))
+    monkeypatch.setattr(type(root), "iteration", property(lambda self: 7), raising=False)
+    sweep()
+    (r,) = _withdrawn(e)
+    assert not _stuck(e) and "new version" in r["how"]
+
+
+def test_control_a_stall_that_holds_stays_reported(tmp_path, monkeypatch):
+    e, agents = _auto_goal(tmp_path)
+    sweep, _ = _reported(e, agents, monkeypatch)
+    for _ in range(3):
+        sweep()
+    assert len(_stuck(e)) == 1 and not _withdrawn(e)
+
+
+def test_what_an_earlier_run_said_is_settled_at_the_first_sweep(tmp_path, monkeypatch):
+    """The run that filed them is gone with its `owed`: the next run's first sweep withdraws each report on a question it
+    no longer owes on a node it owes nothing on, and leaves standing the one it still owes."""
+    e, agents = _auto_goal(tmp_path)
+    for node, question in (("kid", "plan"), ("root", "dispute")):
+        e.tech_report(_said(question, node), role="system", actor=I.WATCH, task_id=node)
+    sweep, _, _ = _sweeper(e, agents, monkeypatch, {"status": "unavailable", "why": "x"})   # owes root's dispute only
+    sweep()
+    (r,) = _withdrawn(e)
+    assert r["text"] == _said("plan", "kid") and [s["text"] for s in _stuck(e)] == [_said("dispute")]
+
+
+def test_control_no_one_else_resolves_a_report_not_theirs(tmp_path, monkeypatch):
+    """The watch withdraws its own; an agent or a person neither its author nor its addressee is still refused."""
+    e, agents = _auto_goal(tmp_path)
+    _reported(e, agents, monkeypatch)
+    (r,) = _stuck(e)
+    for by in {"exec-1", "user", "system"} - {r["addressee"]}:
+        assert isinstance(e.resolve_report(r["id"], "closing it", by), str), by
+    assert _stuck(e)

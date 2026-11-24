@@ -219,6 +219,17 @@ def test_the_persons_names_are_born_as_no_one_elses(name):
             signin.issue(name)
 
 
+@pytest.mark.parametrize("name", [config.SYSTEM, config.WATCH])
+def test_the_systems_own_names_are_born_as_no_ones(name):
+    """The system party and the liveness watch, whose name alone resolves the watch's reports: no role, owned name or
+    token is born under either."""
+    out = TL.register_agent(make_engine(), name, "llm-validator", workdir=".")
+    assert out.get("refused") and "reserved" in out["error"], out
+    for door in (signin.own, signin.issue):
+        with pytest.raises(ValueError, match="reserved"):
+            door(name)
+
+
 def test_a_node_is_not_assigned_to_the_name_of_before():
     e = make_engine()
     e.start()

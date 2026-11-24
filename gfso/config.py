@@ -236,14 +236,20 @@ PERSONS_NAMES = frozenset({AGENT, PERSON})
 SYSTEM = "system"
 #: the names a node is issued in the person's name under: his own, and the system party's acting for him
 FOR_THE_PERSON = PERSONS_NAMES | {SYSTEM}
+#: THE LIVENESS WATCH: the author of the reports the system files on its own stalled moves, and the one name that
+#: resolves them (`issuer.report_stuck`) — a report is resolved by its author, so a party born under it would close them
+WATCH = "liveness"
+#: the system's own names that are no party's to be born under, each with what it names
+SYSTEMS_OWN = {SYSTEM: "the system party, the issuer of a goal handed over whole",
+               WATCH: "the system's liveness watch, the author of its reports on its own stalled moves"}
 
 
 def reserved_refusal(name) -> str | None:
-    """Why `name` cannot be born as a role's, a console's or a token's name, or None: it is the person's, or the
-    system party's."""
-    if str(name) == SYSTEM:
-        return (f"{SYSTEM!r} is reserved: it names the system party, the issuer of a goal handed over whole — never a "
-                f"role, a console or a token. Choose a name of its own (`<project>-exec`, `engineering`).")
+    """Why `name` cannot be born as a role's, a console's or a token's name, or None: it is the person's, or one of the
+    system's own (`SYSTEMS_OWN`)."""
+    if (what := SYSTEMS_OWN.get(str(name))):
+        return (f"{str(name)!r} is reserved: it names {what} — never a role, a console or a token. Choose a name of "
+                f"its own (`<project>-exec`, `engineering`).")
     if str(name) not in PERSONS_NAMES:
         return None
     return (f"{str(name)!r} is reserved: it names this installation's person (`{PERSON}`; `agent` before 0.4.0), "
