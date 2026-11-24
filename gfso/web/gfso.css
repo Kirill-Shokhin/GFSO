@@ -1227,6 +1227,9 @@ body.manual .toolbar .tb-help { margin-left: 0; }
 .pn-verdict b { font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: var(--tr-mono); }
 .pn-verdict > b, .pn-verdict > .check-fail { flex: none; white-space: nowrap; }
 .pn-who { flex: 1; min-width: 5ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-caption); }
+/* why a node waits, in words: wrapped to four lines, the rest one click away («whole →») — on one line it showed 5% of it and
+   was not found (the author, 2026-11-24); unclamped, a long reason pushed the moves off one screen (critic) */
+.pn-why { flex-basis: 100%; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; }
 .pn-when { font-family: var(--font-mono); font-size: 10px; color: var(--ink-soft); white-space: nowrap; }
 .pn-link {
     background: none;

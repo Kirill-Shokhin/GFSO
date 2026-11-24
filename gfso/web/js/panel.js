@@ -261,10 +261,12 @@ const signedBy = (run, id) => [
     ...Object.entries(run?.work.unansweredOn[id] || {}).map(([k, n]) => prop('Unanswered', `<span class="wk-none">${tally(n, `${KIND[k].name} ${n > 1 ? 'sessions' : 'session'}`)}</span>`)),
 ].join('');
 
-// why a node stands waiting on its issuer, while it does: a dispute's words, a block's
+// why a node stands waiting on its issuer, while it does: a dispute's words, a block's — FIRST under the head, wrapped to a few
+// lines (`.pn-why`), the whole one click away: it is why the node waits, and on one line under the validator's report it was not found (the author, 2026-11-24: «почему
+// вообще не написано в интерфейсе либо я не могу найти где прочитать причину челенджа?»)
 const WHY = {CHALLENGED: ['CHALLENGE', 'Challenged'], BLOCKED: ['BLOCK', 'Blocked']};
 const dispute = ({d}) => { const w = WHY[d.state], c = w && [...(d.audit || [])].reverse().find(a => a.signal === w[0] && !a.rejected);
-    return c ? `<div class="pn-verdict check-fail"><b>${w[1]}</b><span class="pn-who">${esc(trim(spoken(c.reason || ''), 200))}</span>${link('history', 'whole')}</div>` : ''; };
+    return c ? `<div class="pn-verdict check-fail"><b>${w[1]}: why</b><span class="pn-who pn-why">${esc(spoken(c.reason || ''))}</span>${link('history', 'whole')}</div>` : ''; };
 // WHO CHECKS A PART — the validator or its issuer themself, the signature the issuer's either way (§10.2, `set_checker`; the
 // author, 11-20: «решает кто будет валидировать; если сам то сам и ставит подпись»). The engine says who checks now
 // (`checker`, on the graph read only where it is the validator) and offers the choice only where one exists — a part the
@@ -285,7 +287,7 @@ function modeScope({d}) {
     const n = nodeOf(d.id);
     return n.mode_top === d.id && n.scope ? `<div class="pn-note check-skip">${esc(PANEL.scopeTop(agentName(d.assignee || ''), nameOf(taskOf(n.scope)) || n.scope))}</div>` : '';
 }
-const PARTS = [head, verdict, dispute, facets, criteria, checkSetting, modeScope, actions];   // the prose chips above the list, always on screen
+const PARTS = [head, dispute, verdict, facets, criteria, checkSetting, modeScope, actions];   // the prose chips above the list, always on screen
 
 let panelRead = 0, opening = Promise.resolve();
 export const panelOpened = () => opening;
