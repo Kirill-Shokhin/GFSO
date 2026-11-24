@@ -25,8 +25,8 @@ Only rows a pre-registration counts are here — a document fixing the question 
 | `sql_database` · Haiku 5.5 | done 3/3 · 100%, 100%, 90.9% · 16–21 min · $0.3–1.3 | done 2/2 · 100% · 56–57 min · $1.0–1.2 ⁴ | done · 90.9% · 4.4 h · $4.0 |
 | `sql_database` · Sonnet 5.5 | done 3/3 · 100% · 6–8 min · $1.0–1.3 | done 2/2 · 100% · 13–17 min · $4.3–5.6 | done · 100% · 110 min · $29 |
 | `c_compiler` · Haiku 4.5 | not done 3/3 · 12–15% · 7–10 min · $0.9–1.6 | no goal closed in 5 rows ⁵ | no verdict ($34) |
-| `c_compiler` · Haiku 5.5 | not done 3/3 · 74–91% · 19–36 min · $1.4–4.4 | done 2/2 · 98.6%, 99.7% · 71–92 min · $5.5–9.3 | no verdict |
-| `c_compiler` · Sonnet 5.5 | done 2/2 · 99.7% · 112–117 min · $48–52 ⁶ | done 2/2 · 99.7%, 99.0% · 35–43 min · $12–15 | no verdict, two attempts |
+| `c_compiler` · Haiku 5.5 | not done 3/3 · 74–91% · 19–36 min · $1.4–4.4 | done 2/2 · 98.6%, 99.7% · 71–92 min · $5.5–9.3 | no verdict ($8.8) ⁷ |
+| `c_compiler` · Sonnet 5.5 | done 2/2 · 99.7% · 112–117 min · $48–52 ⁶ | done 2/2 · 99.7%, 99.0% · 35–43 min · $12–15 | no verdict, two attempts ⁷ |
 
 1. Stopped on spend with no ledger on disk: `coreutils` by hand at about $115, `sql_database` by the operator's spend limit at $60; `c_compiler`'s $34 is the spend limit's log.
 2. The first plan: three rows, one ended by the issuer's cancel (the issuer is the party that handed the goal out), two cut at the 9-hour ceiling, 7.9–8.4 h, $68–92; then two on an amended build, $89 and $121. No score on record for any.
@@ -34,6 +34,7 @@ Only rows a pre-registration counts are here — a document fixing the question 
 4. The same final plan, polished on this model's own earlier runs and run without the addendum: done · 100% · 51 min · $2.4.
 5. Two rows cut at the ceiling ($60, $65); two on the amended build, no score on record ($85, $126); one on the last plan, run without the addendum, stopped by the system after 8 h ($67).
 6. A third row is void under the pre-registration's own rules.
+7. These rows, on build 9155db9, left only a start stub: no database and no score on disk, so no verdict can be read. Haiku 5.5's $8.8 is the spend guard's log; Sonnet's two attempts left no cost on record.
 
 ## How to read the numbers
 
