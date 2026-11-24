@@ -326,6 +326,9 @@ def _add_watch_parsers(sub) -> None:
     waitp.add_argument("--project", default=None, help="project name (default: the active one); `project=<name>` too")
     waitp.add_argument("--hours", type=float, default=24.0, help="give up after this long (default 24)")
 
+    sub.add_parser("whoami", help="The name this console signs as — the one its gfso connection took (`act_as`), read "
+                                  "from the live server; nothing printed with no server answering. For a status line")
+
     witp = sub.add_parser("witness", help="A Claude Code hook: a tool call that changed this repository's working tree "
                                           "while no node of the project is at work in it is recorded in the project "
                                           "and told to the agent; it never blocks. Installed only when you ask, in "
@@ -807,8 +810,24 @@ def _hook(args) -> int:
     return 0
 
 
+def _whoami(args) -> int:
+    """The name this console's calls sign as (`GET /api/whoami`, by its own credential — the lease of its connection,
+    `signin.credential_header`): `name`, or `—` where its connection took none. Nothing, exit 2, where this process
+    finds no credential of its console — a bare call reads as nobody, and `—` would claim the console took no name —
+    and where no server answers: a status line asks it and must neither wait long nor print an error."""
+    try:
+        if not (cred := signin.credential_header()):
+            return 2
+        req = urllib.request.Request(f"{serverctl.BASE}/api/whoami", headers=cred)
+        out = json.loads(urllib.request.urlopen(req, timeout=1).read() or b"null") or {}
+    except (Exception, SystemExit):            # …a console launched the closed way refuses in `credential_header`
+        return 2
+    print(out.get("name") if out.get("signs_as") else "—")
+    return 0
+
+
 #: the commands that are one function of their arguments, exiting with what it returns
-_EXITS = {"wait": _wait, "ui": _ui, "agent": _agent, "provider-check": _provider_check, "credential": _credential,
+_EXITS = {"whoami": _whoami, "wait": _wait, "ui": _ui, "agent": _agent, "provider-check": _provider_check, "credential": _credential,
           "export-places": _export_places, "migrate": _migrate, "witness": _hook, "hold": _hook}
 
 
