@@ -67,6 +67,7 @@ function head({d, rounds}) {
         + prop('Replaces', (d.replaces || []).map(x => esc(nameOf(taskOf(x)) || x)).join(', '))
         + prop('Moved to', (d.replaced_by || []).map(x => esc(nameOf(taskOf(x)) || x)).join(', '))
         + prop('Del', `<code>${esc(d.assignee ? agentName(d.assignee) : '—')}</code>`)
+        + prop('Checked by', checkedBy(d))
         + prop('Round', n ? `<b class="pn-fig">${n}</b>${inWork ? ' in work' : ''}` : '')
         + prop('Result', !d.parent_id && delivered(d) && S.graph.landed ? `<code${H.landed(S.graph.landed)}>${esc(S.graph.landed.branch || S.graph.landed.path)}</code>` : '')
         // a deadline only where it still binds (audit D18)
@@ -271,13 +272,21 @@ const dispute = ({d}) => { const w = WHY[d.state], c = w && [...(d.audit || [])]
 // author, 11-20: «решает кто будет валидировать; если сам то сам и ставит подпись»). The engine says who checks now
 // (`checker`, on the graph read only where it is the validator) and offers the choice only where one exists — a part the
 // person's chat holds below the root; a seam owes the validator, no box there (critic)
-const checkerOf = id => (S.graph.nodes || []).find(n => n.id === id)?.checker || 'self';   // validator · independent · self
+// …read off the node's own record (`checker`: validator · self · independent · an appointed name), on every node its issuer
+// gave out, as a row beside Del: it said nothing where the issuer checks or a name was appointed, and the graph read carries
+// it only for the validator (the author, 2026-11-24: «не вижу галочки … чтобы понимать какой валидатор прикреплен к ноде»)
+const checkerOf = d => d.checker || (S.graph.nodes || []).find(n => n.id === d.id)?.checker || 'self';
+// …before its check, while the node is open: closed, the panel says what checked it, and the setting beside that record
+// contradicted it on 59 of 221 closed parts (critic)
+const checkedBy = d => { if (!d.parent_id || terminal(d.state)) return '';
+    const who = checkerOf(d), issuer = taskOf(d.parent_id).assignee || '';
+    return esc(who === 'validator' ? PANEL.byValidator : who === 'independent' ? PANEL.byApart
+        : who === 'self' ? (owns(issuer) ? PANEL.byYou : PANEL.byIssuer(agentName(issuer))) : PANEL.byNamed(agentName(who))); };
+// …and its issuer's choice of it where one exists, the box
 function checkSetting({d, acts}) {
-    if (!d.parent_id) return '';
-    const who = checkerOf(d.id), on = who === 'validator', may = owns(acts?.moves?.set_checker);
-    return may ? `<div class="pn-note"><label class="act-check"><input type="checkbox"${data({action: 'set-checker', id: d.id, on: on ? '0' : '1'})}${on ? ' checked' : ''}> ${esc(PANEL.checkAlways)}</label></div>`
-        // …a seam no validator observes needs a verdict not its executor's (engineering 6bb0819): said too
-        : on || who === 'independent' ? `<div class="pn-note check-skip">${esc(on ? PANEL.checkedAlways : PANEL.checkedApart)}</div>` : '';
+    if (!d.parent_id || !owns(acts?.moves?.set_checker)) return '';
+    const on = checkerOf(d) === 'validator';
+    return `<div class="pn-note"><label class="act-check"><input type="checkbox"${data({action: 'set-checker', id: d.id, on: on ? '0' : '1'})}${on ? ' checked' : ''}> ${esc(PANEL.checkAlways)}</label></div>`;
 }
 // A SEAM HE ISSUES, HELD IN ITS HOLDER'S CHAT (§10.4: autonomy per task and role): no button sets it — the holder's own
 // connection taking its name records that it works in a chat, and each seam he issues to it is a TOP, his word standing

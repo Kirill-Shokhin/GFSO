@@ -138,7 +138,11 @@ export async function initGraph() {
     // (cytoscape makes no `click` of a touch, so the document never hears it — critic 11)
     cy.on('tap', () => { if (TOUCH.matches) untip(); });
     // (a press on a fold's tag is no tap on the background: the panel stays, and the redraw gives the node its border back)
-    cy.on('unselect', 'node', () => setTimeout(() => { if (cy.nodes(':selected').empty() && !pressed?.id) point('select', null); }));
+    // …only for the node chosen: a choice made elsewhere of a node the canvas does not draw (gathered, folded) unselected the
+    // old one here, and this took the new choice back — its panel never opened (measured: the dev graph, Engineering then a
+    // gathered part)
+    cy.on('unselect', 'node', evt => { const id = evt.target.id();
+        setTimeout(() => { if (cy.nodes(':selected').empty() && !pressed?.id && focus().select === id) point('select', null); }); });
     // a hover ON the canvas needs no halo there — the pointer is on the node; the halo answers a hover from elsewhere
     let own = false;
     // a node is clicked to select it: the pointer says so, as on every row the deck lets one pick a node by
