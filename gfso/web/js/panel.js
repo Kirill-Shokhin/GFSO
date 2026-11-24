@@ -219,7 +219,7 @@ function actions({d, acts, vr}) {
     // a missing button said nothing (a probe: a Reject Challenge withheld for a Level-2 verdict the page never named);
     // `gate` also carries asides written for an agent's verbs, which a person's buttons already perform (critic)
     // …each sentence once: on a closed node `why_none` is the same refusal as `withheld.ASSIGN`, and it stood twice (register critic, 11-24)
-    const why = [...new Set([...Object.values(acts?.withheld || {}), ...(!open.length && acts?.why_none ? [acts.why_none] : [])])];
+    const why = refusals(acts, open.length > 0);
     const gate = why.map(w => `<div class="pn-note check-skip">${esc(spoken(w))}</div>`).join('');
     if (!m?.mode) { const btns = signed([...open, ...moves]); return btns || gate ? foot(gate, btns) : ''; }
     const steps = (S.mySteps?.get(d.id) || []).filter(x => x.mine);
@@ -274,6 +274,9 @@ const notDrawnHere = id => !drawnHere(id);
 // …read off the node's own record (`checker`: validator · self · independent · an appointed name), on every node its issuer
 // gave out, as a row beside Del: it said nothing where the issuer checks or a name was appointed, and the graph read carries
 // it only for the validator (the author, 2026-11-24: «не вижу галочки … чтобы понимать какой валидатор прикреплен к ноде»)
+// WHY NO MOVE, each sentence once: on a closed node the engine's `why_none` is the same refusal as `withheld.ASSIGN`, and it stood
+// twice (register critic, 11-24) — a reason for no move only where none is open
+export const refusals = (acts, anyOpen) => [...new Set([...Object.values(acts?.withheld || {}), ...(!anyOpen && acts?.why_none ? [acts.why_none] : [])])];
 const checkerOf = d => d.checker || (S.graph.nodes || []).find(n => n.id === d.id)?.checker || 'self';
 // …a role, as Del is: the CHECKER — on an open node the one the issuer set, on a closed one the one its closing records
 // (the setting beside a closed node contradicted that record on 59 of 221, critic; the author, 11-24: «есть исполнитель
@@ -282,7 +285,7 @@ const whoName = who => owns(who) ? 'you' : agentName(who);
 // the model of the verdict that CLOSED the node: `closed_on` where a later record landed on top of it, else the record itself
 // (engineering, 11-24); a self-report or a hand carries none (critic: a later FAIL's Sonnet named over a self-reported PASS)
 const closingModel = vr => { const m = (vr?.closed_on || vr)?.validator_model; return m ? modelName(m) : ''; };
-function checkRow(d, vr) {
+export function checkRow(d, vr) {
     if (!d.parent_id || d.state === 'ABANDONED') return ['', ''];
     if (terminal(d.state)) { const cl = d.closure || {};
         // …the executor checking its own work said so, by hand or not: «X, by hand» under «Del: X» hid it (critic, 190 of them)

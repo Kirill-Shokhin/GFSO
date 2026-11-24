@@ -2,7 +2,7 @@
 // live messages to the units that own them. No unit imports another's handlers; they meet here.
 import {$, esc, coded, ages, phone} from './dom.js';
 import {PROJECT, TASK, GOAL, FOCUS, TOP, getJSON, post, singleFlight, whenMoved, movedBy, pushStep} from './api.js';
-import {S, kept, keep, signsAs, hereIn, mineShown, procs, inView, inside, goTo, goUp as up} from './state.js';
+import {S, kept, keep, validatorModelOf, signsAs, hereIn, mineShown, procs, inView, inside, goTo, goUp as up} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap, terminal, FM} from './vocab.js';
 import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
@@ -338,14 +338,10 @@ async function init() {
     }
     // WHO THIS PAGE IS comes before anything it offers: every panel and the header draw its moves by it
     const checks = loadCheckMap();
-    // THE MODEL THIS PROJECT'S VALIDATOR RUNS ON, for the panel's Checker row, as the engine picks it: the validator registered for
-    // this project (or unscoped, `_validators_of`) on its own model — every mode registers one, on the project's system model —,
-    // else `validate_result` at a door, on the server's model unless its call names another (critic: the server's alone named
-    // Sonnet where an AUTO project's validator runs on Haiku, the header saying so)
-    Promise.all([getJSON('/api/runtime'), getJSON('/api/agents')]).then(([r, a]) => {
-        const v = Object.values(a.agents || {}).find(c => ['llm-validator', 'unittest-checker'].includes(c.kind) && [PROJECT, null, undefined].includes(c.project));
-        S.validatorModel = v ? {model: v.kind === 'llm-validator' ? v.model || r.system_model : null} : {model: r.system_model, byDefault: true};
-    }).catch(() => { /* the row says «the validator» */ });
+    // the model this project's validator runs on, for the panel's Checker row (state.js `validatorModelOf`)
+    Promise.all([getJSON('/api/runtime'), getJSON('/api/agents')])
+        .then(([r, a]) => { S.validatorModel = validatorModelOf(a.agents, PROJECT, r.system_model); })
+        .catch(() => { /* the row says «the validator» */ });
     await whoAmI();
     if (S.me?.refused) return;
     await checks;

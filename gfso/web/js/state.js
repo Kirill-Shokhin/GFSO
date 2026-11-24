@@ -24,6 +24,13 @@ export const viaWord = v => !v ? '' : v === 'session' || v === 'local-peer' ? 'o
     : String(v).startsWith('tok') ? 'by its token'
     // …a connection that took the name (`act_as`, signin.py `as:<lease>`): a raw lease hash stood in 203 rows (register critic, 11-24)
     : String(v).startsWith('as:') ? 'by its connection' : `by ${v}`;
+// THE MODEL A PROJECT'S VALIDATOR RUNS ON, as the engine picks it: the validator registered for this project (or unscoped,
+// `_validators_of`) on its own model — every mode registers one, on the project's system model —, an instrument with no model
+// naming none; else `validate_result` at a door, on the server's model unless its call names another (critic: the server's
+// alone named Sonnet where an AUTO project's validator runs on Haiku, the header saying so)
+export const validatorModelOf = (agents, project, serverModel) => {
+    const v = Object.values(agents || {}).find(c => ['llm-validator', 'unittest-checker'].includes(c.kind) && [project, null, undefined].includes(c.project));
+    return v ? {model: v.kind === 'llm-validator' ? v.model || serverModel : null} : {model: serverModel, byDefault: true}; };
 export const moverOf = a => {
     const by = a.source && agentName(a.source);
     if (!a.by_system) return {word: by || (a.signal === 'TIMEOUT' ? 'clock' : ''), as: null, via: viaWord(a.via)};
