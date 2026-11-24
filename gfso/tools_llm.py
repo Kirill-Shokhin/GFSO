@@ -22,8 +22,8 @@ import subprocess
 import threading
 import time
 import contextvars
-from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import ExitStack, suppress
+from concurrent.futures import Future, ThreadPoolExecutor, wait as _settled_within
+from contextlib import ExitStack, nullcontext, suppress
 from pathlib import Path
 from datetime import datetime
 from dataclasses import asdict
@@ -1765,45 +1765,35 @@ def _childrens_executor(engine: Engine, root_id: str, assignee: str, executor: O
     return executor or str(kid)
 
 
-#: {project: [node]} — the nodes an authoring is writing now (`_alone_on_its_subtree`)
-_AUTHORING: dict = {}
-_AUTHORING_LOCK = threading.Lock()
-
-
-def _lineage(engine: Engine, node: str) -> set:
-    """`node` and every node above it."""
-    out, t = {str(node)}, engine.graph.get_task(TaskId(node))
-    while t is not None and t.parent_id:
-        out.add(str(t.parent_id))
-        t = engine.graph.get_task(t.parent_id)
-    return out
+def _refused_while_written(engine: Engine, node: str, other: tuple) -> dict:
+    """The refusal of a move on `node` while the authoring `other` ((node, handle), `Engine.authorings.over`) writes over
+    it: it names what it waits on and lifts when that ends (§12.16(ii))."""
+    n, h = other
+    where = "that node" if n == node else "in its subtree" if n in engine.authorings.lineage(node) else "above it"
+    return {"refused": True, "task_id": node, "being_rewritten": h or n,
+            "error": f"being_rewritten: an authoring is writing {n} now, and {node} is {where}: one split has one writer, "
+                     f"and nothing moves in it while it is written — this call started nothing; it may be made once the "
+                     f"authoring has ended, " + (f"`auto_decompose(writing=\"{h}\")` answering it then and `gfso wait` "
+                                                 f"waking on it" if h else "`next_steps` naming it in flight meanwhile")}
 
 
 def _alone_on_its_subtree(fn):
     """ONE AUTHORING PER SUBTREE, at the authoring's own entry, so every path to it is held: a request, a refine, a plan
     file's go, the page, the system's own split. While one writes a node, another on it, above it or below it is refused
-    — two writers on one split killed the authoring (gb-coreutils-tnq7tv040, 2026-10-30)."""
+    — two writers on one split killed the authoring (gb-coreutils-tnq7tv040, 2026-10-30). A read by handle writes
+    nothing; a writing its door's call claimed for it keeps that claim (`Authorings.writing`)."""
     sig = inspect.signature(fn)
 
     @functools.wraps(fn)
     def _call(*a, **kw):
         at = sig.bind_partial(*a, **kw).arguments
         engine, node = at["engine"], str(at.get("root_id") or ROOT_ID)
-        mine = _lineage(engine, node)
-        with _AUTHORING_LOCK:
-            held = _AUTHORING.setdefault(engine.project_name or DEFAULT_PROJECT, [])
-            if (other := next((n for n in held if n in mine or node in _lineage(engine, n)), None)) is not None:
-                where = "that node" if other == node else "in its subtree" if other in mine else "above it"
-                return {"refused": True, "task_id": node,
-                        "error": f"an authoring is writing {other} now, and {node} is {where}: one split has one "
-                                 f"writer — this call started nothing; `next_steps` and `get_graph` read what it "
-                                 f"builds, and an authoring here may be asked once it has ended"}
-            held.append(node)
-        try:
+        if at.get("writing") or engine.authorings.mine(node):
             return fn(*a, **kw)
-        finally:
-            with _AUTHORING_LOCK:
-                held.remove(node)
+        if (other := engine.authorings.take(node)) is not None:
+            return _refused_while_written(engine, node, other)
+        with engine.authorings.writing(node):
+            return fn(*a, **kw)
     return _call
 
 
@@ -1813,7 +1803,8 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                    depth: int = 1, model: Optional[str] = None, fast: bool = False,
                    max_iterations: Optional[int] = None, spec: Optional[dict] = None,
                    _progress=None, author: Optional[str] = None, open_plan: bool = False,
-                   plan: Optional[str] = None, _contact: str = "", user_said: str = "") -> dict:
+                   plan: Optional[str] = None, _contact: str = "", user_said: str = "",
+                   writing: Optional[str] = None) -> dict:
     """THE one decomposition verb — dispatched by the target's state (one operation over graph state):
     (a) empty project / undecomposed node → authors a real GFSO subtree from `request` (the root node
     itself is created from the request — no hand create_task needed), builds INTO the live CORE through
@@ -1850,7 +1841,15 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     `plan` is THE GO on a plan file (`plan` / `refine_plan`, a path or the text): the project is built from the goal
     and the plan the file holds, exactly or refused; from then on contact may repair it, for the system wrote it. Under
     `solo` and `semi` the go is the person's: `user_said`, their own words agreeing to the plan they were shown.
-    One authoring per subtree: while one writes a node, one on it, above it or below it is refused."""
+    One authoring per subtree: while one writes a node, one on it, above it or below it is refused, and every move in
+    the subtree it writes waits for it to end (`being_rewritten`).
+
+    At a door an authoring from a request, or a refine, is written in a thread of the server's as a plan is (`_once`):
+    the call answers within a few seconds — a refusal or a short run as itself, past that `{writing: <handle>}` —, the
+    graph it builds is read by `get_graph` as it stands, and its whole answer by `auto_decompose(writing=<handle>)` once
+    it ends; `gfso wait` wakes on it. The go on a plan file runs no model and answers in its call."""
+    if writing:
+        return _by_handle(writing, engine.project_name)
     if (yours := _a_new_roots_go(engine, root_id, request, plan, spec, model, user_said)) is not None:
         return yours
     if (unjudged := _no_place_at_the_go(engine)) is not None:
@@ -2371,17 +2370,21 @@ def _answer_of(key: tuple, started: bool = False) -> dict:
     return dict(w.answer.result())
 
 
-def _by_handle(handle: str, project) -> dict:
-    """The writing `handle` names, answered as its own call again would be: no second writing, whatever drifted."""
+def _by_handle(handle: str, project, read: bool = True) -> dict:
+    """The writing `handle` names, answered as its own call again would be: no second writing, whatever drifted. Not
+    `read`: as it stands, marked as read by no one (a wait carrying it)."""
     with _PLANNING_LOCK:
         if (key := next((k for k, w in _PLANNING.items() if w.handle == handle), None)) is not None:
-            return _answer_of(key)
+            w = _PLANNING[key]
+            return _answer_of(key) if read or not w.answer.done() else dict(w.answer.result())
         if (out := _kept.answer(handle)) is not None:
-            _kept.mark(project, handle, read=True)
+            if read:
+                _kept.mark(project, handle, read=True)
             return dict(out)
         rec = _kept.record(project)
         if rec and rec.get("handle") == handle and rec.get("state") in ("failed", "writing"):
-            _kept.mark(project, handle, read=True)
+            if read:
+                _kept.mark(project, handle, read=True)
             return {"refused": True, "error": rec.get("error") or "its writing was lost when the server restarted: "
                                                                    "ask for it anew"}
         return {"refused": True, "error": f"no plan is being written or kept as {handle!r}: one is kept until read, "
@@ -2403,9 +2406,10 @@ def told(project, handle) -> None:
 
 
 def _written_in_its_thread(key: tuple, w: _Writing, write, engine) -> None:
-    """Write one plan, marked in flight under its project, so a reconcile from another session does not restart under it;
-    what it came to is kept: the answer by its handle, and the state of the plan its project waits on."""
-    with _inflight(key[0], engine, ROOT_ID):
+    """Write one plan, marked in flight under its project (`engine`; none: `write` marks itself), so a reconcile from
+    another session does not restart under it; what it came to is kept: the answer by its handle, and the state of the
+    plan its project waits on."""
+    with _inflight(key[0], engine, ROOT_ID) if engine is not None else nullcontext():
         out = _answering(write)()
     with _PLANNING_LOCK:
         if "error" in out:
@@ -2417,11 +2421,16 @@ def _written_in_its_thread(key: tuple, w: _Writing, write, engine) -> None:
         w.answer.set_result(out)
 
 
+#: how long a writing takes, by its verb, as its answer says it
+_HOW_LONG = {"plan": "about 3–8 minutes on a small task", "refine_plan": "2–3 minutes",
+             "auto_decompose": "minutes; its subtree is held meanwhile"}
+
+
 def _being_written(handle: str, project, started: bool) -> dict:
     """The answer while a plan is written: the facts of its writing, and how its agent learns it is written."""
     verb = handle.rsplit("-", 1)[0]
     return {"writing": handle, "started": started,
-            "say": (f"The plan is being written ({'about 3–8 minutes on a small task' if verb == 'plan' else '2–3 minutes'}"
+            "say": (f"The plan is being written ({_HOW_LONG.get(verb, 'minutes')}"
                     f"): `{verb}(writing=\"{handle}\")` answers it once written, and `next_steps` names it under "
                     f"`plans`. " + how_it_is_waited(project, "it is written"))}
 
@@ -3003,8 +3012,7 @@ def _off_the_call(name: str, fn, lands):
         at = sig.bind_partial(*a, **kw).arguments
         engine, node = at.get("engine"), str(at.get("task_id") or ROOT_ID)
         gone, out = threading.Event(), Future()
-        if (shown := kw.get("_progress")) is not None:      # …the door's progress ends with its call
-            kw["_progress"] = lambda msg: None if gone.is_set() else shown(msg)
+        _shown_until(kw, gone)
 
         def run():
             got = answered(*a, **kw)
@@ -3024,6 +3032,58 @@ def _off_the_call(name: str, fn, lands):
     return _call
 
 
+def _shown_until(kw: dict, gone: threading.Event) -> None:
+    """The door's progress (`_progress`) ends with its call: a run past it narrates to no one."""
+    if (shown := kw.get("_progress")) is not None:
+        kw["_progress"] = lambda msg: None if gone.is_set() else shown(msg)
+
+
+def _written_past_its_call(fn):
+    """`auto_decompose` at a door: an authoring from a request, or a refine, written in a thread of the server's through
+    the plans' one channel (`_once`), its whole answer kept by its handle and `gfso wait` waking on it. Its subtree is
+    claimed in the call, under the handle, and let go by the writing at its end (`Authorings.writing`), so from the call
+    on every move there is refused naming it (`being_rewritten`) and the frontier holds it in flight. What it answers within
+    ANSWER_WITHIN_SECONDS is the call's answer — a refusal, a short run —; past that `{writing}`. An answer that cannot be
+    kept — the model's error, the run dead — is its handle's error, said on the feed. In the call: the CLI's direct path,
+    a read by handle, and the go on a plan written (`plan`, a closed `spec`), which runs no model."""
+    sig = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def _call(*a, **kw):
+        at = sig.bind_partial(*a, **kw).arguments
+        if (_config_written_in_the_call.get() or at.get("writing") or at.get("plan") is not None
+                or at.get("spec") is not None and not at.get("open_plan")):
+            return fn(*a, **kw)
+        engine, node = at["engine"], str(at.get("root_id") or ROOT_ID)
+        key = ("auto_decompose", engine.project_name, node, os.urandom(5).hex())
+        handle, gone = _handle_of(key), threading.Event()
+        if (other := engine.authorings.take(node, handle)) is not None:
+            return _refused_while_written(engine, node, other)
+        _shown_until(kw, gone)
+
+        def write() -> dict:
+            """The authoring, its subtree let go at its end, an error past the call said on the feed."""
+            with engine.authorings.writing(node):
+                out = _answering(fn)(*a, **kw)
+            if gone.is_set() and out.get("error"):
+                engine.emit_info("auto_decompose", f"{node}: the authoring {handle} ended with no plan: "
+                                                   f"{str(out['error'])[:400]}")
+            return out
+        _once(key, write)
+        with _PLANNING_LOCK:
+            w = _PLANNING.get(key)
+        if w is None or _settled_within([w.answer], ANSWER_WITHIN_SECONDS).done:
+            return _by_handle(handle, engine.project_name)
+        gone.set()
+        with _PLANNING_LOCK:      # …answered at its end in between: its answer, not `{writing}`
+            if key not in _PLANNING or w.answer.done():
+                return _by_handle(handle, engine.project_name)
+            return {**_answer_of(key), "running": "auto_decompose", "root_id": node, "task_id": node,
+                    "lands": f"the graph it builds is read by `get_graph` as it stands; every move in {node}'s subtree "
+                             f"is refused until it ends, `next_steps` naming it in flight"}
+    return _call
+
+
 def _validation_runs(engine, node) -> dict:
     """What a validation running past its call checks, and where its verdict lands."""
     tree, commit = ((engine.delivered(TaskId(node)) if engine is not None else None) or (None, None))[:2]
@@ -3034,8 +3094,7 @@ def _validation_runs(engine, node) -> dict:
 
 #: The verbs that run a model inside them, each answering at a door at once (`_off_the_call`), and where what they run
 #: lands. In process — the dispatcher's own validation, an issuer's review (`SYSTEM_TOOLS`) — each answers its result.
-#: `auto_decompose` still runs in its call: an authoring past its call must be shown where the wait and the frontier
-#: read it, and its subtree held while it writes, before it may leave the call.
+#: `auto_decompose` goes off its call through the plans' channel (`_written_past_its_call`).
 OFF_THE_CALL = {
     "validate_result": _validation_runs,
     "review_decomposition": lambda engine, node: {
@@ -3450,10 +3509,14 @@ def wait_for_the_customer(engine: Engine, root_id: Optional[str] = None, actor: 
                 f'`{h.rsplit("-", 1)[0]}(writing="{h}")` answers it' for h in done)
         if why or engine.now() >= deadline:
             said_a_plan(engine.project_name, out)
-            return {**out, "waited_seconds": round(engine.now() - began, 1), **(
-                {"needs_you": why} if why else
-                {"waited_note": "nothing needs you yet: the graph is working (`in_flight`) or waiting on a person "
-                                "(`waiting`)"})}
+            # …and what each writing it wakes on came to, whole, as its handle reads it
+            ended = [h for k in ("written", "failed", "unread") for h in plans.get(k) or ()]
+            return {**out, "waited_seconds": round(engine.now() - began, 1),
+                    **({"answers": {h: _by_handle(h, engine.project_name, read=False) for h in ended}}
+                       if why and ended else {}),
+                    **({"needs_you": why} if why else
+                       {"waited_note": "nothing needs you yet: the graph is working (`in_flight`) or waiting on a person "
+                                       "(`waiting`)"})}
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - engine.now())))
 
 
@@ -4128,7 +4191,7 @@ def _mode_lock(name: str, fn):
         except TypeError:
             return fn(*a, **kw)                  # the door answers a malformed call in its own terms
         engine, node = args.get("engine"), args.get(key)
-        if engine is None:
+        if engine is None or args.get("writing"):        # …a read by handle moves nothing
             return fn(*a, **kw)
         if (holder := door_holder(engine, name, node, args.get("signal"))) is None:
             # …AND SIGNED BY WHO HOLDS THE ROLE: an unsigned move is the door's standing identity's, and one by anyone
@@ -4218,9 +4281,33 @@ def _signed(name: str, fn):
 
 # The COMPLETE transport registry the doors bind — every verb wrapped so none of them can raise
 # into one (`_answering`, above), each signed by its call's credential (`_signed`).
-TOOLS = {name: _answering(_signed(name, _mode_lock(name, _off_the_call(name, fn, OFF_THE_CALL[name])
-                                                   if name in OFF_THE_CALL else fn)))
-         for name, fn in _RAW_TOOLS.items()}
+def _held_while_written(name: str, fn):
+    """A move at a door on a node inside a subtree an authoring writes now — or, a split, on one above it — is refused
+    naming that authoring (`being_rewritten`): nothing lands in a subtree while it is written, and the refusal lifts when
+    the authoring ends (§12.16(ii)). `auto_decompose`'s own entry holds it for an authoring (`_alone_on_its_subtree`)."""
+    if (key := DOOR_KEYS.get(name, (None,))[0]) is None or name == "auto_decompose":
+        return fn
+    sig, above = inspect.signature(fn), name == "decompose"
+
+    @functools.wraps(fn)
+    def _call(*a, **kw):
+        try:
+            at = sig.bind_partial(*a, **kw).arguments
+        except TypeError:
+            return fn(*a, **kw)                  # the door answers a malformed call in its own terms
+        if at.get(key) is not None and (other := at["engine"].authorings.over(str(at[key]), above)) is not None:
+            return _refused_while_written(at["engine"], str(at[key]), other)
+        return fn(*a, **kw)
+    return _call
+
+
+def _at_a_door(name: str, fn):
+    """`fn` as a door calls it: held while its subtree is written, and off its call where it runs a model."""
+    return _held_while_written(name, _written_past_its_call(fn) if name == "auto_decompose" else
+                               _off_the_call(name, fn, OFF_THE_CALL[name]) if name in OFF_THE_CALL else fn)
+
+
+TOOLS = {name: _answering(_signed(name, _mode_lock(name, _at_a_door(name, fn)))) for name, fn in _RAW_TOOLS.items()}
 # The same verbs for the system's own in-process moves: answering, never locked — the mode hands the
 # work TO the system, so a lock here refused its own validation of every AUTO delivery (measured live).
 SYSTEM_TOOLS = {name: _answering(fn) for name, fn in _RAW_TOOLS.items()}

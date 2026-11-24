@@ -118,6 +118,19 @@ export function submitVerdict({id}) {
                                             failed_criteria: failed}, 'the engine refused that verdict');
 }
 
+// An authoring past its call (`tools_llm._written_past_its_call`) goes on in the server, its whole answer kept by the
+// handle its call named (`writing`): read again every two seconds until it is no longer `{writing}`, then its answer
+const second = () => new Promise(ok => setTimeout(ok, 2000));
+export const answered = async d => {
+    while (d.writing) {
+        await second();
+        d = await (await post('/api/run/auto_decompose', {writing: d.writing})).json().catch(() => ({}));
+    }
+    return d;
+};
+// what refused it, or ''
+export const refusedBy = d => d.refused || d.error ? String(d.error || d.refused) : '';
+
 export async function aiDecompose({id}) {
     const kids = hasKids(id);
     if (!(await askInPage(`${kids ? 'Refine the existing decomposition (one search↔audit round over the graph)'
@@ -130,7 +143,14 @@ export async function aiDecompose({id}) {
     await S.reload();
     // …and an authoring that added nothing says why: a model call refused for its credential answered 200 with holes,
     // and the page said nothing at all (a probe, 2026-11-14)
-    if (!refused) try { const d = await (await r).json(), holes = (d.holes || []).map(h => typeof h === 'string' ? h : h.why || h.reason || JSON.stringify(h));
+    if (!refused) try { let d = await (await r).json();
+        if (d.writing) {
+            notice('The authoring runs on in the server; the graph shows what it builds as it lands.');
+            d = await answered(d);
+            await S.reload();
+            if (refusedBy(d)) notice(`Decomposition refused: ${refusedBy(d)}`, 'bad');
+        }
+        const holes = (d.holes || []).map(h => typeof h === 'string' ? h : h.why || h.reason || JSON.stringify(h));
         if (holes.length) notice(['The authoring left this open:', ...holes].join('\n'), 'bad'); } catch (e) { /* the act already said what it could */ }
     const after = critNames(id), gone = before.filter(n => !after.includes(n));
     if (gone.length)

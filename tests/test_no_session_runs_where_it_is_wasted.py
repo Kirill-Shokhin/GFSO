@@ -32,9 +32,9 @@ def _tree(tmp_path):
 def test_a_node_under_a_decomposition_in_flight_is_not_dispatched(tmp_path):
     e, d = _tree(tmp_path)
     assert not d._being_rewritten("kid")
-    with _inflight("auto_decompose", e, "root"):
+    with e.authorings.holding("root"):
         assert d._being_rewritten("kid") and d._being_rewritten("root")
-    with _inflight("auto_decompose", e, "kid"):
+    with e.authorings.holding("kid"):
         assert d._being_rewritten("kid") and not d._being_rewritten("root"), "nothing above the rewritten subtree waits"
     with _inflight("validate_result", e, "root"):
         assert not d._being_rewritten("kid"), "only a decomposition rewrites the subtree"

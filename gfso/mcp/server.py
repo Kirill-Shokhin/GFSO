@@ -275,7 +275,7 @@ def _unread_go(name: str, engine, kwargs) -> Optional[dict]:
     """The go under `auto` is a plan file the customer read: a request making a new root would plan and run in one
     call, nobody reading the plan (the author: «пока заказчик не убедится… запускать нельзя»). Refused at this door
     only, lifted by the customer's own `plan` first; the harnesses that plan and run in one call do not come through it."""
-    if name != "auto_decompose" or kwargs.get("plan") is not None or kwargs.get("spec") is not None:
+    if name != "auto_decompose" or any(kwargs.get(k) is not None for k in ("plan", "spec", "writing")):
         return None
     root = kwargs.get("root_id") or ROOT_ID
     if (engine.mode() or {}).get("mode") != "auto" or any(str(t.id) == root for t in engine.all_tasks()):

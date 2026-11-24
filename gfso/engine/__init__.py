@@ -53,6 +53,7 @@ from .findings import (disputed_findings, ever_pinned, finding_rulings, keep_fil
                        released, return_finding as _return_finding, ruled, unrun,
                        regression as standing_regression, round_stands, standing_rulings)
 from .frontier import Frontier, uncovered
+from .authoring import Authorings
 from .claims import Claims
 from .joins import Joins
 from .moves import Move, door_holder
@@ -228,6 +229,7 @@ class Engine:
         #: keys of notices that must be said once, not once per poll (`say_once`)
         self._said_once: set = set()
         self.claims = Claims(self._graph, self._clock, self._audit)   # who runs a model over a node now
+        self.authorings = Authorings(self._graph)                     # …and who writes a subtree now
         self.joins = Joins(self._graph)          # where each passed result stands (`mark_joining`)
         self.workforce = Workforce(self._graph, lambda: self.project_name)   # who works here (published)
         self.parking = Parking(self._graph, self.accepted_moves)   # what waits on an undecided park
@@ -4176,7 +4178,7 @@ class Engine:
         The frontier lists what a caller can take; a node in VALIDATING or one held by a registered
         executor is neither takeable nor stuck, and having no name for that state is what made an
         empty frontier read as a dead graph."""
-        out = []
+        out = self.authorings.in_flight()
         for t in self.all_tasks():
             if self.judges_before_delivery(t.id):
                 out.append({"task_id": str(t.id), "state": t.state.name,

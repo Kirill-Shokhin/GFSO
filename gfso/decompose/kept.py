@@ -29,7 +29,7 @@ def _read(p: Path) -> dict | None:
 
 
 def _write(p: Path, rec: dict) -> None:
-    write_atomic(p, json.dumps(rec, ensure_ascii=False))
+    write_atomic(p, json.dumps(rec, ensure_ascii=False, default=str))
 
 
 def answer(handle: str) -> dict | None:

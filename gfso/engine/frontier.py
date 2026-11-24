@@ -972,6 +972,26 @@ def parts_said(engine, kids, _passed) -> str:
     return ", every part passed: take it to hand the whole in."
 
 
+def _at_work(engine, running: list, held: list) -> dict:
+    """Nothing to take: the graph is working on `running` (`Engine.in_flight_nodes`), `held` waiting."""
+    return {"complete": False, "stuck": False, "steps": [], "in_flight": running,
+            **({"waiting": list(held)} if held else {}),
+            "directive": (
+                "Nothing to take right now — the graph is working: "
+                + "; ".join(f"'{w['task_id']}' {w['why']}" for w in running)
+                + ". Those arrive by themselves; a second instrument on the same "
+                  "delivery would validate it twice; what lands may be yours to sign. "
+                + how_it_is_waited(engine.project_name, "one is yours"))}
+
+
+def _held_while_written(engine, t, held: list) -> bool:
+    """Is `t` in a subtree an authoring writes now? Then it takes no step — every door refuses a move there until it
+    ends — and `held` says what it waits on."""
+    if (w := engine.authorings.wait(t)) is not None:
+        held.append(w)
+    return w is not None
+
+
 class Frontier:
     """The walk over the graph: every node that owes a move, in order, and — when none does — why nothing is open, how
     the root closed, or what holds it (`next_step(s)`)."""
@@ -1076,14 +1096,7 @@ class Frontier:
         # deliberately cancelled — while an independent verdict was arriving. It is the same reading
         # `_never_passes` was corrected for one screen above, and it has to hold in both places.
         if _running and not stranded:
-            return {"complete": False, "stuck": False, "steps": [], "in_flight": _running,
-                    **({"waiting": list(self._held_by_plan)} if self._held_by_plan else {}),
-                    "directive": (
-                        "Nothing to take right now — the graph is working: "
-                        + "; ".join(f"'{w['task_id']}' {w['why']}" for w in _running)
-                        + ". Those arrive by themselves; a second instrument on the same "
-                          "delivery would validate it twice; what lands may be yours to sign. "
-                        + how_it_is_waited(self.engine.project_name, "one is yours"))}
+            return _at_work(self.engine, _running, self._held_by_plan)
         where = "; ".join(f"'{t.id}' ({t.spec.name or t.id}) is {t.state.name}"
                           for t in stranded)
         _held_up = [t for t in tasks if t.state in (State.OFFERED, State.EXECUTING, State.REWORKING)
@@ -1248,7 +1261,9 @@ class Frontier:
             first = ("" if self.engine.mode() else
                      "No mode set — say which you recommend (`auto` on `claude-haiku-5-5`, the most tested; `solo` "
                      "and `semi` if the person asks) and `set_mode`; then: ")
-            return ({"complete": False,
+            # …and a root being written: no graph yet, and no plan to ask for
+            return (_at_work(self.engine, running, self._held_by_plan) if (running := self.engine.in_flight_nodes()) else
+                    {"complete": False,
                     # The protocol handed to an agent says `auto_decompose` authors the root from
                     # the request itself, with no hand-made `create_task` — so this directive, the
                     # first thing a session is told on an empty project, contradicted it.
@@ -1401,7 +1416,8 @@ class Frontier:
             # 2026-08-22, two round-trips). Following the instruction has to be enough.
             crits = [c.name for c in t.spec.criteria]
             nm = t.spec.name or str(t.id)
-            if self.steps._plan_gate_step(t, kids, crits, nm, cands, held, _passed):
+            if _held_while_written(self.engine, t, held) or self.steps._plan_gate_step(t, kids, crits, nm, cands, held,
+                                                                                        _passed):
                 continue
             if self._waits_on_work_in_progress(t, kids, held, _passed):
                 continue
@@ -1532,7 +1548,9 @@ class Frontier:
         # the MCP door: two of three children were dep-blocked and appeared nowhere, while
         # `get_dependencies` had every edge and glue note. The pairs go in the answer, not in a
         # second verb the reader has to know about.
-        out = {"complete": False, "steps": steps, **self._waiting_on(steps), **refuted_said(self.engine, root_id)}
+        out = {"complete": False, "steps": steps, **self._waiting_on(steps), **refuted_said(self.engine, root_id),
+               # …and an authoring beside the steps: what it holds is no one's idle move
+               **({"in_flight": w} if (w := self.engine.authorings.in_flight()) else {})}
         if stranded := [t for t in self.engine.stranded_nodes() if t.state != State.ABANDONED]:
             # …AND WHAT THE GRAPH CANNOT MOVE PAST, whether or not something else is actionable.
             out["stranded"] = [

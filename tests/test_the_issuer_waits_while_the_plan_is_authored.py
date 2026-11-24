@@ -7,7 +7,6 @@ import threading
 
 import gfso.issuer as I
 from gfso.core.types import TaskId
-from gfso.inflight import _inflight
 from tests.test_the_mode_decides_who_holds_what import _auto_goal
 from tests.support import issuer_sweep
 
@@ -23,6 +22,6 @@ def _sweep(e, agents, monkeypatch):
 
 def test_no_plan_question_is_answered_while_the_authoring_writes_the_root(tmp_path, monkeypatch):
     e, agents = _auto_goal(tmp_path)
-    with _inflight("auto_decompose", e, "root"):
+    with e.authorings.holding("root"):
         assert _sweep(e, agents, monkeypatch) == [], "the issuer answered under the authoring"
     assert _sweep(e, agents, monkeypatch) == [1], "once the authoring ended the question is answered"

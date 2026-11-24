@@ -11,6 +11,7 @@ import {critRow, readCrits, pairRow, listRow, readPairs, readList, iso, suggest}
 import {rootOf} from './tree.js';
 import {intentSwitch} from './header.js';
 import {PLAN} from './hints.js';
+import {answered, refusedBy} from './acts.js';
 
 const root = () => rootOf(S.tasks);
 const panel = () => $('goal-panel');
@@ -129,10 +130,14 @@ async function submit(plan) {
     }
     // A plan runs for minutes and the server keeps running it whoever waits: a quick answer is a refusal and is
     // shown here; a slow one is a run, followed in the deck.
-    const run = post('/api/run/auto_decompose', {request: asText(v), ...who}).then(refusal, () => NO_ANSWER);
+    // …and one past its call runs on in the server (`writing`): its refusal is told when it ends, read by its handle
+    const run = post('/api/run/auto_decompose', {request: asText(v), ...who})
+        .then(async r => [await refusal(r.clone()), await r.json().catch(() => ({}))], () => [NO_ANSWER, {}]);
+    const late = async ([n, d]) => (n = n || refusedBy(await answered(d)))
+        ? notice(`The plan was refused: ${n}`, 'bad') : S.reload();
     const quick = await Promise.race([run, new Promise(ok => setTimeout(() => ok(null), 5000))]);
-    if (quick) return say(quick);
-    if (quick === null) run.then(n => n ? notice(`The plan was refused: ${n}`, 'bad') : S.reload());
+    if (quick?.[0]) return say(quick[0]);
+    if (quick === null) run.then(late); else late(quick);
     done();
 }
 export const createGoal = () => submit(false);

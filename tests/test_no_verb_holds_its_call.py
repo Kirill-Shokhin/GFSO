@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import Future
 
 import pytest
 
@@ -74,10 +75,9 @@ def _reaching_its_validator():
     return e, {"task_id": "n1", "_llm": _Model()}
 
 
-#: The one verb that still runs its model in its call, and why: an authoring past its call must first be shown where the
-#: server's wait and the frontier read it, and its subtree held while it writes. Listed, it must still run in its call —
-#: one moved off it leaves this list.
-STILL_IN_THE_CALL = {"auto_decompose": "its form past the call, read by the wait and holding its subtree, is pending"}
+#: The verbs that still run their model in their call, and why. Listed, one must still run in its call — one moved off
+#: it leaves this list.
+STILL_IN_THE_CALL: dict = {}
 
 
 @pytest.mark.parametrize("verb", sorted(_GOOD) + ["validate_result (delivered)"])
@@ -270,25 +270,134 @@ def _split():
     return e
 
 
-def test_one_authoring_per_subtree_on_every_path():
-    """While one authoring writes `root.core`, another on it, on the root above it, the go on a plan file, and the
-    system's own split are refused — the authoring's own entry is the one owner; once it has ended, one may be asked."""
+def _asked(e, **args) -> dict:
+    """`auto_decompose` at a door, its answer asserted within seconds: a call held by its authoring fails here."""
+    got = Future()
+    threading.Thread(target=lambda: got.set_result(TL.TOOLS["auto_decompose"](e, **args)), daemon=True).start()
+    return got.result(timeout=10)
+
+
+@pytest.fixture
+def writing(monkeypatch):
+    """An authoring of `root.core` asked at a door and kept writing (its model waits on OPEN): (the engine, its handle)."""
+    monkeypatch.setattr(TL, "ANSWER_WITHIN_SECONDS", 0.3)
     e = _split()
-    project = e.project_name or TL.DEFAULT_PROJECT
     OPEN.clear()
-    writing = threading.Thread(target=lambda: TL.TOOLS["auto_decompose"](e, request="the core", root_id="root.core"),
-                               daemon=True)
     try:
-        writing.start()
-        _settled(lambda: TL._AUTHORING.get(project) == ["root.core"])
-        for args in ({"request": "again", "root_id": "root.core"}, {"request": "the whole", "root_id": "root"},
-                     {"plan": Go._file()}):
-            out = TL.TOOLS["auto_decompose"](e, **args)
-            assert out.get("refused") and "an authoring is writing root.core now" in out["error"], (args, out)
-        assert TL.SYSTEM_TOOLS["auto_decompose"](e, request="the system's split", root_id="root").get("refused")
-        OPEN.set()
-        writing.join(30)
-        assert not TL._AUTHORING[project]
+        out = _asked(e, request="the core", root_id="root.core")
+        assert out.get("writing") and out["running"] == "auto_decompose" and out["root_id"] == "root.core", out
+        yield e, out["writing"]
     finally:
         OPEN.set()
+        _settled(lambda: not e.authorings.held())
+        e.stop()
+
+
+def test_one_authoring_per_subtree_on_every_path(writing):
+    """While one authoring writes `root.core`, another on it, on the root above it, the go on a plan file, and the
+    system's own split are refused naming it — the authoring's own entry is the one owner; once it has ended, one may
+    be asked."""
+    e, h = writing
+    assert e.authorings.held() == {"root.core": h}
+    for args in ({"request": "again", "root_id": "root.core"}, {"request": "the whole", "root_id": "root"},
+                 {"plan": Go._file()}):
+        out = _asked(e, **args)
+        assert out.get("refused") and out["being_rewritten"] == h and "an authoring is writing root.core now" in \
+            out["error"], (args, out)
+    assert TL.SYSTEM_TOOLS["auto_decompose"](e, request="the system's split", root_id="root").get("refused")
+    OPEN.set()
+    _settled(lambda: not e.authorings.held())
+
+
+def test_the_wait_waits_on_an_authoring_and_wakes_with_its_whole_answer(writing):
+    """The server's wait does not end while the authoring writes — its owner has no move, the graph is working — and
+    wakes with its whole answer once it ends, the one its handle reads."""
+    e, h = writing
+    waited = TL.wait_for_the_customer(e, seconds=0.5)
+    assert not waited.get("needs_you") and waited["waited_seconds"] >= 0.4 and waited["plans"] == {"writing": [h]}, waited
+    OPEN.set()
+    woke = TL.wait_for_the_customer(e, seconds=30)
+    assert h in woke["needs_you"] and woke["answers"][h] == TL.TOOLS["auto_decompose"](e, writing=h), woke
+    assert woke["answers"][h]["root_id"] == "root.core" and "holes" in woke["answers"][h], woke
+
+
+def test_the_frontier_holds_the_subtree_being_written_in_flight(writing):
+    """`next_steps` names the authoring in flight with its handle and holds every step in its subtree, saying what it
+    waits on; the steps come back once it ends."""
+    e, h = writing
+    seen = TL.next_steps(e)
+    assert any(w["task_id"] == "root.core" and w.get("writing") == h for w in seen.get("in_flight") or ()), seen
+    assert not [s for s in seen.get("steps") or () if s["task_id"] == "root.core"], seen
+    assert any(w["task_id"] == "root.core" and w["kind"] == "authoring" for w in seen.get("waiting") or ()), seen
+    OPEN.set()
+    _settled(lambda: not e.authorings.held())
+    assert not any(w.get("writing") for w in TL.next_steps(e).get("in_flight") or ())
+
+
+def test_a_move_in_the_subtree_being_written_is_refused_naming_it(writing):
+    """A move on the node being written, and a split of the node above it, are refused naming the authoring they wait
+    on; once it ends the same move is the node's own state's to take or refuse (it lands where nothing else moved it:
+    `test_an_authoring_that_dies_…`)."""
+    e, h = writing
+    accept = lambda: TL.TOOLS["signal"](e, "root.core", "ACCEPT", "user")
+    for out in (accept(), TL.TOOLS["decompose"](e, "root", [], accepted_risks=REGISTER)):
+        assert out.get("refused") and out["being_rewritten"] == h and "being_rewritten" in out["error"], out
+    assert e.graph.get_task(TaskId("root.core")).state.name == "OFFERED"
+    OPEN.set()
+    _settled(lambda: not e.authorings.held())
+    assert "being_rewritten" not in accept()
+
+
+def test_an_authoring_that_dies_leaves_its_error_on_its_handle_and_frees_its_subtree(monkeypatch):
+    """A run that raises past its call: its handle answers the error, the feed says it, and its subtree is free."""
+    monkeypatch.setattr(TL, "ANSWER_WITHIN_SECONDS", 0.3)
+    go = threading.Event()
+
+    def dies(*a, **k):
+        assert go.wait(30)
+        raise RuntimeError("the planner's process died")
+    monkeypatch.setattr(TL, "decompose_into", dies)
+    e = _split()
+    said = []
+    e.on_info(lambda source, msg: said.append(msg))
+    try:
+        h = _asked(e, request="the core", root_id="root.core")["writing"]
+        go.set()
+        _settled(lambda: not e.authorings.held())
+        _settled(lambda: TL.next_steps(e).get("plans") == {"failed": [h]})
+        assert "the planner's process died" in TL.TOOLS["auto_decompose"](e, writing=h)["error"]
+        assert any(h in m and "ended with no plan" in m for m in said), said
+        assert TL.TOOLS["signal"](e, "root.core", "ACCEPT", "user").get("accepted")
+    finally:
+        go.set()
+        e.stop()
+
+
+def test_the_go_keeps_its_root(writing, monkeypatch):
+    """An authoring past its call names the root it writes, and its answer the root it built; the go on a plan file runs
+    no model and answers its root in its call, however short the door's bound."""
+    e, h = writing
+    OPEN.set()
+    _settled(lambda: not e.authorings.held())
+    assert TL.TOOLS["auto_decompose"](e, writing=h)["root_id"] == "root.core"
+    monkeypatch.setattr(TL, "ANSWER_WITHIN_SECONDS", 0.0)
+    fresh = _engine()
+    try:
+        assert _asked(fresh, plan=Go._file())["root_id"] == "root"
+    finally:
+        fresh.stop()
+
+
+def test_a_root_being_written_is_in_flight_before_the_graph_exists(monkeypatch):
+    """On an empty project the frontier names the root's authoring in flight, not «no graph yet — plan it»."""
+    monkeypatch.setattr(TL, "ANSWER_WITHIN_SECONDS", 0.3)
+    e = _engine()
+    OPEN.clear()
+    try:
+        h = _asked(e, request="a goal")["writing"]
+        seen = TL.next_steps(e)
+        assert [w.get("writing") for w in seen["in_flight"]] == [h] and "No graph yet" not in seen["directive"], seen
+    finally:
+        OPEN.set()
+        _settled(lambda: not e.authorings.held())
         e.stop()

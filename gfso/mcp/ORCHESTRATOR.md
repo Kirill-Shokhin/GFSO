@@ -95,7 +95,9 @@ stops with that cause.
 1. **Structure — the verb by default; MANUAL where context must be studied (below).** A plan file's go
    (`auto_decompose(plan=path)`, above) builds the project from the file, its `request` left out or the plan's own goal,
    and, where the system's review is in the file, the Level-2 gate is off under that plan alone; what follows on structure and that gate is for a graph
-   made any other way (under `auto` a new root's go is the plan file's alone: a request is refused). `auto_decompose(request, root_id, depth)` is THE one decomposition
+   made any other way (under `auto` a new root's go is the plan file's alone: a request is refused). `auto_decompose(request, root_id, depth)` — answering at once
+   `{writing: <handle>}` while it writes in the server, its whole answer read by `auto_decompose(writing=<handle>)` and `gfso wait` waking on it, every
+   move in the subtree it writes refused until it ends (`being_rewritten`) — is THE one decomposition
    verb, dispatched by the target's state: on an empty project it AUTHORS the root from the request
    itself (no hand `create_task` needed) and builds the verified subtree; on an already-decomposed
    node it runs `depth` REFINE rounds over what exists (+1 iteration: new findings fold in as a
