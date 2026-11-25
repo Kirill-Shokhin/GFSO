@@ -203,7 +203,7 @@ def test_inside_the_scope_the_holders_parts_self_verify_and_its_top_is_checked_b
     assert e.held_in_chat(TaskId(ASK)) and not e.observed_here(TaskId(ASK))
     assert e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "validator"
     assert not _call(PAGE, "set_checker", e, X, "self", agent="user").get("refused")
-    assert not e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "independent"
+    assert not e.observes_by_itself(TaskId(X)) and e.checker(TaskId(X)) == "self"   # …his choice, as the gate reads it
 
 
 @bash

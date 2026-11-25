@@ -3686,7 +3686,9 @@ class Engine:
         t = self._graph.get_task(task_id)
         if t is None:
             return "self"
-        if (who := _named_checker(self._graph, t)) is not None:
+        # …at a node whose check is appointed — his appointment or its default, a named party — the one the gate and the
+        # verdict read (`appointee`): a page reading «independent» where he checks it himself showed the wrong decider
+        if (who := self.appointee(task_id)) is not None:
             return who
         return ("validator" if _persons_seam(self._graph, t) or (
             self.validator_staffed() if staffed is None else staffed) and self.observes_by_itself(task_id)

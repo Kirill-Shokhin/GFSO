@@ -401,7 +401,7 @@ def test_at_a_seam_he_issues_who_checks_is_his_appointment():
         assert TL.set_checker(e, "kid", "self", agent="user")["checker"] == "self"
     finally:
         CALLER.reset(token)
-    assert T.get_task(e, "kid")["checker"] == "independent" and not e.observed_here(TaskId("kid"))
+    assert T.get_task(e, "kid")["checker"] == "self" and not e.observed_here(TaskId("kid"))   # …his choice, as the gate reads it
     assert T.signal(e, "kid", "PASS", "user")["state"] == "DONE"
     e.stop()
 
