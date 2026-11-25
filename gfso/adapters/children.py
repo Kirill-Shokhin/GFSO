@@ -196,8 +196,8 @@ def kill_tree(proc: subprocess.Popen) -> None:
 
 
 def popen(args, shown: bool = False, **kw) -> subprocess.Popen:
-    """A child this process holds while it runs (`end` takes it): adopted, in a group of its own, without the server's
-    mark in its environment, and with no console window — on Windows a console child of a parent with none (the server)
+    """A child this process holds while it runs (`end` takes it): adopted, in a group of its own, without the system's
+    switches in its environment unless the caller gives them (`config.subprocess_env`), and with no console window — on Windows a console child of a parent with none (the server)
     ALLOCATES one and shows it: every agent run popped an empty, closable `claude` window on the person's screen.
     `shown` (`run`): a program the person works in stays in the terminal's session, where its Ctrl-C reaches it."""
     kw.setdefault("env", subprocess_env())

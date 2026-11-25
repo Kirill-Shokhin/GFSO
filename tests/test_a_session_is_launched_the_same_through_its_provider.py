@@ -86,10 +86,10 @@ def seen(monkeypatch, tmp_path):
     return seen
 
 
-#: what every call's environment drops and adds: no inherited key or token, no server mark; room to answer, and its
-#: tools' shells scrubbed of the credential the CLI itself is given
+#: what every call's environment drops and adds: no inherited key or token, no switch of the system's (its mark among
+#: them); room to answer, and its tools' shells scrubbed of the credential the CLI itself is given
 def DROPPED() -> set:
-    return {k for k in os.environ if SECRET_ENV.search(k)} | {"GFSO_SERVING"}
+    return {k for k in os.environ if SECRET_ENV.search(k) or k.upper().startswith("GFSO_")} | {"GFSO_SERVING"}
 
 
 #: …and on Windows long paths for every git it runs (`config.subprocess_env`)

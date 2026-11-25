@@ -785,10 +785,22 @@ def providers_in_env() -> set[str]:
 SECRET_ENV = re.compile(r"(API_KEY|AUTH_TOKEN|_SECRET|_PASSWORD)$")
 
 
+#: the system's own switches are named so: every one this process set (its mark among them) or was started under
+SYSTEM_PREFIX = "GFSO_"
+
+
 def env_without_secrets() -> dict:
-    """This process's environment less every key and token (`SECRET_ENV`) and the server's mark (`subprocess_env`) —
-    what an agent run's commands start with."""
-    return {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k) and k not in ("GFSO_SERVING", SERVES_ENV)}
+    """This process's environment less every key and token (`SECRET_ENV`) and the system's own switches (`SYSTEM_PREFIX`)
+    — what an agent run's commands start with: the person's environment, never the server's.
+
+    The server's switches went to every model child and every command it ran on the work: a validator's run of this
+    repository's suite on a delivery failed where the same commit passes, on the server's `GFSO_AGENTS_PATH` among them
+    (2026-11-26). What a child needs of the system it is given by name where it is composed (`subprocess_env`'s
+    `credential` and `extra`, `ExecutionPort.commands_env`); the system's own helpers that read its switches are started
+    with its whole environment (`host_env`, `child_env`, `spawned_server_popen_env`). A key `data/serve.json` declares
+    under another name stays: the installation declares it FOR its runs' commands (an experiment's PYTHONPATH shim, which
+    its judge's commands need on Windows)."""
+    return {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k) and not k.startswith(SYSTEM_PREFIX)}
 
 
 def storage_kind(default: str = "sqlite") -> str:
@@ -914,6 +926,7 @@ def fill_env_gaps(declared: dict) -> dict:
     return {k: os.environ.get(k, v) for k, v in declared.items()}
 
 
+
 # HOW OFTEN A LONG VERB SAYS IT IS STILL THERE, over a transport with a per-message timeout. A
 # decomposition is several model calls and one of them can outlast any ceiling a client sets; an MCP
 # session aborted `auto_decompose` at 1800 s after thirty minutes of silence, and the graph had been
@@ -1007,16 +1020,16 @@ def host_env() -> dict:
 
 def subprocess_env(*, credential: dict | None = None, extra: dict | None = None) -> dict:
     """The environment a subprocess inherits — a fresh dict, nothing installed here: this process's, less every key and
-    token it holds, plus the one credential a MODEL call is given (`credential`, its provider's: `adapters/llm/
-    credentials`).
+    token it holds and every switch of the system's (`env_without_secrets`), plus the one credential a MODEL call is
+    given (`credential`, its provider's: `adapters/llm/credentials`) and what the caller names (`extra`).
 
     A key inherited from the server went to whatever the server started — a validator's probe commands, a build — and
     an inherited ANTHROPIC_API_KEY outranked the CLI's login, billing the paid API while the operator believed they
     were on the subscription. The credential is the provider's to set, in one place, and to give to its own client
     alone (the author, 2026-10-28: «единственное место провайдера должно быть в классе провайдера»).
     """
-    # …and never the server's mark (`env_without_secrets`): a gfso a model child runs (a probe running this product's own
-    # suite) must not treat itself as the server and end its own children
+    # …the server's mark among them: a gfso a model child runs (a probe running this product's own suite) must not treat
+    # itself as the server and end its own children
     env = {**env_without_secrets(), **(credential or {})}
     # …and room to answer: the CLI's default 32k output cap cut a plan of 14 parts, and the model's re-emission after
     # the cut is what was kept (AUTO haiku 4.5 sql_database, GB_sql_database_tmu9cb784)
