@@ -16,7 +16,7 @@ import gfso.validate as VAL
 def _rounds(tmp_path, n: int):
     work = tmp_path / "ws"
     work.mkdir()
-    root = scratch_of(work, None)
+    root = scratch_of(work, None, LocalExecution())
     for i in range(n):
         (root / f"kid_{1000 + i}").mkdir(parents=True)
         (root / f"kid_{1000 + i}" / "t.c").write_text("int main(){}", encoding="utf-8")

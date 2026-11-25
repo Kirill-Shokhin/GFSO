@@ -327,7 +327,7 @@ def test_what_an_executor_made_unreadable_in_its_place_does_not_stop_its_copy(tm
     sh = lambda cmd, cwd: ex.run(["sh", "-c", cmd], cwd=str(cwd), timeout=60)
     try:
         sh("mkdir -p d && echo x > f && echo y > d/g && chmod 000 f d", base)
-        ex.files.mkdir(str((at := scratch_of(base, "chmodprobe") / "r" / "delivery").parent))
+        ex.files.mkdir(str((at := scratch_of(base, "chmodprobe", ex) / "r" / "delivery").parent))
         ex.copy_tree(str(base), str(at))
         with pytest.raises(OSError, match="already exists"):     # …never INTO what stands there (critic 3)
             ex.copy_tree(str(base), str(at))

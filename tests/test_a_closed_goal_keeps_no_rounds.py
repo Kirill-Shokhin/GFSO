@@ -7,7 +7,7 @@ import pytest
 from gfso import workspaces as WS
 from gfso.adapters.execution import LocalExecution, scratch_of
 from gfso.core.protocol.procedure import round_of
-from gfso.core.types import PlaceUnavailable
+from gfso.core.types import PlaceUnavailable, nodes_root
 from gfso.engine.findings import _ROUND, record_round
 from tests.support import make_engine
 
@@ -15,8 +15,9 @@ from tests.support import make_engine
 def _project(tmp_path):
     base = tmp_path / "repo"
     base.mkdir()
-    own = scratch_of(str(base), "p").parent
-    rounds = [own / ".gfso-scratch-.repo" / "root_1", own / ".gfso-scratch-n1" / "n1_2"]
+    own, ex = nodes_root(base) / "p", LocalExecution()
+    # …this host's rounds, a node's and the base's, and one laid among the project's places before they moved
+    rounds = [scratch_of(base, "p", ex) / "root_1", scratch_of(own / "n1", "p", ex) / "n1_2", own / ".gfso-scratch-.repo" / "root_0"]
     for r in rounds:
         (r / "build").mkdir(parents=True)
         (r / "build" / "a.o").write_text("x")
@@ -49,6 +50,7 @@ def _cleared(tmp_path, monkeypatch, holder_has_a_workdir=True):
 def test_the_rounds_go_and_the_record_says_so(tmp_path, monkeypatch):
     e, base, own, rounds = _cleared(tmp_path, monkeypatch)
     assert not any(p.name.startswith(".gfso-scratch-") or p.name == ".gfso-tmp" for p in own.iterdir())
+    assert not any(r.parent.exists() for r in rounds), "this host's scratch too"
     assert all(e.graph.setting(_ROUND + round_of(r)[1]) == "0" for r in rounds)
 
 

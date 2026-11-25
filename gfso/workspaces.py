@@ -14,7 +14,7 @@ from gfso import store
 from gfso.adapters import worktrees as W
 from gfso.adapters.snapshots import Uncopied
 from gfso.adapters.worktrees import base_of
-from gfso.adapters.execution import IMPORTED, ContainerExecution, LocalExecution, component, node_key, scratch_of
+from gfso.adapters.execution import IMPORTED, ContainerExecution, LocalExecution, component, host_rounds, node_key, scratch_of
 from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, data_dir
 from gfso.executions import declaring_role, execution_of, root_key, root_key_of, where_it_runs
 from gfso.llm import llm_factory
@@ -695,13 +695,13 @@ def rejected_reports_dir(project: str) -> Path:
 
 def drop_host_files(project: str) -> list[str]:
     """A deleted project's files in the installation's own state: its places on this machine under every base
-    (`<data>/places/<base's parent>/<base>/<project>`), its refused reports, its hand-laid probe inputs and its store
-    of deliveries (`store.drop`) — a volume holds the rest. Each directory
+    (`<data>/places/<base's parent>/<base>/<project>`), its judges' rounds (`host_rounds`), its refused reports, its
+    hand-laid probe inputs and its store of deliveries (`store.drop`) — a volume holds the rest. Each directory
     on its own: one a process still holds (a lock on Windows) stays, and is returned, while the rest go."""
     name, places, left, here = component(project or DEFAULT_PROJECT), data_dir() / PLACES, [], LocalExecution()
     below = lambda d: [d / x for x in here.files.listdir(str(d))] if here.files.is_dir(str(d)) else []
     ours = [b / name for h in below(places) for b in below(h) if here.files.is_dir(str(b / name))]
-    for d in ours + [rejected_reports_dir(project), data_dir() / "probe_inputs" / name]:
+    for d in ours + [host_rounds(project), rejected_reports_dir(project), data_dir() / "probe_inputs" / name]:
         try:
             here.remove_tree(str(d))
         except OSError:
@@ -739,11 +739,12 @@ def _clear_what_nothing_reads(engine, ex, base) -> list:
     rounds and its temp serve nothing: each removed, every round out of the record of the rounds standing — a finding's
     files the record kept (`findings.keep_files`) re-lay them. Kept: the base and its read copy, unjoined places, the
     sessions' state. Returns what could not be removed."""
-    own, left = scratch_of(base, engine.project_name).parent, []
-    if not ex.files.is_dir(str(own)):
-        return left
-    temp = [ex.tmp] if isinstance(ex, ContainerExecution) else []
-    for d in [own / s for s in ex.files.listdir(str(own)) if s.startswith(SCRATCH)] + temp:
+    p, left = engine.project_name, []
+    # …and on this host the rounds laid among the project's places before they moved to `host_rounds`
+    held = [h for h in dict.fromkeys((scratch_of(base, p, ex).parent, nodes_root(base) / component(p or DEFAULT_PROJECT)))
+            if ex.files.is_dir(str(h))]
+    temp = [ex.tmp] if isinstance(ex, ContainerExecution) and held else []
+    for d in [h / s for h in held for s in ex.files.listdir(str(h)) if s.startswith(SCRATCH)] + temp:
         try:
             for r in ex.files.listdir(str(d)) if ex.files.is_dir(str(d)) else []:
                 ex.remove_tree(str(d / r))

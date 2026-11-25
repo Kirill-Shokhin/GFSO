@@ -301,7 +301,7 @@ def test_a_finding_is_demanded_while_its_file_is_kept_and_shown_once_it_cannot_b
     it from there (`findings.lay_files`): the round going leaves it demanded. One the record could not keep — not there
     when the finding was filed, or past `KEEP_CAP` — is kept as lost and shown, not demanded, at once: laid as nothing,
     it was re-run over an empty directory (`No such file`, rc 2), a refutation no delivery lifts (critic over 909e417)."""
-    prog = (scratch := scratch_of(tmp_path / "ws", "p")) / "kid_1791646628" / "dt" / "hh3.c"
+    prog = (scratch := scratch_of(tmp_path / "ws", "p", LocalExecution())) / "kid_1791646628" / "dt" / "hh3.c"
     prog.parent.mkdir(parents=True)
     if kept != "absent":
         prog.write_text("int main(void){return 0;}")
@@ -329,7 +329,7 @@ def test_a_reruns_command_writing_only_its_own_output_finds_its_directory(tmp_pa
     """A validator's command that writes only into its round (`cc ok.c -o <round>/batch1/prog`) kept nothing there: laid
     from the record, the re-run found no `batch1/` (ld: No such file) and, on a host, no laid directory to copy (cp:
     cannot stat) — every later delivery refuted (critic over the judged tree, run). Every directory it names is made."""
-    out =scratch_of(tmp_path / "ws", "p") / "kid_1791646628" / "batch1" / "prog"
+    out =scratch_of(tmp_path / "ws", "p", LocalExecution()) / "kid_1791646628" / "batch1" / "prog"
     e = _seam()
     at = tmp_path / "r2" / "batch1"
     at.mkdir(parents=True)

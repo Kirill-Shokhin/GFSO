@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from gfso import config
-from gfso.adapters.execution import scratch_of
+from gfso.adapters.execution import ContainerExecution, LocalExecution, scratch_of
 from gfso.adapters.worktrees import base_of, relative_alternates
 from gfso.core.types import NODES, PLACES, base_of_nodes, nodes_root
 from gfso.made import laid_out_before
@@ -27,12 +27,15 @@ def test_a_base_s_places_stand_in_the_installation_and_read_back_to_it(tmp_path)
     assert list(base.parent.iterdir()) == [base], "naming a place makes nothing beside the base"
 
 
-def test_a_base_s_rounds_stand_with_its_places(tmp_path):
+def test_a_base_s_rounds_stand_with_its_places_where_they_stand_apart(tmp_path):
+    """…in the volume its sessions' containers mount; on this host they stand short (`ROUNDS`)."""
     base = tmp_path / "ws"
     base.mkdir()
-    assert scratch_of(base, "p") == nodes_root(base) / "p" / ".gfso-scratch-.ws"
+    x = ContainerExecution("e", "img", None, str(tmp_path / "state"), str(base), "p")
+    assert scratch_of(base, "p", x) == nodes_root(base) / "p" / ".gfso-scratch-.ws"
     place = nodes_root(base) / "p" / "root.a"
-    assert scratch_of(place, "p") == nodes_root(base) / "p" / ".gfso-scratch-root.a"
+    assert scratch_of(place, "p", x) == nodes_root(base) / "p" / ".gfso-scratch-root.a"
+    assert not scratch_of(base, "p", LocalExecution()).is_relative_to(base.parent), "nothing beside the repository"
 
 
 def test_two_bases_of_one_name_under_two_parents_keep_their_places_apart(tmp_path):

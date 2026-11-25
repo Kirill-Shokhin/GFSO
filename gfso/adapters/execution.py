@@ -28,7 +28,7 @@ import time
 import uuid
 from pathlib import Path
 
-from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, SCRATCH, VOLUME, WORK_PATH, ExecutionPort,
+from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MADE, NODES, PROJECT_ID, ROUNDS, SCRATCH, VOLUME, WORK_PATH, ExecutionPort,
                              FilesPort, PlaceUnavailable, base_named, base_of_nodes, nodes_dir, nodes_root, place_name)
 from gfso import config as _config_module
 from gfso.config import (CONTAINER_LOG, DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits,
@@ -804,7 +804,7 @@ def release_rounds(ex, place: str) -> None:
     """Every session of project `ex` standing in a validation's round of the delivery in `place`: filing a finding reads what
     its command names in the round, in the round's own container, after its run ended it. A host's has none."""
     if isinstance(ex, ContainerExecution):
-        under = os.path.normcase(scratch_of(_real(place), ex.project_name)) + os.sep
+        under = os.path.normcase(scratch_of(_real(place), ex.project_name, ex)) + os.sep
         for s in [s for (c, rw), s in _SESSIONS.copy().items() if c == ex.container and rw.startswith(under)]:
             s.stop()
 
@@ -1185,15 +1185,27 @@ def _mount_field(key: str, path: str) -> str:
     return f'"{key}={path.replace(chr(34), chr(34) * 2)}"' if re.search(r'[,"]', path) else f"{key}={path}"
 
 
-def scratch_of(place, project) -> Path:
-    """Where the validations and contacts of the delivery in `place` keep their rounds, one directory each: beside a
-    node's clone, among its project's places already; beside any other directory — a base — in its project's places
-    too, so two projects on one base keep their rounds apart. The dot: no node's key starts with one (`component`), so
-    no node's scratch is a base's."""
+def host_rounds(project) -> Path:
+    """Where this host keeps the judges' rounds of `project` (`ROUNDS`): a directory per project, named by a digest of
+    its name — spelled whole, it is as long as the person made it."""
+    return (Path(os.path.realpath(_config_module.data_dir())) / ROUNDS
+            / hashlib.sha1(component(project or DEFAULT_PROJECT).encode()).hexdigest()[:8])
+
+
+def scratch_of(place, project, ex: ExecutionPort) -> Path:
+    """Where the validations and contacts of the delivery in `place` keep their rounds, one directory each — its name
+    among its project's places: beside a node's clone, `.gfso-scratch-<its key>`; beside any other directory — a base —
+    `.gfso-scratch-.<its name>` in its project's places too, so two projects on one base keep their rounds apart (the
+    dot: no node's key starts with one, `component`, so no node's scratch is a base's). There where places stand apart
+    (`ex.apart`): in the volume, where a session's root is read off it (`_writable_root`) and a Linux path has no 260.
+    On this host at a short spelling of that name, `host_rounds/.gfso-scratch-<its digest>`: a judge's copy at a bound
+    length past the data directory whatever the base, the project and the node are named (`ROUNDS`)."""
     p = Path(place)
-    if p.parent.parent.name.startswith(NODES):
-        return p.parent / f"{SCRATCH}{p.name}"
-    return nodes_root(p) / component(project or DEFAULT_PROJECT) / f"{SCRATCH}.{place_name(p.name)}"
+    named = (p.parent / f"{SCRATCH}{p.name}" if p.parent.parent.name.startswith(NODES)
+             else nodes_root(p) / component(project or DEFAULT_PROJECT) / f"{SCRATCH}.{place_name(p.name)}")
+    if ex.apart:
+        return named
+    return host_rounds(project) / (SCRATCH + hashlib.sha1(os.path.normcase(os.path.realpath(named)).encode()).hexdigest()[:8])
 
 
 def _places(base) -> Path:
@@ -2956,7 +2968,7 @@ class PlaceContainer(ContainerExecution):
         # its validations' scratch read-only beside its place, a root's base as a node's clone: its rounds hold the
         # probes the node's standing findings re-run, which the node's own executor must not rewrite (critic 3 over the
         # session slice); no judge works here (`apart`)
-        own = [(self.rw, False), (scratch_of(self.rw, self.project_name), True)]
+        own = [(self.rw, False), (scratch_of(self.rw, self.project_name, self), True)]
         return [*([] if self.rw == self.base else [(self.base, True)]), *own, (Path(self.temp_root()), False)]
 
     def writable(self) -> set:

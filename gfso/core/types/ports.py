@@ -624,6 +624,11 @@ def base_named(nodes: str) -> str:
 #: back to its base by one local read, no subprocess — the transition bus asks it.
 PLACES = "places"
 PARENT = "parent"
+#: where, on this host, the installation keeps the judges' rounds (`execution.scratch_of`): beside the places, never
+#: under a project's directory, whose path grows with the base's, the project's and the node's names — a judge's copy of
+#: a delivery stood 108 characters past the data directory and more, and the delivered repository's own tests, nesting
+#: ~110 of theirs below it, met Windows' 260 for a working directory and a file: 187 failed where 5042 passed (2026-11-25)
+ROUNDS = "rounds"
 
 
 def nodes_root(base) -> Path:
@@ -665,10 +670,12 @@ def laid_beside(at) -> Path:
     one entry of a project's system directory (a validation's or a contact's round, the system's own checks' directory),
     or a round's batch (`<scratch>/<round>/batch<N>`); off a project's directories, `at` itself — as `<root>.laid`, at
     `at`'s path under it. Never under the root: a delivered program run there renames a read-only directory away as
-    easily as it writes a file (a scope's nodes stand under their batch, the system's copy under its directory)."""
+    easily as it writes a file (a scope's nodes stand under their batch, the system's copy under its directory). A
+    round of this host's (`ROUNDS/<project>/<scratch>/<round>`) is a round as one among a project's places is."""
     at = Path(at)
     root = next((a for a in (at, *at.parents) if a.name.startswith(BATCH) and a.parent.parent.name.startswith(SCRATCH)
-                 or a.parent.name.startswith(".") and a.parent.parent.parent.name.startswith(NODES)), at)
+                 or a.parent.name.startswith(".") and a.parent.parent.parent.name.startswith(NODES)
+                 or a.parent.name.startswith(SCRATCH) and a.parent.parent.parent.name == ROUNDS), at)
     return Path(str(root) + LAID) / at.relative_to(root)
 #: what keys, in a project's settings, the name of each of its volumes by its role (`places`, `state`): the system's
 #: record that its places moved into them — from there on no place nor round is looked for on this host

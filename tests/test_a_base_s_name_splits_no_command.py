@@ -28,7 +28,7 @@ PIN = Criteria("c", check=(Probe("counts words", "wordtop {inputs}/many.txt -n 3
 
 def _inputs(base: Path, files) -> Path:
     """Where a validation's round lays the check's inputs for a delivery standing in `base`."""
-    at = scratch_of(base, "p") / "root_1" / "probe_inputs"
+    at = scratch_of(base, "p", LocalExecution()) / "root_1" / "probe_inputs"
     return materialize_inputs((PIN,), at, files)[probe_id("c", PIN.check[0])]
 
 
@@ -50,7 +50,7 @@ def test_a_real_command_keeps_its_argv_under_a_spaced_directory_on_this_host(tmp
 def test_the_command_a_container_reads_keeps_its_argv(tmp_path, name):
     (w := tmp_path / name).mkdir()
     x = ContainerExecution("e", IMAGE, None, str(tmp_path / "state"), str(w), "p")
-    inside = x.to_inside((scratch_of(x.base, "p") / "root_1" / "probe_inputs" / "c").as_posix())
+    inside = x.to_inside((scratch_of(x.base, "p", x) / "root_1" / "probe_inputs" / "c").as_posix())
     assert inside.startswith(E.INSIDE + "/" + nodes_dir(name)), inside
     cmd = _command(inside, "python3 wordtop.py")
     got = subprocess.run([LocalExecution().shell(), "-c", f"set -- {cmd}; echo $#"], capture_output=True, text=True)
@@ -64,9 +64,9 @@ def test_a_node_place_is_named_once_and_read_back_to_its_base(tmp_path, name):
     agents = SimpleNamespace(get=lambda k: {"workdir": str(w)})
     base, place, branch = WS._place_of(engine, agents, SimpleNamespace(id="root", assignee="x"))
     assert re.fullmatch(r"\.gfso-nodes-[\w.~+@=-]+", Path(place).parents[1].name), place
-    assert Path(place).parent == scratch_of(w, "p").parent, "the place and its rounds under one project's directory"
     assert base_of(place) == str(w) and str(w) in checkout_note(place), "a packet names the base by its own name"
     x = ContainerExecution("e", IMAGE, None, str(tmp_path / "state"), str(w), "p")
+    assert Path(place).parent == scratch_of(w, "p", x).parent, "the place and its rounds under one project's directory"
     assert Path(place).parent == x.own, "the host's name of it and the execution's are one"
     assert E._base_of_places({f"place-made:{place}": "1"}) == str(w)
 
@@ -80,8 +80,9 @@ def test_two_bases_never_share_a_directory():
 def test_a_name_with_nothing_unsafe_stands_byte_for_byte(tmp_path, name):
     (w := tmp_path / name).mkdir()
     assert nodes_dir(name) == f".gfso-nodes-{name}"
-    assert scratch_of(w, "p") == nodes_root(w) / "p" / f".gfso-scratch-.{name}" and nodes_root(w).name == nodes_dir(name)
-    assert ContainerExecution("e", IMAGE, None, str(tmp_path / "s"), str(w), "p").mounts == [name, f".gfso-nodes-{name}/p"]
+    x = ContainerExecution("e", IMAGE, None, str(tmp_path / "s"), str(w), "p")
+    assert scratch_of(w, "p", x) == nodes_root(w) / "p" / f".gfso-scratch-.{name}" and nodes_root(w).name == nodes_dir(name)
+    assert x.mounts == [name, f".gfso-nodes-{name}/p"]
 
 
 def test_a_place_recorded_under_the_old_name_still_reads_its_base(tmp_path):

@@ -574,7 +574,7 @@ def test_the_validator_runs_where_the_delivery_IS(tmp_path):
     # BESIDE the delivery, not inside it: a criterion like "every file under the target dir belongs
     # to this package" is otherwise false because of us (measured on the human door 2026-08-22).
     assert not (project / ".gfso-scratch").exists()
-    scratch = list(scratch_of(project, e.project_name).iterdir())
+    scratch = list(scratch_of(project, e.project_name, LocalExecution()).iterdir())
     assert len(scratch) == 1, "a fresh scratch per validation is still made"
     assert str(scratch[0]) in llm.seen["user"], "…and the validator is told where it is"
     e.stop()

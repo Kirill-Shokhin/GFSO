@@ -493,7 +493,7 @@ def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None, 
         # criterion like "every file under the target dir belongs to this package" is then true:
         # our own scratch was sitting in the deliverable while the validator dutifully reported
         # everyone else's leavings (measured on the human door 2026-08-22).
-        root = scratch_of(workdir, project)
+        root = scratch_of(workdir, project, ex)
         # …a round of its own, never one an earlier validation in the same second holds: its batches are made fresh
         at = int(time.time())
         # …one path component, whatever the id spells: `db/schema` had a place and no round, a node stuck with no validator run (critic, ran)

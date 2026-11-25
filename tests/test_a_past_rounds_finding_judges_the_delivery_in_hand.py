@@ -25,7 +25,7 @@ from tests.test_a_finding_binds_the_criterion_it_refuted import _seam
 
 @pytest.mark.parametrize("old_copy", ["still standing", "removed"])
 def test_a_findings_script_over_its_rounds_delivery_copy_runs_over_this_rounds(tmp_path, old_copy):
-    r = scratch_of(tmp_path / "ws", "p") / "kid_1791646628"
+    r = scratch_of(tmp_path / "ws", "p", LocalExecution()) / "kid_1791646628"
     old, x = r / "batch1" / "delivery", r / "batch1" / "x"
     old.mkdir(parents=True)
     x.mkdir(parents=True)
@@ -50,7 +50,7 @@ def test_a_findings_script_over_its_rounds_delivery_copy_runs_over_this_rounds(t
 
 
 def test_the_validators_packet_lays_it_over_the_copy_its_judge_works_in(tmp_path):
-    r = scratch_of(tmp_path / "ws", "p") / "kid_1791646628"
+    r = scratch_of(tmp_path / "ws", "p", LocalExecution()) / "kid_1791646628"
     (x := r / "batch1" / "x").mkdir(parents=True)
     (x / "cmp.sh").write_text(f'cd "{(r / "batch1" / "delivery").as_posix()}" && sh prog.sh\n')
     cmd = f"sh {(x / 'cmp.sh').as_posix()}"

@@ -21,6 +21,7 @@ import pytest
 
 from gfso import delegate, tools as T, tools_llm as TL
 from gfso.adapters import worktrees as W
+from gfso.adapters.execution import LocalExecution, scratch_of
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import PlaceUnavailable, State, TaskId, nodes_root
@@ -179,8 +180,9 @@ def test_a_nodes_validator_reads_that_nodes_own_tree(tmp_path):
     where: dict = {}
     _run(e, agents, sessions, _in(e, "a", "b", states=(State.DONE,)), validated=where)
     # …each in a COPY of that node's own tree (§10.3: the validator must not be able to change what it judges)
-    assert all(where[k].endswith("delivery") and f".gfso-scratch-{k}" in where[k] for k in ("a", "b")), where
     assert node_workspace(e, agents, "a") == sessions["a"].cwd
+    assert all(where[k].endswith("delivery") and Path(where[k]).is_relative_to(scratch_of(
+        node_workspace(e, agents, k), "p", LocalExecution())) for k in ("a", "b")), where
 
 
 def _as_it_stands(base: Path) -> dict:
@@ -365,7 +367,8 @@ def test_a_scopes_session_and_its_validation_share_the_scopes_one_tree(tmp_path)
     _drive(e, S._dispatcher(e, agents, executor, validator, []), lambda: e.graph.get_state(TaskId("root")) == State.DONE)
     place = nodes_root(tmp_path) / "p" / "root"
     assert where["session"] == str(place)
-    assert where["validation"].endswith("delivery") and ".gfso-scratch-root" in where["validation"], where
+    assert where["validation"].endswith("delivery") and Path(where["validation"]).is_relative_to(
+        scratch_of(place, "p", LocalExecution())), where
     # one tree, a commit per node's delivery in build order; its parts join nothing (their whole works there), and
     # the top, at its PASS, lands as the accepted branch, the user's own untouched
     _until(lambda: not place.exists() and e.next_steps()["complete"] is True)

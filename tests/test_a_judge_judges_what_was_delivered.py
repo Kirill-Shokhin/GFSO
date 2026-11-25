@@ -384,7 +384,7 @@ def test_live_a_roots_judge_reads_nothing_of_the_base_as_it_stands_now(project):
                  f"ln -s {x.to_inside(str(base / 'secret'))} link.txt")
     tree, commit = W.commit_all(base, base, "gfso: root", "exec-root", execution=x), W.head(base, execution=x)
     _sh(x, base, "echo forged > secret")
-    x.files.mkdir(str(round_ := scratch_of(base, "p") / "root_1"))
+    x.files.mkdir(str(round_ := scratch_of(base, "p", x) / "root_1"))
     batch = Path(VAL._own_place(str(round_), 0, x))
     assert _judged(x, base, batch / "delivery", tree, commit, _READ.format("link.txt")) == b"unreachable\n"
     with x.scratch("gfso-exact-", system=True) as tmp:            # …the system's own run of the exact checks
@@ -562,8 +562,8 @@ def test_live_a_standing_finding_reruns_the_probe_it_was_filed_over_and_its_roun
                                     commit=W.head(a, execution=x))
         assert deliver()
         assert VAL.validate_result(e, "big", workdir=str(a), _llm=judge, _spawn=lambda: judge)["verdict"] == "FAIL"
-        (first,) = [r for r in x.files.listdir(str(scratch_of(a, "p"))) if not r.endswith(".laid")]
-        batch = scratch_of(a, "p") / first / "batch1"
+        (first,) = [r for r in x.files.listdir(str(scratch_of(a, "p", x))) if not r.endswith(".laid")]
+        batch = scratch_of(a, "p", x) / first / "batch1"
         alive = x.files.read_bytes(str(batch / "alive"))
         time.sleep(1.5)
         assert x.files.read_bytes(str(batch / "alive")) == alive, "round 1's leftover process outlived its run"

@@ -167,7 +167,7 @@ def _contact_place(where: str, ex, project=None):
     if _NODES not in str(where) and not ex.apart:
         lent = ex.scratch("gfso-issuer-inputs-", dir=ex.temp_of(where))
     else:
-        lent = ex.scratch(CONTACT_ROUND, dir=str(scratch_of(where, project)))
+        lent = ex.scratch(CONTACT_ROUND, dir=str(scratch_of(where, project, ex)))
     with lent as d:
         yield d
 
