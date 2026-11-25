@@ -18,7 +18,7 @@ import pytest
 import gfso.tools as T
 from gfso.core.protocol.procedure import laid_down_dirs, probe_id
 from gfso.core.types import State, TaskId
-from gfso.packets import _validator_packet
+from gfso.packets import validator_packet
 from tests.support import REGISTER, UNMODELLED_FAULT, criterion, instrument_passes, make_engine, DENIAL_ENTRY
 from tests.test_one_session_carries_a_scope import (_LLM, _Validator, _delivered, _dispatcher, _drive, _project)
 from gfso.engine.closures import passes_over_open_parts
@@ -74,7 +74,7 @@ def _entry(e, verdict="pass", with_part=False, **part) -> dict:
 
 def test_the_whole_s_validator_is_handed_the_part_s_pinned_check_under_the_criterion_it_rests_on():
     e = _whole_delivered_over_a_passed_part()
-    packet = _validator_packet(e, e.graph.get_task(TaskId("root")), "the library", None)
+    packet = validator_packet(e, e.graph.get_task(TaskId("root")), "the library", None)
     parses = packet.split("**parses**")[1].split("\n- **")[0]
     assert f"PART’S PINNED CHECK [{_part_pid(e)}]" in parses and _RAISES["command"] in parses
     assert "report it ONCE, under this id, in the probe list of any one criterion that rests on it" in parses
@@ -154,7 +154,7 @@ def test_a_part_s_probe_over_its_own_inputs_is_not_met_by_the_whole_s_same_comma
     own = {"behaviour": "parses a document", "command": cmd, "expect": "OK", "inputs": [["t.py", "whole"]]}
     part = {"behaviour": "raises JSONParseError", "command": cmd, "expect": "OK", "inputs": [["t.py", "part"]]}
     e = _whole_delivered_over_a_passed_part(own, part)
-    packet = _validator_packet(e, e.graph.get_task(TaskId("root")), "the library", None, scratch=str(tmp_path))
+    packet = validator_packet(e, e.graph.get_task(TaskId("root")), "the library", None, scratch=str(tmp_path))
     dirs = dict(laid_down_dirs(e.validation_procedure(TaskId("root")), tmp_path))
     pid_own, pid_part = probe_id("parses", own), _part_pid(e)
     assert pid_own.split("#")[1] == pid_part.split("#")[1] and dirs[pid_own] != dirs[pid_part]
@@ -206,7 +206,7 @@ def test_a_part_s_failure_reported_by_its_laid_command_is_read_with_that_round_s
     part = {"behaviour": "raises JSONParseError", "command": "python {inputs}/t.py", "expect": "OK",
             "inputs": [["t.py", "part"]]}
     e = _whole_delivered_over_a_passed_part(part=part)
-    _validator_packet(e, e.graph.get_task(TaskId("root")), "the library", None, scratch=str(tmp_path))   # lays them down
+    validator_packet(e, e.graph.get_task(TaskId("root")), "the library", None, scratch=str(tmp_path))   # lays them down
     dirs = dict(laid_down_dirs(e.validation_procedure(TaskId("root")), tmp_path))
     laid = {"behaviour": "b", "command": f"python {dirs[_part_pid(e)].as_posix()}/t.py", "expect": "OK",
             "held": False}

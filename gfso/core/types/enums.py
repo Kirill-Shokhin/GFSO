@@ -37,6 +37,8 @@ NON_TERMINAL_STATES = frozenset(s for s in State if s not in TERMINAL_STATES)
 # §12.1: consented work, REWORKING entered through a FAIL taken into rework — the executor still acting; the waits on an
 # issuer are steps of their own
 WORK_STATES = frozenset({State.EXECUTING, State.REWORKING})
+#: The states in which a node's work is still to be done — what an executor session is handed (by name).
+EXECUTOR_STATES = ("OFFERED", "EXECUTING", "REWORKING")
 
 # R′ (§12.14 "Финальность"): DONE and ABANDONED are QUASI-terminal — a named extension of the
 # admissible set (Inv-6): re-ASSIGN (REOPEN) is admitted under a double gate (finality-gate of

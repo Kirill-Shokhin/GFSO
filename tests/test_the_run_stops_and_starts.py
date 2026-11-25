@@ -17,7 +17,7 @@ import gfso.tools_llm as TL
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.delegate import Dispatcher
 from gfso.inflight import flight
-from gfso.packets import _executor_packet, file_tech_reports
+from gfso.packets import executor_packet, file_tech_reports
 from datetime import datetime, timedelta
 
 from gfso.adapters.storage.memory import MemoryStorage
@@ -152,7 +152,7 @@ def test_a_tech_report_is_filed_counted_and_read_back_into_no_packet():
     got = T.TOOLS["tech_reports"](e)
     assert got["count"] == 3 and [r["role"] for r in got["reports"]] == ["executor", "scope-executor", "mcp"], got
     assert got["reports"][1]["node"] == "kid"
-    packet = _executor_packet(e, e.graph.get_task(TaskId("kid")), None, [])
+    packet = executor_packet(e, e.graph.get_task(TaskId("kid")), None, [])
     assert "contradicts the contract" not in packet and "tool cannot run" not in packet
     e.stop()
 

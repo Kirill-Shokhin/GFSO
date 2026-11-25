@@ -25,7 +25,7 @@ from gfso.core.protocol.invariants import verdict_report_defects
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.protocol.accounting import coverage, unaccounted_for
 from gfso.core.types import TaskId
-from gfso.packets import _validator_packet
+from gfso.packets import validator_packet
 from gfso.validate import _VALIDATOR_SCHEMA, _listed_failed, _report_contradicts_itself
 from tests.support import DENIAL_ENTRY, UNMODELLED_FAULT, criterion, make_engine, REGISTER
 
@@ -156,7 +156,7 @@ def test_a_dep_edge_is_no_criterion_and_the_validator_is_not_asked_for_it():
     the packet shows it as an edge, and a verdict over the node's own criteria stands."""
     e, b = _consumer()
     assert [c.name for c in b.spec.criteria] == ["kb"] and [(x.from_id, x.glue) for x in e.get_dependencies()] == [("a", "b reads a")]
-    text = _validator_packet(e, b, "built it", ".")
+    text = validator_packet(e, b, "built it", ".")
     assert "**dep__a**" not in text and "b reads a" in text, text
     e.stop()
 

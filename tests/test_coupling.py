@@ -40,7 +40,7 @@ ALLOWED_PRIVATE: set[tuple[str, str]] = {
     ("gfso.critic.runner", "_storage"),
     ("gfso.runtime", "_storage"), ("gfso.api.server", "_storage"),
     ("gfso.critic.runner", "_graph"), ("gfso.delegate", "_graph"),
-    ("gfso.runtime", "_graph"), ("gfso.tools_llm", "_graph"),
+    ("gfso.runtime", "_graph"),
     # block 1: EventBus gains an unsubscribe
     ("gfso.api.server", "_events"), ("gfso.api.server", "_on_transition"),
     ("gfso.api.server", "_on_reject"), ("gfso.api.server", "_on_info"),
@@ -135,7 +135,7 @@ BASE_COUNT = {"private_reach": 1,   # ← `issuer_of` published (2026-08-22); �
               # a private NAME imported from another module (`from gfso.x import _y`): the layering gate reads it as an
               # ordinary import, and nothing counted it (sync audit, D-F17, 2026-10-05) — measured, to fall from here;
               # 39 read as written, 53 resolved (relative imports: a package's own re-exports, gfso.engine's siblings)
-              "private_import": 41,   # ← `inflight.flight`, `stats.stat_line` published (the validation's own module reads both); ← delegate reads the standing agent from config; ← stats.tag_stage published (D-F18); doctor's floor reads the execution's own
+              "private_import": 15,   # ← packets/reports/decompose.loop publish what sessions, validate and decompose read; `EXECUTOR_STATES` in core.types; `tools._agent_id` gone for `config.caller_id` (2026-11-25); ← frontier and the tool door read `split_holes`/`open_l2_findings` off the engine (2026-11-25); ← `inflight.flight`, `stats.stat_line` published (the validation's own module reads both); ← delegate reads the standing agent from config; ← stats.tag_stage published (D-F18); doctor's floor reads the execution's own
               "monkey_patch": 0, "foreign_path": 0,
               "duck_private": 0,
               # 2 (2026-09-03, S7): a `getattr` with a default over a DECLARED field says the
@@ -153,7 +153,8 @@ BASE_COUNT = {"private_reach": 1,   # ← `issuer_of` published (2026-08-22); �
               # the test green (measured). That is the third time in one session the same defect —
               # a guard whose own bookkeeping makes it blind — appeared inside these instruments.
               # 28: the SDK's `initialize` answer, the one carrier of a client kind's instructions (2026-11-15)
-              "allowed_private": 28,
+              # 27: the tool door reads a plan's open findings and split holes off the engine's facade (2026-11-25)
+              "allowed_private": 27,
               "allowed_duck": 11,   # ← `_project_name` retired: one spelling of an engine's project (2026-11-20)
               "allowed_path": 3,
               "allowed_patch": 4}
@@ -228,8 +229,10 @@ def test_no_new_private_reach():
             # `self._graph._storage` starts at self and still reaches into a FOREIGN object's
             # private at the second hop. Counting only the root missed every such chain — the
             # engine's own nine reaches into Graph among them.
+            # `self.engine._audit` is one private hop, but through a PUBLIC attribute holding a foreign object:
+            # only a private read straight off `self`/`cls` is the object's own.
             hops = ast.unparse(n).count("._")
-            if root in ("self", "cls", "") and hops < 2:
+            if root in ("self", "cls", "") and hops < 2 and isinstance(n.value, ast.Name):
                 continue
             key = (mod, a)
             stale.discard(key)

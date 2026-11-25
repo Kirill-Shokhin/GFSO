@@ -27,9 +27,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from gfso.adapters import children, git as G, lfs
-from gfso.adapters.execution import (NODES, READ_REF, ContainerExecution, LocalExecution, fetched_on_host,
-                                     stored_on_host)
+from gfso.adapters import children, git as G, hostrepo as H, lfs
+from gfso.adapters.execution import NODES, READ_REF, ContainerExecution, LocalExecution
 from gfso.core.types import base_of_nodes
 
 #: the largest bundle `carry` moves through the server's memory
@@ -399,7 +398,7 @@ def read_head(place, rev: str = "HEAD") -> tuple[str, str, list]:
     """(tree, commit, left out) of the user's repository at `place` as their chat committed it — its `rev`, HEAD where
     none is named —; left out: what `git status` names that the commit does not hold, no part of the delivery. Read
     only: a DELIVER refused after it writes nothing (a ref written first stood for a delivery never admitted).
-    Only what is committed is delivered, as only what is committed enters a project (`_carried_in`): a tree staged whole
+    Only what is committed is delivered, as only what is committed enters a project (`hostrepo.carried_in`): a tree staged whole
     took their uncommitted notes and local files into the volume every later session reads (critic)."""
     commit = git(place, "rev-parse", "--verify", "-q", f"{rev}^{{commit}}").stdout.strip()
     if not commit:
@@ -626,12 +625,12 @@ def lfs_into_copy(base, src, dst, commit: str, execution) -> list[str]:
 
 def land_lfs(base, sha: str, since: str | None, execution) -> list[str]:
     """The LFS objects the pointers of the landed commits (`sha` but `since`, the imported one) name, written into the
-    user's LFS store by the host (`execution.stored_on_host`) — only what the base holds verified (`lfs_object`); [the
+    user's LFS store by the host (`hostrepo.stored`) — only what the base holds verified (`lfs_object`); [the
     paths whose object could not be carried]."""
     if not _lfs_in(execution):
         return []
     want = pointed(base, [sha, *(["--not", since] if since else [])], execution)
-    return stored_on_host(Path(base), want, lambda oid, size: lfs_object(base, base, oid, size, execution))
+    return H.stored(Path(base), want, lambda oid, size: lfs_object(base, base, oid, size, execution))
 
 
 def _bundled(src, rev: str, nots: list, execution) -> bytes:
@@ -662,9 +661,9 @@ def _bundled(src, rev: str, nots: list, execution) -> bytes:
 
 def to_host(src, ref: str, to, execution) -> str:
     """The commit `ref` names in the repository at `src`, where `execution` runs (a container), taken into the user's
-    repository at `to` on this host by their own git (`fetched_on_host`) — a bundle made in `src`'s own container,
+    repository at `to` on this host by their own git (`hostrepo.fetched`) — a bundle made in `src`'s own container,
     every object checked; git's words where it refused, else ''."""
-    return fetched_on_host(Path(to), _bundled(src, ref, [], execution), ref)
+    return H.fetched(Path(to), _bundled(src, ref, [], execution), ref)
 
 
 class CheckedOut(OSError):
@@ -731,7 +730,7 @@ def land(base, ref: str, execution, since: str | None, tree: str | None = None, 
     for nots in ([since] if since and since != sha else [], []):
         if whole():
             break
-        if not (why := fetched_on_host(base, _bundled(base, rev, nots, execution))):
+        if not (why := H.fetched(base, _bundled(base, rev, nots, execution))):
             break
     # …a fetch that said an error is no landing, whatever it took in: it went past the bundle (a submodule's remote)
     if why or not whole():

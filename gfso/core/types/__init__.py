@@ -6,7 +6,7 @@ come to disagree, which this package exists to prevent.
 from .enums import (
     State, Signal, Action, CriticVerdict, DoneReason, Verdict, Stage, FM,
     AutonomyLevel, Mode, mode_starts_sessions, MutationType, Predictability, RevisionReason,
-    TERMINAL_STATES, NON_TERMINAL_STATES, WORK_STATES, REASSIGNABLE_STATES, QUASI_TERMINAL_STATES,
+    TERMINAL_STATES, NON_TERMINAL_STATES, WORK_STATES, EXECUTOR_STATES, REASSIGNABLE_STATES, QUASI_TERMINAL_STATES,
     RETIRED_STATES, state_named,
     EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS,
 )

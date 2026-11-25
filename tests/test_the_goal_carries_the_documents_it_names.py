@@ -13,8 +13,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import gfso.adapters.execution as E
+import gfso.adapters.hostrepo as H
 import gfso.tools_llm as TL
 import gfso.workspaces as WS
+import gfso.executions as X
 from gfso.core.graph.model import USERS_PLAN_KEY
 from gfso.core.types import TaskId
 from gfso.roster import AgentRegistry
@@ -132,8 +134,8 @@ def test_a_base_that_is_no_repositorys_top_carries_no_other_repositorys_file(tmp
         subprocess.run(["git", "-C", str(home), *a], check=True, capture_output=True)
     (proj := home / "newproj").mkdir()
     (proj / "settings.json").write_text("the project's own", encoding="utf-8")
-    assert E.committed(proj, "settings.json") is None
-    assert E.committed(home, "settings.json") == b'{"token": "HOME-SECRET"}', "a top with a commit is read"
+    assert H.committed(proj, "settings.json") is None
+    assert H.committed(home, "settings.json") == b'{"token": "HOME-SECRET"}', "a top with a commit is read"
 
 
 def test_the_place_reader_reads_no_base_its_projects_sessions_may_not_run_in(tmp_path, monkeypatch):
@@ -170,13 +172,13 @@ def test_a_volume_held_as_a_tree_binds_nothing_and_its_stop_does_not_lift_by_its
     x = E.ContainerExecution("e", "img", None, str(tmp_path / "state"), str(a_repository(tmp_path / "ws")), "p")
     record = {E.VOLUME + E.IMPORTED: '{"commit": "tree"}'}
     x.volume.record = (record.get, record.__setitem__)
-    monkeypatch.setattr(WS, "where_it_runs", lambda engine, agents=None: x)
+    monkeypatch.setattr(X, "where_it_runs", lambda engine, agents=None: x)
     monkeypatch.setattr(E, "_unavailable", lambda ex, storage: None)
     with pytest.raises(E.PlaceUnavailable, match="live tree"):
-        WS.execution_of(SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None)))
+        X.execution_of(SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None)))
     assert "live tree" in x.unavailable(storage=True)
     record[E.VOLUME + E.IMPORTED] = '{"commit": "abc"}'
-    assert WS.execution_of(SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None))) is x and not x.unavailable(storage=True)
+    assert X.execution_of(SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None))) is x and not x.unavailable(storage=True)
 
 
 def test_a_plan_handed_in_whole_is_recorded_as_the_users(tmp_path, monkeypatch):

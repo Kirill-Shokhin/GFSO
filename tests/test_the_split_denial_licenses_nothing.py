@@ -35,10 +35,10 @@ def _whole():
 def test_the_denial_is_not_set_aside_for_the_validator_nor_the_executor():
     e = _whole()
     root = e.graph.get_task(TaskId("root"))
-    for packet in (packets._validator_packet(e, root, "delivered", None),
-                   packets._scope_validator_packet(e, [(root, "delivered", root.spec.criteria)], None, None,
+    for packet in (packets.validator_packet(e, root, "delivered", None),
+                   packets.scope_validator_packet(e, [(root, "delivered", root.spec.criteria)], None, None,
                                                      frozenset({"root"})),
-                   packets._executor_packet(e, root, "ws"),
+                   packets.executor_packet(e, root, "ws"),
                    packets._scope_node_block(e, 1, root, root, frozenset({"root"}))):
         assert UNMODELLED_FAULT.item in packet, "a risk event the split accepts is still shown"
         assert DENIAL.item not in packet, "the split's denial read as a risk the plan set aside"

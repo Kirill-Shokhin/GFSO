@@ -11,7 +11,7 @@ from gfso import sessions as S, tools as T
 from gfso.adapters import git as G, worktrees as W
 from gfso.core.types import Mode, State, TaskId
 from gfso.delegate import AgentRegistry
-from gfso.packets import _executor_packet
+from gfso.packets import executor_packet
 from gfso.workspaces import _enter_workspace, _ensure_place, _workspace, parts_not_there
 from tests.support import criterion, make_engine
 from tests.test_a_node_works_in_its_own_place import _repo as _repo_of
@@ -107,7 +107,7 @@ def test_the_wholes_packet_names_a_joined_part_whose_work_is_gone(tmp_path):
     W.commit_all(base, place, "a later merge's resolution", "t")
     lost = parts_not_there(e, agents, [root], place)
     assert [(x, f) for x, f, *_ in lost] == [("root.part", ["ld.c"])]
-    text = _executor_packet(e, root, place, unjoined, None, lost)
+    text = executor_packet(e, root, place, unjoined, None, lost)
     assert "## Parts whose work is no longer all in your tree" in text and "`ld.c` (last changed by" in text and "`root.part`" in text
     e.stop()
 

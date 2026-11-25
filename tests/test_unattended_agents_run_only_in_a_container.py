@@ -17,7 +17,7 @@ from starlette.testclient import TestClient
 
 from gfso import config, signin, sessions as S, tools_llm as TL
 from gfso.api.server import create_app
-from gfso.adapters import execution as E
+from gfso.adapters import execution as E, hostrepo as H
 from gfso.core.types import THIS_HOST, PlaceUnavailable
 import gfso.delegate as D
 from gfso.delegate import Dispatcher
@@ -171,7 +171,7 @@ def test_a_top_reached_through_a_junction_is_the_top(tmp_path):
     """git names the junction's target, and a top compared as text was refused as "inside" itself (critic)."""
     top = _repo(tmp_path / "repo")
     subprocess.run(["cmd", "/c", "mklink", "/J", str(tmp_path / "junc"), str(top)], check=True, capture_output=True)
-    assert E._no_places(tmp_path / "junc") is None, "the gate resolves its base; the reason itself must not misread one"
+    assert H.no_places(tmp_path / "junc") is None, "the gate resolves its base; the reason itself must not misread one"
 
 
 def test_the_remedy_never_names_the_users_home_nor_inits_inside_a_git_directory(tmp_path, monkeypatch):

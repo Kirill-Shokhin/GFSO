@@ -17,7 +17,8 @@ from gfso.config import DEFAULT_PROJECT
 from gfso.engine import Engine
 from gfso.places import cheap_to_ask
 from gfso.roster import default_agents
-from gfso.workspaces import accepted_branch, execution_of, performer, repository, validator_workdir
+from gfso.executions import execution_of
+from gfso.workspaces import accepted_branch, performer, repository, validator_workdir
 
 
 def work_branch(engine: Engine) -> str:

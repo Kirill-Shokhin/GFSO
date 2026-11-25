@@ -17,7 +17,7 @@ def test_a_plan_the_admission_refuses_is_repaired_by_the_round(monkeypatch):
     def fix(llm, request, spec, refused, executor):
         shown.extend(refused)
         return {"root_criteria": good["root_criteria"]}
-    monkeypatch.setattr(D, "_audit_fix", fix)
+    monkeypatch.setattr(D, "audit_fix", fix)
     monkeypatch.setattr(D, "default_llm", lambda *a, **k: object())
     monkeypatch.setattr(D, "refine_with", lambda *a, **k: (False, None, []))
     monkeypatch.setattr(planning, "_review", lambda *a, **k: {})

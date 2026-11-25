@@ -23,7 +23,7 @@ from pathlib import PurePosixPath
 import pytest
 
 import gfso.tools as T
-from gfso.packets import _executor_packet, _validator_packet
+from gfso.packets import executor_packet, validator_packet
 from gfso.core.protocol.procedure import claim_digest, laid, probe_id, procedure_digest, tokenized
 from gfso.core.protocol.accounting import orphaned_regression, unrun_regression, without_pinned_runs
 from gfso.core.types import AgentId, Criteria, Probe, Signal, SignalData, Spec, TaskId, register_of
@@ -663,7 +663,7 @@ def test_a_regression_line_is_shown_runnable_this_round_and_re_run_by_command_or
         "probe": [{"behaviour": "escapes", "expect": "OK", "command": own}]}])
     (stored,) = e.regression_probes("kid")["conf"]
     assert stored["as_run"] == 'cd ws && PYTHONPATH=. python "{inputs:' + pid + '}/t.py"\necho done'
-    packet = _validator_packet(e, e.graph.get_task("kid"), "fixed it", None, scratch=str(new))
+    packet = validator_packet(e, e.graph.get_task("kid"), "fixed it", None, scratch=str(new))
     d_new = new / "probe_inputs" / pid.replace("#", "_")
     shown = f'cd ws && PYTHONPATH=. python "{d_new.as_posix()}/t.py"\necho done'
     assert shown in packet and "report it under this id" in packet
@@ -695,7 +695,7 @@ def test_a_retired_finding_over_laid_inputs_is_named_settled_not_ordered(tmp_pat
     T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"finding {fid} is another node's")
     assert T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[fid], justification="it is")["accepted"]
     e.wait_idle()
-    packet = _executor_packet(e, e.graph.get_task("kid"), "ws")
+    packet = executor_packet(e, e.graph.get_task("kid"), "ws")
     assert own not in packet and "the own run broke" not in packet, packet
     e.stop()
 

@@ -6,7 +6,7 @@ together (GB_sql_database_tn9nii608)."""
 import pytest
 
 import gfso.tools as T
-from gfso.packets import HANDOVER_LINES, _executor_packet
+from gfso.packets import HANDOVER_LINES, executor_packet
 from tests.support import DENIAL_ENTRY, UNMODELLED_FAULT, criterion, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY", "justification": "no precedent",
@@ -34,7 +34,7 @@ def _failed_after(report: str):
 
 def test_the_rework_packet_carries_the_last_report():
     e = _failed_after("built parser.c and parser_stmt.c\nchecked: make && ./t < stmts.txt -> OK")
-    packet = _executor_packet(e, e.graph.get_task("root"), "ws")
+    packet = executor_packet(e, e.graph.get_task("root"), "ws")
     assert "## Your last delivery, as you reported it" in packet
     assert "built parser.c and parser_stmt.c" in packet and "./t < stmts.txt" in packet
     e.stop()
@@ -42,7 +42,7 @@ def test_the_rework_packet_carries_the_last_report():
 
 def test_a_long_report_is_handed_as_a_note():
     e = _failed_after("\n".join(f"line {i}" for i in range(HANDOVER_LINES + 25)))
-    packet = _executor_packet(e, e.graph.get_task("root"), "ws")
+    packet = executor_packet(e, e.graph.get_task("root"), "ws")
     assert f"line {HANDOVER_LINES - 1}" in packet and f"line {HANDOVER_LINES}\n" not in packet
     assert "(25 more lines of that report)" in packet
     e.stop()

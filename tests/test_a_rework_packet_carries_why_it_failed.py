@@ -50,7 +50,7 @@ def test_the_rework_packet_carries_what_the_validator_observed_and_the_probe_as_
     """A multi-line probe reaches the executor as it was written — the regression store keeps it one-lined, which
     no shell runs (critic, 2026-09-27)."""
     e = _failed_leaf()
-    packet = packets._executor_packet(e, e.graph.get_task(TaskId("leaf")), "ws")
+    packet = packets.executor_packet(e, e.graph.get_task(TaskId("leaf")), "ws")
     assert "## REWORKING" in packet and "int(text) rejects a 5000-digit integer" in packet, packet
     assert "from json_parser import parse\n" in packet and "print(parse('1' * 5000))" in packet, packet
     e.stop()
@@ -65,7 +65,7 @@ def test_a_new_contract_after_a_fail_carries_why_the_earlier_one_failed():
     e.wait_idle()
     e.send_signal(SignalData(signal=Signal.ACCEPT, task_id=TaskId("leaf"), source=AgentId("w")))
     e.wait_idle()
-    packet = packets._executor_packet(e, e.graph.get_task(TaskId("leaf")), "ws")
+    packet = packets.executor_packet(e, e.graph.get_task(TaskId("leaf")), "ws")
     assert "An earlier version of this contract was FAILED" in packet
     assert "int(text) rejects a 5000-digit integer" in packet and "print(parse('1' * 5000))" in packet, packet
     e.stop()
@@ -99,7 +99,7 @@ def _failed_then_revised(probe, evidence: str, check: tuple):
     e.wait_idle()
     e.send_signal(SignalData(signal=Signal.ACCEPT, task_id=TaskId("leaf"), source=AgentId("w")))
     e.wait_idle()
-    return e, packets._executor_packet(e, e.graph.get_task(TaskId("leaf")), "ws")
+    return e, packets.executor_packet(e, e.graph.get_task(TaskId("leaf")), "ws")
 
 
 #: the run of the pinned probe as a verdict files it: under the probe's bare hash

@@ -34,7 +34,8 @@ from gfso.adapters.snapshots import WATCHED, NotTheDelivery, Uncopied, changed_o
 
 from gfso.core.protocol.procedure import (PROBE_S, contains, materialize_inputs, probe_id, shows,
                                          unsafe_input_paths)
-from gfso.workspaces import execution_of, standing
+from gfso.executions import execution_of
+from gfso.workspaces import standing
 
 #: Seconds one check may run, and the whole observation of one session's nodes — a quarter of the session's own
 #: cap at most (`observe_place`).

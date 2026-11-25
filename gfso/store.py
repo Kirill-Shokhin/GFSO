@@ -21,10 +21,9 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from gfso.adapters import git as G, lfs
+from gfso.adapters import git as G, hostrepo as H, lfs
 from gfso.adapters import worktrees as W
-from gfso.adapters.execution import (IMPORTED, STORE_DIR, ContainerExecution, LocalExecution, component,
-                                     lfs_held)
+from gfso.adapters.execution import IMPORTED, STORE_DIR, ContainerExecution, LocalExecution, component
 from gfso.adapters.snapshots import Source, Uncopied
 from gfso.config import DEFAULT_PROJECT, data_dir
 from gfso.core.types import PROJECT_ID, VOLUME, Signal
@@ -289,14 +288,14 @@ def _keep(engine, ex, commit: str, src, place, at, pack: Optional[str] = None) -
 def _keep_lfs(engine, store: str, ex, commit: str, src, at) -> list[str]:
     """The LFS objects `commit`'s pointers name, from the store `src` reads into the project's, each only where it is
     its pointer's object; [what was not kept]. A place of the system's by its own execution (`W.carry_lfs`); a chat's git
-    on this host read here (`lfs_held`), an object past what one write carries (`W.BUNDLE_CAP`) not kept. Into the
+    on this host read here (`hostrepo.lfs_held`), an object past what one write carries (`W.BUNDLE_CAP`) not kept. Into the
     store, the system's own write: no node's growth against its disk bound (critic over 60d27c5)."""
     keeper = ex if ex is not None else LocalExecution()
     with keeper.system_writes(store):
         if at is not None:
             want = W.pointed(src, [commit], at)
             return W.carry_lfs(W.base_of(str(src)) or str(src), src, store, want, at) if want else []
-        held, lost = lfs_held(Path(src), commit)
+        held, lost = H.lfs_held(Path(src), commit)
         into = str(Path(store) / ".git" / "lfs" / "objects")
         for oid, f in held.items():
             if keeper.files.exists(to := lfs.path_in(into, oid)):

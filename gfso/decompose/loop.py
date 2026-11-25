@@ -33,7 +33,7 @@ from gfso.llm import llm_factory
 from gfso.decompose.seams import critical_path, waves
 
 
-def _progress(msg: str, cb=None) -> None:
+def say_progress(msg: str, cb=None) -> None:
     """Human-visible pipeline progress. Always STDERR (stdout is the MCP stdio channel and must stay
     clean); `cb(msg)` additionally forwards to a transport-side channel (e.g. MCP progress
     notifications) when one is wired."""
@@ -287,7 +287,7 @@ FOLD_SCHEMA = {
 }
 
 
-_COVERED = "ALREADY-COVERED"
+COVERED = "ALREADY-COVERED"
 
 # `fast` pace-suffixes — USER-content additions (frozen prompt CORES untouched; same sanctioned class
 # as the ALREADY-COVERED sentinel). Measured on the wordfreq simple task (runs/v2_speed/suffix_*.json):
@@ -305,20 +305,22 @@ AUDIT_FAST = ("Pace note: this is a SIMPLE task — keep the reduction TIGHT: no
               "measured 63-77s numbers below are from the prose-era wording.")
 
 
-def _stage(llm, label: str) -> None:
+def enter_stage(llm, label: str) -> None:
     """A stage of the authoring starts: its name on the adapter's live ticks, and on the authoring's in-flight entry."""
     _hint(llm, label)
     staged(label)
 
 
-def _search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False, ground: str = "") -> str:
+def search(llm: LLMProviderPort, request: str, prev_md: str, fast: bool = False, ground: str = "") -> str:
+    """THE search call — the holes of the current decomposition (or, with none, the first enumeration); a reply that
+    opens with `COVERED` says nothing is missing."""
     if prev_md:
         # The sentinel is an I/O-FORMAT convention only: the frozen prompt already mandates "say so
         # explicitly rather than manufacturing holes" — this fixes the wording so the loop can detect it.
         user = (f"# TASK\n{request}\n\n# CURRENT DECOMPOSITION\n{prev_md}\n\n"
                 "A current decomposition is provided — find everything it is still missing or wrongly "
                 "scoped (only genuinely new holes, each with its falsifier). If, per your rules, the real "
-                f"requirement space is already covered, begin your reply with the single line {_COVERED}.")
+                f"requirement space is already covered, begin your reply with the single line {COVERED}.")
     else:
         user = f"# TASK\n{request}\n\nFirst pass: no decomposition is provided — produce the exhaustive enumeration."
     user += _ground(ground)
@@ -346,7 +348,7 @@ def executor_line(executor: str) -> str:
               "Judge `fits_one_session` / `whole_fits_one_session` against that session.")
 
 
-def _audit_fold(llm: LLMProviderPort, request: str, state_md: str, holes: str,
+def audit_fold(llm: LLMProviderPort, request: str, state_md: str, holes: str,
                 fast: bool = False, executor: str = "", ground: str = "") -> dict:
     """THE audit call — every round is the same operation (state, findings) → fold-patch; round 1 is
     just the empty-state case (the whole enumeration reduces to the canonical basis as adds). The
@@ -421,7 +423,7 @@ def _no_empty_deferral(part: dict) -> dict:
         "split_after" in part and not (part["split_after"] or {}).get("after")) else part
 
 
-def _fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
+def fold_merge(spec: dict, patch: dict) -> tuple[dict, list[str]]:
     """Deterministic merge of a fold-patch into the carried spec: removals → updates → adds (deduped).
     Removing a subtask cleans its mappings and seams (referential integrity by construction). Returns
     (new spec, human-readable op summary); an empty summary ⟺ the patch changed nothing (converged)."""
@@ -535,7 +537,7 @@ def _keeping_the_pinned_inputs(replacement: dict, current: list) -> dict:
     return out
 
 
-def _audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[str],
+def audit_fix(llm: LLMProviderPort, request: str, spec: dict, problems: list[str],
                executor: str = "") -> dict:
     """The builder's repair call — a PATCH: the built graph exposed structural holes / lost items; the
     audit corrects its own transcription by re-emitting ONLY the fields it changes (the caller merges).
@@ -591,15 +593,15 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
     if llm is None:
         llm = llm_factory(model)
     if getattr(llm, "on_tick", "absent") is None:  # adapter streams live ticks and none wired yet
-        llm.on_tick = lambda msg: _progress(msg, progress)
-    _progress(f"{label} searcher…", progress)
-    _stage(llm, f"{label} searcher")
+        llm.on_tick = lambda msg: say_progress(msg, progress)
+    say_progress(f"{label} searcher…", progress)
+    enter_stage(llm, f"{label} searcher")
     # …the search gives the split its structure (components, seams, failure modes), the goal's obligations its coverage:
     # the obligations alone, in place of the search, lost structure on every E2 task (0.33–0.59 vs 0.50–0.84, 2026-10-31)
     # …and over what the split stands on (`ground`): for a split deferred until its producers delivered, what they
     # delivered (`results_a_split_waits_on`) — a section of its own, never the task: the goal's obligations below read
     # the request alone, so none is mined from a producer's source (critic, twice)
-    found = _search(llm, request, "", fast=fast, ground=ground)
+    found = search(llm, request, "", fast=fast, ground=ground)
     tag_stage(llm, Stage.SEARCH)
     # …the gate's own question asked of the goal only where the authoring answers it at all: the measurement arm's
     # switch exists so a plan the gate has NOT pre-repaired can still be authored (critic over the first fold)
@@ -607,21 +609,21 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
     if owed:
         tag_stage(llm, Stage.AUTHORING_OBLIGATIONS)
     holes = "\n\n".join(x for x in (found, owed) if x)
-    _progress(f"{label} searcher {stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
+    say_progress(f"{label} searcher {stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
     if refused_by_limit(calls_of(llm)):
         return {}                   # …what stops the project stops the round: no fold is asked of refused calls
-    _progress(f"{label} auditor (fold, first round)…", progress)
-    _stage(llm, f"{label} auditor")
-    patch = _audit_fold(llm, request, "", holes, fast=fast, executor=executor, ground=ground) or {}
+    say_progress(f"{label} auditor (fold, first round)…", progress)
+    enter_stage(llm, f"{label} auditor")
+    patch = audit_fold(llm, request, "", holes, fast=fast, executor=executor, ground=ground) or {}
     tag_stage(llm, Stage.AUDIT_FOLD)
-    spec, ops = _fold_merge({}, patch)
+    spec, ops = fold_merge({}, patch)
     if not ops:
-        _progress(f"{label} auditor {stat_line(llm)} · empty fold — no basis emitted (failed first round)",
+        say_progress(f"{label} auditor {stat_line(llm)} · empty fold — no basis emitted (failed first round)",
                   progress)
         return {}
     d, dep, v = shape(spec)
-    _progress(f"{label} auditor {stat_line(llm)} · |D|={d} |Dep|={dep} |V|={v}", progress)
-    _progress(_spec_line(spec), progress)
+    say_progress(f"{label} auditor {stat_line(llm)} · |D|={d} |Dep|={dep} |V|={v}", progress)
+    say_progress(_spec_line(spec), progress)
     return spec
 
 

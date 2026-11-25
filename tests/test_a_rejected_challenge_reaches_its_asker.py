@@ -10,7 +10,7 @@ import gfso.packets as P
 import gfso.tools as T
 from gfso.core.types import AgentId, Criteria, Spec, TaskId
 from gfso.issuer import issuer_context
-from gfso.packets import _executor_packet
+from gfso.packets import executor_packet
 from tests.support import REGISTER, REGISTER_ITEMS, criterion, make_engine, pinned
 
 W = "worker"
@@ -48,13 +48,13 @@ def _rejected(e, times=1):
 
 
 def test_the_executor_reads_the_rejection_of_its_challenge(e):
-    packet = _executor_packet(e, _rejected(e), None)
+    packet = executor_packet(e, _rejected(e), None)
     assert "REJECTED — each is answered" in packet
     assert ASKED in packet and ANSWER in packet
 
 
 def test_a_repeated_exchange_is_one_line(e):
-    packet = _executor_packet(e, _rejected(e, 3), None)
+    packet = executor_packet(e, _rejected(e, 3), None)
     assert packet.count(ANSWER) == 1 and "(3 times)" in packet
 
 
@@ -66,7 +66,7 @@ def test_a_long_ruling_reaches_its_asker_whole(e):
     assert T.signal(e, "root", "CHALLENGE", W, reason=ASKED * 30)["accepted"]
     assert T.signal(e, "root", "REJECT_CHALLENGE", W, justification=long_answer)["accepted"]
     e.wait_idle()
-    assert long_answer in _executor_packet(e, e.graph.get_task(TaskId("root")), None)
+    assert long_answer in executor_packet(e, e.graph.get_task(TaskId("root")), None)
     assert T.signal(e, "root", "CHALLENGE", W, reason="a new observation")["accepted"]
     ctx = issuer_context(e, TaskId("root"), "dispute")
     assert long_answer in ctx and ASKED * 30 in ctx
@@ -84,7 +84,7 @@ def test_a_new_version_starts_without_them(e):
     e._revise(TaskId("root"), Spec("a goal, revised", (Criteria("c", "C2", check=pinned("c")),),
                                    accepted_risks=REGISTER_ITEMS), AgentId(W))
     e.wait_idle()
-    assert ANSWER not in _executor_packet(e, e.graph.get_task(TaskId("root")), None)
+    assert ANSWER not in executor_packet(e, e.graph.get_task(TaskId("root")), None)
 
 
 def test_at_an_auto_root_the_rework_order_promises_no_ruling_it_cannot_get(e, monkeypatch):
@@ -92,7 +92,7 @@ def test_at_an_auto_root_the_rework_order_promises_no_ruling_it_cannot_get(e, mo
     exists — the next validation judges the finding against the criterion (critic over the dispute fix; tn9fpg788's
     root disputed one finding 166 times)."""
     t = e.graph.get_task(TaskId("root"))
-    assert "only his ruling retires it" in _executor_packet(e, t, None)
+    assert "only his ruling retires it" in executor_packet(e, t, None)
     monkeypatch.setattr(P, "is_auto_root", lambda g, task: True)
-    packet = _executor_packet(e, t, None)
+    packet = executor_packet(e, t, None)
     assert "only the user retires a finding" in packet and "only his ruling retires it" not in packet

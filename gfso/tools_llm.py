@@ -28,11 +28,12 @@ from typing import Optional, Union
 
 from gfso import canon as _canon, past
 from gfso.llm import llm_factory
-from gfso.workspaces import (no_repository, unjudged, declaring_role, execution_of, record_repository, where_it_runs,
-                             validator_workdir)
+from gfso.executions import declaring_role, execution_of, where_it_runs
+from gfso.workspaces import no_repository, unjudged, record_repository, validator_workdir
 from gfso.roster import default_agents, publish_the_workforce, staffed
 from gfso.adapters import worktrees as W
-from gfso.adapters.execution import IMPORTED, ContainerExecution, committed, left_out
+from gfso.adapters.execution import IMPORTED, ContainerExecution
+from gfso.adapters.hostrepo import committed, left_out
 from gfso.core.types import (HOST, TERMINAL_STATES, VOLUME, AgentId, Mode, Signal, State, TaskId, Stage,
                              Verdict, passed)
 from gfso.core.protocol.invariants import INTENT
@@ -43,7 +44,7 @@ from gfso.adapters.execution import network_of, node_key
 from gfso.decompose import NoPlan, decompose_into, artifact as _artifact, planning as _planning, kept as _kept
 from gfso.engine.events import emit_cb
 from gfso.engine.moves import DOOR_KEYS, READS, SIGNERS, door_holder, door_role, role_holder, signer_arg, signer_due
-from gfso.engine.validation import (_l0_holes, _l2_undischarged, a_human, depth_of, hands_of, heard_on, his_seam,
+from gfso.engine.validation import (a_human, depth_of, hands_of, heard_on, his_seam,
                                    holder_boundary, in_chat_names, mode_kind)
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS
 from gfso.core.graph.model import (MAX_ITERATIONS_CEILING, bounds_refusal, project_deadline_s, project_now,
@@ -52,7 +53,6 @@ from gfso.adapters.llm.stats import stat_line, refused_by_limit, what_stopped
 from gfso.engine import PERSONS_WORDS, Engine
 from gfso import signin, tools as _tools
 from gfso.serverctl import open_the_page
-from gfso.tools import _agent_id
 from gfso.config import CALLER, agent_id as _config_agent_id, caller_id, client_kind, how_it_is_waited, refuse_unsigned, reserved_refusal
 from gfso.config import WRITTEN_IN_THE_CALL as _config_written_in_the_call, FOR_THE_PERSON, PERSONS_NAMES
 from gfso.engine.frontier import OBSERVE
@@ -206,8 +206,7 @@ def review_decomposition(engine: Engine, task_id: str, model: Optional[str] = No
     # reader took `gate_passed: true` for "the plan is good" while the checker was saying a criterion
     # is not carried (measured 2026-08-20). The question anyone actually has is whether the children
     # may start, so the answer carries it.
-    _t = engine.graph.get_task(TaskId(task_id))
-    _open = _l2_undischarged(engine._graph, _t) if _t is not None else None
+    _open = engine.open_l2_findings(TaskId(task_id))
     out["execution_admitted"] = engine.execution_admitted(TaskId(task_id))
     # ... and what the OTHER flag is about, beside it. `gate_passed: true` next to
     # `execution_admitted: false` reads as a contradiction unless you already know the first names a
@@ -231,7 +230,7 @@ def review_decomposition(engine: Engine, task_id: str, model: Optional[str] = No
     out["what_this_means"] = (
         "the children may start" if out["execution_admitted"] else
         "the children may NOT start yet: Level-0 checks are open (`list_holes`), so the Level-2 review could not run "
-        "— repair the plan, then review it" if _t is not None and _l0_holes(engine._graph, _t) else
+        "— repair the plan, then review it" if engine.split_holes(TaskId(task_id)) else
         "the children may NOT start yet: no CURRENT Level-2 verdict covers this decomposition"
         if _open is None else
         "the children may NOT start yet: the Level-2 review left findings open — "
@@ -409,12 +408,12 @@ def _childrens_executor(engine: Engine, root_id: str, assignee: str, executor: O
     """Who the mode hands `root_id`'s children to (`kid`), or the `executor` the caller named where the mode lets it —
     one rule for the plan and the go, so a plan is never placed for a session its parts will not run in."""
     if executor and str(executor) != str(kid) and not (
-            str(kid) != _agent_id() and str(executor) in map(str, engine.seam_keepers(AgentId(assignee)))):
+            str(kid) != caller_id() and str(executor) in map(str, engine.seam_keepers(AgentId(assignee)))):
         # the lift is the caller's own call without the name (§12.16 (ii)); naming `set_mode` as the way
         # out handed it the user's choice — measured, a semi holder read it, asked to switch, and stopped
         raise ValueError(
             f"this project runs in {(engine.mode_at(root_id) or {}).get('mode')}: the children of '{root_id}' are held "
-            f"by {'the system' if str(kid) != _agent_id() else 'you'}, so they cannot go to "
+            f"by {'the system' if str(kid) != caller_id() else 'you'}, so they cannot go to "
             f"{executor}. Call it again without `executor` — the mode assigns them.")
     return executor or str(kid)
 
@@ -514,7 +513,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     _cb = emit_cb(engine, "decompose", _progress)
     # …and SAY it, once, at the moment it happens: naming someone else here makes them the issuer of
     # every child, which is the opposite of what "delegate the work" usually means to the caller.
-    if assignee and assignee != _agent_id() and not executor:
+    if assignee and assignee != caller_id() and not executor:
         # …and ONLY when they have not already done the other thing. The remedy also interpolated
         # the CALLER's own id ("pass executor=<you>"), which is not the delegation anyone means, and
         # it printed one line before the message saying the children HAD been delegated (measured on
@@ -527,7 +526,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
             f"with the issuer rights over the plan — stays yours.")
     if executor:
         _cb(f"{root_id}: the children are delegated to {executor}; the root stays with "
-            f"{assignee or _agent_id()}, who issues them.")
+            f"{assignee or caller_id()}, who issues them.")
     assignee, executor, author = _held_as_the_mode_says(engine, root_id, assignee, executor, author)
     if fresh := engine.graph.get_task(TaskId(root_id)) is None:
         # the place is read for the plan's author; a plan handed in (`spec`) has none
@@ -536,7 +535,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
         request = (request or "") + ("" if plan is not None else _named_documents(engine, f"{request} {found}"))
     planner = _decompose.default_llm(model, execution=execution_of(engine))   # the one door to the plan's transport
     try:
-        res = decompose_into(engine, request, root_id=root_id, assignee=assignee or _agent_id(),
+        res = decompose_into(engine, request, root_id=root_id, assignee=assignee or caller_id(),
                              child_assignee=executor, llm=planner,
                              depth=depth, model=model, fast=fast, progress=_cb,
                              # A term of the CONTRACT, chosen per decomposition: how many
@@ -624,7 +623,7 @@ def _held_as_the_mode_says(engine: Engine, root_id: str, assignee: Optional[str]
     if _root is None:
         _want = engine.del_at(0, None)
         assignee = str(_tools.del_by_mode(engine, None, assignee)) if assignee else str(_want)
-        engine.record_root_issuer(TaskId(root_id), AgentId(_agent_id()))
+        engine.record_root_issuer(TaskId(root_id), AgentId(caller_id()))
     else:
         assignee = str(_root.assignee)
     return assignee, _childrens_executor(engine, root_id, assignee, executor,
@@ -687,7 +686,7 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
                f"; `{root_id}` is yours to PASS too, the validator observing the scope's top above it."))
         # …and the move itself, as every move's reply carries it: the go's alone had none, and a fresh client asked
         # `next_step` before its DELIVER to learn it (s23g4)
-        out.update(_tools.next_for(engine, _agent_id()))
+        out.update(_tools.next_for(engine, caller_id()))
     return out
 
 
@@ -954,7 +953,7 @@ def plan(engine: Engine, request: str = "", model: Optional[str] = None, executo
             executor = _childrens_executor(engine, ROOT_ID, str(root), executor, kid)
     if executor:
         # …held by the user-agent, its parts run in its hands' session where it dispatches, as the go judges
-        executor = hands_of(engine.graph, executor) or (None if str(executor) == _agent_id() else executor)
+        executor = hands_of(engine.graph, executor) or (None if str(executor) == caller_id() else executor)
     # …the goal as the project's root will hold it — with the documents it names written under it, as the go would add
     # them — so the plan and its review are written against the contract the work will run on (critic)
     docs = _documents_named(engine, request or "")
@@ -1830,14 +1829,14 @@ def stop_project(engine: Engine, why: str = "", by: Optional[str] = None) -> dic
     """STOP the project's run: the system starts no new session in it (executor, validator, issuer); those running
     finish and their signals land — `stopping` until the last one has, then `stopped`. No timeout fires while stopped
     and the graph is not changed. `start_project` runs it again."""
-    engine.stops.pause(by or _agent_id(), why)
+    engine.stops.pause(by or caller_id(), why)
     return run_state(engine)
 
 
 def start_project(engine: Engine, by: Optional[str] = None) -> dict:
     """RUN the project again after `stop_project`; the time it stood stopped is left off its clocks, so no bound ran out
     in it (`project_now`)."""
-    engine.stops.resume(by or _agent_id())
+    engine.stops.resume(by or caller_id())
     return {**run_state(engine), **({} if engine.graph.setting(VOLUME + IMPORTED) else _not_imported(engine))}
 
 
@@ -2070,7 +2069,7 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
     if m is None:
         if not settings:
             return {"refused": True, "error": "name a mode, or a setting of this project to change"}
-        rec = engine.set_settings(settings, AgentId(agent or _agent_id()), said=str(user_said).strip())
+        rec = engine.set_settings(settings, AgentId(agent or caller_id()), said=str(user_said).strip())
         return {**rec, **(_turn_the_way_out(engine) if network is not None else {}), **_short_supplied(engine)}
     # …the project's executors that name no execution placed in the default as the mode is set — the door registers
     # first and sets the mode after, and a registration saw no mode (critic); moved back where the mode is refused, or
@@ -2084,7 +2083,7 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
         if not staff["ready"]:
             return {"refused": True, "error": staff["missing"], "executors": staff["executors"]}
         try:
-            rec = engine.set_mode(m, boundary, AgentId(agent or _agent_id()), said=str(user_said).strip(),
+            rec = engine.set_mode(m, boundary, AgentId(agent or caller_id()), said=str(user_said).strip(),
                                   hands=str(pool[0]) if dispatch else None, settings=settings)
         except ValueError as e:
             return {"refused": True, "error": str(e)}
@@ -2394,7 +2393,7 @@ def set_checker(engine: Engine, task_id: str, checker: str = "validator", user_s
         return {"refused": True, "error": "who checks a node is the person's to choose: ask them, and pass their words "
                                           "asking for it as `user_said`"}
     try:
-        held = engine.set_checker(TaskId(task_id), str(checker), AgentId(agent or _agent_id()), user_said,
+        held = engine.set_checker(TaskId(task_id), str(checker), AgentId(agent or caller_id()), user_said,
                                   on_his_page=(p := CALLER.get()) is not None and p.a_page)
     except ValueError as e:
         return {"refused": True, "error": str(e)}
@@ -2683,7 +2682,7 @@ def _signed(name: str, fn):
         signer = named[0] if named else holder if holder in p.signs_as else p.name
         if client_kind() is not None and isinstance(e := ba.arguments.get("engine"), Engine):
             e.performs_in_chat(signer)        # …a stream's name moving over MCP — taken or launched with — works in a chat
-        # …into a signer the verb requires; one it defaults reads the caller (`_agent_id`), and its omission keeps its
+        # …into a signer the verb requires; one it defaults reads the caller (`caller_id`), and its omission keeps its
         # meaning (a root created naming no issuer is self-assigned)
         a, at = list(a), list(sig.parameters)
         for s in (s for s in signers if not ba.arguments.get(s) and sig.parameters[s].default is inspect.Parameter.empty):

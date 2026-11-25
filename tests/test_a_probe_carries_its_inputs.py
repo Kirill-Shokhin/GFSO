@@ -130,7 +130,7 @@ def test_what_the_executor_wrote_cannot_stand_in_for_the_pinned_corpus(tmp_path)
                               "accepted_risks": REGISTER},
                   assignee="user")
     e.wait_idle()
-    packet = packets._validator_packet(e, e.graph.get_task(TaskId("leaf")), "built it", str(delivery),
+    packet = packets.validator_packet(e, e.graph.get_task(TaskId("leaf")), "built it", str(delivery),
                                   str(tmp_path / "scratch"))
     laid = next(f for f in (tmp_path / "scratch" / "probe_inputs").rglob("a.c"))
     assert laid.read_text(encoding="utf-8") == "int main(){return 0;}"
@@ -168,7 +168,7 @@ def test_the_validator_is_handed_the_laid_down_directory_not_the_delivery(tmp_pa
                               "accepted_risks": REGISTER},
                   assignee="user")
     e.wait_idle()
-    packet = packets._validator_packet(e, e.graph.get_task(TaskId("leaf")), "built it", ".", str(tmp_path))
+    packet = packets.validator_packet(e, e.graph.get_task(TaskId("leaf")), "built it", ".", str(tmp_path))
     laid = tmp_path / "probe_inputs"
     assert "{inputs}" not in packet and str(laid) in packet
     assert any(f.name == "a.c" for f in laid.rglob("*"))
@@ -188,7 +188,7 @@ def test_the_executor_reads_the_inputs_its_contract_will_be_run_over(tmp_path):
                   assignee="user")
     e.wait_idle()
     work = tmp_path / "work"
-    crits = packets._executor_packet(e, e.graph.get_task(TaskId("leaf")), str(work)).split("## Inputs")[0]
+    crits = packets.executor_packet(e, e.graph.get_task(TaskId("leaf")), str(work)).split("## Inputs")[0]
     assert "{inputs}/" not in crits, "the command still names a directory the executor cannot see"
     d = Path(re.search(r"= (\S*gfso-check-inputs-\S+?): the 1 file", crits).group(1))
     assert (d / "sub" / "a.c").read_text(encoding="utf-8") == "int main(){return 0;}"

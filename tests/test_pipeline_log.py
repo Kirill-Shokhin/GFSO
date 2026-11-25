@@ -9,7 +9,7 @@ from tests.support import criterion, make_engine
 from fastapi.testclient import TestClient
 from gfso.api.server import create_app
 from gfso import tools as T
-from gfso.packets import _last_deliver_result
+from gfso.packets import last_deliver_result
 
 
 def _eng(storage=None):
@@ -69,5 +69,5 @@ def test_deliver_result_survives_restart(tmp_path):
     T.signal(e, "n", "DELIVER", "w", result="artifact at out/x.txt; a met by ...")
     e.stop()
     e2 = _eng(SqliteStorage(db))                                   # fresh process, empty audit log
-    assert _last_deliver_result(e2, T.TaskId("n")) == "artifact at out/x.txt; a met by ..."
+    assert last_deliver_result(e2, T.TaskId("n")) == "artifact at out/x.txt; a met by ..."
     e2.stop()

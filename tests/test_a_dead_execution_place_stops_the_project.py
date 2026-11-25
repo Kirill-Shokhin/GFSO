@@ -85,7 +85,7 @@ def test_an_executor_round_on_a_dead_place_is_given_back_and_runs_again_once_the
     project stopped as the system, nothing started while it stands, and the round runs again after the place answers."""
     ex, docker = _place(tmp_path, monkeypatch)
     monkeypatch.setattr(S, "_enter_workspace", lambda engine, agents_, task, order: (str(tmp_path / "ws"), [], None))
-    monkeypatch.setattr(S, "_executor_packet", lambda *a, **k: "packet")
+    monkeypatch.setattr(S, "executor_packet", lambda *a, **k: "packet")
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))

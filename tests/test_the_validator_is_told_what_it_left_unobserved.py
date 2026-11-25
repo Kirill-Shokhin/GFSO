@@ -42,7 +42,7 @@ def _delivered(e, tid="leaf"):
 
 
 def _packet(e, tid="leaf"):
-    return packets._validator_packet(e, e.graph.get_task(TaskId(tid)), "built it", ".")
+    return packets.validator_packet(e, e.graph.get_task(TaskId(tid)), "built it", ".")
 
 
 def test_a_first_attempt_carries_no_such_section():

@@ -17,6 +17,7 @@ import gfso.adapters.llm.headless as H
 import gfso.doctor as D
 import gfso.tools_llm as TL
 import gfso.workspaces as WS
+import gfso.executions as X
 from gfso.adapters.execution import ContainerExecution
 from gfso.core.types import AgentId, Mode
 from tests.support import a_repository, make_engine
@@ -28,7 +29,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("GFSO_EXECUTIONS_PATH", str(tmp_path / "executions.json"))
     monkeypatch.setenv("GFSO_AGENTS_PATH", str(tmp_path / "agents.json"))
     monkeypatch.setattr(config, "local_agents", lambda: False)
-    monkeypatch.setattr(WS, "_EXECUTIONS", {})
+    monkeypatch.setattr(X, "_EXECUTIONS", {})
     a_repository(tmp_path / "w")          # …where its roles work: a repository, as every directory a role is named in
     return tmp_path
 
@@ -54,7 +55,7 @@ def test_an_executor_naming_no_execution_takes_the_default_and_its_project_runs_
     _declare(home)
     e = _dispatching()
     assert _registered(e, home, "p-exec") == "default"
-    assert isinstance(WS.execution_of(e, default_agents()), ContainerExecution)
+    assert isinstance(X.execution_of(e, default_agents()), ContainerExecution)
 
 
 def test_the_default_is_not_taken_where_the_work_is_attended_or_placed_already(home, monkeypatch):
@@ -76,7 +77,7 @@ def test_a_role_registered_again_keeps_the_execution_it_declares(home):
     e = _dispatching()
     assert _registered(e, home, "p-exec") == "default"
     assert _registered(e, home, "p-exec", model="claude-sonnet-5-5") == "default"
-    assert isinstance(WS.execution_of(e, default_agents()), ContainerExecution)
+    assert isinstance(X.execution_of(e, default_agents()), ContainerExecution)
 
 
 def test_an_executor_beside_the_users_own_chat_works_in_the_default_container(home):

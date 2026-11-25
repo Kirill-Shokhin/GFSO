@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 import gfso.adapters.execution as E
+import gfso.adapters.hostrepo as H
 from gfso import issuer
 from gfso.adapters.agents.human import HumanAgent
 from gfso.adapters.llm import credentials
@@ -61,7 +62,7 @@ def undeclare(e, producer: str, consumer: str) -> dict:
 
 
 def a_repository(base: Path) -> Path:
-    """`base` made the top of a git repository with a commit: the only base a container carries in (`_carried_in`)."""
+    """`base` made the top of a git repository with a commit: the only base a container carries in (`hostrepo.carried_in`)."""
     base.mkdir(parents=True, exist_ok=True)
     for a in (["init", "-q"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "start"]):
         subprocess.run(["git", "-C", str(base), *a], check=True, capture_output=True)
@@ -87,12 +88,12 @@ def a_place(place) -> str:
 
 
 def carry_nothing_in(monkeypatch) -> None:
-    """For a fake of the docker client, whose host git is no git: an empty bundle carried in (`_carried_in`), and no base
+    """For a fake of the docker client, whose host git is no git: an empty bundle carried in (`hostrepo.carried_in`), and no base
     refused for what that git cannot say (`_refused_over` keeps its own record's refusal)."""
     def carried(base, project, d):
         tarfile.open(d / "in.tar", "w").close()
         return "c0ffee", d / "in.tar", []
-    monkeypatch.setattr(E, "_carried_in", carried)
+    monkeypatch.setattr(H, "carried_in", carried)
     monkeypatch.setattr(E, "_refused_over", E.held_as_tree)
 
 

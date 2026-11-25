@@ -1911,7 +1911,7 @@ class Engine:
         """Did contact refute this node's split — a standing FAIL on criteria its untouched children
         cover (the re-delivery gate's own question, asked as a predicate, not as a refused signal)."""
         task = self._graph.get_task(task_id)
-        return self._redelivery_refusal(task) if task is not None else None
+        return self.redelivery_refusal(task) if task is not None else None
 
     def rejected_report(self, task_id: TaskId) -> Optional[dict]:
         """The last refused report on this node, or None. Evidence, not a verdict."""
@@ -3489,7 +3489,7 @@ class Engine:
                                         standing=round_stands(self._graph))
                 and not unrun_probes([e], e["reused_from_refused"].get("tools_used"))]
 
-    def _redelivery_refusal(self, task) -> Optional[str]:
+    def redelivery_refusal(self, task) -> Optional[str]:
         """What the re-delivery gate would say about this node right now, or None if it would pass.
 
         Asked by the frontier so the directive names the repair the engine will actually accept —
@@ -3849,6 +3849,11 @@ class Engine:
         A read handle, deliberately: mutations go through the protocol (a signal), because the log is
         the single sequencer and a second writer would end the guarantee it carries."""
         return self._graph
+
+    @property
+    def validates(self) -> bool:
+        """Whether this engine runs a signal through its validation gates (`validate_signals`)."""
+        return self._validate
 
     def wait_idle(self, timeout: float = 5.0) -> None:
         """Wait for queue to drain. Useful for testing."""

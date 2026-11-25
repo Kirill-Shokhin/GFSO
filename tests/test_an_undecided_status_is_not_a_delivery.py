@@ -18,9 +18,9 @@ artifact its author said does not exist. A word the contract does not define dec
 
 WHERE THE GUARD SITS is half the repair. The first version of it checked the status in the CALLER,
 one frame above the dispatch — and the probe that had just found the defect, which calls
-`_report_into_signals` directly, walked straight past it and still reported VALIDATING. A guard a
+`report_into_signals` directly, walked straight past it and still reported VALIDATING. A guard a
 caller can step around is a shape this repository has paid for before, so it moved down to the
-`elif` beside the branches it guards, where no caller can miss it. `_decided_status` owns the word;
+`elif` beside the branches it guards, where no caller can miss it. `decided_status` owns the word;
 the dispatch enforces it; the round's return value only reports what it amounted to.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ import pytest
 import gfso.tools as T
 from gfso.core.types import TaskId
 from gfso.sessions import EXECUTOR_SCHEMA
-from gfso.reports import _decided_status, _report_into_signals
+from gfso.reports import decided_status, report_into_signals
 from gfso.adapters.llm.structured import parse_structured
 from tests.support import criterion, make_engine, REGISTER
 
@@ -53,8 +53,8 @@ def _accepted_node():
 
 def _report(e, report: dict):
     said: list[str] = []
-    _report_into_signals(e, TaskId("n"), "worker", e.graph.get_task("n"), report,
-                         _decided_status(report.get("status")) or str(report.get("status")),
+    report_into_signals(e, TaskId("n"), "worker", e.graph.get_task("n"), report,
+                         decided_status(report.get("status")) or str(report.get("status")),
                          _NoCalls(), said.append)
     e.wait_idle()
     return e.graph.get_task("n").state.name, " ".join(said)
@@ -89,7 +89,7 @@ def test_the_schema_does_not_stop_it_and_that_is_the_point() -> None:
 ])
 def test_the_three_words_are_read_whatever_their_casing(raw, expected) -> None:
     """What is refused is a FOURTH meaning, not a model's capitalisation."""
-    assert _decided_status(raw) == expected
+    assert decided_status(raw) == expected
 
 
 def test_a_delivery_still_delivers() -> None:

@@ -10,7 +10,7 @@ from gfso import cli as C, config, serverctl, tools_llm as TL
 from gfso.adapters import children as CH, execution as E
 from gfso.adapters.llm.stats import is_limit, is_unauthorized
 from gfso.adapters.records import hold_the_home
-from gfso.decompose.loop import FOLD_SCHEMA, _audit_fold
+from gfso.decompose.loop import FOLD_SCHEMA, audit_fold
 import gfso.mcp.server as MS
 from gfso.mcp.server import _with_ui_link
 
@@ -31,13 +31,13 @@ PART = {"id": "a", "name": "a", "description": "d", "criteria": [{"name": "c", "
 def test_a_fold_whose_parts_name_nothing_is_asked_again_once():
     """No repair round can address a part with no id: the plan was refused minutes later as "left None, None"."""
     llm = _Fold({"add_subtasks": [{"name": "n", "check": []}]}, {"add_subtasks": [PART]})
-    assert _audit_fold(llm, "goal", "", "findings") == {"add_subtasks": [PART]}
+    assert audit_fold(llm, "goal", "", "findings") == {"add_subtasks": [PART]}
     assert len(llm.asked) == 2 and "no `id`" in llm.asked[1]
 
 
 def test_a_fold_with_named_parts_costs_one_call():
     llm = _Fold({"add_subtasks": [PART]})
-    assert _audit_fold(llm, "goal", "", "findings") == {"add_subtasks": [PART]}
+    assert audit_fold(llm, "goal", "", "findings") == {"add_subtasks": [PART]}
     assert len(llm.asked) == 1
 
 

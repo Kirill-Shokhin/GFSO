@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 
 from gfso import tools_llm as TL
-from gfso.tools import _agent_id
+from gfso.config import caller_id
 from tests.support import a_repository, make_engine
 
 
@@ -44,7 +44,7 @@ def test_registering_the_standing_identity_is_refused():
     e = make_engine()
     e.start()
 
-    out = TL.register_agent(e, _agent_id(), "llm-validator", workdir=".")
+    out = TL.register_agent(e, caller_id(), "llm-validator", workdir=".")
 
     assert out.get("refused") is True, out
     assert "STANDING identity" in out.get("error", ""), out
@@ -56,9 +56,9 @@ def test_the_refusal_hands_over_a_name_that_works():
     e = make_engine()
     e.start()
 
-    err = TL.register_agent(e, _agent_id(), "llm-executor", workdir=".")["error"]
+    err = TL.register_agent(e, caller_id(), "llm-executor", workdir=".")["error"]
 
-    assert f"{_agent_id()}-val" in err and f"{_agent_id()}-exec" in err, err
+    assert f"{caller_id()}-val" in err and f"{caller_id()}-exec" in err, err
     e.stop()
 
 
@@ -66,9 +66,9 @@ def test_and_the_roster_stays_empty_of_it():
     e = make_engine()
     e.start()
 
-    TL.register_agent(e, _agent_id(), "llm-validator", workdir=".")
+    TL.register_agent(e, caller_id(), "llm-validator", workdir=".")
 
-    assert _agent_id() not in TL.list_agents(e).get("agents", {})
+    assert caller_id() not in TL.list_agents(e).get("agents", {})
     e.stop()
 
 

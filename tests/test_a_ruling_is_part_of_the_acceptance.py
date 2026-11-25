@@ -34,7 +34,7 @@ from gfso import issuer as I
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import Mode, Signal, SignalData, TaskId
-from gfso.packets import _validator_packet
+from gfso.packets import validator_packet
 from tests.support import a_place, criterion
 from tests.test_a_finding_binds_the_criterion_it_refuted import _OTHER, _OWN, _delivered, _id, _pinned, _refute, _seam
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM
@@ -169,7 +169,7 @@ def _refiled(e):
 
 
 def _validator_sees(e, tmp_path) -> str:
-    return _validator_packet(e, e.graph.get_task(TaskId("kid")), "again", None, scratch=str(tmp_path / "r2"))
+    return validator_packet(e, e.graph.get_task(TaskId("kid")), "again", None, scratch=str(tmp_path / "r2"))
 
 
 def test_a_ruling_lapses_when_its_criterion_is_rewritten(tmp_path):

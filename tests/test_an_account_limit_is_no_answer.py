@@ -134,8 +134,8 @@ def test_the_runners_say_which_session_the_limit_ended(monkeypatch, tmp_path):
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     T.signal(e, "kid", "ACCEPT", "exec-1")
     monkeypatch.setattr(S, "_enter_workspace", lambda engine, agents_, task, order: (str(tmp_path), [], None))
-    monkeypatch.setattr(S, "_executor_packet", lambda *a, **k: "packet")
-    monkeypatch.setattr(S, "_scope_packet", lambda *a, **k: "packet")
+    monkeypatch.setattr(S, "executor_packet", lambda *a, **k: "packet")
+    monkeypatch.setattr(S, "scope_packet", lambda *a, **k: "packet")
     for err, want in (("api_error: usage_limit_reached: You've hit your session limit", True), (None, False)):
         llm = types.SimpleNamespace(calls=[{"error": err}])
         monkeypatch.setattr(S, "_spawn", lambda *a, _l=llm, **k: (None, "", [], _l, lambda m: None))
@@ -258,7 +258,7 @@ def test_the_issuers_packet_keeps_the_real_stop_reasons(tmp_path, monkeypatch):
     """A limit window's probes are not why the node's sessions stopped: kept, three of them evicted the reasons the
     section exists for (`prompt_too_long`, GB_sql_database_tmxu0n436); an unreadable report is still said — the pair."""
     monkeypatch.setattr(S, "_enter_workspace", lambda engine, agents_, task, order: (str(tmp_path), [], None))
-    monkeypatch.setattr(S, "_executor_packet", lambda *a, **k: "packet")
+    monkeypatch.setattr(S, "executor_packet", lambda *a, **k: "packet")
     garbled = type("Garbled", (_LimitedProvider,), {"run_agent": lambda self, *a, **k: (
         self.calls.append({"error": None, "cost_usd": 0.01, "transport_torn": False}), "no report")[1]})
     for provider, said in ((_LimitedProvider, False), (garbled, True)):

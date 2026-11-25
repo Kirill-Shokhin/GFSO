@@ -1,6 +1,6 @@
-"""What each LLM role is handed: the executor's packet for one node (`_executor_packet`) or for a scope one session
-carries (`_scope_packet`, in `_scope_order`), and the validator's for a node (`_validator_packet`) or a scope
-(`_scope_validator_packet`) — the contract's criteria, the upstream results, the rework's failed criteria. Text only:
+"""What each LLM role is handed: the executor's packet for one node (`executor_packet`) or for a scope one session
+carries (`scope_packet`, in `scope_order`), and the validator's for a node (`validator_packet`) or a scope
+(`scope_validator_packet`) — the contract's criteria, the upstream results, the rework's failed criteria. Text only:
 no graph writes, no signals."""
 from __future__ import annotations
 
@@ -12,14 +12,15 @@ from typing import Optional
 from gfso.core.protocol.invariants import INTENT, QUOTE_WORDS
 from gfso.core.protocol.procedure import EXACT_READ, laid, materialize_inputs, probe_id, probe_key, same_probe
 from gfso.core.protocol.accounting import unrerunnable
-from gfso.core.types import INPUTS_TOKEN, Signal, TaskId, files_at, set_aside_of
+from gfso.core.types import EXECUTOR_STATES, INPUTS_TOKEN, Signal, TaskId, files_at, set_aside_of
 from gfso.engine import Engine
 from gfso.engine.audit import rejected_on_current_version
 from gfso.engine.findings import round_stands
 from gfso.engine.verdicts import OUTSIDE_NOTE
 from gfso.engine.validation import heard_on, is_auto_root
 from gfso.observe import TAIL
-from gfso.workspaces import _unjoined_text, base_of, execution_of, node_temp
+from gfso.executions import execution_of
+from gfso.workspaces import _unjoined_text, base_of, node_temp
 
 
 def _executor_inputs(engine, task) -> dict:
@@ -68,7 +69,7 @@ def _glue(e) -> str:
 def _upstream_lines(engine, task, inside=frozenset()) -> list:
     """The inputs a node consumes — each producer's REAL delivery — from outside `inside` only."""
     return [f"- input from `{e.from_id}` ({name}){_glue(e)}\n  its DELIVER: "
-            f"{_last_deliver_result(engine, TaskId(e.from_id)) or '(not delivered yet)'}"
+            f"{last_deliver_result(engine, TaskId(e.from_id)) or '(not delivered yet)'}"
             for e, name, _ in _upstream(engine, task, inside)]
 
 
@@ -198,7 +199,7 @@ def _observed_section(rows: list, heading: str = "##") -> str:
     return f"\n{heading} Your place as the system found it\n{_OBSERVED}{observed_lines(rows)}" if rows else ""
 
 
-def _executor_packet(engine, task, workdir: str | None, unjoined: list = (), seen: dict | None = None,
+def executor_packet(engine, task, workdir: str | None, unjoined: list = (), seen: dict | None = None,
                      lost: list = ()) -> str:
     """The executor's self-contained contract (it has no graph access): spec + criteria + upstream
     inputs (the REAL delivered outputs it consumes) + ACCEPTED_RISKS + rework feedback if any + what its pinned checks
@@ -387,11 +388,7 @@ def capped(lines: list, what: str, key: str) -> str:
     return text
 
 
-#: The states in which a node's work is still to be done — what an executor session is handed.
-_EXECUTOR_STATES = ("OFFERED", "EXECUTING", "REWORKING")
-
-
-def _scope_order(engine, members: list) -> list:
+def scope_order(engine, members: list) -> list:
     """The scope's nodes in the order they are built: every part before the whole it composes into, every Dep
     producer before its consumer — a node is listed once all it waits on inside the scope is."""
     ids = {str(m.id) for m in members}
@@ -414,7 +411,7 @@ def _scope_node_block(engine, i: int, t, top, inside: frozenset, seen: dict | No
     parent = engine.graph.get_parent(t.id)
     role = "the scope's top — the whole" if str(t.id) == str(top.id) else f"a part of `{parent.id}`"
     head = f"## {i}. `{t.id}` — {t.spec.name} ({role})\n\n{t.spec.description}\n\n"
-    if t.state.name not in _EXECUTOR_STATES:
+    if t.state.name not in EXECUTOR_STATES:
         return head + f"Already {t.state.name}: delivered earlier — listed for context, not yours to redo.\n"
     ups = "\n".join(_upstream_lines(engine, t, inside)) or "- none"
     negl = "\n".join(f"- {n.item}" for n in set_aside_of(t)) or "- none"
@@ -456,7 +453,7 @@ def _last_delivery_text(engine, nodes: list) -> str:
     return out
 
 
-def _scope_packet(engine, top, order: list, workdir: str | None, unjoined: list = (), seen: dict | None = None,
+def scope_packet(engine, top, order: list, workdir: str | None, unjoined: list = (), seen: dict | None = None,
                   lost: list = ()) -> str:
     """The scope session's contract: every node of the scope in build order, each with its criteria as the
     checklist its validation runs, its inputs from outside the scope and its rework feedback — and the plan's
@@ -696,7 +693,7 @@ def _issuers_fails(engine: Engine, task, validating: bool) -> str:
                       f"{f['said'] or '(no words recorded with it)'}\n" for f in fails))
 
 
-def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[str],
+def validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[str],
                       scratch: Optional[str] = None, criteria=None, carry: Optional[dict] = None,
                       seen: Optional[dict] = None) -> str:
     """The validator's self-contained input: contract + seams + ACCEPTED_RISKS + the DELIVER report.
@@ -756,7 +753,7 @@ def _validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[
             + _working_directory(workdir, validating=True) + _scratch_note(scratch))
 
 
-def _scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str], scratch: Optional[str],
+def scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str], scratch: Optional[str],
                             inside: frozenset, seen: Optional[dict] = None) -> str:
     """ONE validator's input over a scope's deliveries: every node under its own heading, with its criteria,
     pinned probes and regression lines, its seams from outside the scope, its ACCEPTED_RISKS and its own
@@ -855,7 +852,7 @@ def _handover(engine: Engine, task) -> str:
     starts clean; without this note a fresh session re-read the code it had written to find where it stood (32% of its
     tool calls before the first edit, three sql_database rows, 2026-10-21), and continuing the whole conversation instead
     cost more than every fresh round together (GB_sql_database_tn9nii608)."""
-    said = (_last_deliver_result(engine, task.id) or "").strip().splitlines()
+    said = (last_deliver_result(engine, task.id) or "").strip().splitlines()
     if not said:
         return ""
     cut = len(said) > HANDOVER_LINES
@@ -864,7 +861,8 @@ def _handover(engine: Engine, task) -> str:
             + (f"\n… ({len(said) - HANDOVER_LINES} more lines of that report)" if cut else "") + "\n")
 
 
-def _last_deliver_result(engine: Engine, task_id: TaskId) -> Optional[str]:
+def last_deliver_result(engine: Engine, task_id: TaskId) -> Optional[str]:
+    """The result the node's last accepted DELIVER carried, or None."""
     stored = engine.deliver_result(task_id)                       # persisted on DELIVER — survives restarts
     if stored:
         return stored

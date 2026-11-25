@@ -19,7 +19,7 @@ import pytest
 from gfso.adapters.execution import LocalExecution, scratch_of
 from gfso.core.types import TaskId, laid_beside
 from gfso.engine.findings import keep_files
-from gfso.packets import _validator_packet
+from gfso.packets import validator_packet
 from tests.test_a_finding_binds_the_criterion_it_refuted import _seam
 
 
@@ -59,7 +59,7 @@ def test_the_validators_packet_lays_it_over_the_copy_its_judge_works_in(tmp_path
         {"id": "conf#1", "behaviour": "b", "command": cmd, "as_run": cmd, "expect": "ok"}]}))
     at = tmp_path / "r2" / "batch1"
     at.mkdir(parents=True)
-    _validator_packet(e, e.graph.get_task(TaskId("kid")), "fixed it", None, scratch=str(at))
+    validator_packet(e, e.graph.get_task(TaskId("kid")), "fixed it", None, scratch=str(at))
     (laid,) = laid_beside(at).glob("*/batch1/x/cmp.sh")
     assert f'cd "{(at / "delivery").as_posix()}"' in laid.read_text(), laid.read_text()
     e.stop()

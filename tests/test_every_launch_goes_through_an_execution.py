@@ -18,7 +18,8 @@ HOSTS_OWN = {
     "adapters/children.py": "the funnel every child goes through: adopted, in its own group, ended with the server",
     "adapters/lfs.py": "the LFS filter git runs inside a project's container, asking its own git where its store is",
     "adapters/shell.py": "the listener of a session's commands, run inside their own container: it starts them there",
-    "adapters/execution.py": "the host's temp of LocalExecution, and the import's and landing's host-side trees",
+    "adapters/execution.py": "the host's temp of LocalExecution, and the import's host-side tree",
+    "adapters/hostrepo.py": "the landing's bundle, taken into the person's own repository on the host",
     "adapters/verifiers/subprocess_verifier.py": "an embedder's verifier adapter, its program in a temp of the host that wires it",
     "examples/__init__.py": "an example a person runs on their own machine",
 }

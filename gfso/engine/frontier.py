@@ -16,7 +16,7 @@ from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_S
                              Verdict, Wait, settled_positive)
 from .moves import Move, door_holder
 from .parking import USERS_WAY
-from .validation import depth_of, mode_kind, users_criteria, _l0_holes, _l2_undischarged, hole_kind, l2_gate_on, observation_blocker
+from .validation import depth_of, mode_kind, users_criteria, hole_kind, l2_gate_on, observation_blocker
 from .closures import (auto_accepted_closures, closed_over_an_open_plan_review, closure_of, closures_by_hand,
                        hand_overruled_closures, nodes_with_a_refused_report, open_nodes, passes_over_open_parts,
                        questions_left_standing, refuted_passes)
@@ -84,7 +84,7 @@ class NodeSteps:
     def __init__(self, engine):
         self.engine = engine
 
-    def _fails_through_parts(self, t) -> dict:
+    def fails_through_parts(self, t) -> dict:
         """{criterion of this whole: [its parts that FAILed on their current version]} — the criteria its FAIL through
         them names (Inv-3), empty where no part mapped to a criterion is in rework."""
         failing = {str(k.id) for k in self.engine.graph.get_active_children(t.id) if self.engine.in_rework(k)}
@@ -118,7 +118,7 @@ class NodeSteps:
     def _step_for_a_delivered_node(self, t, nm, crits):
         """What is owed on a node whose delivery is waiting for a verdict — or None.
 
-        The largest of `_step_for`'s seven answers, and the only one that ever advises a
+        The largest of `step_for`'s seven answers, and the only one that ever advises a
         PASS: sign a verdict already on the record, repair a plan that refuses one, or validate
         a delivery nothing has validated yet. It sat inside the seven-way body and made that
         function answer more than one question at a time.
@@ -141,7 +141,7 @@ class NodeSteps:
         # …AND A WHOLE OVER A PART THAT FAILED HAS ITS VERDICT ALREADY: a whole is not attained while a part fails
         # (Thm 1). Listed as a wait for the part's rework, it waited in VALIDATING across that rework past T_validate
         # and escalated, its holder never told the move (critic, 2026-09-28, SEMI).
-        if (through := self._fails_through_parts(t)):
+        if (through := self.fails_through_parts(t)):
             _parts = sorted({k for ks in through.values() for k in ks})
             return (1, t, Action.VALIDATE,
                     f"SIGN THE VERDICT on '{t.id}' ({nm}) — FAIL on {', '.join(through)}: its part(s) "
@@ -157,7 +157,7 @@ class NodeSteps:
         # a record on file is not always one a PASS may stand on (the executor's self-check, a passer-by's
         # hand), and an appointed observer's FAIL stands whatever was recorded after it.
         _cur = self.engine.current_exec_verdict(t.id)
-        if (_ob := observation_blocker(self.engine.graph, t, self.engine._audit)) is not None and (
+        if (_ob := observation_blocker(self.engine.graph, t, self.engine.graph.audit)) is not None and (
                 (_ob["kind"] == "observed_fail" and str((_cur or {}).get("verdict")) != Verdict.FAIL)
                 or _ob["kind"] == "unobserved"):
             return (1, t, Action.VALIDATE,
@@ -297,7 +297,7 @@ class NodeSteps:
                         lead="The moves are its issuer's: ") + ".")
         return None
 
-    def _step_for(self, t, kids, crits, nm, cands, held, _deps_ready, _passed, work_beneath=False):
+    def step_for(self, t, kids, crits, nm, cands, held, _deps_ready, _passed, work_beneath=False):
         """What the holder of this node is asked to do next — one answer per state.
 
         Sign a verdict already on the record · validate one that is not · repair a plan a
@@ -323,10 +323,10 @@ class NodeSteps:
             # "TAKE" / "EXECUTE" / "FIX AND RE-DELIVER" here cost a refused call and, worse, tell the holder
             # to do the work by hand (critic rounds 8, 9, 16). With children the step is on them; without,
             # it is the split, the holder's own act (§11.5).
-            return ((_carry_on(self.engine, t, kids, nm, _deps_ready, self.engine._validate) if t.state == State.EXECUTING else None)
+            return ((_carry_on(self.engine, t, kids, nm, _deps_ready, self.engine.validates) if t.state == State.EXECUTING else None)
                     if kids and not all(_passed(k) for k in kids) else
                     (2, t, Action.REVISE, f"{self._held_step_verb(t, kids)} '{t.id}' ({nm}) — {_held}"))
-        elif self.engine.in_rework(t) and (_refusal := self.engine._redelivery_refusal(t)):
+        elif self.engine.in_rework(t) and (_refusal := self.engine.redelivery_refusal(t)):
             # THE DIRECTIVE MUST NOT ASK FOR A DELIVERY THE GATE WILL REFUSE. When the failed
             # criteria are covered by children nobody touched, contact refuted the DECOMPOSITION
             # and a re-DELIVER is rejected on arrival (§15.4 q_D, FM-1.d/f) — but the step still
@@ -390,7 +390,7 @@ class NodeSteps:
                           # the missing input by BLOCKing on it. (The re-ACCEPT of a PARENT above
                           # is deliberately not gated: consent to resume is what lets its subtree
                           # run at all.)
-            if self.engine._validate and (_shut := self.engine.execution_blocked_by(t.id)) is not None:
+            if self.engine.validates and (_shut := self.engine.execution_blocked_by(t.id)) is not None:
                 # THE FRONTIER MUST NOT OFFER WHAT THE ENGINE REFUSES. This node's ACCEPT is
                 # gated on its PARENT's plan being checked (§11.5), and the step above says so —
                 # but the child was still listed as takeable, `mine: true`, with a directive to
@@ -475,11 +475,11 @@ class NodeSteps:
         else:
             # EXECUTING with unfinished children: its holder's move where he can make one now (`_carry_on`), else
             # elsewhere; terminal or IDLE: none
-            return _carry_on(self.engine, t, kids, nm, _deps_ready, self.engine._validate) if t.state == State.EXECUTING and kids else None
+            return _carry_on(self.engine, t, kids, nm, _deps_ready, self.engine.validates) if t.state == State.EXECUTING and kids else None
 
         return cand
 
-    def _plan_gate_step(self, t, kids, crits, nm, cands, held, _passed) -> bool:
+    def plan_gate_step(self, t, kids, crits, nm, cands, held, _passed) -> bool:
         """Whether this node's PLAN, not its own state, decides what happens here (§11.5).
 
         A parent whose decomposition has an open Syntactic hole or an undischarged Level-2
@@ -511,10 +511,10 @@ class NodeSteps:
             return True
         # …where the plan gate HOLDS a child — the decomposer's own, or one the system would start (C9-L2): a child
         # another party takes may ACCEPT, so a step "its children cannot start" there says more than the gate (r13)
-        _gating = (kids and self.engine._validate and not _passed(t)
+        _gating = (kids and self.engine.validates and not _passed(t)
                    and any(k.state == State.OFFERED and self.engine.execution_blocked_by(k.id) is not None
                            for k in kids))
-        if kids and not _passed(t) and (_holes := _l0_holes(self.engine.graph, t)):
+        if kids and not _passed(t) and (_holes := self.engine.split_holes(t.id)):
             # A HOLE OPENED AFTER THE ADMISSION — a revision of the contract, a child cancelled — is a flag on the plan
             # for its decomposer (§12.10), not a hold on work already issued: the Syntactic level gates the admission,
             # where he can lift it (corner 9). The repair is named. With the Level-2 gate on, his OWN children still
@@ -525,8 +525,8 @@ class NodeSteps:
                           + f". `list_holes` shows them across the graph."))
         if _gating and l2_gate_on(self.engine.graph, t) and "plan" in self.engine.checks_running(t.id):
             return _held_by_check(t, "plan", held)
-        if _gating and l2_gate_on(self.engine.graph, t) and not _l0_holes(self.engine.graph, t):
-            open_l2 = _l2_undischarged(self.engine.graph, t)
+        if _gating and l2_gate_on(self.engine.graph, t) and not self.engine.split_holes(t.id):
+            open_l2 = self.engine.open_l2_findings(t.id)
             if open_l2 is None:
                 cands.append((2.5, t, Action.CHECK_PLAN,
                               f"CHECK THE PLAN of '{t.id}' ({nm}): its children cannot start until the "
@@ -608,7 +608,7 @@ class NodeSteps:
         the root still EXECUTING after 93 minutes. The REWORKING branch had learnt this a fortnight
         earlier; the rule has one owner and both branches ask it.
         """
-        if (wall := self.engine._redelivery_refusal(t)) is not None:
+        if (wall := self.engine.redelivery_refusal(t)) is not None:
             return (6, t, Action.REVISE,
                     f"REPAIR THE PLAN of '{t.id}' ({nm}) — do NOT re-deliver it: {wall}")
         left = self.engine.joins.unjoined_parts(t)
@@ -644,7 +644,8 @@ class NodeSteps:
                   for f in self.engine.issuers_fails(task_id) if f["said"]]
         return " Failed:" + "".join(lines) if lines else ""
 
-    def _step_out(self, t: Task, action: str, directive: str) -> dict:
+    def step_out(self, t: Task, action: str, directive: str) -> dict:
+        """The step as the frontier answers it: the node's move and directive, with the checks it has not met."""
         # Surface unmet checks, split by what the engine actually does with them. The Syntactic level gates the
         # ADMISSION (§11.5); one met after it — a revision, a child cancelled — is a flag on the decomposer's plan that
         # holds no issued work (§12.10), his to repair by a re-admission. CHECK-3 past the admission that
@@ -1440,12 +1441,12 @@ class Frontier:
             # 2026-08-22, two round-trips). Following the instruction has to be enough.
             crits = [c.name for c in t.spec.criteria]
             nm = t.spec.name or str(t.id)
-            if _held_while_written(self.engine, t, held) or self.steps._plan_gate_step(t, kids, crits, nm, cands, held,
+            if _held_while_written(self.engine, t, held) or self.steps.plan_gate_step(t, kids, crits, nm, cands, held,
                                                                                         _passed):
                 continue
             if self._waits_on_work_in_progress(t, kids, held, _passed):
                 continue
-            _c = self.steps._step_for(t, kids, crits, nm, cands, held, _deps_ready, _passed,
+            _c = self.steps.step_for(t, kids, crits, nm, cands, held, _deps_ready, _passed,
                                       str(t.id) in under_way)
             if _c is not None:
                 cands.append(_c)
@@ -1469,7 +1470,7 @@ class Frontier:
             # `waiting`, with the frontier that exists to say what to do never mentioning it
             # (measured on the human door 2026-08-21).
             _open = [k for k in kids if not _passed(k)]
-            if self.steps._fails_through_parts(t):
+            if self.steps.fails_through_parts(t):
                 return False           # not a wait: its FAIL is true now and is the step (`_step_for_a_delivered_node`)
             # A WAIT WHOSE OBJECT CAN NEVER ARRIVE IS NOT A WAIT. A child that settled without
             # passing — ESCALATED (its rework bound spent) or ABANDONED (cancelled) — is terminal,
@@ -1523,7 +1524,7 @@ class Frontier:
         if isinstance(result, dict):
             return result
         _, t, action, directive = result[0]
-        return self.steps._step_out(t, action, directive)
+        return self.steps.step_out(t, action, directive)
 
     def next_steps(self, root_id: Optional[TaskId] = None) -> dict:
         """The PARALLEL frontier (v2): every currently actionable node, priority-ordered, with a
@@ -1544,7 +1545,7 @@ class Frontier:
                      **self._waiting_on([])})
         steps = []
         for _, t, action, directive in result:
-            step = self.steps._step_out(t, action, directive)
+            step = self.steps.step_out(t, action, directive)
             # …a leaf's alone: a taken parent carried on through its parts is no work to hand a subagent
             step["parallel_ok"] = action == "execute" and not self.engine.graph.get_active_children(t.id)
             steps.append(step)
@@ -1606,7 +1607,7 @@ class Frontier:
         shown = {s["task_id"] for s in steps}
         waits = self.engine.start_waits()
         out = []
-        for t in self.engine.graph._storage.get_all_tasks():
+        for t in self.engine.all_tasks():
             if str(t.id) in shown or t.state.name in ("DONE", "ABANDONED", "ESCALATED"):
                 continue
             if open_prod := self._open_producers(t.id, waits):

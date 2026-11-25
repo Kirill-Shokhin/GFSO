@@ -154,7 +154,7 @@ def _keep_the_moves_facts(signal_data: SignalData, graph: Graph, task_id: TaskId
             graph._storage.store_deliver_result(task_id, signal_data.result)
         except Exception as e:
             # A WARNING IS NOT A RETRY, and this pointer is load-bearing: it is what a validator reads
-            # after a restart. The fallback below is real (`_last_deliver_result` reads the audit log,
+            # after a restart. The fallback below is real (`last_deliver_result` reads the audit log,
             # which the same step has already appended), so the delivery is not lost — but if that
             # log entry is ever the thing that fails, this line is the only trace left.
             log.warning(f"{task_id}: DELIVER result not persisted ({e}) — validation falls back to "

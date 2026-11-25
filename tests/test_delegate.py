@@ -1121,7 +1121,7 @@ def test_the_executor_can_name_the_sibling_it_is_blocked_on(tmp_path):
     e = _eng()
     _goal(e, "par", "user")
     _children(e, "core", "readme", crit="k")
-    packet = run_executor.__globals__["_executor_packet"](e, e.graph.get_task(TaskId("readme")), str(tmp_path))
+    packet = run_executor.__globals__["executor_packet"](e, e.graph.get_task(TaskId("readme")), str(tmp_path))
     assert "`core`" in packet and "blocker_task_ids" in packet
     assert "NOT your work" in packet          # …named so it can be waited on, not done
     e.stop()

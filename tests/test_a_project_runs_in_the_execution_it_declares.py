@@ -14,6 +14,7 @@ import pytest
 
 import gfso.adapters.execution as E
 import gfso.workspaces as WS
+import gfso.executions as X
 from gfso.adapters.execution import ContainerExecution, LocalExecution
 from gfso.roster import AgentRegistry
 import gfso.tools_llm as TL
@@ -32,7 +33,7 @@ def declared(tmp_path, monkeypatch):
     p.write_text(json.dumps({"e3-linux": {"image": "e3-linux-agent:2", "env_file": "e.env"},
                              "other": {"image": "x", "env_file": "e.env"}}))
     monkeypatch.setenv("GFSO_EXECUTIONS_PATH", str(p))
-    monkeypatch.setattr(WS, "_EXECUTIONS", {})
+    monkeypatch.setattr(X, "_EXECUTIONS", {})
     monkeypatch.setattr(E, "_SWITCH", {})
     base = a_repository(tmp_path / "w" / "base")
     return AgentRegistry(path=str(tmp_path / "agents.json")), base
@@ -42,11 +43,11 @@ def test_a_role_names_a_declared_execution_and_the_project_runs_there(declared):
     agents, base = declared
     agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
     agents.register("q-exec", "llm-executor", workdir=str(base), project="q")
-    x = WS.execution_of(_p("p"), agents)
+    x = X.execution_of(_p("p"), agents)
     assert isinstance(x, ContainerExecution) and x.image == "e3-linux-agent:2" and x.base == base.resolve()
     assert x.state_dir() == x.own / ".gfso-state" and x.way.log().parts[-6:-3] == ("executions", "e3-linux", "claude")
-    assert WS.execution_of(_p("p"), agents) is x, "one object per (execution, project)"
-    assert isinstance(WS.execution_of(_p("q"), agents), LocalExecution)
+    assert X.execution_of(_p("p"), agents) is x, "one object per (execution, project)"
+    assert isinstance(X.execution_of(_p("q"), agents), LocalExecution)
 
 
 
@@ -57,7 +58,7 @@ def test_a_turned_network_switch_holds_for_every_holder(declared, tmp_path, monk
     carry_nothing_in(monkeypatch)
     agents, base = declared
     agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
-    held = WS.execution_of(_p("p"), agents)
+    held = X.execution_of(_p("p"), agents)
     ran = []
     monkeypatch.setattr(E, "run", lambda args, **kw: ran.append(args) or subprocess.CompletedProcess(
         args, 0, "true" if args[:2] == ["docker", "inspect"] else "", ""))
@@ -65,7 +66,7 @@ def test_a_turned_network_switch_holds_for_every_holder(declared, tmp_path, monk
     held.start()
     (tmp_path / "executions.json").write_text(json.dumps({"e3-linux": {"image": "e3-linux-agent:2", "env_file": "e.env",
                                                                        "network": {"mode": "off"}}}))
-    assert WS.execution_of(_p("p"), agents) is held and held.way.network == ("off", ())
+    assert X.execution_of(_p("p"), agents) is held and held.way.network == ("off", ())
     held.start()
     held.start()
     seals = [a[-1] for a in ran if a[:4] == ["docker", "exec", "-u", "0"]]
@@ -77,10 +78,10 @@ def test_a_declaration_that_does_not_read_shuts_a_running_project(declared, tmp_
     """A session keeps its execution object; a typo while closing the switch must not leave it out (critic 5)."""
     agents, base = declared
     agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
-    held = WS.execution_of(_p("p"), agents)
+    held = X.execution_of(_p("p"), agents)
     (tmp_path / "executions.json").write_text(broken)
     with pytest.raises((ValueError, KeyError)):
-        WS.execution_of(_p("p"), agents)
+        X.execution_of(_p("p"), agents)
     assert held.way.network == ("off", ())
 
 def test_an_undeclared_execution_is_refused(declared):
@@ -115,12 +116,12 @@ def test_a_base_on_a_network_share_is_refused():
 def test_a_project_re_created_on_another_base_gets_another_execution(declared, tmp_path):
     agents, base = declared
     agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
-    first = WS.execution_of(_p("p"), agents)
+    first = X.execution_of(_p("p"), agents)
     other = tmp_path / "w2" / "base"
     other.mkdir(parents=True)
     agents.unregister("p-exec")
     agents.register("p-exec", "llm-executor", workdir=str(other), project="p", execution="e3-linux")
-    again = WS.execution_of(_p("p"), agents)
+    again = X.execution_of(_p("p"), agents)
     assert again is not first and again.base == other.resolve()
 
 
@@ -131,20 +132,20 @@ def test_the_projects_switch_can_only_close_what_the_declaration_opens(declared,
     wiring, where the project's word won)."""
     agents, base = declared
     agents.register("p-exec", "llm-executor", workdir=str(base), project="p", execution="e3-linux")
-    held = WS.execution_of(_p("p"), agents)
+    held = X.execution_of(_p("p"), agents)
     assert held.way.network == ("open", ())
-    WS.execution_of(_p("p", network='{"mode": "allowlist", "hosts": ["api.anthropic.com", "pypi.org"]}'), agents)
+    X.execution_of(_p("p", network='{"mode": "allowlist", "hosts": ["api.anthropic.com", "pypi.org"]}'), agents)
     assert held.way.network == ("allowlist", ("api.anthropic.com", "pypi.org"))
     decl = {"image": "e3-linux-agent:2", "env_file": "e.env"}
     (tmp_path / "executions.json").write_text(json.dumps({"e3-linux": {**decl, "network": {"mode": "off"}}}))
-    WS.execution_of(_p("p", network='{"mode": "open"}'), agents)
+    X.execution_of(_p("p", network='{"mode": "open"}'), agents)
     assert held.way.network == ("off", ()), "the project's open overrode the operator's off"
     (tmp_path / "executions.json").write_text(json.dumps({"e3-linux": {**decl, "network": {
         "mode": "allowlist", "hosts": ["pypi.org", "github.com"]}}}))
-    WS.execution_of(_p("p", network='{"mode": "allowlist", "hosts": ["api.anthropic.com", "pypi.org"]}'), agents)
+    X.execution_of(_p("p", network='{"mode": "allowlist", "hosts": ["api.anthropic.com", "pypi.org"]}'), agents)
     assert held.way.network == ("allowlist", ("pypi.org",))
     with pytest.raises(ValueError):
-        WS.execution_of(_p("p", network="{garbled"), agents)
+        X.execution_of(_p("p", network="{garbled"), agents)
     assert held.way.network == ("off", ()), "a switch that does not read shuts the way out"
 
 

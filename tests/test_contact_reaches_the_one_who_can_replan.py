@@ -7,7 +7,7 @@ held-out miss — in prose no channel carried (FM-1.f is read at contact, §8.3)
 with the verdict, decided by nothing (Inv-2), shown wherever the node's issuer decides about it or its parent's split,
 and ASKED of that issuer once (the `outside` question), its answer retiring it from every later read.
 
-CONTROLS (each breaks exactly its test): drop `CHALLENGE_WHEN` from `_executor_packet` — the packet test; put "a pinned
+CONTROLS (each breaks exactly its test): drop `CHALLENGE_WHEN` from `executor_packet` — the packet test; put "a pinned
 check contradicts the contract" back into TECH_REPORT — the tech-report test; drop `**_outside(outside)` from the
 exec-verdict record in `store_verdict` — the recorded test; drop the `outside_text` line of `issuer_context` — the
 issuer test; write `outside` into the record always — the unchanged test; drop `qs.append("outside")` from
@@ -25,7 +25,7 @@ from gfso import tools_llm as TL
 from gfso.core.types import TaskId
 from gfso.engine.verdicts import OBSERVATIONS, OUTSIDE_ANSWERED, ledger_read, ledger_write
 from gfso.issuer import issuer_context
-from gfso.packets import SHOWN_FINDINGS, TECH_REPORT, _executor_packet
+from gfso.packets import SHOWN_FINDINGS, TECH_REPORT, executor_packet
 from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fenced
 import gfso.validate as VAL
 
@@ -50,7 +50,7 @@ def test_the_first_round_packet_offers_challenge_and_says_what_it_buys():
     e = _eng()
     T.create_task(e, "n", {"description": "link it", "criteria": [{"name": "c", "description": "links", "check": [
         {"behaviour": "links", "command": "cc main.c -o m", "expect": "ok"}]}]}, "alice")
-    packet = _executor_packet(e, e.graph.get_task(TaskId("n")), None)
+    packet = executor_packet(e, e.graph.get_task(TaskId("n")), None)
     e.stop()
     assert "REWORKING" not in packet
     assert 'Report `status: "challenge"`, naming the criterion' in packet

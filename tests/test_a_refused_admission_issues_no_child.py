@@ -10,8 +10,8 @@ import pytest
 
 import gfso.tools as T
 from gfso.core.types import TaskId
-from gfso.packets import _executor_packet
-from gfso.packets import _validator_packet
+from gfso.packets import executor_packet
+from gfso.packets import validator_packet
 from tests.support import REGISTER, criterion, make_engine
 
 _EXCLUSION = {"item": "IE11 is not supported", "predictability": "EXTRAORDINARY",
@@ -41,6 +41,6 @@ def test_the_issuers_pre_fill_on_a_leaf_reaches_its_executor_and_its_validator()
                               "accepted_risks": [_EXCLUSION]}, "me")
     e.wait_idle()
     task = e.graph.get_task(TaskId("leaf"))
-    assert "IE11 is not supported" in _executor_packet(e, task, None)
-    assert "IE11 is not supported" in _validator_packet(e, task, "it renders", None)
+    assert "IE11 is not supported" in executor_packet(e, task, None)
+    assert "IE11 is not supported" in validator_packet(e, task, "it renders", None)
     e.stop()

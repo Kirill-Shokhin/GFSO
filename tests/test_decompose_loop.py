@@ -17,7 +17,7 @@ from gfso import decompose as D, tools_llm as T
 from gfso.core.types import Verdict, TaskId, AgentId, AcceptedRiskItem, SignalData, Signal, State
 from gfso.decompose import decompose_into, decompose_spec, refine, extract_spec
 from gfso.issuer import issuer_context
-from gfso.decompose.loop import (SEARCH_PROMPT, FOLD_SCHEMA, AGREE_SCHEMA, _fold_merge, shape,
+from gfso.decompose.loop import (SEARCH_PROMPT, FOLD_SCHEMA, AGREE_SCHEMA, fold_merge, shape,
                                  SEARCH_FAST, AUDIT_FAST)
 from tests.support import criterion as _criterion, make_engine, pinned, procedure_under
 
@@ -434,7 +434,7 @@ def test_the_issuer_repairing_the_split_reads_its_seam_findings():
     assert "a's probes run the code of b" in issuer_context(res.engine, TaskId("root"), "plan")
 
 
-# === _fold_merge: deterministic, referentially clean, dedup ===
+# === fold_merge: deterministic, referentially clean, dedup ===
 
 def test_fold_merge_add_update_remove():
     spec = _graph_state()
@@ -447,7 +447,7 @@ def test_fold_merge_add_update_remove():
         "add_mappings": [{"criterion": "rc2", "child_id": "c"}],
         "add_deps": [{"from": "a", "to": "c", "glue": "C reads A"}],
     }
-    s, ops = _fold_merge(spec, patch)
+    s, ops = fold_merge(spec, patch)
     assert {c["id"] for c in s["subtasks"]} == {"a", "c"}
     assert all(m["child_id"] != "b" for m in s["mappings"])        # removal cleaned b's mapping
     assert all("b" not in (d["from"], d["to"]) for d in s["deps"])  # ...and b's seam
@@ -464,14 +464,14 @@ def test_fold_merge_dedup_and_noop():
              "add_accepted_risks": [dict(spec["accepted_risks"][0])],
              "update_subtasks": [dict(spec["subtasks"][1])],       # identical update = no-op
              "name": "Thing"}                                      # same name = no-op
-    s, ops = _fold_merge(spec, patch)
+    s, ops = fold_merge(spec, patch)
     assert ops == []
     assert s["subtasks"] == spec["subtasks"] and s["deps"] == spec["deps"]
 
 
 def test_fold_merge_root_criteria_removal_cleans_mappings():
     spec = _graph_state()
-    s, ops = _fold_merge(spec, {"remove_root_criteria_names": ["rc1"]})
+    s, ops = fold_merge(spec, {"remove_root_criteria_names": ["rc1"]})
     assert [c["name"] for c in s["root_criteria"]] == ["rc2"]
     assert all(m["criterion"] != "rc1" for m in s["mappings"])
     assert ops
@@ -622,6 +622,6 @@ def test_a_fold_naming_the_files_without_their_content_gets_the_content_the_plan
     patch = {"add_subtasks": [{"id": "integ", "name": "integ", "description": "the whole", "criteria": [
         {"name": name, "description": "d", "check": [{"behaviour": "b", "command": "x < {inputs}/a.sql || echo F",
                                                      "expect": "ok", "inputs": {"{inputs}/a.sql": ""}}]}]}]}
-    out, _ = _fold_merge(spec, patch)
+    out, _ = fold_merge(spec, patch)
     (p,) = next(k for k in out["subtasks"] if k["id"] == "integ")["criteria"][0]["check"]
     assert p["inputs"] == {"a.sql": "SELECT 1;\n"}, p["inputs"]

@@ -14,12 +14,14 @@ import pytest
 from pathlib import Path
 
 import gfso.adapters.execution as E
+import gfso.adapters.hostrepo as H
 import gfso.adapters.worktrees as W
 import gfso.store as ST
 from gfso.runtime import ProjectRegistry
 from gfso.tools import TOOLS
 import gfso.tools_llm as TL
 import gfso.workspaces as WS
+import gfso.executions as X
 from gfso.adapters.execution import ContainerExecution
 from gfso.adapters.snapshots import snapshot
 from gfso.core.types import PlaceUnavailable, State
@@ -114,7 +116,7 @@ def _engine(x, *roots):
                         project_name="p", all_tasks=lambda: tasks, tasks=tasks, kept=kept,
                         emit_info=lambda who, text: said.append(text), said=said, accepted=[None])
     e.accepted_delivery, e.accepted_repository = (lambda task_id: (e.accepted[0], None)), (lambda task_id: None)
-    x.volume.root, x.volume.said = (lambda: WS.root_key(e)), (lambda text: said.append(text))
+    x.volume.root, x.volume.said = (lambda: X.root_key(e)), (lambda text: said.append(text))
     return e
 
 
@@ -146,11 +148,11 @@ def test_live_the_import_is_the_roots_and_no_start_ever_imports_over_it(x, user,
     x.stop()                                 # …a start before the root's own act ran: still nothing imported
     assert _inside(x, "rev-parse", "HEAD") == joined, "a start never imports over a record"
     WS.root_created(e, None, root)
-    assert _imported(x) == {**first, "for": WS.root_key(e)}, "adopted, not imported again"
+    assert _imported(x) == {**first, "for": X.root_key(e)}, "adopted, not imported again"
     for _ in range(2):
         x.stop()
         assert _inside(x, "rev-parse", "HEAD") == joined, "a restart re-imports nothing over the root's work"
-    assert _imported(x)["for"] == WS.root_key(e)
+    assert _imported(x)["for"] == X.root_key(e)
 
 
 @live
@@ -169,7 +171,7 @@ def test_live_a_new_root_imports_again_unless_the_earlier_one_still_works_there(
     WS.root_created(e, None, new)
     assert _inside(x, "rev-parse", "HEAD") == _git(user, "rev-parse", "HEAD"), "a new root starts from the user's HEAD"
     assert _inside(x, "rev-parse", "gfso/p/old") == joined != kept, "a branch standing in the volume is never overwritten"
-    assert _imported(x)["for"] == WS.root_key(e)
+    assert _imported(x)["for"] == X.root_key(e)
 
 
 def test_a_base_that_is_no_repositorys_top_is_never_carried_in(tmp_path):
@@ -186,7 +188,7 @@ def test_a_base_that_is_no_repositorys_top_is_never_carried_in(tmp_path):
         out = tmp_path / f"out-{base.name}"
         out.mkdir()
         with pytest.raises(PlaceUnavailable, match="not the top of a git repository"):
-            E._carried_in(base, "p", out)
+            H.carried_in(base, "p", out)
         assert not (out / "in.tar").exists() or b"SECRET" not in (out / "in.tar").read_bytes()
 
 
@@ -376,9 +378,9 @@ def test_the_host_takes_only_a_bundle(tmp_path, monkeypatch):
     named inside it, a network path too (critic over a99ea34). No git runs on what is no bundle."""
     ran = []
     monkeypatch.setattr(E.G, "run", lambda *a, **kw: ran.append(a) or subprocess.CompletedProcess(a, 0, "", ""))
-    assert "no git bundle" in E.fetched_on_host(tmp_path, b"//attacker/share/repo\n")
+    assert "no git bundle" in H.fetched(tmp_path, b"//attacker/share/repo\n")
     assert ran == []
-    assert E.fetched_on_host(tmp_path, b"# v2 git bundle\nabc HEAD\n\nPACK") == "" and ran
+    assert H.fetched(tmp_path, b"# v2 git bundle\nabc HEAD\n\nPACK") == "" and ran
 
 
 def test_a_commit_left_without_its_blobs_is_fetched_again_never_landed(tmp_path, monkeypatch):
@@ -430,7 +432,7 @@ def test_a_bundle_whose_objects_git_would_not_accept_is_refused_on_the_host(tmp_
     (src / ".git" / "refs" / "heads" / "main").write_bytes(f"{bad}\n".encode())      # …as an agent's own git would lay it
     g(src, "symbolic-ref", "HEAD", "refs/heads/main")
     g(src, "bundle", "create", str(tmp_path / "b.bundle"), "HEAD")
-    said = E.fetched_on_host(base, (tmp_path / "b.bundle").read_bytes())
+    said = H.fetched(base, (tmp_path / "b.bundle").read_bytes())
     assert "missingEmail" in said and subprocess.run(["git", "-C", str(base), "cat-file", "-e", bad]).returncode, said
 
 

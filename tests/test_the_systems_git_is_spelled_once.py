@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from gfso.adapters import execution as E, git as G, worktrees as W
+from gfso.adapters import execution as E, git as G, hostrepo as H, worktrees as W
 
 GFSO = Path(__file__).resolve().parents[1] / "gfso"
 ADAPTER = GFSO / "adapters" / "git.py"
@@ -99,8 +99,8 @@ def test_a_repository_reached_through_a_link_is_its_top_by_either_question(tmp_p
     two directories and the user's repository was refused as no top. Both askers, one rule (`G.is_top`)."""
     _link(_repo(tmp_path / "real"), via := tmp_path / "via")
     W._TOPS.clear()
-    assert W.is_repo_top(via) and E._no_places(via) is None
-    assert not W.is_repo_top(tmp_path) and E._no_places(tmp_path)
+    assert W.is_repo_top(via) and H.no_places(via) is None
+    assert not W.is_repo_top(tmp_path) and H.no_places(tmp_path)
 
 
 def test_a_repository_another_account_owns_is_refused_with_its_cause(tmp_path, monkeypatch):
@@ -111,5 +111,5 @@ def test_a_repository_another_account_owns_is_refused_with_its_cause(tmp_path, m
     for a in (("init", "-q"), ("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "s")):
         subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)
     monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
-    why = E._no_places(repo)
+    why = H.no_places(repo)
     assert why and "another account owns" in why and "safe.directory" in why and "git init" not in why, why

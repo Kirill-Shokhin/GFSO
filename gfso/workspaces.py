@@ -1,12 +1,11 @@
 """Where a node's work stands: the scope one executor's session carries it in (`session_scope`), the node's own git
 workspace derived from its executor's roster place (`node_workspace`), entering it, joining its PASSed parts into the
 whole (`join_whole`), and clearing them at the root's PASS (`clear_workspaces`). Derived, never stored — save which
-places were made (`made`)."""
+places were made (`gfso.made`). Which execution the work runs in is `gfso.executions`'."""
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import subprocess
 import uuid
@@ -15,15 +14,14 @@ from gfso import store
 from gfso.adapters import worktrees as W
 from gfso.adapters.snapshots import Uncopied
 from gfso.adapters.worktrees import base_of
-from gfso.adapters.netrecord import forget
-from gfso.adapters.execution import (IMPORTED, ContainerExecution, LocalExecution, component, node_key, drop_volumes,
-                                     held_as_tree, network_of, scratch_of, stricter)
-from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, data_dir, executions
+from gfso.adapters.execution import IMPORTED, ContainerExecution, LocalExecution, component, node_key, scratch_of
+from gfso.config import DEFAULT_PROJECT, MODEL_DEFAULT, data_dir
+from gfso.executions import declaring_role, execution_of, root_key, root_key_of, where_it_runs
 from gfso.llm import llm_factory
+from gfso.made import laid_out_before, made, record
 from gfso.places import cheap_to_ask, same_place
-from gfso.core.graph.model import LANDED, generation_of_task, grounds_key, root_of
-from gfso.core.types import HOST, MADE, NODES, SCRATCH, THIS_HOST, VOLUME, PlaceUnavailable, Signal, TaskId, State, base_named, base_of_nodes, hold_places, nodes_root, PLACES
-from gfso.core.protocol.procedure import round_of
+from gfso.core.graph.model import LANDED, generation_of_task, grounds_key
+from gfso.core.types import HOST, SCRATCH, THIS_HOST, VOLUME, PlaceUnavailable, Signal, TaskId, State, base_of_nodes, nodes_root, PLACES
 from gfso.engine.findings import record_round
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.engine.validation import delivered_repository, hands_of
@@ -78,80 +76,10 @@ def _place_of(engine, agents: "AgentRegistry", task) -> tuple[str, str, str] | N
     # …a host place made beside its base before the places moved into the installation's own state goes on where it
     # stands (a stat, no subprocess); a role whose execution is declared works in a volume, where its place is a name
     # (`made` reads its record by the old one) and what stands beside the base is no place of it (critic)
-    if not role.get("execution") and (old := _laid_out_before(place)) != place and HOST.is_dir(str(old)):
+    if not role.get("execution") and (old := laid_out_before(place)) != place and HOST.is_dir(str(old)):
         place = old
     return base, str(place), f"gfso/{proj}/{key}"
 
-
-
-#: the places this process asked about where the record had none, and found not made (`made`)
-_UNMADE: set = set()
-
-
-def made(engine, place: str) -> bool:
-    """Was `place` made? THE SYSTEM'S RECORD, not the file system: `_ensure_place` adds a place it made,
-    `clear_workspaces` drops one it removed, kept with the project's settings (a restart reads it) and read with no subprocess — the
-    transition bus asks it. A place may stand nowhere on this host, and what stands where an agent writes decides
-    nothing of the protocol."""
-    if (got := engine.graph.setting(MADE + place)) is not None or (
-            got := engine.graph.setting(MADE + _spelled(place))) is not None or (   # …as a copy-in carried it
-            got := engine.graph.setting(MADE + _named_as_before(place))) is not None or (
-            got := engine.graph.setting(MADE + str(_laid_out_before(place)))) is not None:   # …recorded beside its base
-        return got == "1"
-    # …a place made before the record was kept: asked once (once per process where it is not made), then recorded —
-    # the record decides from there on. On this host, never by a call into a container from the transition bus: until
-    # the places move into volumes they are host directories (a fallback that goes with that move)
-    if place in _UNMADE or engine.graph.setting(VOLUME + "places"):     # …moved into a volume: the record alone
-        return False
-    if HOST.is_dir(place):
-        _record(engine, place, True)
-        return True
-    _UNMADE.add(place)
-    return False
-
-
-def _record(engine, place: str, made: bool) -> None:
-    engine.graph.store_setting(MADE + place, "1" if made else "0")
-
-
-def _named_as_before(place: str) -> str:
-    """A place of a base whose name holds what `place_name` escapes, as its record was written before it did."""
-    return str(Path(*(NODES + base_named(x) if x.startswith(NODES) else x for x in Path(place).parts)))
-
-
-def _laid_out_before(place) -> Path:
-    """A place under the installation's places (`nodes_root`) as it was named beside its base before 2026-11-15: the
-    record of a project made then keys its places so; any other path as it is."""
-    p = Path(place)
-    nodes = next((a for a in p.parents if a.name.startswith(NODES)), None)
-    if nodes is None or nodes.parent.parent.name != PLACES:
-        return p
-    return base_of_nodes(nodes).parent / nodes.name / p.relative_to(nodes)
-
-
-def _laid_out_now(place) -> str:
-    """A place or round laid out beside its base before 2026-11-15, as it is named now under the installation's places
-    (`nodes_root`) — `_laid_out_before` read the other way; any other path as it is."""
-    p = Path(place)
-    nodes = next((a for a in p.parents if a.name.startswith(NODES)), None)
-    if nodes is None or nodes.parent.parent.name == PLACES:
-        return str(p)
-    return str(nodes_root(base_of_nodes(nodes)) / p.relative_to(nodes))
-
-
-def _spelled(place) -> str:
-    """One spelling of a place, whichever it arrived in — what a copy-in records it by (`_carried`)."""
-    return os.path.normcase(os.path.abspath(place))
-
-
-def _carried(engine, dirs) -> None:
-    """The places and rounds a copy-in carried into the project's volume, recorded as made — before their host copy
-    is consumed, which the record of places made before it was kept fell back on (`made`, `round_stands`)."""
-    for d in map(_laid_out_now, dirs):        # …carried in from beside the base, recorded by the names they now stand by
-        if round_of(d):
-            record_round(engine.graph, d, True)
-        elif not Path(d).parent.name.startswith("."):
-            _record(engine, _spelled(d), True)
 
 
 def stands(engine, agents: "AgentRegistry", where: str) -> bool:
@@ -458,14 +386,6 @@ def _to_the_chat(engine, agents: "AgentRegistry", whole, ex, rev: str = "HEAD", 
     return None
 
 
-def held_off_the_host(engine, ex):
-    """`ex`, unless it is this host for a project whose places stand in volumes: a role lost after the gate gave the reading that binds
-    work there the user's machine — its validation, or the system's git making a place in the user's own repository (critic)."""
-    if isinstance(ex, LocalExecution) and engine.graph.setting(VOLUME + "places"):
-        raise PlaceUnavailable(THIS_HOST, "this project's places stand in volumes and none of its roles declares their execution now: register them back")
-    return ex
-
-
 def _ensure_place(engine, agents: "AgentRegistry", task, w: tuple) -> None:
     """The node's place, made if absent from where its whole works — that place made first, up the tree: cut from the
     base while its whole had none, a place missed what had already joined the whole (critic r6, 2026-10-04: a part
@@ -478,7 +398,7 @@ def _ensure_place(engine, agents: "AgentRegistry", task, w: tuple) -> None:
     W.ensure(w[0], w[1], w[2], _where_it_joins(engine, agents, task, w) or w[0], execution=ex,
              ground=lambda: _had(engine, task, w, ex) or parent is not None and json.loads(
                  engine.graph.setting(grounds_key(parent.id)) or "{}").get(str(task.id)))
-    _record(engine, w[1], True)
+    record(engine, w[1], True)
 
 
 def _had(engine, task, w: tuple, ex) -> str | None:
@@ -610,79 +530,6 @@ def _unjoined_text(unjoined: list) -> str:
 CONVERSING_ROLES = ("executor", "scope-executor")
 
 
-#: one object per (execution, project): its container is started once and every call of the project goes through it
-_EXECUTIONS: dict = {}
-
-
-def declaring_role(engine, agents: "AgentRegistry | None" = None) -> "dict | None":
-    """The role of this project that declares its execution, whether or not the declaration reads now."""
-    return next((c for c in (agents or AgentRegistry()).list().values()
-                 if c.get("execution") and c.get("project") == engine.project_name and c.get("workdir")), None)
-
-
-def _declared(engine, agents: "AgentRegistry | None" = None):
-    """(the object of the execution this project declares, its declaration) — made once per (execution, project,
-    place); (None, None) for this host."""
-    if (role := declaring_role(engine, agents)) is None:
-        return None, None
-    project = engine.project_name
-    key = (role["execution"], project, role["workdir"])
-    try:
-        d = executions()[role["execution"]]
-    except (ValueError, KeyError):
-        # a declaration that does not read shuts the way out it switched: an operator closing it in a hurry made a typo
-        if key in _EXECUTIONS:
-            _EXECUTIONS[key].switch({"mode": "off"})
-        raise
-    if key not in _EXECUTIONS:
-        _EXECUTIONS[key] = ContainerExecution(role["execution"], d["image"], d.get("env_file"), d["state"],
-                                              role["workdir"], project)
-        hold_places(_EXECUTIONS[key].files)
-    return _EXECUTIONS[key], d
-
-
-def execution_of(engine, agents: "AgentRegistry | None" = None):
-    """WHERE this project's work runs (`where_it_runs`), never this host for a project whose places stand in volumes
-    (`held_off_the_host`): every reading that binds work refuses there, by default — one call site at a time, a role lost
-    after a gate still put a validation, a place's git and a plan's reader on the user's machine (critics). Nor a volume
-    that holds its base as a live tree (`held_as_tree`): its plan reader, validator and issuer's contact each read it, one
-    call site found at a time (critics)."""
-    ex = held_off_the_host(engine, where_it_runs(engine, agents))
-    if isinstance(ex, ContainerExecution) and (why := held_as_tree(ex)):
-        raise PlaceUnavailable(str(ex.base), why)
-    return ex
-
-
-def where_it_runs(engine, agents: "AgentRegistry | None" = None):
-    """WHERE this project's sessions and commands run: the execution its roles declare (`register_agent(execution=)`,
-    one per project), in the place of the role that declared it — else this host. Its volume's making is the
-    project's own record (`Volume.record`): a volume lost under it is the place down, never refilled. Read bare only to
-    end or free what runs; work is bound through `execution_of`."""
-    ex, d = _declared(engine, agents)
-    if ex is None:
-        return LocalExecution()
-    ex.volume.record = (engine.graph.setting, engine.graph.store_setting)
-    ex.volume.carried = lambda dirs: _carried(engine, dirs)
-    ex.volume.root = lambda: root_key(engine)
-    ex.volume.said = lambda text: engine.emit_info("execution", text)
-    # the switch as set NOW — the more closed of its execution's declaration and the project's own (`set_mode`), the
-    # declaration a ceiling — kept by the container: every holder of any object of it starts it under this one
-    own = engine.graph.setting("network")
-    try:
-        mode, hosts = stricter(network_of(d.get("network")), network_of(json.loads(own)) if own else None)
-        network = {"mode": mode, "hosts": list(hosts)}
-    except ValueError:
-        network = {"mode": "unreadable"}   # either one unreadable shuts the way out, as an unreadable declaration does
-    ex.switch(network)
-    return ex
-
-
-def root_key(engine) -> str | None:
-    """The project's root as its base's import is keyed (`Volume.import_base`): its id and its making — a root made
-    again under the id is another."""
-    return root_key_of(r) if (r := root_of(engine.all_tasks())) is not None else None
-
-
 def root_created(engine, agents: "AgentRegistry", root) -> None:
     """A root of the project was made: its base's import is ITS — the act of the system at the root's creation, never
     of a container's start (`Volume.import_base`). One made before any root (the project's first start) is adopted
@@ -703,11 +550,6 @@ def root_created(engine, agents: "AgentRegistry", root) -> None:
         engine.emit_info("execution", f"{root.id}: its base has no git and was imported once - it works on that base "
                                       f"as the earlier root left it")
     engine.graph.store_setting(VOLUME + IMPORTED, json.dumps({**rec, "for": key}))
-
-
-def root_key_of(root) -> str:
-    """A root as its base's import is keyed: its id and its making — a root made again under the id is another."""
-    return f"{root.id}@{root.created_at.isoformat()}"
 
 
 def land_accepted(engine, agents: "AgentRegistry", root) -> str | None:
@@ -818,19 +660,6 @@ def node_temp(engine, task) -> str:
     agents = AgentRegistry()
     here = node_workspace(engine, agents, task.id) or (performer(engine, agents, task.assignee)[1] or {}).get("workdir")
     return execution_of(engine, agents).temp_of(here)
-
-
-def drop_execution(project: str) -> None:
-    """The project is gone: its containers go, and the objects that held them, and every volume of it by its label
-    (`drop_volumes`) — the one removal of its places in volumes, its roster read or not (those on this machine go at
-    the deletion's end, `drop_host_files`)."""
-    for key in [k for k in _EXECUTIONS.copy() if k[1] == project]:   # …a copy: other threads make executions
-        if not (ex := _EXECUTIONS.pop(key, None)):
-            continue
-        ex.stop()
-        hold_places(ex.files, False)
-    drop_volumes(project)
-    forget(project)
 
 
 def drop_node_branches(project: str, bases) -> list[str]:
@@ -944,7 +773,7 @@ def _remove_joined_places(engine, agents: "AgentRegistry") -> list:
         if not (W.settled(*w, execution=ex, onto=onto) and W.remove(*w, execution=ex, onto=onto)):
             left.append(f"{w[1]} (`{w[2]}`)")
         else:
-            _record(engine, w[1], False)
+            record(engine, w[1], False)
     return left
 
 

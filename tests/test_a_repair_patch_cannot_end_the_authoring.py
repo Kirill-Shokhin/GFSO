@@ -38,7 +38,7 @@ _FIXED_B = {"id": "b", "name": "b", "writes": ["b.c"], "criteria": [_ok("open", 
 
 def _authored(monkeypatch, *rounds):
     patches = iter(rounds)
-    monkeypatch.setattr(D, "_audit_fix", lambda *a, **k: next(patches, {}))
+    monkeypatch.setattr(D, "audit_fix", lambda *a, **k: next(patches, {}))
     e = make_engine()
     e.start()
     try:
@@ -76,7 +76,7 @@ def test_a_patch_a_later_round_can_still_finish_is_left_to_it(monkeypatch):
     told = []
     patches = iter([{"subtasks": [kids_a() | {"criteria": [_bad("design")]}, _FIXED_B]},
                     {"subtasks": [kids_a() | {"criteria": [_ok("design", "./prog --new")]}]}])
-    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or next(patches, {}))
+    monkeypatch.setattr(D, "audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or next(patches, {}))
     e = make_engine()
     e.start()
     try:

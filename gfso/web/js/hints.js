@@ -205,7 +205,7 @@ export const H = {
     // WHERE THE WORK RUNS, said where the person reads the run (row 5): an executor with no container works on this machine
     // …said of the server's computer, true from wherever the page is read (a phone reads it through a front)
     host: hover('Outside Docker', 'The executors run on the computer gfso serves from, not in a container: what they do reaches that computer, and their work stays off your branches'),
-    // …the server's own sentences, each a kind of what the copy lacks with its count (execution.py `left_out`)
+    // …the server's own sentences, each a kind of what the copy lacks with its count (hostrepo.py `left_out`)
     notImported: lines => hover("Not in the agents' copy", lines),
     landed: l => l.branch ? hover(`The result, on branch ${l.branch}`, `Of the repository ${l.path}`, `Commit ${l.sha.slice(0, 12)}`, 'Your own branches and working tree are untouched')
         : hover('The result, as files', l.path, 'Your own directory is untouched'),

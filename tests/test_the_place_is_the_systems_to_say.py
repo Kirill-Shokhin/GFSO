@@ -45,28 +45,28 @@ def test_a_node_place_reads_back_its_base():
 
 def test_the_executor_works_in_the_systems_place_and_reads_the_bases_paths_there():
     e, root = _root()
-    for packet in (packets._executor_packet(e, root, PLACE), packets._scope_packet(e, root, [root], PLACE)):
+    for packet in (packets.executor_packet(e, root, PLACE), packets.scope_packet(e, root, [root], PLACE)):
         assert f"Working directory: {BASE}" in packet, "the contract is shown as written"
         assert _last_place(packet) == PLACE, "the system's place is the last word on where to work"
         assert "Write only here and below" in packet and "you may read, never write" in packet
         assert f"checkout of `{BASE}` as committed when it was made" in packet
         assert f"under `{BASE}` is the same path here" in packet and f"read in `{BASE}`" in packet
         assert "uncommitted edits, untracked or ignored files, later commits" in packet
-    shared = packets._executor_packet(e, root, SHARED)
+    shared = packets.executor_packet(e, root, SHARED)
     assert "Write only here and below" in shared and "as committed" not in shared, "no git base, no checkout"
     e.stop()
 
 
 def test_the_validator_checks_the_delivery_in_the_systems_place():
     e, root = _root()
-    for packet in (packets._validator_packet(e, root, "delivered", PLACE),
-                   packets._scope_validator_packet(e, [(root, "delivered", root.spec.criteria)], PLACE, None,
+    for packet in (packets.validator_packet(e, root, "delivered", PLACE),
+                   packets.scope_validator_packet(e, [(root, "delivered", root.spec.criteria)], PLACE, None,
                                                    frozenset({"root"}))):
         assert f"Working directory for your tools: {PLACE}" in packet
         assert f"under `{BASE}` is the same path here" in packet
         assert "Write only here" not in packet, "the validator writes nothing anywhere; its rule is where to look"
     # where it stands may be the roster's guess (a registered validator's own directory): nothing asserted over it
-    guess = packets._validator_packet(e, root, "delivered", SHARED)
+    guess = packets.validator_packet(e, root, "delivered", SHARED)
     assert "as committed" not in guess and "whatever directory" not in guess
     e.stop()
 

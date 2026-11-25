@@ -18,6 +18,7 @@ import gfso.adapters.execution as E
 import gfso.adapters.lfs as L
 import gfso.adapters.snapshots as S
 import gfso.adapters.git as G
+import gfso.adapters.hostrepo as H
 import gfso.adapters.worktrees as W
 import gfso.tools_llm as TL
 from gfso.adapters.execution import ContainerExecution
@@ -149,17 +150,17 @@ def test_a_staging_under_the_systems_filter_commits_pointers_and_without_it_cont
 def test_the_host_says_what_the_import_leaves_out_and_carries_what_it_holds(tmp_path):
     base = _repo(tmp_path)
     oid = L.parse(_g(base, "cat-file", "blob", "HEAD:gone.bin"))[0]
-    git = E._host_git(base)
-    held, missing = E._lfs_of(base, git)
+    git = H._git(base)
+    held, missing = H._lfs_of(base, git)
     assert len(held) == 2 and missing == []
-    assert E.left_out(base) == []
+    assert H.left_out(base) == []
     (base / ".git" / "lfs" / "objects" / oid[:2] / oid[2:4] / oid).unlink()
     (base / "mine.txt").write_text("not committed")
-    said = E.left_out(base)
+    said = H.left_out(base)
     assert said[0].startswith(f"1 changed or untracked files of {base} are not in the agents' copy - commit them")
     assert said[1].startswith("1 files tracked by Git LFS have no object") and "gone.bin" in said[1]
-    assert list(E._lfs_of(base, git)[0]) == [L.parse(_g(base, "cat-file", "blob", "HEAD:big.bin"))[0]]
-    assert E.left_out(tmp_path / "no-git") == []
+    assert list(H._lfs_of(base, git)[0]) == [L.parse(_g(base, "cat-file", "blob", "HEAD:big.bin"))[0]]
+    assert H.left_out(tmp_path / "no-git") == []
 
 
 def test_what_the_gitignore_keeps_out_is_named(tmp_path):
@@ -168,16 +169,16 @@ def test_what_the_gitignore_keeps_out_is_named(tmp_path):
     (base / ".gitignore").write_text("data/\n.venv/\n__pycache__/\n.pytest_cache/\n*.md\n")
     _g(base, "add", ".gitignore", lfs=False)
     _g(base, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "ignore data", lfs=False)
-    assert E.left_out(base) == [], "nothing ignored on disk: nothing said"
+    assert H.left_out(base) == [], "nothing ignored on disk: nothing said"
     for d in (".venv", "__pycache__", ".pytest_cache"):          # what any checkout regenerates: counted, not named
         (base / d).mkdir()
         (base / d / "x").write_text("x")
-    assert E.left_out(base) == [], "only regenerated paths: nothing the work could need"
+    assert H.left_out(base) == [], "only regenerated paths: nothing the work could need"
     for i in range(9):                                            # files sorted before it filled the line (critic)
         (base / f"a{i}.md").write_text("x")
     (base / "data").mkdir()
     (base / "data" / "train.csv").write_text("x\n")
-    said = E.left_out(base)
+    said = H.left_out(base)
     assert len(said) == 1 and said[0].startswith(f"10 paths of {base} ignored by its .gitignore") and "data/" in said[0]
     assert not any(d in said[0] for d in (".venv", "__pycache__", ".pytest_cache"))
 
@@ -193,7 +194,7 @@ def test_the_call_that_starts_the_work_says_what_the_agents_copy_lacks(tmp_path,
     e = _engine(Mode.AUTO)
     e.record_llm_usage = lambda *a: None
     got = TL.auto_decompose(e, "the goal", spec={"name": "p"})
-    assert got["not_imported"] == E.left_out(base) and "1 changed or untracked files" in got["not_imported"][0]
+    assert got["not_imported"] == H.left_out(base) and "1 changed or untracked files" in got["not_imported"][0]
     assert "not_imported" in TL.start_project(e), "no import yet: said where the work starts again"
     e.graph.store_setting("volume:imported", '{"for": "root@1", "commit": "c"}')
     assert "not_imported" not in TL.start_project(e), "the import done: its root's answer said it"
@@ -211,7 +212,7 @@ def test_the_root_made_by_hand_says_what_the_agents_copy_lacks(tmp_path, monkeyp
     e.start()
     root = TL.TOOLS["create_task"](e, "root", {"description": "goal", "criteria": [criterion("a", "A")],
                                                "accepted_risks": REGISTER}, assignee="me")
-    assert root["not_imported"] == E.left_out(base) and "1 changed or untracked files" in root["not_imported"][0]
+    assert root["not_imported"] == H.left_out(base) and "1 changed or untracked files" in root["not_imported"][0]
     kid = TL.TOOLS["create_task"](e, "root.x", {"description": "x", "criteria": [criterion("x1", "X")]},
                                   assignee="me", parent_id="root", covers=["a"])
     assert "not_imported" not in kid, "said where the root is made, not at every node"
@@ -259,10 +260,10 @@ def test_a_partial_clone_is_read_with_no_fetch_and_what_it_lacks_is_said(tmp_pat
     clone = tmp_path / "clone"
     _user(*_NO_LFS, "clone", "-q", "--sparse", "--filter=blob:none", src.as_uri(), str(clone), cwd=tmp_path)
     monkeypatch.setenv("GIT_TRACE", str(trace := tmp_path / "trace"))
-    said = E.left_out(clone)
-    _, no_object = E._lfs_of(clone, E._host_git(clone))
+    said = H.left_out(clone)
+    _, no_object = H._lfs_of(clone, H._git(clone))
     with pytest.raises(OSError, match="partial clone"):
-        E._carried_in(clone, "p", tmp_path)
+        H.carried_in(clone, "p", tmp_path)
     fetches = [ln for ln in trace.read_text(errors="replace").splitlines() if "fetch" in ln and "run_command" in ln]
     assert fetches == [], fetches
     assert said[0].startswith("1 objects of the history of") and "partial clone" in said[0], said

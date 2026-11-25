@@ -39,8 +39,8 @@ from gfso.observe import cannot_run, missing_program, on_the_base, parsed, print
 
 from .seams import deferral_problems, refused_deferrals, seam_problems, with_deferrals
 from gfso.inflight import staged
-from .loop import (decompose_spec, _audit_fix, _audit_fold, _fold_merge, _search,
-                   _progress, stat_line, _stage, tag_stage, _COVERED, AUDIT_SCHEMA, shape, AGREE_PROMPT, AGREE_SCHEMA,
+from .loop import (decompose_spec, audit_fix, audit_fold, fold_merge, search,
+                   say_progress, stat_line, enter_stage, tag_stage, COVERED, AUDIT_SCHEMA, shape, AGREE_PROMPT, AGREE_SCHEMA,
                    AUDIT_PROMPT, executor_line)
 from .build import build_graph_live, held_contract
 from .extract import extract_spec
@@ -455,7 +455,7 @@ def _taken_back(history: list, spec: dict, progress, contract_fixed: bool = Fals
         k.pop("split_after")
         k["fits_one_session"] = False
     if undone:
-        _progress("repair: the rounds are spent, what the admission refuses is taken back: " + " | ".join(undone), progress)
+        say_progress("repair: the rounds are spent, what the admission refuses is taken back: " + " | ".join(undone), progress)
     return out if undone else spec
 
 
@@ -486,10 +486,10 @@ def _repaired_before_build(spec: dict, request: str, llm, executor: str, progres
             raise ValueError("the plan handed in is refused as it stands — " + " | ".join(refused)
                              + ". Repair it in the file (`refine_plan` with a note naming these), or hand it in open "
                                "(`open_plan=true`) for the system to repair")
-        _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer: {len(refused)} probe(s) the admission refuses, seam(s) its "
+        say_progress(f"{r + 1}/{REPAIR_ROUNDS} repairer: {len(refused)} probe(s) the admission refuses, seam(s) its "
                   f"files contradict or criteria their checks deny, before the build: "
                   + " | ".join(x[:140] for x in refused), progress)
-        fixed = _audit_fix(llm, request, spec, refused, executor) or {}
+        fixed = audit_fix(llm, request, spec, refused, executor) or {}
         tag_stage(llm, f"{Stage.AUDIT_FIX}-pre-{r + 1}")
         history.append(spec)
         spec = _patched(spec, fixed, " | ".join(map(str, refused)))
@@ -576,7 +576,7 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
         _admitted_as_it_stands(spec, request, root_id, assignee, max_iterations, child_assignee)
     engine._dispatch_quiesce = getattr(engine, "_dispatch_quiesce", 0) + 1
     try:
-        _progress("builder: wholesale build through the FSM…", progress)
+        say_progress("builder: wholesale build through the FSM…", progress)
         staged("builder")
         eng, rid, dropped = build_graph_live(agree.root(spec), request, engine, root_id=root_id, assignee=assignee,
                                                  max_iterations=max_iterations, closed=closed,
@@ -585,22 +585,22 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
         # seams again — c_compiler's file came out with 23 the go refused (2026-11-11). A closed plan was read before.
         found = lambda: _problems(engine, rid, dropped) + ([] if closed else admission_refusals(spec, contract_fixed))
         problems = found()
-        _progress(f"builder: {len(engine.graph.get_active_children(rid))} nodes · {len(dropped)} dropped · "
+        say_progress(f"builder: {len(engine.graph.get_active_children(rid))} nodes · {len(dropped)} dropped · "
                   f"{len(problems)} problem(s)", progress)
         for r in range(0 if closed else REPAIR_ROUNDS):      # …a closed plan's residue is said, not patched
             if not problems:
                 break
-            _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer: {len(problems)} problem(s) → corrective auditor (patch)…",
+            say_progress(f"{r + 1}/{REPAIR_ROUNDS} repairer: {len(problems)} problem(s) → corrective auditor (patch)…",
                       progress)
-            _stage(llm, f"{r + 1}/{REPAIR_ROUNDS} repairer")
-            fixed = _audit_fix(llm, request, spec, problems, executor)
+            enter_stage(llm, f"{r + 1}/{REPAIR_ROUNDS} repairer")
+            fixed = audit_fix(llm, request, spec, problems, executor)
             tag_stage(llm, f"{Stage.AUDIT_FIX}-{r + 1}")
             if not fixed:
                 break  # repair call failed — return the honest residue
             # …the build reads this patch at once and refuses it there: no round of its own would ever be told
             spec = hold(_taken_back([spec], _patched(spec, fixed, " | ".join(map(str, problems))), progress, contract_fixed))
             patched = [k for k in fixed if k in _fields(fixed)]
-            _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {stat_line(llm)} · patched: {', '.join(patched)}", progress)
+            say_progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {stat_line(llm)} · patched: {', '.join(patched)}", progress)
             if any(k in fixed for k in _CRITERIA_FIELDS):
                 agree.judge(spec)       # before the rebuild: what the patch rewrote still differs from the graph
             eng, rid, dropped = build_graph_live(agree.root(spec), request, engine, root_id=root_id, assignee=assignee,
@@ -628,7 +628,7 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
         # this goal are still decided by no criterion", and wrote it down as the first surprise of
         # the session — two readings of one plan disagreeing about whether it was clean (wave 25,
         # 2026-09-05). Both were true; only one of them was qualified.
-        _progress(built_line(built, problems, len(spec.get("subtasks") or [])), progress)
+        say_progress(built_line(built, problems, len(spec.get("subtasks") or [])), progress)
         return rid, spec, problems
     finally:
         engine._dispatch_quiesce = max(0, getattr(engine, "_dispatch_quiesce", 1) - 1)
@@ -784,27 +784,27 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
     if findings:
         holes = findings
     else:
-        _progress(f"{label} searcher (over the graph projection)…", progress)
-        _stage(llm, f"{label} searcher")
-        holes = _search(llm, request, state_view)
+        say_progress(f"{label} searcher (over the graph projection)…", progress)
+        enter_stage(llm, f"{label} searcher")
+        holes = search(llm, request, state_view)
         tag_stage(llm, Stage.SEARCH_REFINE)
-        _progress(f"{label} searcher {stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
-    if holes.lstrip().upper().startswith(_COVERED):
-        _progress(f"{label} searcher: ALREADY-COVERED — converged", progress)
+        say_progress(f"{label} searcher {stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
+    if holes.lstrip().upper().startswith(COVERED):
+        say_progress(f"{label} searcher: ALREADY-COVERED — converged", progress)
         return False, extract_spec(engine, root_id), []
     spec = extract_spec(engine, root_id)
-    _progress(f"{label} auditor (fold into the graph state)…", progress)
-    _stage(llm, f"{label} auditor")
-    patch = _dens_patch(_audit_fold(llm, request, state_view, holes, executor=executor) or {}, root_id)
+    say_progress(f"{label} auditor (fold into the graph state)…", progress)
+    enter_stage(llm, f"{label} auditor")
+    patch = _dens_patch(audit_fold(llm, request, state_view, holes, executor=executor) or {}, root_id)
     tag_stage(llm, Stage.AUDIT_FOLD_REFINE)
-    new_spec, ops = _fold_merge(spec, patch)
+    new_spec, ops = fold_merge(spec, patch)
     new_spec = held_contract(new_spec, engine.graph.get_task(TaskId(root_id))) if contract_fixed else new_spec
     if not ops:
-        _progress(f"{label} auditor {stat_line(llm)} · empty fold — converged", progress)
+        say_progress(f"{label} auditor {stat_line(llm)} · empty fold — converged", progress)
         return False, spec, []
     d0, dep0, v0 = shape(spec)
     d, dep, v = shape(new_spec)
-    _progress(f"{label} auditor {stat_line(llm)} · |D| {d0}→{d} · |Dep| {dep0}→{dep} · "
+    say_progress(f"{label} auditor {stat_line(llm)} · |D| {d0}→{d} · |Dep| {dep0}→{dep} · "
               f"|V| {v0}→{v} · ops: {'; '.join(ops)}", progress)
     try:
         rid, new_spec, problems = _build_verified(new_spec, request, engine, root_id, assignee, llm,
@@ -812,7 +812,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
                                                   agree=agree or _Agreement(llm, engine, root_id, request, True,
                                                                             contract_fixed, asks), pins=pins)
     except NoPlan as no:          # a round over a standing plan that authored no contract leaves that plan, said
-        _progress(f"{label} {no}", progress)
+        say_progress(f"{label} {no}", progress)
         return False, spec, [str(no)]
     return True, new_spec, problems
 
@@ -888,10 +888,10 @@ def _pin_by_part(engine, request, rid, assignee, llm, gaps, progress, executor, 
             # (critic: `"add_criteria": "two"`, a bare name, a check given as a string)
             return p["id"], [c for c in got if _shaped(c)] if isinstance(got, list) else []
         except Exception as why:        # …said, not swallowed: a part that added nothing and a part whose call died differ
-            _progress(f"{rid}: pin-by-part · {p['id']}: the call failed ({str(why)[:200]}) — its obligations go to the "
+            say_progress(f"{rid}: pin-by-part · {p['id']}: the call failed ({str(why)[:200]}) — its obligations go to the "
                       f"next repair", progress)
             return p["id"], []
-    _progress(f"{rid}: {len(gaps)} open obligation(s) handed to {len(parts)} part(s) at once", progress)
+    say_progress(f"{rid}: {len(gaps)} open obligation(s) handed to {len(parts)} part(s) at once", progress)
     added = dict(fan(llm, parts, one, "pin-by-part"))
     upd = []
     for p in parts:
@@ -904,8 +904,8 @@ def _pin_by_part(engine, request, rid, assignee, llm, gaps, progress, executor, 
             upd.append({**p, "criteria": list(p.get("criteria") or ()) + new})
     if not upd:
         return False, spec, []
-    new_spec, ops = _fold_merge(spec, {"update_subtasks": upd})
-    _progress(f"{rid}: pin-by-part · {sum(len(u['criteria']) for u in upd) - sum(len(p.get('criteria') or ()) for p in parts if p['id'] in {u['id'] for u in upd})} "
+    new_spec, ops = fold_merge(spec, {"update_subtasks": upd})
+    say_progress(f"{rid}: pin-by-part · {sum(len(u['criteria']) for u in upd) - sum(len(p.get('criteria') or ()) for p in parts if p['id'] in {u['id'] for u in upd})} "
               f"criteria added over {len(upd)} part(s)", progress)
     try:
         _, new_spec, problems = _build_verified(new_spec, request, engine, rid, assignee, llm, progress=progress,
@@ -960,7 +960,7 @@ def _close_the_goals_obligations(engine, request, rid, assignee, llm, spec, hole
     for r in range(SUFFICIENCY_ROUNDS):
         if not gaps and not unentailed:
             break
-        _progress(f"{rid}: {len(gaps)} obligation(s) of the goal no criterion decides, {len(unentailed)} root "
+        say_progress(f"{rid}: {len(gaps)} obligation(s) of the goal no criterion decides, {len(unentailed)} root "
                   f"criteria its children do not entail — repair {r + 1}/{SUFFICIENCY_ROUNDS}", progress)
         listed = "\n".join(f"- {g.get('obligation', '')}\n  a result passing every criterion yet breaking it: "
                            f"{g.get('admits', '')}" for g in gaps) + "".join(
@@ -991,18 +991,18 @@ def _close_the_goals_obligations(engine, request, rid, assignee, llm, spec, hole
             if c.semantic_covered is not None:
                 unentailed = [v for v in c.criteria_verdicts or () if v.get("verdict") != "sufficient"]
                 gaps = list(c.undecided_obligations or ())
-                _progress(f"{rid}: the checker reads {len(unentailed)} root criteria unentailed, "
+                say_progress(f"{rid}: the checker reads {len(unentailed)} root criteria unentailed, "
                           f"{len(gaps)} obligation(s) open", progress)
                 continue
         unentailed = []
         after = _undecided_obligations(engine, engine.graph.get_task(rid), llm, stage=Stage.AUTHORING_OBLIGATIONS)
         if after is None:   # ⊥: nothing re-checked, so nothing is measured closed
             break
-        _progress(f"{rid}: {len(gaps) - len(after)} of {len(gaps)} closed", progress)
+        say_progress(f"{rid}: {len(gaps) - len(after)} of {len(gaps)} closed", progress)
         gaps = after
     residue = tuple(g.get("obligation", "") for g in gaps)
     if residue:
-        _progress(f"{rid}: still open: {'; '.join(residue)}", progress)
+        say_progress(f"{rid}: still open: {'; '.join(residue)}", progress)
     return spec, holes, residue
 
 
@@ -1102,7 +1102,7 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
     contract = _the_request(existing, request, held)    # the contract before this authoring: what its criteria are judged by
     agree = _Agreement(llm, engine, root_id, contract, given is None, held, root=system_root)
     if existing is not None and engine.graph.get_active_children(TaskId(root_id)):
-        _progress(f"{root_id} is already decomposed → {depth} refine round(s) over the existing graph",
+        say_progress(f"{root_id} is already decomposed → {depth} refine round(s) over the existing graph",
                   progress)
         req = existing.spec.description or request
         if request and request.strip() and request.strip() != (existing.spec.description or "").strip():
@@ -1111,7 +1111,7 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
             note = (f"NOTE: `{root_id}` is already decomposed — refine ran over the node's OWN contract; "
                     f"your `request` text was NOT applied. To change the goal itself: revise the node "
                     f"(new description/criteria), then auto_decompose again.")
-            _progress(note, progress)
+            say_progress(note, progress)
         spec, holes, rid = extract_spec(engine, root_id), [], TaskId(root_id)
         for i in range(depth):
             changed, spec, holes = _refine_round(engine, req, root_id, assignee, llm, progress=progress,
@@ -1160,7 +1160,7 @@ def decompose_into(engine: Engine, request: str, root_id: str = ROOT_ID, assigne
     holes = list(holes) + [r for r in agree.residue() if r not in holes]
     calls = list(calls_of(llm))
     total_out = sum((c.get("output_tokens") or 0) for c in calls if isinstance(c, dict))
-    _progress(f"total: {time.time() - t0:.0f}s wall · {total_out / 1000:.1f}k tokens · "
+    say_progress(f"total: {time.time() - t0:.0f}s wall · {total_out / 1000:.1f}k tokens · "
               f"{len(calls)} LLM calls", progress)
     return DecomposeResult(engine, rid, engine.project(rid), spec, holes, stats=calls, note=note,
                            undecided_obligations=tuple(_residue))

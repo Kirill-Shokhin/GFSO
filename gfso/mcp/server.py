@@ -36,7 +36,6 @@ from gfso.adapters.storage.sqlite import holds_a_live_node
 from gfso.hold import own_moves
 from gfso.runtime import ProjectRegistry
 from gfso.mcp import protocol as _PROTOCOL
-from gfso.tools import _agent_id
 from gfso import tools_llm as T                   # the COMPLETE action surface (structural + LLM verbs)
 
 
@@ -684,7 +683,7 @@ def _mount_project_verbs(server, reg) -> None:
         try:   # where the graph stands and what it waits on — entering a project is a move like a signal
             e = reg.engine(name)
             out["mode"] = e.mode()
-            out.update(_T.next_for(e, _agent_id(), entering=True))
+            out.update(_T.next_for(e, caller_id(), entering=True))
         except Exception:   # gives up only the hint; the switch stands
             pass
         # …and a newer gfso, said where every task begins: nothing else would ever tell the person

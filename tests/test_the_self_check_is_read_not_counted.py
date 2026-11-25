@@ -39,7 +39,7 @@ def _delivered(said):
     T.decompose(e, "par", [{"task_id": "kid", "spec": {"description": "w", "criteria": [criterion("k", "K")]},
                             "assignee": "exec-1", "covers": ["g"]}], accepted_risks=_RISK)
     T.signal(e, "kid", "ACCEPT", "exec-1")
-    D._report_into_signals(e, "kid", "exec-1", e.graph.get_task("kid"),
+    D.report_into_signals(e, "kid", "exec-1", e.graph.get_task("kid"),
                            {"status": "delivered", "summary": "did it", "self_validation": said},
                            "delivered", type("L", (), {"calls": []})(), lambda *a, **k: None)
     e.wait_idle()

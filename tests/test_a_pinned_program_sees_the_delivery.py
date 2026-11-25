@@ -256,7 +256,7 @@ def test_the_plan_s_author_repairs_what_the_admission_would_refuse_before_the_bu
         {"behaviour": "b", "command": "T=$(mktemp -d); seq 3 > $T/s; ./head $T/s", "expect": "1"},
         {"behaviour": "p", "command": "PYTHONPATH=. python {inputs}/p.py", "expect": "OK",
          "inputs": {"p.py": _IMPORTS_THE_DELIVERY}}]}]}
-    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or fixed)
+    monkeypatch.setattr(D, "audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or fixed)
 
     def _stop(sp, *a, **k):
         built.append(sp)
@@ -277,7 +277,7 @@ def test_a_field_the_repairer_re_emits_as_null_keeps_the_plan_s_own(monkeypatch)
     built, rounds = [], iter([["a mapping drifted"], []])
     monkeypatch.setattr(D, "build_graph_live", lambda sp, *a, **k: built.append(sp) or (None, "root", []))
     monkeypatch.setattr(D, "_problems", lambda *a, **k: next(rounds))
-    monkeypatch.setattr(D, "_audit_fix", lambda *a, **k: {"subtasks": None, "mappings": [{"criterion": "c", "child_id": "a"}]})
+    monkeypatch.setattr(D, "audit_fix", lambda *a, **k: {"subtasks": None, "mappings": [{"criterion": "c", "child_id": "a"}]})
     D._build_verified(spec, "req", make_engine(), "root", "user", llm=None)
     assert len(built) == 2 and built[-1]["subtasks"] == spec["subtasks"] and built[-1]["mappings"] == [{"criterion": "c", "child_id": "a"}]
 

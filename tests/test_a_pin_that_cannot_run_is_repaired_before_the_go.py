@@ -255,7 +255,7 @@ def test_a_pin_no_work_can_run_is_flagged_and_a_missing_program_is_said_never_fl
 def test_the_repair_round_is_told_with_bashs_words_and_a_pin_run_once_is_not_run_again(monkeypatch, ran):
     told = []
     patches = iter([{"root_criteria": [_crit("a", FIXED)]}])
-    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or next(patches, {}))
+    monkeypatch.setattr(D, "audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or next(patches, {}))
     pins = D.PinsOnTheBase(APART)
     e = make_engine()
     e.start()
@@ -278,7 +278,7 @@ def test_a_pin_that_hit_its_own_limit_ran_and_is_not_run_again(ran):
 
 
 def test_what_the_rounds_leave_is_in_the_review_never_a_gate(monkeypatch, ran):
-    monkeypatch.setattr(D, "_audit_fix", lambda *a, **k: {})
+    monkeypatch.setattr(D, "audit_fix", lambda *a, **k: {})
     pins = D.PinsOnTheBase(APART)
     e = make_engine()
     e.start()
@@ -292,7 +292,7 @@ def test_what_the_rounds_leave_is_in_the_review_never_a_gate(monkeypatch, ran):
 
 
 def test_a_closed_plan_is_not_refused_for_a_pin_its_flags_are_said(monkeypatch, ran):
-    monkeypatch.setattr(D, "_audit_fix", lambda *a, **k: pytest.fail("a closed plan was repaired"))
+    monkeypatch.setattr(D, "audit_fix", lambda *a, **k: pytest.fail("a closed plan was repaired"))
     pins = D.PinsOnTheBase(APART)
     agree = D._Agreement(None, make_engine(), "root", GOAL, False, False)
     spec = D._repaired_before_build(_plan_of(_crit("a", S16B)), GOAL, None, "", None, False, agree, closed=True, pins=pins)
@@ -449,7 +449,7 @@ def test_the_plan_file_carries_what_its_pins_did_and_the_answer_holds_it_open(mo
     """Through the authoring verb: the pins object reaches the build, the file's review says the pin left unrepaired,
     and the plan's answer holds it open — never "nothing is undecided" over it."""
     told = []
-    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {})
+    monkeypatch.setattr(D, "audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {})
     monkeypatch.setattr(D, "decompose_spec", lambda *a, **k: _plan_of(_crit("a", S16B), _crit("b", "./wordtop x")))
     text = planning.author(GOAL, "m", execution=APART)
     assert told and any("syntax error" in x and "y.(none)" in x for x in told[0]), "the authoring's repair was told"
@@ -463,7 +463,7 @@ def test_the_plan_file_carries_what_its_pins_did_and_the_answer_holds_it_open(mo
 def test_the_customers_note_round_runs_the_pins_and_says_what_they_did(monkeypatch, ran, no_model):
     """`refine_plan`, the customer's path: its repair before the build is told the pin, and the new file says it."""
     told = []
-    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {
+    monkeypatch.setattr(D, "audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {
         "root_criteria": [_crit("a", FIXED)]})
     rounds = []
     monkeypatch.setattr(D, "refine_with", lambda *a, **k: rounds.append(k.get("pins")) or (False, {}, []))

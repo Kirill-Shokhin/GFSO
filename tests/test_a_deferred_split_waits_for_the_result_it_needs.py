@@ -18,7 +18,7 @@ import pytest
 import gfso.decompose as D
 import gfso.decompose.loop as L
 from gfso.decompose import _dens_patch
-from gfso.decompose.loop import _fold_merge
+from gfso.decompose.loop import fold_merge
 from gfso import delegate as DG
 from gfso import issuer as I
 from gfso import tools as T
@@ -183,7 +183,7 @@ def test_a_fold_keeps_a_deferral_it_does_not_mention_and_reads_its_ids_as_the_pl
     held = {"subtasks": [{"id": "parser"}, {"id": "checker", "criteria": [], "split_after": {"after": ["parser"],
                                                                                             "why": WHY}}],
             "deps": [{"from": "parser", "to": "checker"}], "mappings": [], "root_criteria": []}
-    merged, _ = _fold_merge(held, {"update_subtasks": [{"id": "checker", "criteria": [criterion("sharper", "x")]}]})
+    merged, _ = fold_merge(held, {"update_subtasks": [{"id": "checker", "criteria": [criterion("sharper", "x")]}]})
     assert next(s for s in merged["subtasks"] if s["id"] == "checker")["split_after"]["after"] == ["parser"]
     echoed = _dens_patch({"update_subtasks": [{"id": "root.checker", "split_after": {"after": ["root.parser"],
                                                                                      "why": WHY}}]}, "root")
@@ -249,10 +249,10 @@ def test_the_issuers_split_round_authors_over_that_contact(monkeypatch):
     contact was appended to the task, and the obligations reader took the parser's code for the goal)."""
     seen = {}
     monkeypatch.setattr(DG, "results_a_split_waits_on", lambda engine, agents, node: "# THE RESULTS — AST of Node")
-    monkeypatch.setattr(L, "_search", lambda llm, request, prev, fast=False, ground="": seen.setdefault(
+    monkeypatch.setattr(L, "search", lambda llm, request, prev, fast=False, ground="": seen.setdefault(
         "search", (request, ground)) and "")
     monkeypatch.setattr(L, "_obligations_first", lambda llm, request: seen.setdefault("obligations", request) and "")
-    monkeypatch.setattr(L, "_audit_fold", lambda llm, request, state, holes, fast=False, executor="", ground="":
+    monkeypatch.setattr(L, "audit_fold", lambda llm, request, state, holes, fast=False, executor="", ground="":
                         seen.setdefault("fold", (request, ground)) and {})
     e = _plan()
     _defer(e, "root.parser")
@@ -305,8 +305,8 @@ def test_a_deferral_is_taken_back_by_saying_so_and_kept_by_silence():
     `refine_plan` could not remove a system-written deferral)."""
     spec = with_deferrals(_three_parts(fits_one_session=False))
     silent = {k: v for k, v in spec["subtasks"][2].items() if k != "split_after"} | {"name": "c2"}
-    kept, _ = _fold_merge(spec, {"update_subtasks": [silent]})
-    gone, _ = _fold_merge(spec, {"update_subtasks": [{**spec["subtasks"][2], "split_after": {"after": [], "why": ""}}]})
+    kept, _ = fold_merge(spec, {"update_subtasks": [silent]})
+    gone, _ = fold_merge(spec, {"update_subtasks": [{**spec["subtasks"][2], "split_after": {"after": [], "why": ""}}]})
     assert kept["subtasks"][2].get("split_after") and "split_after" not in gone["subtasks"][2]
     prefixed = _three_parts(fits_one_session=False, criteria=[{"name": "c", "depends_on": "root.parser"}])
     assert with_deferrals(prefixed)["subtasks"][2]["split_after"]["after"] == ["docs"]

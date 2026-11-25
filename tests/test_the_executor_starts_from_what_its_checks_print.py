@@ -16,7 +16,7 @@ import gfso.tools as T
 from gfso import observe, sessions as S
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.observe import observe_place
-from gfso.packets import _executor_packet
+from gfso.packets import executor_packet
 from tests.support import DENIAL_ENTRY, UNMODELLED_FAULT, committed, make_engine
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY", "justification": "no precedent",
@@ -47,7 +47,7 @@ def test_each_check_is_seen_as_it_prints_on_the_place(tmp_path):
     assert [r.get("matched") for r in seen] == [True, False, True, True]
     assert seen[1]["rc"] != 0 and seen[1]["out"], "a check over a program not built shows how it ended"
     assert not (place / "made.txt").exists(), "the checks run in a copy: the session starts on the place as it was"
-    text = _executor_packet(e, t, str(place), seen={"root": seen})
+    text = executor_packet(e, t, str(place), seen={"root": seen})
     assert "Your place as the system found it" in text and "not a verdict" in text and "no build step" in text
     assert "`cat done.txt` → printed what it must show" in text
     assert "`./tool` → exit" in text and "standing findings" in text, "the text says what it does not cover"
@@ -74,7 +74,7 @@ def test_a_place_with_nothing_built_reads_as_one_line(tmp_path):
     committed(tmp_path)
     e, t = _node(*({"behaviour": f"b{i}", "command": "./sql_database < q.sql", "expect": f"value {i}"} for i in range(5)))
     seen = observe_place(e, [t], str(tmp_path))
-    text = _executor_packet(e, t, str(tmp_path), seen=seen)
+    text = executor_packet(e, t, str(tmp_path), seen=seen)
     assert "none of the 5 checks shows what it must" in text and text.count("./sql_database") <= 5 + 1
 
 
@@ -92,7 +92,7 @@ def test_a_project_that_says_no_observes_nothing_and_no_place_nothing(tmp_path):
     assert observe_place(e, [t], None) == {}
     e.set_mode(Mode.SOLO, None, AgentId("user"), settings={"observe": "0"})
     assert observe_place(e, [t], str(tmp_path)) == {}
-    assert "Your place as the system found it" not in _executor_packet(e, t, str(tmp_path), seen={})
+    assert "Your place as the system found it" not in executor_packet(e, t, str(tmp_path), seen={})
 
 
 def test_the_session_still_ends_inside_its_deadline_after_the_observation(monkeypatch):

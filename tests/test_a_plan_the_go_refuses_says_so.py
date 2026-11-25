@@ -57,7 +57,7 @@ def test_the_repair_after_the_build_is_told_what_the_go_would_refuse(monkeypatch
     told = []
     monkeypatch.setattr(D, "_repaired_before_build", lambda spec, *a, **k: spec)
     monkeypatch.setattr(D, "admission_refusals", lambda spec, *a, **k: ["seam a → b: names nothing"])
-    monkeypatch.setattr(D, "_audit_fix", lambda llm, request, spec, problems, executor: told.extend(problems) or {})
+    monkeypatch.setattr(D, "audit_fix", lambda llm, request, spec, problems, executor: told.extend(problems) or {})
     e = _engine(Mode.AUTO)
     try:
         D._build_verified(_plan(), GOAL, e, "root", "user", llm=None)

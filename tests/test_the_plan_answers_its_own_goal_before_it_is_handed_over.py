@@ -177,8 +177,8 @@ def test_the_measurement_arm_authors_with_no_reading_of_the_gate(monkeypatch):
     fold, and the gate's reading is never asked (critic over the first fold)."""
     monkeypatch.setenv("GFSO_SUFFICIENCY_AT_AUTHORING", "0")
     monkeypatch.setattr(L, "goal_obligations", lambda *a: (_ for _ in ()).throw(AssertionError("the gate was read")))
-    monkeypatch.setattr(L, "_search", lambda *a, **k: "found by search")
+    monkeypatch.setattr(L, "search", lambda *a, **k: "found by search")
     seen = []
-    monkeypatch.setattr(L, "_audit_fold", lambda llm, request, prev, holes, **k: seen.append(holes) or {})
+    monkeypatch.setattr(L, "audit_fold", lambda llm, request, prev, holes, **k: seen.append(holes) or {})
     L.decompose_spec("g", llm=type("Q", (), {"on_tick": "absent"})())
     assert seen == ["found by search"]

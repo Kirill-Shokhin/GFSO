@@ -30,7 +30,8 @@ from gfso.roster import AgentRegistry, default_agents, publish_the_workforce
 from gfso.delegate import _DISPATCHERS, ensure_dispatcher
 from gfso.decompose import kept as _kept_plans
 from gfso.tools import is_refusal
-from gfso.workspaces import drop_execution, drop_host_files, drop_node_branches
+from gfso.executions import drop_execution
+from gfso.workspaces import drop_host_files, drop_node_branches
 
 log = logging.getLogger(__name__)
 

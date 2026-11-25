@@ -63,7 +63,7 @@ def test_a_childs_finer_criterion_is_read_as_the_roots_are():
 
 def _built(monkeypatch, spec, on):
     told = []
-    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {
+    monkeypatch.setattr(D, "audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {
         "root_criteria": [ASKED]})
     e = make_engine()
     e.start()
@@ -91,7 +91,7 @@ def test_a_plan_the_system_did_not_write_from_the_request_alone_is_not_repaired_
 def _told(monkeypatch, spec, task, request="", root_goal=None):
     """What `_repaired_before_build`'s first round tells the repairer of `spec`, written now from `task` (`agree.on`)."""
     told = []
-    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {})
+    monkeypatch.setattr(D, "audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {})
     monkeypatch.setattr(D, "root_of", lambda tasks: root_goal and SimpleNamespace(spec=SimpleNamespace(
         description=root_goal)))
     agree = D._Agreement(None, make_engine(), "root.count", task, True, False)
@@ -122,7 +122,7 @@ def test_yo_reads_as_ye():
 def test_what_the_rounds_leave_is_in_the_plan_file_and_the_answer_says_it_as_the_systems(monkeypatch, no_model):
     """Through the authoring verb: the repair left the invented criterion, the file keeps each `asked`, its review names
     the criterion as the system's own, and the plan's answer tells the client to name it to the person."""
-    monkeypatch.setattr(D, "_audit_fix", lambda *a, **k: {})
+    monkeypatch.setattr(D, "audit_fix", lambda *a, **k: {})
     monkeypatch.setattr(D, "decompose_spec", lambda *a, **k: _plan_of(ASKED, UTF8, _crit("bare")))
     text = planning.author(GOAL, "m")
     p = artifact.parse(text)
@@ -161,8 +161,8 @@ def _refined(monkeypatch, plan, added=None, patch=None):
     """`refine_plan` over `plan` with the note NOTE, its fold adding `added` (or folding `patch`): (what the repairs
     were told, the new file)."""
     told = []
-    monkeypatch.setattr(D, "_audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {})
-    monkeypatch.setattr(D, "_audit_fold", lambda *a, **k: patch or {"add_root_criteria": [added]})
+    monkeypatch.setattr(D, "audit_fix", lambda llm, req, sp, problems, ex: told.append(problems) or {})
+    monkeypatch.setattr(D, "audit_fold", lambda *a, **k: patch or {"add_root_criteria": [added]})
     monkeypatch.setattr(D._Agreement, "judge", lambda self, spec: None)
     text = planning.refine(artifact.render(GOAL, plan, {"by": "m"}), NOTE, "m")
     return [x for xs in told for x in xs if "states nothing the request asks" in x], artifact.parse(text)

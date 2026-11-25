@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from gfso import workspaces as WS
+import gfso.made as M
 from gfso.adapters import execution as E
 from gfso.adapters.execution import ContainerExecution, LocalExecution, scratch_of
 from gfso.adapters.worktrees import base_of
@@ -111,6 +112,6 @@ def test_a_place_recorded_under_its_raw_name_is_still_made_after_the_name_was_ma
     """Else a delivered node of such a base, waiting on its validator through an upgrade, is validated away from its delivery."""
     old = str(tmp_path / ".gfso-nodes-word top" / "p" / "root")
     new = str(tmp_path / ".gfso-nodes-word~20top" / "p" / "root")
-    held = {WS.MADE + old: "1"}
+    held = {M.MADE + old: "1"}
     engine = SimpleNamespace(graph=SimpleNamespace(setting=held.get))
-    assert WS.made(engine, new) is True
+    assert M.made(engine, new) is True

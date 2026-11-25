@@ -12,7 +12,7 @@ from gfso import tools as T, tools_llm as TL
 from gfso.core.protocol.invariants import verdict_report_defects
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.decompose import artifact as A
-from gfso.packets import _validator_packet
+from gfso.packets import validator_packet
 from tests.test_a_solo_chat_writes_its_own_plan_and_the_person_gives_the_go import ASKED, _filled, no_model  # noqa: F401
 from tests.test_the_go_only_adds_to_the_plan import GOAL, _plan
 from tests.test_the_mode_decides_who_holds_what import _engine
@@ -116,7 +116,7 @@ def test_the_plans_answer_before_the_go_shows_it(no_model):
 
 def test_the_validators_packet_carries_the_go_and_the_plan(no_model):
     e, root = _gone()
-    packet = _validator_packet(e, root, "delivered", None)
+    packet = validator_packet(e, root, "delivered", None)
     assert SAID in packet and 'name = "counts"' in packet and "recorded words" in packet, packet
     assert "not quotable" in packet, "the plan is the agent's text: context, never a quote's source"
     assert "# One criterion per thing" not in packet, "the template's comments are the system's, not the agreement"
@@ -207,7 +207,7 @@ def test_the_persons_revision_of_it_is_read_by_the_next_validation(no_model):
               "check": [p.to_dict() for p in c.check]} for c in root.spec.criteria]
     out = TL.TOOLS["edit_criteria"](e, "root", crits, user_said="нет, пустые строки я не имел в виду")
     assert not (out or {}).get("refused"), out
-    packet = _validator_packet(e, e.graph.get_task(root.id), "again", None)
+    packet = validator_packet(e, e.graph.get_task(root.id), "again", None)
     assert meant in packet and "пустые строки я не имел в виду" in packet, packet
 
 
@@ -215,7 +215,7 @@ def test_a_parts_packet_is_as_it_was(no_model):
     packets = []
     for intent in (True, False):
         e, root = _gone(intent=intent, text=A.render(GOAL, _plan(), {}))
-        packets.append(_validator_packet(e, e.graph.get_task(TaskId("root.core")), "built", None))
+        packets.append(validator_packet(e, e.graph.get_task(TaskId("root.core")), "built", None))
     assert packets[0] == packets[1] and INTENT not in packets[0]
 
 

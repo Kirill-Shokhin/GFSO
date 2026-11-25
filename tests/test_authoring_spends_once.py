@@ -23,8 +23,8 @@ def test_given_findings_skip_the_search(monkeypatch):
         e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("user"))
         e.wait_idle()
         searched, folded = [], []
-        monkeypatch.setattr(D, "_search", lambda *a, **k: searched.append(1) or "found")
-        monkeypatch.setattr(D, "_audit_fold", lambda llm, req, state, holes, **k: folded.append(holes) or {})
+        monkeypatch.setattr(D, "search", lambda *a, **k: searched.append(1) or "found")
+        monkeypatch.setattr(D, "audit_fold", lambda llm, req, state, holes, **k: folded.append(holes) or {})
         D._refine_round(e, "goal", "root", "user", object(), findings="the listed obligations")
         D._refine_round(e, "goal", "root", "user", object())
     finally:

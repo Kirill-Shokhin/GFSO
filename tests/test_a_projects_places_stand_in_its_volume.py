@@ -24,6 +24,8 @@ import gfso.adapters.execution as E
 import gfso.adapters.worktrees as W
 import gfso.engine.findings as F
 import gfso.workspaces as WS
+import gfso.executions as X
+import gfso.made as M
 from gfso.cli import _export_places
 from gfso.adapters.execution import STATE_INSIDE, ContainerExecution
 from gfso.core.types import PlaceUnavailable, nodes_root
@@ -172,8 +174,8 @@ def test_only_a_projects_deletion_removes_its_volume(tmp_path, monkeypatch):
     E.end_leftovers()
     E.end_started()
     assert not [a for a in ran if a[:2] == ["docker", "volume"] and "rm" in a]
-    monkeypatch.setattr(WS, "_EXECUTIONS", {("e3-linux", "p", str(base)): x})
-    WS.drop_execution("p")                                       # …by its label: no roster read
+    monkeypatch.setattr(X, "_EXECUTIONS", {("e3-linux", "p", str(base)): x})
+    X.drop_execution("p")                                       # …by its label: no roster read
     ls = next(a for a in ran if a[:3] == ["docker", "volume", "ls"])
     assert "label=gfso.project=p" in ls and f"label=gfso.home={E._home()}" in ls
     assert ["docker", "volume", "rm", "-f", "its-v"] in ran and ["docker", "volume", "rm", "-f", "its-state"] in ran
@@ -326,7 +328,7 @@ def test_live_a_copy_in_cut_by_its_time_leaves_no_copy_running_and_the_next_star
 
 
 def _fresh(tmp_path, base, record: dict, name: str = "", project: str = "p") -> ContainerExecution:
-    """A server's view of the project, its own record in hand — as `workspaces.execution_of` holds it."""
+    """A server's view of the project, its own record in hand — as `executions.execution_of` holds it."""
     E._STARTED.clear()
     E._SESSIONS.clear()
     x = ContainerExecution(name or f"t{tmp_path.name[-12:]}", IMAGE, None, str(tmp_path / "state"), str(base), project)
@@ -429,12 +431,12 @@ def test_live_a_place_and_a_round_carried_in_stand_by_the_record_once_their_host
     graph.setting, graph.store_setting = graph.d.get, graph.d.__setitem__
     engine = SimpleNamespace(graph=graph)
     x = _fresh(tmp_path, base, graph.d)
-    x.volume.carried = lambda dirs: WS._carried(engine, dirs)
+    x.volume.carried = lambda dirs: M.carried(engine, dirs)
     try:
         assert x.files.is_dir(str(a := x.own / "a")) and not (tmp_path / ".gfso-nodes-ws" / "p").exists()
         r1 = str(x.own / ".gfso-scratch-a" / "r1")
-        assert WS.made(engine, str(a)) and F.round_stands(graph)((r1, ".gfso-scratch-a/r1"))
-        assert not WS.made(engine, str(x.own / "b")), "the host is not asked once the volume is recorded"
+        assert M.made(engine, str(a)) and F.round_stands(graph)((r1, ".gfso-scratch-a/r1"))
+        assert not M.made(engine, str(x.own / "b")), "the host is not asked once the volume is recorded"
     finally:
         x.stop()
         x.volume.remove()
@@ -669,7 +671,7 @@ def test_live_a_lost_state_volume_is_the_place_down_and_a_project_made_again_inh
             x.files.read_bytes(str(x.own / "a" / "old.txt"))
         assert not _volume_stands(x.volume.state), "no volume made of a lost one"
         x.stop()
-        WS.drop_execution("p")
+        X.drop_execution("p")
         assert not _volume_stands(x.volume.name)
         x = _fresh(tmp_path, base, {})                               # …made again: its record went with its db
         assert x.files.read_bytes(str(x.own / "a" / "old.txt")) is None, "a project made again inherits nothing"

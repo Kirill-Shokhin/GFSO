@@ -469,7 +469,7 @@ def test_his_fail_and_its_words_reach_the_next_check_and_the_rework(tmp_path):
     why = "the second page still prints the old totals"
     assert _call(PAGE, "signal", e, SEAM, "FAIL", "user", failed_criteria=["d"], reason=why)["state"] == "REWORKING"
     t = e.graph.get_task(TaskId(SEAM))
-    assert why in P._validator_packet(e, t, "the tree", str(tmp_path))
+    assert why in P.validator_packet(e, t, "the tree", str(tmp_path))
     assert why in P._rework_section(e, t)
     with _as(CONSOLE):
         steps = [s for s in T.next_steps(e)["steps"] if s.get("task_id") == SEAM]

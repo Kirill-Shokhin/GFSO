@@ -486,11 +486,12 @@ WHO answers is the provider (`LLMProviderPort`, resolved by the registry above; 
 WHERE its processes and the commands over a project's work run is the `ExecutionPort` (adapters/execution.py):
 `LocalExecution` — this host, as before — or `ContainerExecution` — one sealed Linux container per (execution, project)
 that the one server calls into with `docker exec`. A project chooses it on the existing doors: a role registered with
-`execution=<name>` names an execution the server declares in `data/executions.json`, one per project. Then every call
+`execution=<name>` names an execution the server declares in `data/executions.json`, one per project (selected in
+executions.py, whatever node works where). Then every call
 of the project runs there: its sessions, the plan's author and reviewer, the issuer's derivations, a delivery's snapshot
 and join. The project's container holds the base and the project's own directory — node places, scratch, its temp, its
 system copies — both in the project's places volume (nothing of the host is mounted: the base is the user's HEAD
-imported for the project's root (at its first start, never again by a start) by the user's own git as a bundle and cloned inside under no config or hook of theirs,
+imported for the project's root (at its first start, never again by a start) by the user's own git as a bundle (adapters/hostrepo.py) and cloned inside under no config or hook of theirs,
 recorded `volume:imported`; the root's PASS lands its accepted result back in the user's repository as the branch
 `gfso/<project>/accepted` by `git fetch` of a bundle alone), both at `/gfso-place` under the host paths' names, the
 host loopback forward shut; paths are mapped both ways so the graph keeps host paths, while nothing under the project's

@@ -31,7 +31,7 @@ import gfso.tools as T
 from gfso import issuer as I
 from gfso.adapters.execution import LocalExecution, scratch_of
 from gfso.core.protocol.accounting import unrerunnable
-from gfso.packets import _executor_packet, _validator_packet
+from gfso.packets import executor_packet, validator_packet
 from gfso.core.types import AgentId, TaskId
 from tests.support import a_place, REGISTER, UNMODELLED_FAULT, DENIAL_ENTRY, criterion, make_engine
 from tests.test_the_issuer_answers_a_dispute import _ContactLLM, _IssuerLLM
@@ -202,7 +202,7 @@ def test_retiring_one_criterions_finding_settles_nothing_of_the_other_the_same_p
     assert T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[_id(e)], justification="libc's")["accepted"]
     e.wait_idle()
     assert "other" in e.regression_probes(TaskId("kid"))
-    packet = _executor_packet(e, e.graph.get_task(TaskId("kid")), "ws")
+    packet = executor_packet(e, e.graph.get_task(TaskId("kid")), "ws")
     assert "it rejected the program" in packet and _id(e, "other") not in str(e.rework_settled(TaskId("kid"))), packet
     e.stop()
 
@@ -224,7 +224,7 @@ def test_a_retired_finding_is_no_order_in_the_next_packet():
     T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"finding {_id(e)} is root.libc's scope")
     T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[_id(e)], justification="libc's")
     e.wait_idle()
-    packet = _executor_packet(e, e.graph.get_task(TaskId("kid")), "ws")
+    packet = executor_packet(e, e.graph.get_task(TaskId("kid")), "ws")
     assert _OWN not in packet and "An earlier version" not in packet, packet
     e.stop()
 
@@ -319,7 +319,7 @@ def test_a_finding_is_demanded_while_its_file_is_kept_and_shown_once_it_cannot_b
         with pytest.raises(ValueError, match="REFUTED"):
             _pass(e)                                    # …its file in the record: still demanded
     else:
-        packet = _validator_packet(e, e.graph.get_task(TaskId("kid")), "fixed it", None, scratch=str(tmp_path / "r2"))
+        packet = validator_packet(e, e.graph.get_task(TaskId("kid")), "fixed it", None, scratch=str(tmp_path / "r2"))
         assert "no longer exist here" in packet and "shown, not demanded" in packet
         assert _pass(e)["verdict"] == "PASS", "a finding the record could not keep held the node"
     e.stop()
@@ -368,7 +368,7 @@ def test_the_issuer_judging_a_challenge_sees_the_findings_standing_under_it():
 def test_the_executor_is_told_a_finding_outside_its_criterion_is_a_challenge_not_a_block():
     e = _seam()
     _refute(e, _OWN)
-    text = _executor_packet(e, e.graph.get_task(TaskId("kid")), None)
+    text = executor_packet(e, e.graph.get_task(TaskId("kid")), None)
     assert 'status: "challenge"' in text and "not a dependency" in text
     e.stop()
 
@@ -455,7 +455,7 @@ def test_the_ruling_reaches_the_next_validator_and_a_refiled_finding_is_no_refut
     T.signal(e, "kid", "CHALLENGE", "exec-1", reason=f"{gone} is root.libc's scope")
     T.signal(e, "kid", "ACCEPT_CHALLENGE", "me", retire_findings=[gone], justification="wide characters are libc's")
     _delivered(e, "built it again")
-    packet = _validator_packet(e, e.graph.get_task(TaskId("kid")), "built", None, scratch=str(tmp_path / "r2"))
+    packet = validator_packet(e, e.graph.get_task(TaskId("kid")), "built", None, scratch=str(tmp_path / "r2"))
     assert f"RULED OUT by its issuer [{gone}]" in packet and "wide characters are libc's" in packet
     again = first.replace("kid_1791646628", "kid_1791649999")      # the same probe, filed from a later round
     with pytest.raises(ValueError, match="ruled outside this criterion"):

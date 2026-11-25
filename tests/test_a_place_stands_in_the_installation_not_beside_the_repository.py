@@ -12,7 +12,7 @@ from gfso import config
 from gfso.adapters.execution import scratch_of
 from gfso.adapters.worktrees import base_of, relative_alternates
 from gfso.core.types import NODES, PLACES, base_of_nodes, nodes_root
-from gfso.workspaces import _laid_out_before
+from gfso.made import laid_out_before
 
 
 def test_a_base_s_places_stand_in_the_installation_and_read_back_to_it(tmp_path):
@@ -45,8 +45,8 @@ def test_what_the_old_layout_laid_down_is_still_read(tmp_path):
     base = tmp_path / "ws"
     old = tmp_path / f"{NODES}ws" / "p" / "root.a"
     assert base_of(str(old)) == str(base), "a place made beside its base before reads back as it did"
-    assert _laid_out_before(nodes_root(base) / "p" / "root.a") == old, "a record keyed by the old name is found"
-    assert _laid_out_before(base / "src") == base / "src", "any other path as it is"
+    assert laid_out_before(nodes_root(base) / "p" / "root.a") == old, "a record keyed by the old name is found"
+    assert laid_out_before(base / "src") == base / "src", "any other path as it is"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="drives are Windows'")

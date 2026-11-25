@@ -24,7 +24,7 @@ from gfso.api.server import create_app
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.core.types import (Action, AgentId, Criteria, Signal, SignalData, Spec, State, Task,
                              TaskId)
-from gfso.packets import _executor_packet
+from gfso.packets import executor_packet
 from gfso.engine import Engine, audit
 from gfso.engine.audit import AuditEntry, AuditLog, consented_on_current_version
 from tests.support import criterion, make_engine, pinned, REGISTER_ITEMS, REGISTER
@@ -201,7 +201,7 @@ def _failed_then(e, *resume):
 
 def _still_reworking(e, t) -> None:
     assert e.in_rework(t)
-    assert "the validator FAILED these criteria" in _executor_packet(e, t, None)
+    assert "the validator FAILED these criteria" in executor_packet(e, t, None)
     assert e.next_steps(TaskId("root"))["steps"][0]["action"] == Action.FIX
 
 
@@ -220,7 +220,7 @@ def test_a_new_version_ends_the_rework(e):
     assert T.signal(e, "root", "ACCEPT", W)["accepted"]
     t = e.graph.get_task(TaskId("root"))
     assert t.state == State.EXECUTING and not e.in_rework(t)
-    assert "the validator FAILED" not in _executor_packet(e, t, None)
+    assert "the validator FAILED" not in executor_packet(e, t, None)
 
 
 def test_control_the_state_label_loses_the_failure(e, monkeypatch):

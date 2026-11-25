@@ -30,7 +30,7 @@ from gfso.core.protocol.procedure import criterionless, probes_from as _checks_o
 from gfso.core.protocol.accounting import BOUND_SPENT
 from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
                              Action, Mode, PlaceUnavailable,
-                             SPAWNABLE_ACTIONS, passed, register_of)
+                             EXECUTOR_STATES, SPAWNABLE_ACTIONS, passed, register_of)
 from gfso.issuer import (LIMIT_RETRY_S, Verbs, answer_open_questions, answer_owed_first, signal_ok as _signal, system_issues,
                           split_has_a_mover)
 from gfso.adapters.llm import credentials
@@ -38,10 +38,11 @@ from gfso.adapters.llm.chat import answers, is_address
 from gfso.roster import (AgentRegistry, _resolution_note, default_agents, missing_workdir, on_staffed,
                          publish_the_instruments, publish_the_workforce)
 from gfso.adapters.execution import release_rounds
-from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace, clear_workspaces, execution_of,
-                             join_whole, land_accepted, left_to_merge, made, node_workspace, results_a_split_waits_on, root_created,
-                             session_scope, stands, validator_workdir, where_it_runs)
-from gfso.packets import _EXECUTOR_STATES
+from gfso.executions import execution_of, where_it_runs
+from gfso.made import made
+from gfso.workspaces import (performer, _place_of, _where_it_joins, _workspace, clear_workspaces, join_whole,
+                             land_accepted, left_to_merge, node_workspace, results_a_split_waits_on, root_created,
+                             session_scope, stands, validator_workdir)
 from gfso.sessions import unattended_here, run_consent, run_executor, run_scope_executor, stale
 from gfso.validate import auto_validate, auto_validate_scope, pass_held_by_parts_outside
 from gfso.engine.closures import open_nodes, questions_left_standing, refuted_passes
@@ -392,7 +393,7 @@ class Dispatcher:
         """Is this childless node's split owed, with someone to make it (`issuer.split_has_a_mover`)? Then no
         executor session is spawned on it: its DELIVER as a leaf is refused, so the run could only be thrown away
         (measured: two paid sessions, then parked, then two more). The split is made by the machine issuer's
-        question `split`, or by its issuer, whose step names it (`NodeSteps._step_for`).
+        question `split`, or by its issuer, whose step names it (`NodeSteps.step_for`).
 
         Owed only by its plan's author's judgement, never by a count of rounds: equal FAILs say the work is not there
         yet, not that the node is above its executor's κ (§3.7) — every session of the haiku 4.5 `select` that a count
@@ -768,8 +769,8 @@ class Dispatcher:
         passed, and its executor is here. A refuted split is its executor's repair — a revision, not a
         re-delivery, which the re-delivery gate refuses — and an owed one its executor's split: a session
         before either is a paid run whose every report is refused (measured: two such, then parked)."""
-        open_ = [m for m in members if m.state.name in _EXECUTOR_STATES]
-        if not open_ or any(m.state.name not in (*_EXECUTOR_STATES, "VALIDATING", "DONE") for m in members):
+        open_ = [m for m in members if m.state.name in EXECUTOR_STATES]
+        if not open_ or any(m.state.name not in (*EXECUTOR_STATES, "VALIDATING", "DONE") for m in members):
             return False
         own_consent = self._agents.get(str(top.assignee)) is None   # a holder's hands: it consents, they never do
         if (not self._agents.owner_is_live(performer(self._engine, self._agents, top.assignee)[0])
@@ -967,8 +968,6 @@ class Dispatcher:
         """`being_rewritten` for this dispatcher's engine."""
         return being_rewritten(self._engine, TaskId(task_id))
 
-    _EXECUTOR_STATES = _EXECUTOR_STATES
-
     def _fresh(self, task_id: TaskId, expect_gen: tuple, states: tuple,
                executor_id: str | None = None) -> bool:
         """TOCTOU guard: the dispatch decision can be minutes older than the semaphore slot (observed
@@ -1086,7 +1085,7 @@ class Dispatcher:
 
     def _run_guarded_body(self, task_id: TaskId, executor_id: str, expect_gen: tuple) -> None:
         with self._slot(self._cap.opening, self._key_of(task_id)) as go:
-            if not go or not self._fresh(task_id, expect_gen, self._EXECUTOR_STATES, executor_id):
+            if not go or not self._fresh(task_id, expect_gen, EXECUTOR_STATES, executor_id):
                 return
             # ACCEPT FIXES THE START OF THE OBLIGATION (§11.2) — so it is sent when the work
             # STARTS, not when the report comes back. Wrapping the finished report into
@@ -1097,7 +1096,7 @@ class Dispatcher:
             # the UI included, could show work in progress, because no interval held that fact:
             # "trust, but see" (§19.1) has nothing to see. The executor's consent is still its own
             # report — a spawned executor that never reports leaves the node in EXECUTING, where
-            # the dispatcher's own `_EXECUTOR_STATES` picks it up again exactly as before.
+            # `EXECUTOR_STATES` picks it up again exactly as before.
             # THE PLACE IS ASKED BEFORE THE OBLIGATION IS FIXED. `run_executor` refuses a role whose
             # workdir is gone, but by the time it is called the ACCEPT below has already moved the
             # node OFFERED → EXECUTING and this round's key is spent — so the refusal said "the node
@@ -1152,7 +1151,7 @@ class Dispatcher:
                 # and returned "delivered" for the third, and the node sat to its deadline while its
                 # issuer read "being worked on". One retry, then parked and handed to the issuer.
                 _now = self._engine.graph.get_task(task_id)
-                if (_now is not None and _now.state.name in self._EXECUTOR_STATES
+                if (_now is not None and _now.state.name in EXECUTOR_STATES
                         and self._engine.accepted_moves(task_id) == _before
                         and not self._engine.parking.contested_reason(task_id)):
                     _st = out.get("status") if isinstance(out, dict) else None

@@ -12,17 +12,18 @@ from gfso.llm import session_calls
 from gfso.adapters.llm.stats import stat_line, calls_of, refused_by_limit, the_call_was_cut
 from gfso.adapters.llm.structured import schema_instruction, parse_structured, why_unread
 from gfso.core.graph.model import generation_of_task, project_now
-from gfso.core.types import THIS_HOST, PlaceUnavailable, TaskId, Signal, Stage, State, Verdict
+from gfso.core.types import EXECUTOR_STATES, THIS_HOST, PlaceUnavailable, TaskId, Signal, Stage, State, Verdict
 from gfso.engine.events import emit_cb
 from gfso.issuer import signal_ok as _signal
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
-from gfso.workspaces import _enter_workspace, conversation_of, parts_not_there, execution_of, performer, project_llm, where_it_runs
+from gfso.executions import execution_of, where_it_runs
+from gfso.workspaces import _enter_workspace, conversation_of, parts_not_there, performer, project_llm
 from gfso.observe import observe_place
 from gfso.adapters import worktrees as W
 from gfso.adapters.execution import ended_past_disk, place_past_disk
-from gfso.packets import (TECH_REPORT, _EXECUTOR_STATES, _executor_packet, observed_lines, _scope_order, _scope_packet,
+from gfso.packets import (TECH_REPORT, executor_packet, observed_lines, scope_order, scope_packet,
                           file_tech_reports)
-from gfso.reports import _decided_status, _report_into_signals, _scope_report_into_signals
+from gfso.reports import decided_status, report_into_signals, scope_report_into_signals
 
 
 _PROMPTS = Path(__file__).parent / "mcp" / "prompts"
@@ -80,7 +81,7 @@ MIN_SESSION_S = 60
 
 
 def stale(engine, task_id: TaskId, gen: tuple, executor_id: str | None = None,
-          states: tuple = _EXECUTOR_STATES) -> str:
+          states: tuple = EXECUTOR_STATES) -> str:
     """Why a run of `task_id` for version `gen` by `executor_id` is no longer owed, '' while it is: the node is still
     in a work state (`states`), at that version, held by that Del (Inv-1: the executor is bound only to the version
     he accepted, §12.3). Asked at the slot and again right before the session is spawned — the preamble between
@@ -270,7 +271,7 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
     # `claude -p` — and it was the one path that never appeared in `busy`, so a reconcile arriving
     # from another session read the server as idle and restarted it mid-run.
     report, text, stats, llm, _cb = _spawn(engine, task_id, executor_id, cfg, _llm, "executor", "executor.md",
-                                           _executor_packet(engine, task, cwd, unjoined, seen, lost), EXECUTOR_SCHEMA,
+                                           executor_packet(engine, task, cwd, unjoined, seen, lost), EXECUTOR_SCHEMA,
                                            "delegated_execution", cwd, cap, tasks=(task,))
     if report is None:
         # No signal is forged on a broken report: the node stays where it is; the FSM's own timeout
@@ -288,11 +289,11 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
                 "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm)), "past_disk": past,
                 "disk_ended": ended}
 
-    # `_decided_status` is the owner of "which of the three was this"; the dispatch enforces it and
+    # `decided_status` is the owner of "which of the three was this"; the dispatch enforces it and
     # this line only reports what the round amounted to. An unrecognised word is `undecided`, and
     # the caller can tell that from a delivery.
-    status = _decided_status(report.get("status"))
-    _report_into_signals(engine, task_id, executor_id, task, report,
+    status = decided_status(report.get("status"))
+    report_into_signals(engine, task_id, executor_id, task, report,
                          status or str(report.get("status")), llm, _cb,
                          observed=engine.observed_here(task_id)
                          and agents.validator_for(hands or executor_id, project=engine.project_name) is not None,
@@ -331,7 +332,7 @@ def run_consent(engine, task_id: TaskId, executor_id: str, agents: "AgentRegistr
     # its executor made one, it shared the base's model-client state with the root's executor and read its
     # conversations (measured, a stand-in model driving the real CLI). With no git base, the roster's directory
     here = _enter_workspace(engine, agents, task, [task])[0] or cfg.get("workdir")
-    packet = (_executor_packet(engine, task, here)
+    packet = (executor_packet(engine, task, here)
               + f"\n## The split under your node — built by its children, merged into your tree: what your criteria "
                 f"catch in it is yours to fix there, not a defect of your contract\n{kids}\n")
     _fresh_disk(engine, agents, here)
@@ -375,10 +376,10 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
     §3.7) are handed over together, in build order, and its one report is wrapped into each node's signals.
     The scope's top presents one result outward; the nodes inside are its own detail (§10.3)."""
     cfg = performer(engine, agents, executor_id)[1] or {}
-    order = _scope_order(engine, engine.scope_members(top_id))
+    order = scope_order(engine, engine.scope_members(top_id))
     started_on = {str(t.id): generation_of_task(t) for t in order}   # before the place is entered (see run_executor)
     held = {str(t.id): t.assignee for t in order}
-    todo = [t for t in order if t.state.name in _EXECUTOR_STATES]
+    todo = [t for t in order if t.state.name in EXECUTOR_STATES]
     if not todo:
         return {"task_id": str(top_id), "status": "nothing_open"}
     if agents.get(executor_id) is None and any(t.state.name == "OFFERED" for t in todo):
@@ -406,7 +407,7 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
     _cb(f"{top_id}: one executor session ({executor_id}) for the scope's open node(s) "
         f"{', '.join(str(t.id) for t in todo)}" + (f", cap {cap}s" if cap else "") + "…")
     report, text, stats, llm, _cb = _spawn(engine, top_id, executor_id, cfg, _llm, "scope-executor",
-                                           "executor_scope.md", _scope_packet(engine, top, order, cwd, unjoined, seen, lost),
+                                           "executor_scope.md", scope_packet(engine, top, order, cwd, unjoined, seen, lost),
                                            SCOPE_SCHEMA, "delegated_execution", cwd, cap, tasks=tuple(todo))
     if report is None:
         past, ended = _past_disk(engine, agents, cwd)
@@ -415,6 +416,6 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
         return {"task_id": str(top_id), "status": "unparsed", "report_text": text, "stats": stats,
                 "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm)), "past_disk": past,
                 "disk_ended": ended}
-    _scope_report_into_signals(engine, order, executor_id, report, llm, _cb, workspace=ws, started_on=started_on,
+    scope_report_into_signals(engine, order, executor_id, report, llm, _cb, workspace=ws, started_on=started_on,
                                unjoined=unjoined)
     return {"task_id": str(top_id), "status": "reported", "stats": stats}

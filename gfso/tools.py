@@ -30,7 +30,7 @@ from gfso.core.protocol.procedure import (admission_defects, materialize_inputs,
 from gfso.core.protocol.validation import P2P_SIGNALS, Role
 from gfso.config import (DEFAULT_PROJECT, data_dir as _data_dir, for_the_hands, how_it_is_waited,
                          VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE, unsigned,
-                         caller_id as _config_caller_id)
+                         caller_id)
 from gfso.engine import Engine, second_root_refusal
 from gfso.engine.frontier import OBSERVE, WITHHOLDS, recovery_said, refuted_reading, step_role
 from gfso.engine.moves import CHECKS, DOOR_KEYS, READS, Move, door_holder, role_holder, signal_role, signer_due
@@ -290,7 +290,7 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
     out = {**task_out(t, engine), "checker": engine.checker(t.id)}   # …who checks its deliveries (`set_checker`)
     if made := engine.checker_choices(t.id):                         # …and who chose it, when, on what words
         out["checker_chosen"] = made
-    if signs_as(engine.graph.issuer_of(t.id), _agent_id()) and engine.checker_choosable(t.id):
+    if signs_as(engine.graph.issuer_of(t.id), caller_id()) and engine.checker_choosable(t.id):
         out["checker_choices"] = engine.checker_choices_now(t.id)    # …and whom the caller may appoint now
     if (blocked := _blocked_by(engine, t)):
         out["blocked_by"] = blocked
@@ -932,7 +932,7 @@ def return_finding(engine: Engine, task_id: str, finding: str, why: str, agent: 
     it is demanded of every later PASS again, and no validator's run takes it off. `why` is recorded."""
     if not why.strip():
         return {"error": "a returned finding says why"}
-    if not engine.return_finding(TaskId(task_id), finding, agent or _agent_id(), why):
+    if not engine.return_finding(TaskId(task_id), finding, agent or caller_id(), why):
         return {"error": f"no finding {finding} on {task_id} stands as not reproduced"}
     t = engine.graph.get_task(TaskId(task_id))
     return {"returned": finding, **({"note": "demanded of the next PASS: this node has none coming until it is reopened"}
@@ -946,7 +946,7 @@ def rule_unrun_finding(engine: Engine, task_id: str, findings: list, ruling: str
     asked again while its criterion reads as now. `findings`: the ids the stop names. Then `start_project`."""
     if ruling not in ("retire", "keep"):
         return {"error": "ruling is `retire` or `keep`"}
-    refused = engine.rule_unrun(TaskId(task_id), findings, agent or _agent_id(), (why or "").strip(), ruling == "retire")
+    refused = engine.rule_unrun(TaskId(task_id), findings, agent or caller_id(), (why or "").strip(), ruling == "retire")
     return {"error": refused} if refused else {"ruled": ruling, "findings": list(findings),
                                                "next": "start_project, if the run is stopped"}
 
@@ -1006,16 +1006,16 @@ def dispute_finding(engine: Engine, task_id: str, criterion: Union[str, list], w
                           f"finding with no argument at all.")}
     _keys = [str(c) for c in criterion] if isinstance(criterion, (list, tuple)) else [str(criterion)]
     if len(_keys) == 1:      # the single-key contract is unchanged: it raises, and the door wraps it
-        _out = engine.dispute_review_finding(TaskId(task_id), _keys[0], why, AgentId(_agent_id()))
+        _out = engine.dispute_review_finding(TaskId(task_id), _keys[0], why, AgentId(caller_id()))
         engine.emit_info("dispute", f"{task_id}: Level-2 finding {_keys[0]!r} DISCHARGED BY ARGUMENT "
-                                    f"by {_agent_id()} — the plan did not change. Reason: {why}")
+                                    f"by {caller_id()} — the plan did not change. Reason: {why}")
         return _out
     out: dict = {}
     for _k in _keys:
         try:
-            out = engine.dispute_review_finding(TaskId(task_id), _k, why, AgentId(_agent_id()))
+            out = engine.dispute_review_finding(TaskId(task_id), _k, why, AgentId(caller_id()))
             engine.emit_info("dispute", f"{task_id}: Level-2 finding {_k!r} DISCHARGED BY ARGUMENT "
-                                        f"by {_agent_id()} — the plan did not change. "
+                                        f"by {caller_id()} — the plan did not change. "
                                         f"Reason: {why}")
         except ValueError as ex:
             # In a BATCH the refusal is data, not an exception: the caller needs to know which keys
@@ -1269,7 +1269,7 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
     # state to ANY role — four actions the caller could not perform, and no `why_none` either. The
     # door pins identity for `signal` ("impersonation is impossible") and forgot it here; measured
     # 2026-08-20 through the MCP door. `agent="*"` is the old any-role view, which the UI wants.
-    who = _agent_id() if agent is None else agent
+    who = caller_id() if agent is None else agent
     acts = [s.name for s in engine.available_actions(TaskId(task_id),
                                                      None if who == "*" else AgentId(who))]
     t = engine.graph.get_task(TaskId(task_id))
@@ -1476,7 +1476,7 @@ def graph_read(engine: Engine) -> dict:
 def get_graph(engine: Engine) -> dict:
     """The whole graph: nodes (id, name, state, parent) + edges (parent-child and dependency). The bird's-eye
     view — use it to see overall progress / where the frontier is."""
-    return {**graph_read(engine), **next_for(engine, _agent_id())}
+    return {**graph_read(engine), **next_for(engine, caller_id())}
 
 
 def list_holes(engine: Engine, root_id: Optional[str] = None) -> dict:
@@ -1621,14 +1621,14 @@ def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str], 
     project's executors where the system holds and it keeps the seam — is kept."""
     want = engine.del_for(TaskId(parent_id) if parent_id else None)
     if want is None:
-        return AgentId(asked or _agent_id())
+        return AgentId(asked or caller_id())
     if not asked or str(asked) == str(want):
         return want
     if parent_id and (scope := engine.scope_at(parent_id)) is not None:
         raise ValueError(f"'{parent_id}' lies under {scope['top']}, a top of the mode the person set at {scope['node']} "
                          f"({scope['mode']}, {scope['perform']}): every node there is its holder's, {want}'s — given to "
                          f"{asked}, it would be a seam inside solo (§10.3). Leave `assignee` out, or name {want}")
-    me = _agent_id()
+    me = caller_id()
     parent = engine.graph.get_task(TaskId(parent_id)) if parent_id else None
     system_side = str(want) != me
     keepers = [str(a) for a in engine.seam_keepers(parent.assignee if parent else None,
@@ -1646,12 +1646,6 @@ def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str], 
         f"so it cannot be given to {asked}. {lift[0].upper() + lift[1:]}, or — where the name is optional — "
         f"leave `assignee` out and the mode assigns it; the mode itself is the user's choice of who holds "
         f"what, and only the user changes it.")
-
-
-def _agent_id() -> str:
-    """Who signs the call being served — the name its credential resolved to at its door (`config.caller_id`), `user`
-    where no door served it — so an omitted `assignee` means the caller itself."""
-    return _config_caller_id()
 
 
 def admission_of(spec: dict) -> list[str]:
@@ -1735,7 +1729,7 @@ def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
                                # sets a goal for another is its issuer (§15.2; §14: the PM issues, the Tech Lead
                                # executes), else that person had no move on the goal they set (ui critic, 11-14)
                                issuer=None if parent_id else AgentId(agent) if agent and agent != str(_del)
-                               else AgentId(_agent_id()) if (
+                               else AgentId(caller_id()) if (
                                    engine.mode() or engine.workforce.kind_of(str(_del)) is not None) else None,
                                covers=tuple(covers or ()))
     except ValueError as ex:
@@ -2206,7 +2200,7 @@ def revise(engine: Engine, task_id: str, spec: Optional[dict] = None, agent: str
     # spec=None carries the node's OWN contract unchanged — the bound-only revision above.
     return task_out(engine.revise(TaskId(task_id),
                                    _spec_from(spec) if spec is not None else t.spec,
-                                   AgentId(agent or _agent_id()),
+                                   AgentId(agent or caller_id()),
                                    reason=_reason_from(reason), deadline=_deadline(deadline, engine.graph),
                                    max_iterations=max_iterations, block_sources=tuple(block_sources or ()),
                                    block_refuted=block_refuted), engine, plan=False)
@@ -2222,7 +2216,7 @@ def edit_accepted_risks(engine: Engine, task_id: str, accepted_risks: list,
     component: the STD-3 component it accepts as a group, if any} — every field is mandatory per factor on a
     decomposed node (CHECK-4), and the register carries the split's own denial by S as one more entry:
     {denial: true, p: the recorded refutation rate of comparable splits, else your estimate, justification} (§9.5)."""
-    agent = agent or _agent_id()
+    agent = agent or caller_id()
     was = engine.graph.get_task(TaskId(task_id))
     items = _accepted_risks_from(accepted_risks)
     # the split's register where there is a split and its decomposer writes; else the packet's pre-fill (a leaf's
@@ -2258,7 +2252,7 @@ def edit_scope(engine: Engine, task_id: str, scope: list, agent: str = "") -> Op
     goal's criteria, and there was no verb that could reach `scope` at all except a wholesale
     `revise`. One concept, one destination, one door.
     """
-    agent = agent or _agent_id()
+    agent = agent or caller_id()
     was = engine.graph.get_task(TaskId(task_id))
     if was is None:
         return {"refused": True, "error": f"unknown task {task_id}"}
@@ -2300,7 +2294,7 @@ def edit_criteria(engine: Engine, task_id: str, criteria: list[dict], agent: str
     # named anywhere, so a person answered "edit_criteria needs agent" by guessing a name that
     # happened to work (measured 2026-08-21). The caller's standing identity is the answer the
     # agent door has always used; a person naming themselves still overrides it.
-    agent = agent or _agent_id()
+    agent = agent or caller_id()
     # …THROUGH THE OWNER OF THE RULE, not a second spelling of it. `TaskId` is a string alias, so
     # `TaskId(["a", "b"])` hands the list straight back: this door accepted the very value
     # `_spec_from` refuses, the DAG check then raised `unhashable type: 'list'` inside the event
@@ -2545,7 +2539,7 @@ def add_dependency(engine: Engine, from_id: str, to_id: str, glue: str = "",
                          f"(`decompose` with `replaces`)")
     was = _version(engine, to_id)
     engine.add_dependency(TaskId(from_id), TaskId(to_id), glue=glue,
-                          check=_checks_of({"check": check}) if check else (), agent=AgentId(agent or _agent_id()))
+                          check=_checks_of({"check": check}) if check else (), agent=AgentId(agent or caller_id()))
     return {"ok": True, "from": from_id, "to": to_id, **({"read_as": f"{asked} is replaced: the edge stands on {from_id}, which stands in for it"}
                                                        if asked != from_id else {}),
             "declared": f"'{to_id}' now WAITS for '{from_id}' to pass — '{from_id}' produces, "
@@ -2560,7 +2554,7 @@ def remove_dependency(engine: Engine, from_id: str, to_id: str, agent: str = "")
     being admitted to execution until the check runs again (§9.1) — said in the answer: `{"ok": true}` alone left a
     person watching a graph that did not move (measured on the human door 2026-08-22)."""
     was = _version(engine, to_id)
-    engine.remove_dependency(TaskId(from_id), TaskId(to_id), agent=AgentId(agent or _agent_id()))
+    engine.remove_dependency(TaskId(from_id), TaskId(to_id), agent=AgentId(agent or caller_id()))
     return {"ok": True, "removed": f"{from_id} -> {to_id}", **_the_dep_act(engine, to_id, was)}
 
 
@@ -3000,7 +2994,7 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
     the field is for — then skips its own obligation and the graph stops. So for `validate` the owner
     is the node's ISSUER: its parent's executor, or for a root the agent that assigned it.
     """
-    me = me or _agent_id()
+    me = me or caller_id()
     for s in (out.get("steps") or ([out] if out.get("task_id") else [])):
         a = s.get("assignee")
         # …AND THE REVISION ONLY THE ISSUER CAN MAKE: an ESCALATED node (Inv-8: the issuer owns it) and a
@@ -3184,8 +3178,8 @@ def record_verdict(engine: Engine, task_id: str, verdict: str,
     # refusal of reviewer == executor below compares names, and an omitted name never matched. The
     # misattribution was the default path, not a forgery (found by the theory stream's review of the
     # root seam, 2026-09-24). An omitted reviewer is the door's standing identity, as it is for every
-    # other act on this surface (`_agent_id`); a person names themselves, as they do with `source`.
-    reviewer = reviewer or _agent_id()
+    # other act on this surface (`caller_id`); a person names themselves, as they do with `source`.
+    reviewer = reviewer or caller_id()
     _t = engine.graph.get_task(TaskId(task_id))
     # A NODE WITH NO CRITERIA CANNOT BE VALIDATED. V(t) is the conjunction over the node's criteria
     # (§2), and the conjunction over an empty set is vacuously TRUE — so the strongest guard in the
@@ -3354,7 +3348,7 @@ def _named_offer(engine: Engine, s: dict) -> dict:
 
 def tech_report(engine: Engine, text: str, task_id: Optional[str] = None, actor: Optional[str] = None) -> dict:
     """Rarely: report a defect of the SYSTEM itself (not of the task) that leaves you no honest move. Moves nothing."""
-    return {"filed": engine.tech_report(text, "mcp", actor or _agent_id(), task_id)}
+    return {"filed": engine.tech_report(text, "mcp", actor or caller_id(), task_id)}
 
 
 def tech_reports(engine: Engine, resolved: bool = False) -> dict:
@@ -3369,7 +3363,7 @@ def tech_reports(engine: Engine, resolved: bool = False) -> dict:
 def resolve_report(engine: Engine, report_id: str, how: str, actor: Optional[str] = None) -> dict:
     """Resolve a tech report you were sent or wrote (`tech_reports` names each one's `addressee` and `actor`): say `how`
     it was dealt with. It leaves every open count and stays in the log (`tech_reports resolved=true`)."""
-    out = engine.resolve_report(report_id, how, actor or _agent_id())
+    out = engine.resolve_report(report_id, how, actor or caller_id())
     return {"error": out} if isinstance(out, str) else {"resolved": out}
 
 

@@ -1,6 +1,6 @@
 """An LLM role's structured report turned into the protocol's signals: what its self-check and status decided
-(`_decided_self_check`, `_decided_status`), the internal node it may settle itself (`_settle_internal`), and the
-signals one node's report or one scope's report sends (`_report_into_signals`, `_scope_report_into_signals`). An
+(`_decided_self_check`, `decided_status`), the internal node it may settle itself (`_settle_internal`), and the
+signals one node's report or one scope's report sends (`report_into_signals`, `scope_report_into_signals`). An
 undecided report sends no delivery."""
 from __future__ import annotations
 
@@ -10,10 +10,11 @@ from gfso.adapters import worktrees as W
 from gfso.adapters.llm.stats import stat_line
 from gfso.core.protocol.invariants import verdict_word
 from gfso.core.graph.model import generation_of_task
-from gfso.core.types import TaskId, Signal, Verdict
+from gfso.core.types import EXECUTOR_STATES, TaskId, Signal, Verdict
 from gfso.issuer import signal_ok as _signal
-from gfso.packets import DELIVERED, HELD, _EXECUTOR_STATES
-from gfso.workspaces import execution_of, still_unjoined
+from gfso.packets import DELIVERED, HELD
+from gfso.executions import execution_of
+from gfso.workspaces import still_unjoined
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def _decided_self_check(raw) -> "Verdict | None":
     return verdict_word(raw, lenient=True)
 
 
-def _decided_status(raw) -> "str | None":
+def decided_status(raw) -> "str | None":
     """Which of the three the executor reported — or nothing, when it reported something else.
 
     §11.2 gives an executor three moves after it has worked: it delivered, it is blocked, or it
@@ -130,7 +131,7 @@ def _settle_internal(engine, task_id: TaskId, self_check, _cb, observed: bool = 
             f"carried by the validation of the public result above it)")
 
 
-def _report_into_signals(engine, task_id, executor_id, task, report: dict, status: str,
+def report_into_signals(engine, task_id, executor_id, task, report: dict, status: str,
                          llm, _cb, observed: bool = False, workspace: tuple | None = None,
                          started_on: tuple | None = None, unjoined: list = ()) -> None:
     """The executor's report, wrapped into the protocol: challenge · block · deliver.
@@ -260,7 +261,7 @@ def _not_handed_in(engine, task_id, workspace: tuple | None, artifact: str | Non
     return None
 
 
-def _scope_report_into_signals(engine, order: list, executor_id: str, report: dict, llm, _cb,
+def scope_report_into_signals(engine, order: list, executor_id: str, report: dict, llm, _cb,
                                workspace: tuple | None = None, started_on: dict | None = None,
                                unjoined: list = ()) -> None:
     """The scope session's report, wrapped into each node's own signals in build order, parts first. The
@@ -270,7 +271,7 @@ def _scope_report_into_signals(engine, order: list, executor_id: str, report: di
     by = {str(e.get("task_id")): e for e in report.get("nodes") or () if isinstance(e, dict)}
     for t in order:
         t = engine.graph.get_task(t.id)
-        if t is None or t.state.name not in _EXECUTOR_STATES:
+        if t is None or t.state.name not in EXECUTOR_STATES:
             continue
         entry = by.get(str(t.id))
         # a whole is handed in with its parts — in rework too, in the same session that reworks them. Waiting for
@@ -280,7 +281,7 @@ def _scope_report_into_signals(engine, order: list, executor_id: str, report: di
         # leaf's every failing round — the whole's budget is its issuer's forecast of rounds, and a round of the
         # whole is one session of the scope.
         short = [str(k.id) for k in engine.graph.get_active_children(t.id) if k.state.name not in ("VALIDATING", "DONE")]
-        status = _decided_status(entry.get("status")) if entry is not None else None
+        status = decided_status(entry.get("status")) if entry is not None else None
         if entry is None or (short and status == "delivered"):
             _cb(f"{t.id}: not signalled — " + (f"its part(s) {', '.join(short)} were not delivered, and a whole "
                                                 f"is handed in with its parts" if entry is not None else
@@ -303,7 +304,7 @@ def _scope_report_into_signals(engine, order: list, executor_id: str, report: di
                     f"scope's sessions build; it stays open for the next one")
                 continue
             entry = {**entry, "blocker_task_ids": outside, "blocker_task_id": one}
-        _report_into_signals(engine, t.id, executor_id, t, {**entry, "summary": str(entry.get("summary") or "")},
-                             _decided_status(entry.get("status")) or str(entry.get("status")), llm, _cb,
+        report_into_signals(engine, t.id, executor_id, t, {**entry, "summary": str(entry.get("summary") or "")},
+                             decided_status(entry.get("status")) or str(entry.get("status")), llm, _cb,
                              observed=True, workspace=workspace,
                              started_on=(started_on or {}).get(str(t.id)), unjoined=unjoined)

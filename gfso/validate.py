@@ -20,7 +20,8 @@ from typing import Optional
 
 from gfso import store
 from gfso.llm import llm_factory, session_calls
-from gfso.workspaces import execution_of, node_workspace, rejected_reports_dir, validator_workdir
+from gfso.executions import execution_of
+from gfso.workspaces import node_workspace, rejected_reports_dir, validator_workdir
 from gfso.roster import AgentRegistry, default_agents
 from gfso.adapters import worktrees as W
 from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, judged_at, snapshot, swap
@@ -46,8 +47,8 @@ from gfso.engine.loop import state_bound_left
 from gfso.engine.validation import StaleRun, whole_waits_for_its_parts
 from gfso.engine.closures import verdict_provenance
 from gfso.config import CALLER, MODEL_DEFAULT, state_bound, validate_internal, validation_batch
-from gfso.packets import (BUILT, TECH_REPORT, UNCOPIED, _last_deliver_result, _scope_order, _scope_validator_packet,
-                          _validator_packet, file_tech_reports, owed_probes, snapshot_note)
+from gfso.packets import (BUILT, TECH_REPORT, UNCOPIED, last_deliver_result, scope_order, scope_validator_packet,
+                          validator_packet, file_tech_reports, owed_probes, snapshot_note)
 from gfso.inflight import flight
 from gfso.tools import answering
 
@@ -442,7 +443,7 @@ def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm,
                             "its holder CHALLENGEs the criterion no report could decide, and its issuer revises what "
                             "it promises (`edit_criteria`); a repair of what failed is a new tree, checked afresh.")
                          + " `get_verdict` shows what the refused reports did check."}, None, None
-    deliverable = deliverable or _last_deliver_result(engine, TaskId(task_id))
+    deliverable = deliverable or last_deliver_result(engine, TaskId(task_id))
     if not deliverable:
         return {"error": f"nothing to validate: {task_id} has no recorded DELIVER result — "
                          f"pass `deliverable` explicitly (state {task.state.name})"}, None, None
@@ -1193,12 +1194,12 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
 
     def _run(batch, client=None, place=None) -> str:
         if inside is not None:
-            body = (_scope_validator_packet(engine, batch, workdir, place or scratch, inside, seen)
+            body = (scope_validator_packet(engine, batch, workdir, place or scratch, inside, seen)
                     + schema_instruction(_SCOPE_VALIDATOR_SCHEMA))
             cap = lambda: _scope_cap(batch, engine.graph)
         else:
             (task, deliverable, crits, *carry), = batch
-            body = (_validator_packet(engine, task, deliverable, workdir, place or scratch,
+            body = (validator_packet(engine, task, deliverable, workdir, place or scratch,
                                       criteria=None if len(crits) == len(task.spec.criteria) else crits,
                                       carry=carry[0] if carry else None, seen=seen)
                     + schema_instruction(_VALIDATOR_SCHEMA))
@@ -1375,7 +1376,7 @@ def validate_scope(engine: Engine, top_id: str, workdir: Optional[str], validato
         llm.on_tick = _cb = emit_cb(engine, "validate_result")
         llm.stage_hint = f"{top_id} scope-validator({validator or 'standalone'})"
         _cb(f"{top_id}: one independent validator over the scope's {len(nodes)} deliveries…")
-        out, _ = _validation_pass(engine, str(top_id), [(t, _last_deliver_result(engine, t.id) or "(none recorded)")
+        out, _ = _validation_pass(engine, str(top_id), [(t, last_deliver_result(engine, t.id) or "(none recorded)")
                                                         for t in nodes],
                                   {str(t.id): k for t, k in zip(nodes, keys)}, workdir, validator, model, llm,
                                   _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=ex)), _cb,
@@ -1428,9 +1429,9 @@ def _sign_scope(engine, top, verdicts: dict, validator_id: str, sign: bool) -> s
     whose footing is being redone — a consumer beside a failing producer, a node over a part reworked, disputed or
     re-presented — has no true verdict yet, so its issuer re-presents it (Inv-1: a re-ASSIGN keeping the criteria
     answers nothing), and it is re-delivered over the fix. A footing still awaiting its own verdict is waited for.
-    The whole is re-delivered with its parts' rework, in the same session (`_scope_report_into_signals`)."""
+    The whole is re-delivered with its parts' rework, in the same session (`scope_report_into_signals`)."""
     failing, undecided, again = set(), set(), set()
-    for t in [t for t in _scope_order(engine, engine.scope_members(top.id)) if str(t.id) in verdicts]:
+    for t in [t for t in scope_order(engine, engine.scope_members(top.id)) if str(t.id) in verdicts]:
         tid, own = str(t.id), verdicts[str(t.id)]
         kids = {str(k.id) for k in engine.graph.get_active_children(t.id)}
         producers = {str(e.from_id) for e in engine.adopted_dependencies() if str(e.to_id) == tid}
