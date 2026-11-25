@@ -12,7 +12,7 @@ from .enums import (
 )
 from .primitives import (
     TaskId, AgentId, DEFAULT_MAX_ITERATIONS,
-    Criteria, Probe, Spec, Task, AcceptedRiskItem, Register, register_of, set_aside_of,
+    Criteria, Probe, INPUTS_TOKEN, Spec, Task, AcceptedRiskItem, Register, register_of, set_aside_of,
     CriterionMapping, DepEdge, seams_apart,
     GuardContext, CheckResult, Recommendation,
     GraphContext, SignalData, DispatchPayload, Refusal, SignalOutcome, Wait,

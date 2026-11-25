@@ -13,10 +13,10 @@ def test_the_stop_is_read_from_the_file(tmp_path):
     db = str(tmp_path / "p.db")
     eng = make_engine(storage=SqliteStorage(db))
     assert peek_project(db)["stopped"] is None, "a run nobody stopped is not stopped"
-    eng.pause("someone", "imported to read")
+    eng.stops.pause("someone", "imported to read")
     assert peek_project(db)["stopped"] | {"at": None, "off_s": None} == {"by": "someone", "at": None, "off_s": None,
                                                            "why": "imported to read"}
-    eng.resume("someone")
+    eng.stops.resume("someone")
     assert peek_project(db)["stopped"] is None, "started again, it is no longer stopped"
 
 
@@ -26,9 +26,9 @@ def test_an_open_project_answers_its_stop_as_it_stands(monkeypatch, tmp_path):
     reg = ProjectRegistry()
     eng = reg.engine("p")
     assert reg.about(["p"])["p"]["stopped"] is None
-    eng.pause("someone", "")
+    eng.stops.pause("someone", "")
     assert reg.about(["p"])["p"]["stopped"]["by"] == "someone", "the open engine's stop, not a stale peek"
-    eng.resume("someone")
+    eng.stops.resume("someone")
     assert reg.about(["p"])["p"]["stopped"] is None
 
 
@@ -39,7 +39,7 @@ def test_a_stop_and_a_start_in_one_tick_of_the_files_stamp_list_it_as_it_stands(
     reg = ProjectRegistry()
     eng = reg.engine("p")
     monkeypatch.setattr(reg, "_stamp", lambda name: "one tick")
-    eng.pause("someone", "")
+    eng.stops.pause("someone", "")
     assert reg.about(["p"])["p"]["stopped"]["by"] == "someone"
-    eng.resume("someone")
+    eng.stops.resume("someone")
     assert reg.about(["p"])["p"]["stopped"] is None

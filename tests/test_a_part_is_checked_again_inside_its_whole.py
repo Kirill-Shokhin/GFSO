@@ -21,6 +21,7 @@ from gfso.core.types import State, TaskId
 from gfso.packets import _validator_packet
 from tests.support import REGISTER, UNMODELLED_FAULT, criterion, instrument_passes, make_engine, DENIAL_ENTRY
 from tests.test_one_session_carries_a_scope import (_LLM, _Validator, _delivered, _dispatcher, _drive, _project)
+from gfso.engine.closures import passes_over_open_parts
 
 _RISK = [{"item": UNMODELLED_FAULT.item, "predictability": "EXTRAORDINARY", "justification": "no precedent", "invalidation_condition": "one occurs", "p": 0.01, "impact": "the run stops and is resumed"}, DENIAL_ENTRY]
 _RAISES = {"behaviour": "a malformed document raises JSONParseError",
@@ -388,5 +389,5 @@ def test_a_pass_over_an_open_part_waits_only_where_its_issuer_can_lift_it(held_b
         assert out.get("accepted") is False and "not all children have PASSed" in out.get("error", ""), out
     else:
         assert out.get("accepted") is True, out
-        assert e.passes_over_open_parts() == ["mid"]
+        assert passes_over_open_parts(e) == ["mid"]
     e.stop()

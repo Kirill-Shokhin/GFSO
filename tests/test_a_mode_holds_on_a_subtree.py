@@ -29,7 +29,7 @@ from gfso.config import CALLER, SERVES_ENV, Principal
 from gfso.core.protocol.invariants import INTENT
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.delegate import AgentRegistry, ensure_dispatcher
-from gfso.engine.validation import MODE_SCOPES, in_chat_names, observation_binds, owed_observer
+from gfso.engine.validation import MODE_SCOPES, heard_on, in_chat_names, mode_scopes, observation_binds, owed_observer
 from gfso.runtime import ProjectRegistry
 from tests.support import REGISTER, a_repository, criterion, instrument_passes, make_engine
 from tests.test_delegate import _dispatch_validate
@@ -149,7 +149,7 @@ def test_the_name_taken_in_a_chat_makes_each_seam_he_issues_to_it_a_top_and_the_
     he issues to it is a top, read by the page per node with the node above it; the project itself stays modeless for
     the other streams, and nothing is set at any node."""
     e = _shared(tmp_path)
-    rec = e.mode_scopes()[Y]
+    rec = mode_scopes(e.graph)[Y]
     assert (rec["mode"], rec["perform"], rec["by"]) == ("solo", "in_chat", HOLDER), rec
     assert e.mode() is None and e.mode_at(TaskId("root.ui")) is None
     graph = T.get_graph(e)
@@ -165,7 +165,7 @@ def test_no_one_sets_a_mode_at_a_node_his_page_included(tmp_path):
     for p in (PAGE, CONSOLE, ISSUER):
         out = _call(p, "set_mode", e, "solo", perform="in_chat", node=Y, workdir=str(tmp_path))
         assert out.get("refused") and "act_as" in out["error"], out
-    assert not e.mode_scopes()
+    assert not mode_scopes(e.graph)
 
 
 def test_a_project_mode_is_refused_while_a_top_stands_and_answers_alone_where_set(tmp_path):
@@ -178,7 +178,7 @@ def test_a_project_mode_is_refused_while_a_top_stands_and_answers_alone_where_se
     bare = _shared(tmp_path / "bare", scoped=False)
     bare.set_mode(Mode.SOLO, None, AgentId("user"))
     bare.performs_in_chat(HOLDER)
-    assert bare.scope_at(X) is None and not bare.mode_scopes()
+    assert bare.scope_at(X) is None and not mode_scopes(bare.graph)
 
 
 # ── inside the scope ──────────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ def test_inside_the_scope_a_go_anywhere_is_the_holders_own_split(tmp_path, no_mo
     assert not go.get("refused") and "gfso/p/work" not in go["say"], go
     assert INTENT not in [c.name for c in e.graph.get_task(TaskId(ASK)).spec.criteria]
     assert not e.observed_here(TaskId(ASK)) and not e.persons_verdict(ASK)
-    assert not [h for h in e.heard_on(ASK) if h["act"] in ("go", "request")], "the holder's words heard as the person's"
+    assert not [h for h in heard_on(e.graph, ASK) if h["act"] in ("go", "request")], "the holder's words heard as the person's"
     assert not _call(CONSOLE, "signal", e, ASK, "ACCEPT", HOLDER).get("refused")
 
 
@@ -272,7 +272,7 @@ def test_the_tops_packet_changes_only_on_the_persons_words(tmp_path):
     assert refused.get("refused") and "user_said" in refused["error"], refused
     assert [c.name for c in e.graph.get_task(TaskId(X)).spec.criteria] == ["engineering", INTENT]
     assert not _call(ISSUER, "edit_criteria", e, X, [criterion("asked")], user_said=WORDS).get("refused")
-    assert [h["said"] for h in e.heard_on(X) if h["act"] == "revise"][-1] == WORDS
+    assert [h["said"] for h in heard_on(e.graph, X) if h["act"] == "revise"][-1] == WORDS
 
 
 def test_the_top_is_observed_and_closes_on_the_persons_verdict(tmp_path):
@@ -287,7 +287,7 @@ def test_the_top_is_observed_and_closes_on_the_persons_verdict(tmp_path):
         assert "is the person's" in e.persons_verdict(X)
     assert _call(ISSUER, "signal", e, X, "PASS", "user").get("refused"), "the top signed without his words"
     assert _call(ISSUER, "signal", e, X, "PASS", "user", user_said=ACCEPTED)["state"] == "DONE"
-    assert [h["said"] for h in e.heard_on(X) if h["act"] == "verdict"] == [ACCEPTED]
+    assert [h["said"] for h in heard_on(e.graph, X) if h["act"] == "verdict"] == [ACCEPTED]
 
 
 def test_the_criterion_read_against_his_words_stands_at_the_top(tmp_path):
@@ -307,8 +307,8 @@ def test_who_checks_a_part_is_heard_over_the_scopes_top(tmp_path):
     e = _shared(tmp_path)
     _split(e, X, ASK, HOLDER, HOLDER)
     assert TL.set_checker(e, ASK, user_said="проверяй", agent=HOLDER)["checker"] == "validator"
-    assert [h["checker"] for h in e.heard_on(X) if h["act"] == "checker"] == ["validator"]
-    assert not [h for h in e.heard_on("root") if h["act"] == "checker"]
+    assert [h["checker"] for h in heard_on(e.graph, X) if h["act"] == "checker"] == ["validator"]
+    assert not [h for h in heard_on(e.graph, "root") if h["act"] == "checker"]
 
 
 def test_a_delivery_inside_the_scope_names_no_branch_of_the_shared_checkout(tmp_path):
@@ -630,7 +630,7 @@ def test_a_server_start_leaves_a_scoped_project_running_beside_a_registered_exec
     monkeypatch.setenv("GFSO_DATA_DIR", str(data))
     monkeypatch.delenv("GFSO_PROJECT", raising=False)
     monkeypatch.setenv(SERVES_ENV, "1")
-    assert ProjectRegistry().engine("p").paused() is None
+    assert ProjectRegistry().engine("p").stops.paused() is None
 
 
 # ── his page, by the bodies it sends ──────────────────────────────────────────

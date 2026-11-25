@@ -81,21 +81,21 @@ def test_the_refusal_is_the_projects_stop_until_the_word_is_given(no_word, monke
     for _ in range(4):
         d.dispatch_once()
         time.sleep(0.3)
-    stop = e.paused()
+    stop = e.stops.paused()
     assert stop and stop["by"] == "system" and stop["place"] == THIS_HOST and "unattended" in stop["why"], (stop, said)
     assert ran == [] and "kid" not in {str(x) for x in e.parking.parked_executions()}, (ran, said)
     assert e.graph.get_task(S.TaskId("kid")).state.name == "OFFERED", "consented in its executor's name, then refused"
-    e.lift_the_system_stop(time.time())
-    assert e.paused(), "the stop lifted with nothing changed"
+    e.stops.lift_the_system_stop(time.time())
+    assert e.stops.paused(), "the stop lifted with nothing changed"
     monkeypatch.setattr(config, "local_agents", lambda: True)
-    e.lift_the_system_stop(time.time())
-    assert e.paused() is None
+    e.stops.lift_the_system_stop(time.time())
+    assert e.stops.paused() is None
     e.stop()
 
 
 def test_a_mode_that_dispatches_is_not_ready_where_its_work_would_be_refused(no_word, monkeypatch, tmp_path):
     e = make_engine(validate_signals=True, state_timeout=0)
-    monkeypatch.setattr(TL, "_roster", lambda engine: _agents(tmp_path, ("exec-1", "llm-executor"),
+    monkeypatch.setattr(TL, "staffed", lambda engine: _agents(tmp_path, ("exec-1", "llm-executor"),
                                                               ("exec-2", "llm-executor"), ("val-1", "llm-validator")))
     for mode, perform in (("solo", "dispatch"), ("semi", "dispatch"), ("auto", "dispatch")):
         got = TL.mode_staffing(e, mode, perform)
@@ -193,14 +193,14 @@ def test_a_stopped_project_ends_its_containers_once_nothing_of_it_runs_and_keeps
     monkeypatch.setattr(D, "in_flight", lambda: working)
     e = make_engine()
     d = Dispatcher(e, _agents(tmp_path, ("exec-1", "llm-executor")))
-    e.pause("me", "stop")
+    e.stops.pause("me", "stop")
     d.dispatch_once()
     assert rested == [], "a session of it still runs"
     working.clear()
     d.dispatch_once(), d.dispatch_once()
     assert rested == [1], "ended once, when nothing of it runs"
-    e.resume("me")
+    e.stops.resume("me")
     d.dispatch_once()
-    e.pause("me", "again")
+    e.stops.pause("me", "again")
     d.dispatch_once()
     assert rested == [1, 1], "each stop its own"

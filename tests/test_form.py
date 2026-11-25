@@ -87,7 +87,9 @@ BASE = {
     # place where two modules cannot be read, tested or replaced apart, and it is why 16 imports in
     # this package must stay inside functions (the A2 floor above says so in its own words).
     # The floor is 0: an acyclic import graph is reachable here, unlike A2's 16.
-    "F_modules_in_an_import_cycle": 3,
+    # 2: `runtime` left the knot — `tools_llm` read nothing of it, and the roster's helpers live in `gfso.roster`
+    # 0: validation is one module (`gfso.validate`) and the registry attaches no dispatcher: the floor, reached
+    "F_modules_in_an_import_cycle": 0,
     # 0: every package and module says what it owns — the first thing a stranger reads
     "A1_module_without_docstring": 0,
     # 188: `llm_factory` moved to the import section — it was imported inside two functions
@@ -108,7 +110,9 @@ BASE = {
     # mounting, and the optional-SDK import is a per-function constraint — the same
     # reason, spelled where it binds. A floor that RISES with a legitimate split is the
     # instrument working, not drifting.
-    "A2_import_inside_a_function": 14,
+    # 12: `runtime` imports the dispatcher at its top — the knot that made those two late is gone
+    # 11: …and `tools_llm` has no lazy door to `gfso.delegate` left (`_delegation`)
+    "A2_import_inside_a_function": 11,
     "A3_module_imported_two_ways": 1,   # this test OWNS the number; the standalone tool counts
                                         # `from X import y` spellings too and says 16 — one rule, one owner
     # 181: `/api/projects` gained one — the filter it now takes needs saying (2026-09-02)
@@ -148,7 +152,7 @@ BASE = {
     # Held at 0 through the pinned-procedure landing (2026-09-20): it pushed
     # `Engine.record_exec_verdict` to 42 statements with two more gap sources, and the answer was
     # the split rather than a new baseline — the three sources are one question ("what did this
-    # report not account for") and now have one owner, `procedure.unaccounted_for`.
+    # report not account for") and now have one owner, `accounting.unaccounted_for`.
     "F_function_over_size_limit": 0,
     # C5 — the hardcode rule, and the number S4 owns. `GFSO_L2_GATE` is read at its point of enforcement DELIBERATELY
     # (hard constraint #7 of the run sheet) — the switch of a measured mechanism, not a setting — through `config.flag`.

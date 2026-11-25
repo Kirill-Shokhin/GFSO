@@ -12,10 +12,10 @@ supplied is not a death), and the return of the same owner must need no separate
 """
 from __future__ import annotations
 
-import gfso.delegate as D
 import gfso.tools as T
-from gfso.delegate import Dispatcher, default_agents
-from gfso.roster import AgentRegistry
+from gfso.delegate import Dispatcher
+import gfso.roster as R
+from gfso.roster import AgentRegistry, default_agents
 from tests.support import make_engine, criterion, round_over, DENIAL_ENTRY
 from fastapi.testclient import TestClient
 from gfso.api.server import create_app
@@ -132,7 +132,7 @@ def test_the_server_hands_the_dispatcher_its_own_lease_answer(tmp_path, monkeypa
     never applied by the layer that acts.
     """
     monkeypatch.setenv("GFSO_AGENTS_PATH", str(tmp_path / "agents.json"))
-    D._DEFAULT_AGENTS = None                       # a roster for this test, not the machine's
+    R._DEFAULT_AGENTS = None                       # a roster for this test, not the machine's
     app = create_app(_engine())
     with TestClient(app) as c:
         reg = default_agents()
@@ -142,7 +142,7 @@ def test_the_server_hands_the_dispatcher_its_own_lease_answer(tmp_path, monkeypa
         assert reg.owner_is_live("w"), "the server's own lease did not reach the dispatcher"
         c.delete("/api/lease/session-9")
         assert not reg.owner_is_live("w"), "dropping the lease left the role dispatchable"
-    D._DEFAULT_AGENTS = None
+    R._DEFAULT_AGENTS = None
 
 
 def test_a_run_already_started_is_left_to_finish(tmp_path):

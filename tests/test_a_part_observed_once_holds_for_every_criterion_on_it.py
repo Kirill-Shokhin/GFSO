@@ -12,7 +12,8 @@ import pytest
 
 import gfso.tools as T
 from gfso.core.protocol.invariants import verdict_report_defects
-from gfso.core.protocol.procedure import part_criteria, probe_id, unrun_parts, with_part_observations
+from gfso.core.protocol.procedure import part_criteria, probe_id
+from gfso.core.protocol.accounting import unrun_parts, with_part_observations
 from gfso.core.types import Criteria, Probe, State, TaskId
 from tests.support import REGISTER, criterion, instrument_passes, make_engine
 from tests.test_a_part_is_checked_again_inside_its_whole import _RAISES, _RISK

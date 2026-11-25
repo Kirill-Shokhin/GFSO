@@ -5,9 +5,10 @@ its own grounds, and the part probe — owed by A and B, cited by neither — wa
 """
 from __future__ import annotations
 
-from gfso.core.protocol.procedure import part_credit, part_criteria, parts_not_shown_holding, probe_id, unrun_parts
+from gfso.core.protocol.procedure import part_criteria, probe_id
+from gfso.core.protocol.accounting import part_credit, parts_not_shown_holding, unrun_parts
 from gfso.core.types import Criteria, Probe
-from gfso.tools_llm import _conjoined
+from gfso.validate import _conjoined
 
 _P = part_criteria("root.cat", [Criteria("flags", check=(Probe("cat flags", "make test", "all 12 pass"),))])
 _PARTS = {"A": _P, "B": _P}

@@ -145,7 +145,7 @@ def test_a_stop_during_a_wait_answers_it_at_once():
     """The frontier has no step for a stop: the person's stop came back at the wait's end, minutes late (critic)."""
     e = make_engine()
     e.start()
-    threading.Timer(0.5, lambda: e.pause("system", "a finding only the user rules")).start()
+    threading.Timer(0.5, lambda: e.stops.pause("system", "a finding only the user rules")).start()
     t0 = time.monotonic()
     out = TL.wait_for_the_customer(e, seconds=60)
     assert time.monotonic() - t0 < 15 and out["needs_you"] == "the run is stopped"
@@ -155,7 +155,7 @@ def test_a_stop_during_a_wait_answers_it_at_once():
 def test_the_endpoint_answers_when_the_run_needs_its_customer():
     e = make_engine()
     e.start()
-    e.pause("user", "held")
+    e.stops.pause("user", "held")
     with TestClient(create_app(e)) as c:
         out = c.post("/api/wait", json={"seconds": 30}, headers={"Host": "127.0.0.1:8000"}).json()
     assert out["needs_you"] == "the run is stopped" and out["waited_seconds"] < 5, out

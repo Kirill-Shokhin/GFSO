@@ -24,10 +24,11 @@ import pytest
 
 import gfso.tools as T
 from gfso.packets import _executor_packet, _validator_packet
-from gfso.core.protocol.procedure import (claim_digest, laid, orphaned_regression, probe_id, procedure_digest, tokenized,
-                                          unrun_regression, without_pinned_runs)
+from gfso.core.protocol.procedure import claim_digest, laid, probe_id, procedure_digest, tokenized
+from gfso.core.protocol.accounting import orphaned_regression, unrun_regression, without_pinned_runs
 from gfso.core.types import AgentId, Criteria, Probe, Signal, SignalData, Spec, TaskId, register_of
 from tests.support import REGISTER, UNMODELLED_FAULT, criterion, make_engine, DENIAL_ENTRY
+from gfso.engine.closures import closure_of
 
 #: every round stands: these findings name none the system removed
 _STANDS = lambda r: True
@@ -440,7 +441,7 @@ def test_a_narrowing_after_authoring_is_named_on_the_node():
                         "probe": [{"command": c.check[0].command, "expect": "it holds",
                                    "behaviour": c.check[0].behaviour}]}])
     assert T.signal(e, "root", "PASS", "me").get("accepted") is True
-    cb = (e.closure_of("root") or {}).get("checked_by") or {}
+    cb = (closure_of(e, "root") or {}).get("checked_by") or {}
     assert cb.get("claim_moved_since_authoring") is True
     assert "vector types" in str(cb.get("narrowed_after_authoring")), (
         "a flag that does not say WHICH exclusion was added sends the reader to another verb; "
@@ -455,7 +456,7 @@ def test_an_untouched_pre_fill_is_no_movement_of_the_claim():
     e = _engine(criterion("exits_zero"))
     drift = e.claim_drift(TaskId("root"))
     assert drift["risks_dropped"] == [] and drift["risks_added"] == [] and drift["narrowed"] is False, drift
-    assert e._authoring_digest(TaskId("root")) == claim_digest(e.graph.get_task("root").spec,
+    assert e.authoring_digest(TaskId("root")) == claim_digest(e.graph.get_task("root").spec,
                                                                register_of(e.graph.get_task("root")))
     e.stop()
 

@@ -19,9 +19,11 @@ import gfso.tools_llm as TL
 from gfso.adapters.execution import LocalExecution
 from gfso.core.protocol.invariants import INTENT
 from gfso.core.types import State, TaskId
+from gfso.engine.validation import heard_on
 from gfso.mcp import server as S
 from tests.support import a_repository, make_engine
 from tests.test_projects import _call, _reg
+import gfso.validate as VAL
 
 pytestmark = pytest.mark.skipif(not LocalExecution().shell(), reason="no bash on this host: the pinned checks run here")
 
@@ -60,7 +62,7 @@ def chat(tmp_path, monkeypatch):
     e = make_engine(validate_signals=True, state_timeout=0)
     e.start()
     e.project_name = "p"
-    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e))
+    monkeypatch.setattr(VAL, "llm_factory", lambda *a, **k: _Validator(e))
     calls = []
 
     def call(verb, *a, **kw):
@@ -120,7 +122,7 @@ def test_a_small_solo_chat_task_reaches_the_persons_pass_in_the_canons_acts(chat
     assert len(calls) <= 7, f"{len(calls)} calls for the canon's six acts: {calls}"
     verdict = e.current_exec_verdict(TaskId("root"))
     assert verdict and verdict["validator"] == "p-val", "the observation is the validator's, not the chat's"
-    assert [h["said"] for h in e.heard_on("root") if h["act"] == "verdict"] == [ACCEPTED], "the PASS is the person's"
+    assert [h["said"] for h in heard_on(e.graph, "root") if h["act"] == "verdict"] == [ACCEPTED], "the PASS is the person's"
     assert INTENT in [c.name for c in e.graph.get_task(TaskId("root")).spec.criteria]
 
 
@@ -181,7 +183,7 @@ def test_the_person_is_told_what_the_validator_saw_outside_the_criteria(chat, mo
     signed over "x.tar.gz is counted as .gz" without a word to the person (s23g1)."""
     e, repo, call, _ = chat
     seen = "x.tar.gz is counted as .gz, not .tar.gz"
-    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, [{"what": seen, "evidence": "ran it on x.tar.gz"}]))
+    monkeypatch.setattr(VAL, "llm_factory", lambda *a, **k: _Validator(e, [{"what": seen, "evidence": "ran it on x.tar.gz"}]))
     _set_up(call, repo)
     call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
     _worked(repo)
@@ -195,7 +197,7 @@ def test_the_verdict_read_serves_what_the_validator_saw_outside_the_criteria(cha
     """The page reads the verdict through `get_verdict`; the sign-off step told the person what it never served."""
     e, repo, call, _ = chat
     seen = "x.tar.gz is counted as .gz, not .tar.gz"
-    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, [{"what": seen, "evidence": "ran it on x.tar.gz"}]))
+    monkeypatch.setattr(VAL, "llm_factory", lambda *a, **k: _Validator(e, [{"what": seen, "evidence": "ran it on x.tar.gz"}]))
     _set_up(call, repo)
     call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
     _worked(repo)
@@ -210,7 +212,7 @@ def test_a_second_delivery_is_shown_only_what_its_own_validator_saw(chat, monkey
     e, repo, call, _ = chat
     first, second = "x.tar.gz is counted as .gz", "Z.TXT is counted apart from z.txt"
     said = [[{"what": first, "evidence": "ran it"}], [{"what": second, "evidence": "ran it"}]]
-    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, said.pop(0) if said else []))
+    monkeypatch.setattr(VAL, "llm_factory", lambda *a, **k: _Validator(e, said.pop(0) if said else []))
     _set_up(call, repo)
     call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
     _worked(repo)
@@ -256,7 +258,7 @@ def test_the_person_hears_the_whole_reading_and_what_it_rests_on(chat, monkeypat
     caveat = "the pinned check's expect is a paraphrase, so this verdict rests on my own probes, not on that expect"
     reading = "f.txt says v1 as the person asked; " * 12 + caveat
     seen = {"what": "v1 has no trailing newline in the spec", "evidence": "ran od -c f.txt\nit printed v 1 and a newline"}
-    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, [seen], {INTENT: reading}))
+    monkeypatch.setattr(VAL, "llm_factory", lambda *a, **k: _Validator(e, [seen], {INTENT: reading}))
     _set_up(call, repo)
     call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
     _worked(repo)
@@ -272,7 +274,7 @@ def test_the_person_hears_the_whole_reading_and_what_it_rests_on(chat, monkeypat
 def test_a_reading_past_its_bound_says_where_it_is_whole(chat, monkeypatch):
     """Unbounded, a 50 KB reading made a 193 KB step a client's own `| tail` cut to the signal line (critic, 4708aa9)."""
     e, repo, call, _ = chat
-    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _Validator(e, [], {INTENT: "x" * 50000}))
+    monkeypatch.setattr(VAL, "llm_factory", lambda *a, **k: _Validator(e, [], {INTENT: "x" * 50000}))
     _set_up(call, repo)
     call("auto_decompose", plan=call("plan", plan=_filled(call("plan", ASKED)["text"]))["path"], user_said=WORDS)
     _worked(repo)

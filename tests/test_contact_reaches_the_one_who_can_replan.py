@@ -15,7 +15,7 @@ issuer test; write `outside` into the record always — the unchanged test; drop
 not in answered` from `outside_observations` — the asked test and the two answered tests; read an issuer question's
 observations off the node instead of its parent's split (`holder = task.id`) — the sibling test and the issuer test;
 sort `outside_the_criteria` oldest first — the newest test; show the evidence whole (`_tail`) — the evidence test; let
-`decline` pass without its reason — the reason test; drop `not engine.users_plan()` from `open_questions` — the
+`decline` pass without its reason — the reason test; drop `not users_plan(engine.graph)` from `open_questions` — the
 user's-plan test."""
 import json
 
@@ -27,6 +27,7 @@ from gfso.engine.verdicts import OBSERVATIONS, OUTSIDE_ANSWERED, ledger_read, le
 from gfso.issuer import issuer_context
 from gfso.packets import SHOWN_FINDINGS, TECH_REPORT, _executor_packet
 from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fenced
+import gfso.validate as VAL
 
 SEEN = "a subquery in NOT IN (SELECT …) gives NULL"
 
@@ -42,7 +43,7 @@ def _validated(outside=None) -> tuple:
     report = {"verdict": "PASS", "per_criterion": [_entry("flush"), _entry("holds")], "failed_criteria": []}
     if outside is not None:
         report["outside"] = outside
-    return e, TL.validate_result(e, "n1", _llm=_ValidatorLLM(_fenced(report)))
+    return e, VAL.validate_result(e, "n1", _llm=_ValidatorLLM(_fenced(report)))
 
 
 def test_the_first_round_packet_offers_challenge_and_says_what_it_buys():
@@ -143,7 +144,7 @@ def test_a_plan_the_user_handed_in_is_not_asked_to_take_it(monkeypatch):
     observation that fails nothing would stop the user's run."""
     e, _ = _validated([{"what": SEEN, "evidence": "printed NULL"}])
     try:
-        monkeypatch.setattr(e, "users_plan", lambda: True)
+        monkeypatch.setattr(I, "users_plan", lambda graph: True)
         assert _asked(e).get("goal") != "outside" and f"`n1`: {SEEN}" in issuer_context(e, TaskId("goal"), "repair")
     finally:
         e.stop()

@@ -1,4 +1,4 @@
-"""What this process is doing right now: one entry per running piece of long work (`_inflight`), read by
+"""What this process is doing right now: one entry per running piece of long work (`flight`), read by
 `/api/runtime` (`in_flight`) so a reconcile from another session sees work in flight and does not restart under it."""
 from __future__ import annotations
 
@@ -41,7 +41,8 @@ def _changed() -> None:
             log.exception("an in-flight listener failed")
 
 
-def _inflight(name: str, engine=None, task_id=None):
+def flight(name: str, engine=None, task_id=None):
+    """`with flight(verb, engine, node):` — the work inside is one entry of `INFLIGHT` while it runs (`in_flight`)."""
     @contextlib.contextmanager
     def _track():
         key, me = object(), threading.get_ident()

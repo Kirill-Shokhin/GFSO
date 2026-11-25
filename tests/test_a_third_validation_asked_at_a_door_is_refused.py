@@ -14,6 +14,7 @@ from gfso.core.protocol.invariants import red_set
 from gfso.core.types import TaskId
 from tests.support import committed
 from tests.test_validate_result import _delivered_node, _eng
+import gfso.validate as VAL
 
 _RAN = []
 
@@ -40,7 +41,7 @@ def test_a_third_run_asked_at_a_door_is_refused_with_what_lifts_it(tmp_path):
     e, _RAN[:] = _refused_twice(tmp_path), []
     at = CALLER.set(Principal("alice", ("alice",), "session", "signed in"))
     try:
-        out = TL.validate_result(e, "n1", _llm=_Counts(), workdir=str(tmp_path))
+        out = VAL.validate_result(e, "n1", _llm=_Counts(), workdir=str(tmp_path))
     finally:
         CALLER.reset(at)
     assert out["verdict"] is None and out["refusals_on_this_node"] == 2 and not _RAN, out
@@ -50,7 +51,7 @@ def test_a_third_run_asked_at_a_door_is_refused_with_what_lifts_it(tmp_path):
 
 def test_the_systems_own_asking_is_not_refused(tmp_path):
     e, _RAN[:] = _refused_twice(tmp_path), []
-    TL.validate_result(e, "n1", _llm=_Counts(), workdir=str(tmp_path))
+    VAL.validate_result(e, "n1", _llm=_Counts(), workdir=str(tmp_path))
     assert _RAN, "the system's own validation was refused"
     e.stop()
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 import dataclasses
 
 from gfso.core.types import DepEdge, Signal, SignalData, TaskId
-from gfso.delegate import publish_the_workforce
+from gfso.roster import publish_the_workforce
 import gfso.tools_llm as TL
 from tests.support import make_engine
 from tests.test_every_verb_answers import _seeded

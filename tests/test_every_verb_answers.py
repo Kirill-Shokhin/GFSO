@@ -23,6 +23,7 @@ import gfso.decompose as _dec
 from gfso import tools_llm as TL
 from gfso.adapters.llm.stub import StubLLM
 from tests.support import criterion, make_engine, written, DENIAL_ENTRY
+import gfso.validate as VAL
 
 # Verbs whose whole job is to spawn a model run. They are still called (their argument guards are
 # the point), with an id that exists and a state that stops them before any transport is touched.
@@ -37,7 +38,8 @@ def _stub_models(monkeypatch):
     """A verb with good arguments is ENTITLED to reach its model — that is its job — so it gets a stub:
     this table exercises the door's guards, not a model (the suite never starts a live one, conftest)."""
     monkeypatch.setattr(_dec, "_default_llm", lambda *a, **k: StubLLM())
-    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: StubLLM())
+    for m in (TL, VAL):
+        monkeypatch.setattr(m, "llm_factory", lambda *a, **k: StubLLM())
 
 
 def _engine():

@@ -16,11 +16,12 @@ import gfso.delegate as D
 from gfso import issuer as I, tools as T, tools_llm as TL
 from gfso.core.types import Mode, Signal, SignalData, State, TaskId
 from gfso.delegate import Dispatcher
-from gfso.engine.validation import users_criteria
+from gfso.engine.validation import users_criteria, users_plan
 from gfso.inflight import in_flight
 from tests.support import criterion
 from tests.test_delegate import _agents
 from tests.test_the_mode_decides_who_holds_what import _FakeLLM, _admit, _engine, _kid
+import gfso.validate as VAL
 
 
 def _users_part():
@@ -40,7 +41,7 @@ def test_a_plan_handed_in_open_is_a_draft_not_the_users_plan(monkeypatch):
     for open_plan, users in ((False, True), (True, False)):
         e = _engine(Mode.AUTO)
         TL.auto_decompose(e, "the goal", spec={"name": "p"}, open_plan=open_plan)
-        assert e.users_plan() is users, (open_plan, e.users_plan())
+        assert users_plan(e.graph) is users, (open_plan, users_plan(e.graph))
 
 
 def test_a_reissued_contract_of_the_users_part_keeps_its_criteria():
@@ -77,7 +78,7 @@ def test_the_system_never_cuts_the_users_plan_a_cancel_there_stops_the_run():
     assert "cancel" not in I.moves_for(e, e.graph.get_task(TaskId("root")), "escalation"), "the AUTO root: the user's"
     state = part.state
     ok, why = I._cancel(e, part, "exec-1", {}, "the parser cannot meet k on this input set", None)
-    assert ok and e.paused() and "cannot be carried" in e.paused()["why"] and "the parser cannot meet k" in why
+    assert ok and e.stops.paused() and "cannot be carried" in e.stops.paused()["why"] and "the parser cannot meet k" in why
     assert e.graph.get_task(TaskId("root.part")).state == state, "no CANCEL was signalled: the plan is untouched"
     e.stop()
 
@@ -120,14 +121,14 @@ def test_the_plan_review_and_the_scope_validation_are_in_flight(monkeypatch):
     seen = D._in_flight_as("review_decomposition", lambda engine, node: [w["verb"] for w in in_flight()])(e, "root")
     assert seen == ["review_decomposition"]
     got = []
-    monkeypatch.setattr(D, "_which_instrument_validates", lambda *a: "val-1")
-    monkeypatch.setattr(D, "_standing_verdicts", lambda *a: {})
-    monkeypatch.setattr(D, "validator_workdir", lambda *a, **k: ".")
+    monkeypatch.setattr(VAL, "_which_instrument_validates", lambda *a: "val-1")
+    monkeypatch.setattr(VAL, "_standing_verdicts", lambda *a: {})
+    monkeypatch.setattr(VAL, "validator_workdir", lambda *a, **k: ".")
     monkeypatch.setattr(e, "scope_members", lambda tid: [SimpleNamespace(id="root.part",
                                                                          state=SimpleNamespace(name="VALIDATING"))])
-    monkeypatch.setattr(D.T, "validate_scope", lambda *a, **k: got.append([w["verb"] for w in in_flight()])
+    monkeypatch.setattr(VAL, "validate_scope", lambda *a, **k: got.append([w["verb"] for w in in_flight()])
                         or {"inflight": True})
-    D._auto_validate_scope(e, TaskId("root"), SimpleNamespace(get=lambda a: {}))
+    VAL.auto_validate_scope(e, TaskId("root"), SimpleNamespace(get=lambda a: {}))
     assert got == [["validate_scope"]]
     e.stop()
 
@@ -137,7 +138,7 @@ def test_a_stop_the_system_sets_names_the_users_way_out(monkeypatch):
     e.give_users_plan("root")
     monkeypatch.setattr(I, "_still_open", lambda *a: True)
     I.settle(e, None, TaskId("root"), "repair", "exec-1", verbs=None)
-    why = e.paused()["why"]
+    why = e.stops.paused()["why"]
     assert "auto_decompose" in why and "set_mode" in why and "start_project" in why, why
     e.stop()
 
@@ -153,7 +154,7 @@ def test_a_stop_names_the_refutation_that_stands(monkeypatch):
     monkeypatch.setattr(e, "dep_order_refuted", lambda t: "root.select_core waits on root.joins — the plan's order is "
                                                           "refuted by contact; reshape the split")
     I.settle(e, None, TaskId("root"), "repair", "exec-1", verbs=None)
-    why = e.paused()["why"]
+    why = e.stops.paused()["why"]
     assert "root.select_core waits on root.joins" in why and "children cover" not in why, why
     e.stop()
 
@@ -168,7 +169,7 @@ def test_a_stop_over_a_cancelled_producer_names_it(monkeypatch):
         monkeypatch.setattr(e, refuted, lambda t: None)
     monkeypatch.setattr(I, "_cancelled_producers", lambda engine, k: ["root.gone"] if str(k.id) == "root.part" else [])
     I.settle(e, None, TaskId("root"), "repair", "exec-1", verbs=None)
-    why = e.paused()["why"]
+    why = e.stops.paused()["why"]
     assert "root.part waits on root.gone, cancelled" in why and "children cover" not in why, why
     e.stop()
 
@@ -197,9 +198,9 @@ def test_a_cancel_on_the_users_plan_takes_over_a_stop_the_system_would_lift():
     carried was lost with the lift (critic over bc5fca4)."""
     e, part = _users_part()
     e.give_users_plan("root")
-    e.pause("system", "the account's limit", until=time.time() + 3600)
+    e.stops.pause("system", "the account's limit", until=time.time() + 3600)
     I._cancel(e, part, "exec-1", {}, "k cannot be met", None)
-    assert "cannot be carried" in e.paused()["why"] and "until" not in e.paused()
+    assert "cannot be carried" in e.stops.paused()["why"] and "until" not in e.stops.paused()
     e.stop()
 
 

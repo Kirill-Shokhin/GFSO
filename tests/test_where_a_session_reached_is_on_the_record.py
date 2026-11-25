@@ -30,6 +30,7 @@ from gfso.mcp import server as S
 from gfso.adapters import netrecord as N
 from gfso.core.types import PlaceUnavailable
 from tests.test_a_session_holds_only_its_own_place import IMAGE, made, project  # noqa: F401 — a fixture
+import gfso.validate as VAL
 
 docker = pytest.mark.skipif(subprocess.run(["docker", "version"], capture_output=True).returncode != 0, reason="no Docker")
 
@@ -347,16 +348,16 @@ def test_a_session_is_held_to_the_gate_at_the_reading_that_binds_it(monkeypatch)
     monkeypatch.setattr(WS, "where_it_runs", lambda e, a=None: E.LocalExecution())
     held = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: "v" if k == E.VOLUME + "places" else None))
     with pytest.raises(PlaceUnavailable, match="stand in volumes"):
-        TL.validation_execution(held)
+        VAL.validation_execution(held)
     free = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None))
-    assert isinstance(TL.validation_execution(free), E.LocalExecution), "work in chat validates on the host, as it did"
+    assert isinstance(VAL.validation_execution(free), E.LocalExecution), "work in chat validates on the host, as it did"
 
 
 def test_a_validation_reads_where_it_runs_once():
     """Each of a validation's model, scratch, exact checks, reports and later batches read the roster again: a role lost
     meanwhile put the later ones on the host, past the gate the first passed (critic's class, read)."""
-    for f in (TL._refuse_validation, TL._ready_to_validate, TL.validate_result, TL._validation_pass, TL._observe_pins,
-              TL._validator_texts, TL.validate_scope):
+    for f in (VAL._refuse_validation, VAL._ready_to_validate, VAL.validate_result, VAL._validation_pass, VAL._observe_pins,
+              VAL._validator_texts, VAL.validate_scope):
         calls = [n for n in ast.walk(ast.parse(inspect.getsource(f).lstrip()))
                  if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "execution_of"]
         assert not calls, f"{f.__name__} reads the roster again"
@@ -393,9 +394,9 @@ def test_a_validation_refused_its_place_holds_no_claim(monkeypatch, tmp_path):
     nodes = [SimpleNamespace(id="n", state=SimpleNamespace(name="VALIDATING"))]
     engine = SimpleNamespace(scope_members=lambda t: nodes, claims=SimpleNamespace(
         begin_validation=lambda t: begun.append(t) or "k", end_validation=ended.append))
-    monkeypatch.setattr(TL, "validation_execution", lambda e: (_ for _ in ()).throw(PlaceUnavailable("host", "volumes")))
+    monkeypatch.setattr(VAL, "validation_execution", lambda e: (_ for _ in ()).throw(PlaceUnavailable("host", "volumes")))
     with pytest.raises(PlaceUnavailable):
-        TL.validate_scope(engine, "top", str(tmp_path))
+        VAL.validate_scope(engine, "top", str(tmp_path))
     assert len(begun) == len(ended), "a claim held past the refusal"
 
 

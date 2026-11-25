@@ -412,13 +412,13 @@ def test_a_model_server_down_is_lifted_only_when_it_answers(wire_server):
     url, _, _ = wire_server
     assert answers(url) is None and answers("http://127.0.0.1:9/v1")
     e = make_engine(llm=None)
-    e.probe_the_place_with(lambda place: answers(place) if place.startswith("http") else None)
-    e.stop_for_the_place("http://127.0.0.1:9/v1", "nothing answers")
-    e.lift_the_system_stop(time.time())
-    assert e.paused(), "lifted while the model server was still down"
-    e.stop_for_the_place(url, "it came back")
-    e.lift_the_system_stop(time.time())
-    assert e.paused() is None
+    e.stops.probe_the_place_with(lambda place: answers(place) if place.startswith("http") else None)
+    e.stops.stop_for_the_place("http://127.0.0.1:9/v1", "nothing answers")
+    e.stops.lift_the_system_stop(time.time())
+    assert e.stops.paused(), "lifted while the model server was still down"
+    e.stops.stop_for_the_place(url, "it came back")
+    e.stops.lift_the_system_stop(time.time())
+    assert e.stops.paused() is None
 
 
 def test_an_agents_shell_holds_no_key_and_no_server_mark(monkeypatch, wire_server, tmp_path):

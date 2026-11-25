@@ -18,6 +18,7 @@ from gfso import tools as T
 from gfso import tools_llm as TL
 from tests.support import committed, criterion
 from tests.test_validate_result import _eng, _fenced
+import gfso.validate as VAL
 
 NAMES = ("a", "b", "c")
 
@@ -69,7 +70,7 @@ def test_the_unread_batch_alone_is_run_again_and_the_validation_decides(monkeypa
     e = _eng()
     _node(e, tmp_path)
     llm = _Runs()
-    out = TL.validate_result(e, "n", _llm=llm, workdir=str(tmp_path))
+    out = VAL.validate_result(e, "n", _llm=llm, workdir=str(tmp_path))
     assert len(llm.packets) == 4 and sum("**b**" in p for p in llm.packets) == 2, len(llm.packets)
     assert out["verdict"] == "PASS", out
     e.stop()
@@ -81,7 +82,7 @@ def test_the_run_again_works_in_a_fresh_place_of_its_own(monkeypatch, tmp_path):
     _broken_b(monkeypatch)
     e = _eng()
     _node(e, tmp_path)
-    out = TL.validate_result(e, "n", _llm=_Runs(), workdir=str(tmp_path), _spawn=_Runs)
+    out = VAL.validate_result(e, "n", _llm=_Runs(), workdir=str(tmp_path), _spawn=_Runs)
     assert out["verdict"] == "PASS", out
     seen = _Runs.scratch
     assert len(seen) == 2 and seen[0] != seen[1] and "_again" in seen[1], seen

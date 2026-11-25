@@ -17,7 +17,7 @@ import pytest
 
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, unrun_probes,
                                            verdict_report_defects)
-from gfso.core.protocol.procedure import refuting_probes
+from gfso.core.protocol.accounting import refuting_probes
 from gfso.core.types import Verdict
 
 _RED = [{"criterion": "c1", "verdict": "fail", "evidence": "it broke"}]

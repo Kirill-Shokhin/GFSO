@@ -22,7 +22,7 @@ def test_a_project_with_an_issued_node_is_not_deleted_until_its_work_has_ended(t
     e = reg.engine("doomed")
     T.create_task(e, "root", {"description": "a goal", "criteria": [criterion("c1", "C1 holds")]}, assignee="me")
     e.wait_idle()
-    e.pause("me")
+    e.stops.pause("me")
     with pytest.raises(ValueError, match="CANCEL") as ex:
         reg.delete("doomed")
     assert "root" in str(ex.value)

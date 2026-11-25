@@ -4,7 +4,7 @@ Series 2 REF 2 (2026-10-29, root.reject): a regression line bound to a past roun
 later round; its setup failed, `&&` skipped the compiler and it printed `rejected` — the line it expected — with nothing
 judged. Counted, a cited id met the line's demand (`unrun_regression` read `{}`): a PASS with nothing re-observed."""
 from gfso.core.protocol.invariants import probes_of
-from gfso.core.protocol.procedure import unrun_regression
+from gfso.core.protocol.accounting import unrun_regression
 
 
 def _entry(ran):

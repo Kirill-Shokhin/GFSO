@@ -307,7 +307,7 @@ def _the_call(engine_or_registry, resolve, fn, project, ctx, args, kwargs) -> tu
 
 def _with_refusal(ret):
     """A verb's answer type that admits its refusal: every verb may answer `{"error": …, "refused": true}`
-    (`tools_llm._answering`), and the SDK validates the answer against the declared type — a refused `decompose`
+    (`tools.answering`), and the SDK validates the answer against the declared type — a refused `decompose`
     (declared a list) reached the agent as a pydantic error with the refusal's text cut away (2026-11-13)."""
     return ret if ret in (dict, inspect.Signature.empty) else typing.Union[ret, dict]
 
@@ -618,7 +618,7 @@ def _owed_everywhere(where, held: str):
             except Exception:
                 unread.append(project)
                 continue
-        if not x.paused():
+        if not x.stops.paused():
             owed += [(project, x, s) for s in own_moves(T.next_steps(x, actor=held))]
     return owed, unread
 

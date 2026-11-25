@@ -6,7 +6,8 @@ failed 7 times in 33 minutes while its pinned check passed. Told by the FILE, no
 line or a test would hide it from a parse, and a script or a Makefile there runs the delivery."""
 import pytest
 
-from gfso.core.protocol.procedure import refuting_probes, runs_a_past_build, without_past_builds
+from gfso.core.protocol.procedure import runs_a_past_build
+from gfso.core.protocol.accounting import refuting_probes, without_past_builds
 
 
 @pytest.fixture

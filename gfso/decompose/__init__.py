@@ -40,7 +40,7 @@ from gfso.observe import cannot_run, missing_program, on_the_base, parsed, print
 from .seams import deferral_problems, refused_deferrals, seam_problems, with_deferrals
 from gfso.inflight import staged
 from .loop import (decompose_spec, _audit_fix, _audit_fold, _fold_merge, _search,
-                   _progress, _stat_line, _stage, tag_stage, _COVERED, AUDIT_SCHEMA, shape, AGREE_PROMPT, AGREE_SCHEMA,
+                   _progress, stat_line, _stage, tag_stage, _COVERED, AUDIT_SCHEMA, shape, AGREE_PROMPT, AGREE_SCHEMA,
                    AUDIT_PROMPT, executor_line)
 from .build import build_graph_live, held_contract
 from .extract import extract_spec
@@ -600,7 +600,7 @@ def _build_verified(spec: dict, request: str, engine: Engine, root_id: str, assi
             # …the build reads this patch at once and refuses it there: no round of its own would ever be told
             spec = hold(_taken_back([spec], _patched(spec, fixed, " | ".join(map(str, problems))), progress, contract_fixed))
             patched = [k for k in fixed if k in _fields(fixed)]
-            _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {_stat_line(llm)} · patched: {', '.join(patched)}", progress)
+            _progress(f"{r + 1}/{REPAIR_ROUNDS} repairer {stat_line(llm)} · patched: {', '.join(patched)}", progress)
             if any(k in fixed for k in _CRITERIA_FIELDS):
                 agree.judge(spec)       # before the rebuild: what the patch rewrote still differs from the graph
             eng, rid, dropped = build_graph_live(agree.root(spec), request, engine, root_id=root_id, assignee=assignee,
@@ -788,7 +788,7 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
         _stage(llm, f"{label} searcher")
         holes = _search(llm, request, state_view)
         tag_stage(llm, Stage.SEARCH_REFINE)
-        _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
+        _progress(f"{label} searcher {stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
     if holes.lstrip().upper().startswith(_COVERED):
         _progress(f"{label} searcher: ALREADY-COVERED — converged", progress)
         return False, extract_spec(engine, root_id), []
@@ -800,11 +800,11 @@ def _refine_round(engine: Engine, request: str, root_id: str, assignee: str, llm
     new_spec, ops = _fold_merge(spec, patch)
     new_spec = held_contract(new_spec, engine.graph.get_task(TaskId(root_id))) if contract_fixed else new_spec
     if not ops:
-        _progress(f"{label} auditor {_stat_line(llm)} · empty fold — converged", progress)
+        _progress(f"{label} auditor {stat_line(llm)} · empty fold — converged", progress)
         return False, spec, []
     d0, dep0, v0 = shape(spec)
     d, dep, v = shape(new_spec)
-    _progress(f"{label} auditor {_stat_line(llm)} · |D| {d0}→{d} · |Dep| {dep0}→{dep} · "
+    _progress(f"{label} auditor {stat_line(llm)} · |D| {d0}→{d} · |Dep| {dep0}→{dep} · "
               f"|V| {v0}→{v} · ops: {'; '.join(ops)}", progress)
     try:
         rid, new_spec, problems = _build_verified(new_spec, request, engine, root_id, assignee, llm,

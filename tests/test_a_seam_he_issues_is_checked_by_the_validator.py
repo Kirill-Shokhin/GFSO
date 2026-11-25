@@ -30,6 +30,7 @@ from gfso.engine.verdicts import observations
 from gfso.roster import AgentRegistry
 from gfso.signin import PAGE
 from tests.support import REGISTER, a_repository, criterion, instrument_passes, make_engine
+import gfso.validate as VAL
 
 SEAM, HOLDER = "root.eng", "engineering"
 HUMAN = "yana"     # …on no roster, in no chat: a human (`roster`: unlisted ids are humans)
@@ -313,7 +314,7 @@ def test_the_check_before_the_delivery_judges_the_committed_tree_and_moves_nothi
     that tree; a place that is no repository's top is refused naming the lift."""
     e, _ = _issued(tmp_path)
     repo = a_repository(tmp_path / "repo")
-    before = TL._before_its_delivery(e, SEAM, str(repo), None)
+    before = VAL._before_its_delivery(e, SEAM, str(repo), None)
     head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD", "HEAD^{tree}"], capture_output=True,
                           text=True).stdout.split()
     assert (before["commit"], before["tree"]) == tuple(head), before
@@ -323,7 +324,7 @@ def test_the_check_before_the_delivery_judges_the_committed_tree_and_moves_nothi
     assert e.delivered(TaskId(SEAM)) is None and _state(e) == "EXECUTING"
     assert e.current_exec_verdict(TaskId(SEAM))["tree"] == before["tree"]
     (tmp_path / "bare").mkdir()
-    assert "not the top of a git repository" in TL._before_its_delivery(e, SEAM, str(tmp_path / "bare"), None)["error"]
+    assert "not the top of a git repository" in VAL._before_its_delivery(e, SEAM, str(tmp_path / "bare"), None)["error"]
 
 
 # ── 3. a delivery recording no tree: observed after it lands, its PASS bound ────────────────────────────────────────
@@ -425,14 +426,14 @@ def test_two_refused_reports_on_one_tree_leave_a_repaired_tree_checkable(tmp_pat
     with e.judging_before_delivery(SEAM, "tree-2", "c-tree-2"):
         assert e.refusals_on_this_delivery(TaskId(SEAM)) == 0
         with _as(CONSOLE):
-            assert TL._refuse_validation(e, SEAM, "the tree", str(tmp_path), object(), None)[0] is None
+            assert VAL._refuse_validation(e, SEAM, "the tree", str(tmp_path), object(), None)[0] is None
 
 
 def test_the_third_run_refused_on_one_tree_names_the_holders_lift_not_validating(tmp_path):
     e, _ = _issued(tmp_path)
     _refused_twice(e, "tree-1")
     with e.judging_before_delivery(SEAM, "tree-1", "c-tree-1"), _as(CONSOLE):
-        stop = TL._refuse_validation(e, SEAM, "the tree", str(tmp_path), object(), None)[0]
+        stop = VAL._refuse_validation(e, SEAM, "the tree", str(tmp_path), object(), None)[0]
     said = stop and stop["error"]
     assert said and "VALIDATING" not in said and "changed tree" not in said, stop
     assert said.index("CHALLENGE") < said.index("a repair of what failed"), said
@@ -443,7 +444,7 @@ def test_a_check_of_a_new_tree_reuses_nothing_from_a_report_on_another(tmp_path)
     e, _ = _issued(tmp_path)
     _refused_twice(e, "tree-1")
     with e.judging_before_delivery(SEAM, "tree-2", "c-tree-2"):
-        crits, kept = TL._left_to_validate(e, e.graph.get_task(TaskId(SEAM)))
+        crits, kept = VAL._left_to_validate(e, e.graph.get_task(TaskId(SEAM)))
     assert not kept and len(crits) == len(e.graph.get_task(TaskId(SEAM)).spec.criteria)
 
 
@@ -574,7 +575,7 @@ def test_a_runs_record_names_the_tree_its_claim_named_when_it_began(tmp_path):
     _delivers(e, "tree-1")
     claim = e.claims.begin_validation(TaskId(SEAM), tree="tree-1")
     with e.judging_before_delivery(SEAM, "tree-2", "c-tree-2"):
-        TL._record_node(e, e.graph.get_task(TaskId(SEAM)), _entries(e), {}, "p-val", object(), claim, None,
+        VAL._record_node(e, e.graph.get_task(TaskId(SEAM)), _entries(e), {}, "p-val", object(), claim, None,
                         str(tmp_path), None)
     e.claims.end_validation(claim)
     assert e.current_exec_verdict(TaskId(SEAM))["tree"] == "tree-1"

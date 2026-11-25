@@ -7,11 +7,13 @@ from pathlib import Path
 
 from gfso import issuer as I, packets as P, tools_llm as TL
 from gfso.adapters.llm import headless as H
-from gfso.adapters.llm.stats import _stat_line
-from gfso.core.protocol.procedure import admission_defects, merge_regression, refuting_probes
+from gfso.adapters.llm.stats import stat_line
+from gfso.core.protocol.procedure import admission_defects
+from gfso.core.protocol.accounting import merge_regression, refuting_probes
 from gfso.core.types import Criteria, Mode, Probe, TaskId
 from tests.support import hold_a_credential
 from tests.test_the_mode_decides_who_holds_what import _engine, _goal
+import gfso.validate as VAL
 
 
 def test_a_list_past_the_shown_count_is_in_a_file_the_text_names_none_withheld(tmp_path):
@@ -36,8 +38,8 @@ class _Llm:
 
 
 def test_a_call_that_ended_in_error_says_why():
-    assert "prompt_too_long: Prompt is too long" in _stat_line(_Llm(error="prompt_too_long: Prompt is too long"))
-    assert "error" not in _stat_line(_Llm())
+    assert "prompt_too_long: Prompt is too long" in stat_line(_Llm(error="prompt_too_long: Prompt is too long"))
+    assert "error" not in stat_line(_Llm())
 
 
 def test_only_what_the_report_says_refuted_enters_the_store():
@@ -46,7 +48,7 @@ def test_only_what_the_report_says_refuted_enters_the_store():
     probe = lambda i, **k: dict({"id": f"p{i}", "behaviour": "b", "command": f"run {i}", "expect": "e"}, **k)
     passed = {"criterion": "q", "verdict": "pass", "evidence": "ok", "probe": [probe(1), probe(2)]}
     failed = {"criterion": "q", "verdict": "fail", "evidence": "run 3 printed 1", "probe": [probe(3), probe(4, held=True)]}
-    (entry,) = TL._conjoined([passed, failed])
+    (entry,) = VAL._conjoined([passed, failed])
     assert len(entry["probe"]) == 4, "the union the record holds the criterion to is kept"
     assert [p["as_run"] for p in refuting_probes([entry])["q"]] == ["run 3"]
 

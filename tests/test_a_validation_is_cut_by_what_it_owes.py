@@ -22,6 +22,7 @@ from gfso.packets import _criteria_text, owed_probes
 from tests.support import committed, criterion
 from tests.test_validate_result import _eng, _fenced
 from tests.support import FakeSpec
+import gfso.validate as VAL
 
 # ── the measured shape ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -68,7 +69,7 @@ def test_the_measured_shape_owes_what_was_measured():
 @pytest.mark.parametrize("size", [16, 7, 40])
 def test_each_run_owes_at_most_the_dial_and_each_probe_is_carried_once(size):
     eng, task, parts = _measured()
-    runs = TL._scope_batches(eng, parts, size)
+    runs = VAL._scope_batches(eng, parts, size)
     carried = [pid for run in runs for *_, carry in run for pid in carry]
     assert all(sum(len(carry) for *_, carry in run) <= size for run in runs)
     assert sorted(carried) == sorted(pid for _, items in owed_probes(eng, task, eng.crits) for pid, _ in items)
@@ -91,7 +92,7 @@ def test_each_run_owes_at_most_the_dial_and_each_probe_is_carried_once(size):
 
 def test_the_dial_at_zero_is_one_run_carrying_everything():
     eng, _, parts = _measured()
-    (run,) = TL._scope_batches(eng, parts, 0)
+    (run,) = VAL._scope_batches(eng, parts, 0)
     assert sum(len(carry) for *_, carry in run) == 75
 
 
@@ -144,7 +145,7 @@ def test_a_split_criterion_is_the_conjunction_of_its_runs(monkeypatch, word, bad
     e = _eng()
     _split_node(e, tmp_path)
     llm = _Runs(word, bad)
-    out = TL.validate_result(e, "big", _llm=llm, workdir=str(tmp_path))
+    out = VAL.validate_result(e, "big", _llm=llm, workdir=str(tmp_path))
     assert len(llm.packets) == 2 and all("**wide**" in p and "SPLIT between runs" in p for p in llm.packets)
     record = e.get_exec_verdict(T.TaskId("big"))
     wide = [x for x in (record or {}).get("per_criterion") or () if x.get("criterion") == "wide"]
@@ -178,7 +179,7 @@ def test_a_split_run_that_left_the_criterion_out_does_not_pass_it(monkeypatch, t
                 return text
             return _fenced({"verdict": "PASS", "failed_criteria": [], "per_criterion": []})
 
-    out = TL.validate_result(e, "big", _llm=_Silent("pass", None), workdir=str(tmp_path))
+    out = VAL.validate_result(e, "big", _llm=_Silent("pass", None), workdir=str(tmp_path))
     assert out["verdict"] != "PASS"
     assert (e.get_exec_verdict(T.TaskId("big")) or {}).get("verdict") != "PASS"
     e.stop()
@@ -191,7 +192,7 @@ def test_a_part_probe_another_run_carries_is_shown_as_pinned_not_by_id_alone():
     resting on them failed over a tree that passes all of them."""
     eng, task, parts = _measured()
     shown = 0
-    for run in TL._scope_batches(eng, parts, 16):
+    for run in VAL._scope_batches(eng, parts, 16):
         for t, _, crits, carry in run:
             text = _criteria_text(eng, t, crits, None, None, carry)
             for c in crits:

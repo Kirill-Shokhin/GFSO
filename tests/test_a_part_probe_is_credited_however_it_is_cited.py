@@ -13,7 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from gfso.core.protocol.procedure import part_credit, part_criteria, probe_id, unaccounted_for, unrun_parts
+from gfso.core.protocol.procedure import part_criteria, probe_id
+from gfso.core.protocol.accounting import part_credit, unaccounted_for, unrun_parts
 from gfso.core.types import Criteria, Probe
 from tests.support import FakeSpec
 

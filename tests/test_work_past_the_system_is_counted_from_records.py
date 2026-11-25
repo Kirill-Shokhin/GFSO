@@ -24,6 +24,8 @@ import gfso.tools_llm as TL
 from gfso.adapters import worktrees as W
 from gfso.core.types import AgentId, Mode, TaskId
 from tests.support import REGISTER, criterion, make_engine
+from gfso.roster import default_agents
+from gfso.workspaces import validator_workdir
 
 OLD, LATER = "2001-01-01T00:00:00Z", "2099-01-01T00:00:00Z"
 
@@ -78,7 +80,7 @@ def _take(e, node="root"):
 def _deliver(e):
     # …the node's work is what the test committed where its judge stands, named; none: an empty commit says so, on no
     # branch, so that no line of the repository moves
-    at = TL._delegation().validator_workdir(e, TL._delegation().default_agents(), TaskId("root"))
+    at = validator_workdir(e, default_agents(), TaskId("root"))
     if (head := _git(at, "rev-parse", "HEAD")) == P.start_of(e, "root"):
         at = _git(at, "commit-tree", "-m", "nothing changed", "-p", head, f"{head}^{{tree}}")
     assert TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="f.txt", self_validation="PASS", place=at)["accepted"]
@@ -109,7 +111,7 @@ def test_a_chats_accept_records_where_and_from_which_head_its_node_is_at_work(re
     e = _in_chat(repo)
     row = next(x for x in e.audit_log() if x.signal.name == "ACCEPT")
     assert (row.commit, Path(row.repository).resolve()) == (head, repo.resolve())
-    assert [(t.repository, t.node, t.until, t.holder) for t in P.spans(e, TL._delegation().default_agents())] == [
+    assert [(t.repository, t.node, t.until, t.holder) for t in P.spans(e, default_agents())] == [
         (P.repository(repo), "root", None, "user")]
 
 

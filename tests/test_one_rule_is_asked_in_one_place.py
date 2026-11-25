@@ -1,6 +1,6 @@
 """A rule two doors ask is written once (canon audit 2026-10-26, OD-2/OD-3): copies of it had diverged.
 
-CONTROLS: read only the last batch in `delegate._classify_no_verdict`, or drop the children's clause from
+CONTROLS: read only the last batch in `validate._classify_no_verdict`, or drop the children's clause from
 `Engine.seam_keepers` — and the test of that rule goes red."""
 from __future__ import annotations
 
@@ -8,13 +8,14 @@ import gfso.delegate as D
 from gfso.adapters.llm.stats import the_call_was_cut
 from gfso.core.types import AgentId, TaskId
 from tests.support import make_engine
+import gfso.validate as VAL
 
 
 def test_a_validation_whose_first_batch_was_cut_was_cut_for_every_reader():
     calls = [{"transport_torn": True, "cost_usd": 0.0}, {"transport_torn": False, "cost_usd": 0.01}]
     llm = type("L", (), {"calls": calls})()
     e = make_engine()
-    assert the_call_was_cut(llm, "") and D._classify_no_verdict(e, "t", {"stats": calls}) == "no-verdict:torn"
+    assert the_call_was_cut(llm, "") and VAL._classify_no_verdict(e, "t", {"stats": calls}) == "no-verdict:torn"
     e.stop()
 
 

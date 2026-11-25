@@ -873,7 +873,7 @@ def test_under_auto_a_node_its_disk_bound_ended_is_asked_with_its_cause_and_canc
     assert I.moves_for(e, root, "parked") == ()
     out = I.settle(e, None, root.id, "parked", str(e.graph.issuer_of(root.id)), None)
     assert out["status"] == "users" and why in out["why"] and "start_project" in out["why"], out
-    assert e.paused(), "the run waits for the user"
+    assert e.stops.paused(), "the run waits for the user"
 
 
 def test_laying_a_checks_inputs_spends_none_of_the_observations_time(monkeypatch, tmp_path):

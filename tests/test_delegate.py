@@ -14,13 +14,15 @@ from gfso.core.types import (TaskId, AgentId, Mode, Spec, Criteria, CriterionMap
                              DepEdge, Signal)
 from gfso import tools as T
 import gfso.delegate as D
-from gfso.delegate import Dispatcher, _auto_validate, _checker_validate
+from gfso.delegate import Dispatcher
+from gfso.validate import auto_validate, _checker_validate
 from gfso.sessions import run_executor, EXECUTOR_SCHEMA
 from gfso.roster import AgentRegistry
 from tests.support import (committed, make_engine, instrument_passes, criterion, pinned,
                            workdir as workdir_)
 from gfso.decompose.build import build_graph_live
 from tests.support import DENIAL_ENTRY, REGISTER, REGISTER_SPLIT, round_over, declare
+import gfso.validate as VAL
 
 
 def _eng():
@@ -117,7 +119,7 @@ def _dispatch_validate(e, agents, verdict_payload):
     llm = _AgentLLM(_fenced(verdict_payload))
     d = Dispatcher(e, agents,
                    validator_runner=lambda en, t, a, model_override=None, sign=True:
-                   _auto_validate(en, t, a, _llm=llm, model_override=model_override, sign=sign))
+                   auto_validate(en, t, a, _llm=llm, model_override=model_override, sign=sign))
     started = d.dispatch_once()
     # until the VALIDATION is over, not until the canned text was read: the verdict is recorded and signed
     # after the fake returns, and waiting on the text alone raced that under load
@@ -525,7 +527,7 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
           "failed_criteria": []}   # …the part's pinned probe too, over the aggregate: g rests on it
     llm = _AgentLLM(_fenced(ok), _fenced(ok))
     d = Dispatcher(e, agents, runner=lambda *a: None,
-                   validator_runner=lambda en, t, a: _auto_validate(en, t, a, _llm=llm))
+                   validator_runner=lambda en, t, a: auto_validate(en, t, a, _llm=llm))
     # (a) the gate: children not settled → no validator spawn at all
     assert not any("par" in s for s in d.dispatch_once())
     assert len(llm._texts) == 2
@@ -578,7 +580,7 @@ def test_auto_validate_reuses_fresh_recorded_verdict(tmp_path):
     e._graph.authorized_validators = {"val-1"}      # the dispatcher syncs this each pass
     e.workforce.publish_roster({"exec-1": "llm-executor", "val-1": "llm-validator"})   # …its issuer a machine
     unused = _AgentLLM("never popped")
-    assert _auto_validate(e, TaskId("n1"), agents, _llm=unused) == "pass"
+    assert auto_validate(e, TaskId("n1"), agents, _llm=unused) == "pass"
     assert unused.packets == []                       # verdict reused, no validator spawned
     e.wait_idle()
     assert e.graph.get_state(TaskId("n1")).name == "DONE"   # signed from the record
@@ -609,7 +611,7 @@ def test_inflight_validator_lock_suppresses_concurrent_duplicates(tmp_path):
     slow = _Blocking(_fenced({"verdict": "PASS", "per_criterion": [
         {"criterion": "flush", "verdict": "pass", "evidence": "ran", "behaviours": ["the criterion holds"], "probe": [{"command": "check flush", "expect": "it holds"}]}], "failed_criteria": []}))
     first: dict = {}
-    t = threading.Thread(target=lambda: first.update(TL.validate_result(e, "n1", _llm=slow)))
+    t = threading.Thread(target=lambda: first.update(VAL.validate_result(e, "n1", _llm=slow)))
     t.start()
     for _ in range(500):                                      # first run claims the slot
         if e.claims._val_inflight:
@@ -617,11 +619,11 @@ def test_inflight_validator_lock_suppresses_concurrent_duplicates(tmp_path):
         time.sleep(0.01)
     assert e.claims._val_inflight
 
-    dup = TL.validate_result(e, "n1", _llm=_AgentLLM("unused"))
+    dup = VAL.validate_result(e, "n1", _llm=_AgentLLM("unused"))
     assert dup.get("inflight") is True                        # suppressed, no verdict field
 
     fast = _AgentLLM("unused")
-    assert _auto_validate(e, TaskId("n1"), agents, _llm=fast) == "rejected"
+    assert auto_validate(e, TaskId("n1"), agents, _llm=fast) == "rejected"
     assert fast.packets == []                                 # no duplicate agent spawned
 
     release.set()
@@ -1230,7 +1232,7 @@ def test_another_projects_validator_does_not_validate_this_projects_work(tmp_pat
 def test_a_project_with_no_validator_is_not_a_validator_that_failed(tmp_path):
     """A graph that never had an instrument was reported as an instrument that failed twice.
 
-    `_auto_validate` returned a bare None when no `llm-validator` is registered, and the caller reads
+    `auto_validate` returned a bare None when no `llm-validator` is registered, and the caller reads
     None as "the run died": it queued a retry (a paid model run) and then parked the node for its
     issuer with "validator produced no verdict twice". An absence and a failure are opposite facts
     (register 2026-08-22, finding 6)."""
@@ -1336,8 +1338,8 @@ def test_a_self_report_is_not_a_recorded_verdict_the_instrument_may_skip(tmp_pat
                                                               "expect": "it holds"}]}])
         return {"verdict": Verdict.PASS}
 
-    monkeypatch.setattr(D, "_validate_with", _ran)
-    out = D._auto_validate(e, "kid", agents)
+    monkeypatch.setattr(VAL, "_validate_with", _ran)
+    out = VAL.auto_validate(e, "kid", agents)
 
     assert validated == ["kid"], "the instrument must run: a self-report is not an independent verdict"
     assert out == "pass"
@@ -1365,7 +1367,7 @@ def test_a_parent_delivered_over_unfinished_children_costs_nothing_to_refuse(tmp
     T.signal(e, "par", "DELIVER", "exec-1", result="claims it is done")   # …while `kid` is OFFERED
 
     e._graph.authorized_validators = {"val-1"}
-    assert D._auto_validate(e, "par", agents, _llm=_Explodes()) == "rejected"
+    assert VAL.auto_validate(e, "par", agents, _llm=_Explodes()) == "rejected"
     assert e._graph.get_task(TaskId("par")).state.name == "VALIDATING"    # …and it waits, honestly
     e.stop()
 
@@ -1437,9 +1439,9 @@ def test_a_validator_that_belongs_to_no_project_says_so(tmp_path, monkeypatch):
     said = []
     monkeypatch.setattr(e, "emit_info", lambda src, msg: said.append(msg))
     monkeypatch.setattr(e, "project_name", "mine", raising=False)
-    monkeypatch.setattr(D, "_validate_with", lambda *a, **k: {"verdict": Verdict.PASS})
+    monkeypatch.setattr(VAL, "_validate_with", lambda *a, **k: {"verdict": Verdict.PASS})
     e._graph.authorized_validators = {"stranger-val"}
-    D._auto_validate(e, "n", agents)
+    VAL.auto_validate(e, "n", agents)
 
     assert any("belongs to NO project" in m and "stranger-val" in m for m in said), said
     e.stop()
@@ -1450,7 +1452,7 @@ def test_what_registering_says_of_validation_stays_inside_the_project(tmp_path, 
     its own validator was told it "validates nothing yet", while its own did the validating (live, otf-smoke-4). The
     answers ask the binding the dispatcher makes: within the project."""
     reg = AgentRegistry(path=str(tmp_path / "agents.json"))
-    monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
+    monkeypatch.setattr(TL, "staffed", lambda engine=None: reg)
     a, b, wd = _eng(), _eng(), workdir_(tmp_path, "work")
     monkeypatch.setattr(a, "project_name", "pa", raising=False)
     monkeypatch.setattr(b, "project_name", "pb", raising=False)
@@ -1468,7 +1470,7 @@ def test_registering_a_validator_says_what_it_will_validate(tmp_path, monkeypatc
     unconfirmable until an execution was validated 25 minutes later (HTTP door, 2026-09-02). The
     question is symmetric; the answer is now too."""
     reg = AgentRegistry(path=str(tmp_path / "agents.json"))
-    monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
+    monkeypatch.setattr(TL, "staffed", lambda engine=None: reg)
     e = _eng()
 
     first = TL.register_agent(e, "w-exec", "llm-executor", workdir=workdir_(tmp_path, "work"))

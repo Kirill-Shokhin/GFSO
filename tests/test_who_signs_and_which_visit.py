@@ -15,6 +15,7 @@ from gfso.core.types import Signal, SignalData, TaskId
 from gfso.issuer import _reassign, signal_ok
 from gfso.roster import AgentRegistry
 from tests.support import REGISTER, criterion, make_engine, reviewer_passes
+from gfso.roster import publish_the_workforce
 
 
 def _kid(k, covers, who):
@@ -90,7 +91,7 @@ def test_a_root_another_executes_keeps_its_creator_as_issuer_with_no_mode(tmp_pa
     e.project_name = "p"
     agents = AgentRegistry(path=str(tmp_path / "agents.json"))
     agents.register("exec-1", "llm-executor", workdir=str(tmp_path), project="p")
-    D.publish_the_workforce(e, agents.list())
+    publish_the_workforce(e, agents.list())
     e.workforce.publish_roster({a: c.get("kind") for a, c in agents.list().items()})
     T.create_task(e, "root", {"description": "goal", "criteria": [criterion("x", "X"), criterion("y", "Y")],
                               "accepted_risks": REGISTER}, assignee="exec-1")

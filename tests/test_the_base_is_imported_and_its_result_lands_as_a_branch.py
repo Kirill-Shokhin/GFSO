@@ -25,6 +25,7 @@ from gfso.adapters.snapshots import snapshot
 from gfso.core.types import PlaceUnavailable, State
 from tests.support import make_engine
 from tests.test_a_session_holds_only_its_own_place import IMAGE, _docker
+import gfso.validate as VAL
 
 live = pytest.mark.skipif(not _docker(), reason=f"needs docker and {IMAGE}")
 
@@ -472,7 +473,7 @@ def test_live_a_chats_delivery_is_taken_in_its_parts_land_back_and_its_pass_name
     assert W.git(store, "rev-parse", ST.KEEP + commit, execution=x).stdout.strip() == commit, "not kept in the store"
     assert _inside(x, "rev-parse", "HEAD") == joined, "the base moved"
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-ws" / "root_1"))
-    with snapshot(ST.held(e, x, commit), Path(TL._own_place(str(round_), 0, x)) / "delivery", x,
+    with snapshot(ST.held(e, x, commit), Path(VAL._own_place(str(round_), 0, x)) / "delivery", x,
                   delivered=(tree, commit, "")) as at:
         assert x.files.read_bytes(str(Path(at) / "c.txt")) == b"the chat's\n"
     e.accepted_delivery, e.accepted_repository = (lambda task_id: (tree, commit)), (lambda task_id: str(user))

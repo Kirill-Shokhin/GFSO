@@ -6,6 +6,7 @@ import json
 
 import gfso.delegate as D
 from gfso.core.types import Signal, State, TaskId
+from gfso.engine.validation import session_fit
 from gfso.packets import _rework_section
 from tests.test_one_session_carries_a_scope import _LLM, _dispatcher, _entry, _free_claim, _project
 
@@ -58,6 +59,6 @@ def test_a_refutation_an_earlier_engine_stored_reads_as_nothing(tmp_path, monkey
     leaf = _leaf(e)
     e._storage.store_setting("session_fit:root.a", json.dumps({"volume": "", "fits": None, "refuted": {
         "version": [leaf.reopens, leaf.revisions], "open": True, "upto": {"root.a": [[0, 0], 4]}}}))
-    assert (e.session_fit(TaskId("root.a")) or {}).get("fits") is None
+    assert (session_fit(e.graph, TaskId("root.a")) or {}).get("fits") is None
     assert e.split_owed(TaskId("root.a")) is None and not d._split_owed_said(_leaf(e))
     e.stop()

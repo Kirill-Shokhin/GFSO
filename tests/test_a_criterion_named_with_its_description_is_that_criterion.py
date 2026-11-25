@@ -13,7 +13,7 @@ from types import SimpleNamespace as NS
 
 from gfso.core.protocol.invariants import criterion_meant
 from gfso.packets import _evidence_short
-from gfso.tools_llm import _SCOPE_VALIDATOR_SCHEMA, _VALIDATOR_SCHEMA, _entries_by_node
+from gfso.validate import _SCOPE_VALIDATOR_SCHEMA, _VALIDATOR_SCHEMA, _entries_by_node
 from tests.support import FakeSpec
 
 NAMES = ["Lexer and parser functionality", "INNER JOIN operations", "INNER JOIN operations chained"]

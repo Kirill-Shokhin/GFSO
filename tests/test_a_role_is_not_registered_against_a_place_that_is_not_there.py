@@ -24,6 +24,7 @@ from gfso import tools_llm as TL
 from gfso.roster import AgentRegistry, _resolution_note, missing_workdir
 from gfso.places import cheap_to_ask, same_place, text_place
 from tests.support import a_repository, criterion, make_engine
+import gfso.validate as VAL
 
 BS = chr(92)
 
@@ -333,7 +334,7 @@ def test_the_advice_names_the_spelling_that_actually_binds(tmp_path, monkeypatch
     monkeypatch.chdir(tmp_path)
     a_repository(tmp_path / "work")       # …a repository, as every directory a role is named in
     e = make_engine()
-    monkeypatch.setattr(TL, "_roster", lambda _e: AgentRegistry(str(tmp_path / "roster.json")))
+    monkeypatch.setattr(TL, "staffed", lambda _e: AgentRegistry(str(tmp_path / "roster.json")))
     # A transport with no `run_agent`: the door returns its own error right AFTER the workdir
     # pre-check and before anything is spawned, which is the window under test.
     monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: object())
@@ -624,7 +625,7 @@ def test_the_validation_door_asks_the_same_question_of_the_same_directory(monkey
                             "criteria": [criterion("flush", "nail is flush")]}, "alice")
     T.signal(e, "n1", "ACCEPT", "alice")
     assert T.signal(e, "n1", "DELIVER", "alice", result="done")["state"] == "VALIDATING"
-    monkeypatch.setattr(TL, "_roster", lambda _e: AgentRegistry(str(tmp_path / "roster.json")))
+    monkeypatch.setattr(VAL, "default_agents", lambda: AgentRegistry(str(tmp_path / "roster.json")))
 
     asked = []
     real_is_dir, real_iterdir = Path.is_dir, Path.iterdir
@@ -633,8 +634,8 @@ def test_the_validation_door_asks_the_same_question_of_the_same_directory(monkey
                         lambda self: (asked.append(str(self)), real_iterdir(self))[1])
     # the model is stubbed BEHIND the door (`_llm` stays None): passing `_llm` skips the very pre-check
     # this test is about, and a mutant removing its guard then stayed green
-    monkeypatch.setattr(TL, "llm_factory", lambda *a, **k: _NoValidator())
-    TL.validate_result(e, "n1", workdir="Z:" + BS + "work")
+    monkeypatch.setattr(VAL, "llm_factory", lambda *a, **k: _NoValidator())
+    VAL.validate_result(e, "n1", workdir="Z:" + BS + "work")
     e.stop()
     assert not any(a.upper().startswith("Z:") for a in asked), asked
 

@@ -15,8 +15,8 @@ from gfso import workspaces as WS
 from gfso.adapters import execution as E
 from gfso.adapters.execution import ContainerExecution, LocalExecution, scratch_of
 from gfso.adapters.worktrees import base_of
-from gfso.core.protocol.procedure import INPUTS_TOKEN, materialize_inputs, probe_id
-from gfso.core.types import VOLUME, Criteria, Probe, nodes_dir, nodes_root
+from gfso.core.protocol.procedure import materialize_inputs, probe_id
+from gfso.core.types import INPUTS_TOKEN, VOLUME, Criteria, Probe, nodes_dir, nodes_root
 from gfso.packets import checkout_note
 
 IMAGE = "gfso-test-image"
@@ -59,7 +59,7 @@ def test_the_command_a_container_reads_keeps_its_argv(tmp_path, name):
 @pytest.mark.parametrize("name", UNSAFE)
 def test_a_node_place_is_named_once_and_read_back_to_its_base(tmp_path, name):
     w = tmp_path / name
-    engine = SimpleNamespace(project_name="p", scope_top=lambda i: None, hands_of=lambda p: None)
+    engine = SimpleNamespace(project_name="p", scope_top=lambda i: None, graph=None)
     agents = SimpleNamespace(get=lambda k: {"workdir": str(w)})
     base, place, branch = WS._place_of(engine, agents, SimpleNamespace(id="root", assignee="x"))
     assert re.fullmatch(r"\.gfso-nodes-[\w.~+@=-]+", Path(place).parents[1].name), place

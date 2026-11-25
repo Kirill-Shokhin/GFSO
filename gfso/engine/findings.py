@@ -24,8 +24,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
-from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, probe_key, round_inputs, round_of, round_words,
-                                          without_past_builds, without_pinned_runs, without_retired)
+from gfso.core.protocol.procedure import forget_round, probe_id, probe_key, round_inputs, round_of, round_words
+from gfso.core.protocol.accounting import pinned_run, without_past_builds, without_pinned_runs, without_retired
 from gfso.core.types import BATCH, HOST, LAID, VOLUME, Signal, TaskId, files_at, laid_beside
 from .audit import VERSION_INSTALLING
 from .verdicts import REGRESSION, criterion_version, ledger_read, ledger_write
@@ -170,7 +170,7 @@ def _onto_the_judged(raw: bytes, prefix: str, judged) -> bytes:
 def round_stands(graph):
     """`unrerunnable`'s `standing`: does the round stand — or does the system's record hold what the path named there
     (`keep_files`), which a re-run lays from it (`lay_files`)? THE SYSTEM'S RECORD — it alone makes and removes rounds
-    (`tools_llm._validation_place`, `issuer._contact_place`) and keeps their files — read with no subprocess, whoever
+    (`validate._validation_place`, `issuer._contact_place`) and keeps their files — read with no subprocess, whoever
     asks: a verdict's record included. A round made before the record was kept is found once on this host, where rounds
     are directories until the places move into volumes (a fallback that goes with that move), then recorded."""
     def standing(r: tuple) -> bool:
@@ -328,7 +328,7 @@ def finding_rulings(storage, task, finding: str) -> list[dict]:
 
 def record_not_reproduced(storage, task, marks: Iterable[tuple], by: str, at: str, found: dict,
                           ruled: bool = False) -> list[tuple]:
-    """The ledger with each of `marks` (`procedure.findings_not_reproduced`) written on its finding — unless the same report
+    """The ledger with each of `marks` (`accounting.findings_not_reproduced`) written on its finding — unless the same report
     filed it again, or a person's return is its latest word and no issuer's ruling (`ruled`) answers it — and the mark
     gone from each finding `found` filed: reproduced, it stands. Returns the rulings written (`_rule`)."""
     stored, out = ledger_read(storage, task.id, REGRESSION, {}) or {}, []

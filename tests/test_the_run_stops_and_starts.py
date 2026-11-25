@@ -16,7 +16,7 @@ import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.delegate import Dispatcher
-from gfso.inflight import _inflight
+from gfso.inflight import flight
 from gfso.packets import _executor_packet, file_tech_reports
 from datetime import datetime, timedelta
 
@@ -63,9 +63,9 @@ def test_a_stop_leaves_its_time_off_the_clocks_so_no_bound_runs_out_in_it():
     e.start()
     _mk(e)
     _carried(e)
-    e.pause("the-user", "")
+    e.stops.pause("the-user", "")
     time.sleep(2.5)
-    e.resume("the-user")
+    e.stops.resume("the-user")
     time.sleep(0.4)
     assert e.graph.get_state(TaskId("n")).name == "OFFERED", "the stop's time ran the bound out"
     assert _await_state(e, "n", {"ESCALATED", "CANCELLING", "ABANDONED"}, timeout=5) != "OFFERED", "running, it ends"
@@ -81,11 +81,11 @@ def test_time_no_engine_ticked_over_a_project_is_left_off_its_clocks_once():
         gone.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
         e = _carried(make_engine(storage=gone, llm=None, check_interval=0.1))
         if stopped:
-            e.pause("the-user", "")
+            e.stops.pause("the-user", "")
         e.start()
         assert abs(clock_off_s(e.graph) - 3600) < 2
         assert abs((datetime.now() - project_now(e.graph)).total_seconds() - clock_off_s(e.graph)) < 1
-        e.resume("the-user")
+        e.stops.resume("the-user")
         e.stop()
         again = make_engine(storage=gone, llm=None, check_interval=0.1)
         again.start()
@@ -112,13 +112,13 @@ def test_a_host_asleep_around_a_stop_or_a_start_is_off_once():
         e = _carried(make_engine(llm=None))
         gate, halt = _Gate(), threading.Event()
         if before == "stopped":
-            e.pause("u", "")
+            e.stops.pause("u", "")
         e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))   # the last tick: an hour ago on the wall
         th = threading.Thread(target=L.timeout_monitor, args=(e.graph, queue.Queue(), 10.0, halt, None, gate),
                               daemon=True)
         th.start()
         time.sleep(0.2)
-        e.resume("u") if after == "start" else e.pause("u", "")
+        e.stops.resume("u") if after == "start" else e.stops.pause("u", "")
         gate.ev.release()
         time.sleep(0.3)
         halt.set()
@@ -130,7 +130,7 @@ def test_a_host_asleep_around_a_stop_or_a_start_is_off_once():
 def test_the_run_has_one_state_running_stopping_stopped():
     e = make_engine(validate_signals=True, state_timeout=0)
     assert TL.run_state(e)["state"] == "running"
-    with _inflight("delegated_execution", e, "kid"):
+    with flight("delegated_execution", e, "kid"):
         got = TL.TOOLS["stop_project"](e, why="w", by="u")
         assert got["state"] == "stopping" and [w["task_id"] for w in got["working"]] == ["kid"], got
         assert TL.TOOLS["next_steps"](e)["run"]["state"] == "stopping"
@@ -180,7 +180,7 @@ def test_a_bound_read_between_two_ticks_already_sees_the_sleep_off():
     e = _carried(make_engine(llm=None))             # not started: no monitor ticks over it
     e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
     assert abs(clock_off_s(e.graph) - 3600) < 2
-    e.pause("the-user", "")                         # …which keeps the sleep before it stands (`Engine._keep_the_beat`)
+    e.stops.pause("the-user", "")                         # …which keeps the sleep before it stands (`Stops.keep_the_beat`)
     kept = clock_off_s(e.graph)
     assert abs(kept - 3600) < 2
     e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 5))

@@ -26,6 +26,9 @@ AgentId = NewType("AgentId", str)
 # magnitude is on `Task.max_iterations` below; what this constant carries is that there is exactly one.
 DEFAULT_MAX_ITERATIONS = 12
 
+#: what a probe's command names the directory its `inputs` are laid down in
+INPUTS_TOKEN = "{inputs}"
+
 
 @dataclass(frozen=True)
 class Probe:
@@ -51,7 +54,7 @@ class Probe:
     inputs: tuple[tuple[str, str], ...] = ()
     # `expect` is the WHOLE output the command prints on correct work, as `procedure.shows` reads it (escapes as the
     # characters, whitespace runs as one) — so the system decides it by running the command itself, and a validator's
-    # `held: true` over an output that differs is the false PASS the engine overrules (`tools_llm._observe_pins`).
+    # `held: true` over an output that differs is the false PASS the engine overrules (`validate._observe_pins`).
     # False: `expect` describes the output in words or names a part of it, which only a reader can judge.
     exact: bool = False
 

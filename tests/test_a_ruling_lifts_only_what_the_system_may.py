@@ -143,7 +143,7 @@ def test_below_a_handed_in_root_a_ruling_is_the_persons_and_the_run_stops(tmp_pa
                     place=lambda en, ag, n: a_place(tmp_path))
     out = I.settle(e, _Roster(), mid, "dispute", issuer, verbs)
     e.wait_idle()
-    assert out["status"] == "users" and e.paused() and "only the user changes a check" in out["why"], out
+    assert out["status"] == "users" and e.stops.paused() and "only the user changes a check" in out["why"], out
     assert _standing(e, mid) == set(ids) and STUB in _pins(e, "m", mid) and e.graph.get_state(mid) == State.CHALLENGED
     assert e.plans_own_findings(mid) == [], "the system's question and its door read a handed-in plan as open"
     e.stop()

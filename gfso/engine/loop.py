@@ -600,9 +600,9 @@ def timeout_monitor(
     """Background thread: checks deadlines AND per-state age, emits timeout signals.
 
     `lift(wall)`, asked at every tick under a stop: starts a stop the system made by itself once what made it is gone —
-    the account's limit lifted, the execution place answering (`Engine.lift_the_system_stop`) — from the stop's record,
+    the account's limit lifted, the execution place answering (`Stops.lift_the_system_stop`) — from the stop's record,
     so a restart re-arms it. `held(since, before)`, told of a gap held outside a stop that this tick kept (a host asleep;
-    `keep_the_beat`): its start and the off kept before it, for the deadlines' record (`Engine._record_the_gap`).
+    `keep_the_beat`): its start and the off kept before it, for the deadlines' record (`Stops.record_the_gap`).
 
     Inv-5 (§12.12): EVERY non-terminal state is finite. Two clocks feed the same TIMEOUT trigger:
     (a) the task's own deadline (exact, when set); (b) the per-STATE clock — a state older than

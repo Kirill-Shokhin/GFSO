@@ -37,7 +37,8 @@ from tests.test_the_issuer_answers_a_dispute import _ContactLLM, _disputed
 from tests.test_the_runs_of_a_validation_do_not_share_a_tree import _Run
 from tests.test_the_systems_git_runs_in_the_place_it_reads import _sh, live, project  # noqa: F401 — the fixture
 from tests.test_validate_result import _eng, _fenced
-from gfso.delegate import _classify_no_verdict
+from gfso.validate import _classify_no_verdict
+import gfso.validate as VAL
 
 
 class _Judge(_Run):
@@ -74,7 +75,7 @@ def _delivered(x, monkeypatch, flip: bool, build=None, before: str = ""):
                 break
             time.sleep(0.5)
         assert x.files.read_bytes(str(a / "f")) == b"passing\n", "the leftover process rewrote the place"
-    monkeypatch.setattr(TL, "execution_of", lambda *_: x)
+    monkeypatch.setattr(VAL, "execution_of", lambda *_: x)
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "0")
     e = _eng()
     T.create_task(e, "big", {"description": "f", "criteria": [
@@ -83,7 +84,7 @@ def _delivered(x, monkeypatch, flip: bool, build=None, before: str = ""):
     assert signal_ok(e, TaskId("big"), Signal.DELIVER, "alice", result="f", artifact=tree, commit=W.head(a, execution=x),
                      build=build)
     judge = _Judge(x)
-    out = TL.validate_result(e, "big", workdir=str(a), _llm=judge, _spawn=lambda: judge)
+    out = VAL.validate_result(e, "big", workdir=str(a), _llm=judge, _spawn=lambda: judge)
     return out, judge, e
 
 
@@ -130,8 +131,8 @@ def test_live_a_batchs_leftover_process_cannot_reach_another_batchs_copy(project
     tree, commit = W.commit_all(x.base, a, "gfso: a delivery", "exec-a", execution=x), W.head(a, execution=x)
     round_ = x.own / ".gfso-scratch-a" / "a_1"
     x.files.mkdir(str(round_))
-    one = Path(TL._own_place(str(round_), 0, x))
-    two = Path(TL._own_place(str(round_), 1, x))
+    one = Path(VAL._own_place(str(round_), 0, x))
+    two = Path(VAL._own_place(str(round_), 1, x))
     inside = lambda p: x.to_inside(str(p))
     v1 = x.session(str(one))
     # batch 1's validator leaves a process behind that keeps writing where batch 2's copy will stand
@@ -144,7 +145,7 @@ def test_live_a_batchs_leftover_process_cannot_reach_another_batchs_copy(project
         assert x.files.read_bytes(str(Path(at) / "f")) == b"delivered\n", "batch 1's leftover rewrote batch 2's copy"
     assert not x.files.exists(str(round_ / "batch9")), "batch 1's leftover wrote its round"
     with pytest.raises(OSError, match="already stands"):
-        TL._own_place(str(round_), 0, x)
+        VAL._own_place(str(round_), 0, x)
 
 
 _FILTER = "git config --file {d}/config filter.f.clean 'git cat-file blob HEAD:b.txt' && mkdir -p {d}/info && " \
@@ -206,7 +207,7 @@ def test_live_an_object_of_the_delivery_rewritten_in_its_place_after_deliver_is_
     # …refused where the pack is taken in (`index-pack` names each object by its content: the forged one is not the
     # delivery's, which is then missing)
     with pytest.raises(Uncopied, match="is missing"):
-        with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")):
+        with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")):
             pass
 
 
@@ -219,14 +220,14 @@ def test_live_a_submodule_the_user_committed_is_copied_empty_and_one_moved_is_no
     _sh(x, a, link.format("a" * 40) + " && echo mine > m.txt")
     tree = W.commit_all(x.base, a, "gfso: a delivery", "exec-a", execution=x)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, W.head(a, execution=x), "")) as copy:
+    with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, W.head(a, execution=x), "")) as copy:
         assert x.files.exists(str(Path(copy) / "m.txt")), "its files are there, its submodule empty as in every copy"
     _sh(x, a, link.format("b" * 40))
     tree = W.commit_all(x.base, a, "gfso: moved", "exec-a", execution=x)
     assert W.nested(a, "HEAD", x) == ["vendor/lib"]
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_2"))
     with pytest.raises(NotTheDelivery, match=r"nested repositories \(vendor/lib\)"):
-        with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, W.head(a, execution=x), "")):
+        with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, W.head(a, execution=x), "")):
             pass
 
 
@@ -244,7 +245,7 @@ def test_live_a_copy_is_the_recorded_tree_whatever_the_place_holds(project, case
     if after:
         _sh(x, a, after)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    batch = Path(TL._own_place(str(round_), 0, x))
+    batch = Path(VAL._own_place(str(round_), 0, x))
     try:
         with snapshot(a, batch / "delivery", x, delivered=(tree, commit, "")) as at:
             refused, differs = None, changed(a, at, x, commit)
@@ -270,7 +271,7 @@ def _copy(x, before: str, build, after="") -> tuple:
     elif after:
         _sh(x, a, after)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    batch, built = Path(TL._own_place(str(round_), 0, x)), []
+    batch, built = Path(VAL._own_place(str(round_), 0, x)), []
     with snapshot(a, batch / "delivery", x, delivered=(tree, commit, build), built=built) as at:
         names = sorted(x.files.listdir(at))
         return names, {n: x.files.read_bytes(str(Path(at) / n)) for n in names if n != ".git"}, built
@@ -370,7 +371,7 @@ def test_live_a_delivered_link_into_the_nodes_temp_reads_nothing_written_there_a
     tree, commit = W.commit_all(x.base, a, "gfso: a delivery", "exec-a", execution=x), W.head(a, execution=x)
     x.files.write_bytes(str(t / "impl"), b"forged\n")
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    batch = Path(TL._own_place(str(round_), 0, x))
+    batch = Path(VAL._own_place(str(round_), 0, x))
     assert _judged(x, a, batch / "delivery", tree, commit, _READ.format("impl.txt")) == b"unreachable\n"
 
 
@@ -384,7 +385,7 @@ def test_live_a_roots_judge_reads_nothing_of_the_base_as_it_stands_now(project):
     tree, commit = W.commit_all(base, base, "gfso: root", "exec-root", execution=x), W.head(base, execution=x)
     _sh(x, base, "echo forged > secret")
     x.files.mkdir(str(round_ := scratch_of(base, "p") / "root_1"))
-    batch = Path(TL._own_place(str(round_), 0, x))
+    batch = Path(VAL._own_place(str(round_), 0, x))
     assert _judged(x, base, batch / "delivery", tree, commit, _READ.format("link.txt")) == b"unreachable\n"
     with x.scratch("gfso-exact-", system=True) as tmp:            # …the system's own run of the exact checks
         x.files.mkdir(str(Path(tmp) / "exact"))
@@ -400,7 +401,7 @@ def test_live_a_batchs_build_reads_nothing_of_a_sibling_batch(project):
     _sh(x, a, "echo delivered > f")
     tree, commit = W.commit_all(x.base, a, "gfso: a delivery", "exec-a", execution=x), W.head(a, execution=x)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    one, two = (Path(TL._own_place(str(round_), i, x)) for i in (0, 1))
+    one, two = (Path(VAL._own_place(str(round_), i, x)) for i in (0, 1))
     x.files.write_bytes(str(two / "delivery.place" / "secret"), b"sibling\n")
     assert _judged(x, a, one / "delivery", tree, commit,
                    _READ.format(x.to_inside(str(two / "delivery.place" / "secret")))) == b"unreachable\n"
@@ -423,7 +424,7 @@ def test_live_an_object_rewritten_once_the_delivery_is_taken_in_is_never_read(pr
         return pointed(repo, revs, execution)
     monkeypatch.setattr(W, "pointed", _then_forged)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")) as at:
+    with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")) as at:
         assert x.files.read_bytes(str(Path(at) / "m.txt")) == b"mine\n"
 
 
@@ -438,7 +439,7 @@ def test_live_an_object_no_store_holds_is_no_verdict_never_the_deliverys_fail(pr
     _sh(x, a, "o=$(git rev-parse HEAD:m.txt) && rm -f .git/objects/$(echo $o | cut -c1-2)/$(echo $o | cut -c3-)")
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
     with pytest.raises(Uncopied, match="is missing"):
-        with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")):
+        with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")):
             pass
 
 
@@ -547,7 +548,7 @@ def test_live_a_standing_finding_reruns_the_probe_it_was_filed_over_and_its_roun
     _sh(x, a, "echo delivered > f")
     x.files.write_bytes(str(a / "Makefile"), _FORGER)
     tree = W.commit_all(x.base, a, "gfso: big delivery", "exec-a", execution=x, branch="gfso/p/a")
-    monkeypatch.setattr(TL, "execution_of", lambda *_: x)
+    monkeypatch.setattr(VAL, "execution_of", lambda *_: x)
     monkeypatch.setattr(P, "execution_of", lambda *_: x)
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "0")
     e = _eng()
@@ -560,7 +561,7 @@ def test_live_a_standing_finding_reruns_the_probe_it_was_filed_over_and_its_roun
         deliver = lambda: signal_ok(e, TaskId("big"), Signal.DELIVER, "alice", result="f", artifact=tree,
                                     commit=W.head(a, execution=x))
         assert deliver()
-        assert TL.validate_result(e, "big", workdir=str(a), _llm=judge, _spawn=lambda: judge)["verdict"] == "FAIL"
+        assert VAL.validate_result(e, "big", workdir=str(a), _llm=judge, _spawn=lambda: judge)["verdict"] == "FAIL"
         (first,) = [r for r in x.files.listdir(str(scratch_of(a, "p"))) if not r.endswith(".laid")]
         batch = scratch_of(a, "p") / first / "batch1"
         alive = x.files.read_bytes(str(batch / "alive"))
@@ -569,7 +570,7 @@ def test_live_a_standing_finding_reruns_the_probe_it_was_filed_over_and_its_roun
         x.files.write_bytes(str(batch / "probe.sh"), b"echo held\nexit 0\n")    # …rewritten after its finding was filed
         T.signal(e, "big", "FAIL", "alice", failed_criteria=["one"])
         assert deliver(), e.graph.get_task(TaskId("big")).state
-        TL.validate_result(e, "big", workdir=str(a), _llm=judge, _spawn=lambda: judge)
+        VAL.validate_result(e, "big", workdir=str(a), _llm=judge, _spawn=lambda: judge)
         assert judge.rounds == 2 and judge.reran, "round 2 was handed the standing finding to re-run"
         assert [(out, rc) for _, out, rc, *_ in judge.reran] == [("refuted", 1)], judge.reran
         assert judge.earlier != 0, "round 2's judge reads round 1's directory"
@@ -599,11 +600,11 @@ def test_live_an_lfs_file_reads_as_its_content_in_the_judges_copy_and_a_forged_o
     content = b"\x00lfs content\r\n" * 4096
     tree, commit, oid = _lfs_delivery(x, content)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")) as at:
+    with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, "")) as at:
         assert x.files.read_bytes(str(Path(at) / "big.bin")) == content, "the judge read a pointer"
     for store in (a, x.base):          # …forged at its pointer's size in every store the place reads
         x.files.write_bytes(lfs.path_in(str(store / ".git" / "lfs" / "objects"), oid), b"F" * len(content))
-    with snapshot(a, Path(TL._own_place(str(round_), 1, x)) / "delivery", x, delivered=(tree, commit, "")) as at:
+    with snapshot(a, Path(VAL._own_place(str(round_), 1, x)) / "delivery", x, delivered=(tree, commit, "")) as at:
         got = x.files.read_bytes(str(Path(at) / "big.bin"))
     assert lfs.parse(got) == (oid, len(content)), "a forged object read as the delivery's content"
 
@@ -622,7 +623,7 @@ def test_live_a_build_that_takes_the_copys_lfs_objects_fails_rather_than_leave_t
     tree, commit, _ = _lfs_delivery(x, b"\x00lfs content\r\n" * 4096)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
     with pytest.raises(BuildFailed, match="removed the Git LFS object of big.bin"):
-        with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x,
+        with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x,
                       delivered=(tree, commit, f"{gone} && printf changed > big.bin")):
             pass
 
@@ -635,7 +636,7 @@ def test_live_a_build_that_cleans_the_lfs_store_but_leaves_the_files_is_judged_o
     content = b"\x00lfs content\r\n" * 4096
     tree, commit, _ = _lfs_delivery(x, content)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x,
+    with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x,
                   delivered=(tree, commit, "rm -rf .git/lfs")) as at:
         assert x.files.read_bytes(str(Path(at) / "big.bin")) == content
 
@@ -653,7 +654,7 @@ def test_live_a_pointer_shaped_file_outside_the_lfs_filter_stays_its_text(projec
     x.files.write_bytes(str(a / "fixture.txt"), pointer.encode())
     tree = W.commit_all(x.base, a, "gfso: a fixture", "exec-a", execution=x, branch="gfso/p/a")
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x,
+    with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x,
                   delivered=(tree, W.head(a, execution=x), build)) as at:
         assert x.files.read_bytes(str(Path(at) / "fixture.txt")) == pointer.encode()
         assert x.files.read_bytes(str(Path(at) / "big.bin")) == content
@@ -667,7 +668,7 @@ def test_live_a_build_that_writes_an_lfs_files_pointer_back_has_its_content_put_
     content = b"\x00lfs content\r\n" * 4096
     tree, commit, _ = _lfs_delivery(x, content)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x,
+    with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x,
                   delivered=(tree, commit, "git cat-file blob HEAD:big.bin > big.bin")) as at:
         assert x.files.read_bytes(str(Path(at) / "big.bin")) == content, "the checks read the pointer"
 
@@ -683,7 +684,7 @@ def test_live_a_delivery_past_the_old_cap_is_judged_and_never_held_in_the_server
     commit, want = W.head(a, execution=x), x.files.read_bytes(str(a / "big.sum"))
     monkeypatch.setattr(W, "BUNDLE_CAP", 1 << 20)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
-    batch = Path(TL._own_place(str(round_), 0, x))
+    batch = Path(VAL._own_place(str(round_), 0, x))
     tracemalloc.start()
     try:
         with snapshot(a, batch / "delivery", x, delivered=(tree, commit, "")) as at:
@@ -745,7 +746,7 @@ def test_live_a_builds_processes_end_with_it_and_its_changes_to_delivered_files_
     tree, commit = W.commit_all(x.base, a, "gfso: a delivery", "exec-a", execution=x), W.head(a, execution=x)
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))
     built: list = []
-    with snapshot(a, Path(TL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, None),
+    with snapshot(a, Path(VAL._own_place(str(round_), 0, x)) / "delivery", x, delivered=(tree, commit, None),
                   built=built) as at:
         time.sleep(4)
         assert x.files.read_bytes(str(Path(at) / "main.c")) == b"int main(void){return 1;}\n", "the build's leftover"

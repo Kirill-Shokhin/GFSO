@@ -23,6 +23,7 @@ from gfso import delegate as D
 from gfso.core.types import Verdict
 from tests.support import criterion, make_engine, REGISTER
 from tests.test_delegate import _agents
+import gfso.validate as VAL
 
 _RISK = REGISTER
 
@@ -54,8 +55,8 @@ def test_the_refusal_reaches_the_reader_with_its_reason(monkeypatch):
     monkeypatch.setattr(e, "emit_info", lambda src, msg: said.append(msg))
     e._graph.authorized_validators = {"val-1"}
     # A verdict the FSM will refuse: PASS on the PARENT while its child is still unsettled.
-    monkeypatch.setattr(D, "_validate_with", lambda *a, **k: {"verdict": Verdict.PASS})
-    D._auto_validate(e, "par", agents)
+    monkeypatch.setattr(VAL, "_validate_with", lambda *a, **k: {"verdict": Verdict.PASS})
+    VAL.auto_validate(e, "par", agents)
 
     rejected = [m for m in said if "REJECTED by the FSM" in m]
     assert rejected, said

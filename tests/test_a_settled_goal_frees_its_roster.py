@@ -16,6 +16,8 @@ from gfso import tools as T
 from gfso.core.types import AgentId, Mode, TaskId
 from gfso.engine.moves import door_holder
 from tests.support import criterion, instrument_passes, make_engine
+from gfso.roster import default_agents
+from gfso.engine.closures import open_nodes
 
 
 def _auto():
@@ -52,7 +54,7 @@ def test_an_empty_graph_under_auto_keeps_the_roster_the_systems():
 def test_a_goal_in_work_keeps_the_roster_the_systems():
     e = _auto()
     _root(e)
-    assert e.open_nodes() and _locked(e)
+    assert open_nodes(e) and _locked(e)
     e.stop()
 
 
@@ -85,7 +87,7 @@ def test_once_nothing_is_left_the_roles_come_off_at_the_door():
     e = _auto()
     _root(e)
     _sign(e)
-    TL._roster().register("exec-1", "external", project=e.project_name or "default")
+    default_agents().register("exec-1", "external", project=e.project_name or "default")
     out = TL.TOOLS["unregister_agent"](e, "exec-1")
     assert out.get("unregistered"), out
     e.stop()

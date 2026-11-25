@@ -17,6 +17,7 @@ from gfso.adapters.llm.stub import StubLLM
 from gfso.core.graph.model import project_max_iterations, project_state_bound
 from gfso.core.types import AgentId, Criteria, CriterionMapping, Signal, SignalData, Spec, TaskId, DEFAULT_MAX_ITERATIONS
 from tests.support import REGISTER_SPLIT, make_engine, pinned
+import gfso.validate as VAL
 
 SPEC = Spec("a wait", (Criteria("c", "C", check=pinned("c")),))
 
@@ -111,10 +112,10 @@ def test_a_persons_week_to_sign_is_not_a_model_validators_process_cap(e):
     e.send_signal_sync(SignalData(signal=Signal.DELIVER, task_id=TaskId("v"), source=AgentId("human"), result="done"))
     t = e.graph.get_task(TaskId("v"))
     assert t.state.name == "VALIDATING"
-    assert TL._validation_cap(t, e.graph) <= 3_600
+    assert VAL._validation_cap(t, e.graph) <= 3_600
     e.send_signal_sync(SignalData(signal=Signal.FAIL, task_id=TaskId("v"), source=AgentId("human"), failed_criteria=["c"]))
     t = e.graph.get_task(TaskId("v"))
-    assert t.state.name != "VALIDATING" and TL._validation_cap(t, e.graph) == 3_600, "out of VALIDATING too"
+    assert t.state.name != "VALIDATING" and VAL._validation_cap(t, e.graph) == 3_600, "out of VALIDATING too"
     assert project_state_bound(e.graph, "VALIDATING") == 7 * 86_400, "the wait itself is the project's"
 
 

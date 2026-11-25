@@ -22,6 +22,7 @@ from gfso import delegate as D
 from gfso.delegate import Dispatcher
 from tests.support import criterion, make_engine, REGISTER
 from tests.test_delegate import _agents
+import gfso.validate as VAL
 
 _RISK = REGISTER
 
@@ -86,10 +87,10 @@ def test_the_line_says_what_the_tool_OBSERVED(tmp_path, monkeypatch):
     said: list = []
     monkeypatch.setattr(e, "emit_info", lambda src, msg: said.append(msg))
     _observed = "the validator stands in a directory holding none of this delivery"
-    monkeypatch.setattr(D, "_validate_with",
+    monkeypatch.setattr(VAL, "_validate_with",
                         lambda *a, **k: {"verdict": None, "error": _observed})
     e._graph.authorized_validators = {"val-1"}
-    ret = D._auto_validate(e, "n", agents)
+    ret = VAL.auto_validate(e, "n", agents)
 
     assert any(_observed in m for m in said), said
     assert not any("refused before it started" in m for m in said), said

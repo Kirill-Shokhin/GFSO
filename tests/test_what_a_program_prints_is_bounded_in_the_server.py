@@ -15,7 +15,7 @@ from gfso.adapters import children as C
 from gfso.adapters import execution as E
 from gfso.core.protocol import procedure as P
 from gfso.adapters.execution import LocalExecution
-from gfso.delegate import _checker_validate
+from gfso.validate import _checker_validate
 from tests.test_a_session_holds_only_its_own_place import made, project  # noqa: F401 — a fixture
 
 PRINTS = "import sys\nfor _ in range(%d): sys.stdout.write('head' + 'x' * 65532); sys.stderr.write('e' * 1024)\nprint('the end')"

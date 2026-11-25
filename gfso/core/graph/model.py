@@ -156,7 +156,7 @@ def issuer_moves_key(task_id) -> str:
 PAUSE_KEY = "paused"
 #: The tech reports filed in the project — about the system, not the task (`Engine.tech_report`).
 TECH_KEY = "tech_reports"
-#: Where a node's deadline moves on the wall are recorded: each a stop's held time, at its lift (`Engine.deadline_moves`).
+#: Where a node's deadline moves on the wall are recorded: each a stop's held time, at its lift (`Stops.deadline_moves`).
 DEADLINE_MOVES = "deadline_moves:"
 #: The writes a console's witness saw in the project's repository while no node of it was at work there (`Engine.witnessed`):
 #: work past the system, the project's own record — not the system's defect.
@@ -171,7 +171,7 @@ def witnessed_count(seen: list[dict]) -> int:
 #: its sha is a commit the system made, as its deliveries' are (`past`).
 LANDED = "landed"
 #: The root whose plan the user handed in whole (`auto_decompose` with `spec`): under AUTO it is the user's, as the root's
-#: criteria are, and the system does not re-split it (`Engine.users_plan`).
+#: criteria are, and the system does not re-split it (`validation.users_plan`).
 USERS_PLAN_KEY = "users_plan"
 #: the nodes whose plan was built from a file carrying its own Level-2 review (`Engine.reviewed_in_its_file`): the gate
 #: is off under each of them alone — a go on one file turned it off for every goal of a shared graph (s20g1)
@@ -234,7 +234,7 @@ def keep_the_beat(graph: "Graph", wall: float) -> Optional[tuple[float, float]]:
     second to come finds the gap kept (the beat at or past its `wall`) and keeps nothing. Held, by `clock_off_s`'s rule:
     all of it under a stop, all of a gap too long to be a tick, and only where time holds (`time_holds`); the beat moves
     to `wall` either way. Returns the start of a gap held outside a stop and the off kept before it — what the deadlines'
-    record names (`Engine._record_the_gap`), by the one caller that kept it — else None."""
+    record names (`Stops.record_the_gap`), by the one caller that kept it — else None."""
     holds, out = time_holds(graph), None    # …who carries the work, read before the act: it is not the clock's to race
 
     def beat(get):
@@ -261,7 +261,7 @@ def project_now(graph: Optional["Graph"]) -> datetime:
 
 def door_off_s(graph: Optional["Graph"]) -> float:
     """The off time EVERY DOOR converts with, both ways (`on_the_wall`, `tools._deadline`): `clock_off_s`, except that
-    while the project stands stopped it is the one taken at the stop (`Engine.pause`). Under a stop the project's time
+    while the project stands stopped it is the one taken at the stop (`Stops.pause`). Under a stop the project's time
     stands while the wall runs, so a date shown grew every tick, and a client feeding it back (an unchanged child
     re-admitted) had it taken off with a larger off — read as changed. Started again, a date reads the stop's length later."""
     stop = json.loads(graph.setting(PAUSE_KEY) or "null") if graph is not None else None
@@ -334,7 +334,7 @@ def waits_on_a_person(graph: Optional["Graph"], party) -> bool:
     customer, or a person the published roster does not carry? Their waits run on a person's scale (`PERSON_BOUNDS`);
     the system's own sessions keep the server's. With no mode the standing agent IS the person (the page's signer, the
     OS owner of a local connection) whatever the roster says; a hung validator is still cut by the server's T_validate
-    (`tools_llm._validation_cap`). Before the dispatcher publishes a roster nobody else is taken for a person by
+    (`validate._validation_cap`). Before the dispatcher publishes a roster nobody else is taken for a person by
     absence from it."""
     if graph is None or party is None:
         return False

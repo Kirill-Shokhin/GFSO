@@ -25,7 +25,7 @@ from gfso.engine.audit import AuditEntry, AuditLog
 from gfso.issuer import ISSUER_SCHEMA
 from gfso.reports import _report_into_signals
 from gfso.sessions import EXECUTOR_SCHEMA
-from gfso.tools_llm import _SCOPE_VALIDATOR_SCHEMA, _VALIDATOR_SCHEMA
+from gfso.validate import _SCOPE_VALIDATOR_SCHEMA, _VALIDATOR_SCHEMA
 from tests.support import criterion, make_engine, REGISTER
 from tests.test_equal_fails_do_not_measure_kappa import _leaf, _leaves
 from tests.test_a_node_works_in_its_own_place import _repo

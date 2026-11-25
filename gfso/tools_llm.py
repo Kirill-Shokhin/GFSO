@@ -10,7 +10,6 @@ structural subset.
 """
 from __future__ import annotations
 
-import copy
 import functools
 import hashlib
 import inspect
@@ -18,47 +17,39 @@ import json
 import logging
 import os
 import re
-import subprocess
 import threading
 import time
 import contextvars
-from concurrent.futures import Future, ThreadPoolExecutor, wait as _settled_within
-from contextlib import ExitStack, nullcontext, suppress
+from concurrent.futures import Future, wait as _settled_within
+from contextlib import nullcontext
 from pathlib import Path
-from datetime import datetime
 from dataclasses import asdict
 from typing import Optional, Union
 
-from gfso import canon as _canon, past, runtime, store
+from gfso import canon as _canon, past
 from gfso.llm import llm_factory
-from gfso.workspaces import (accepted_branch, no_repository, unjudged, declaring_role, execution_of, performer, record_repository, repository,
-                             where_it_runs, rejected_reports_dir)
+from gfso.workspaces import (no_repository, unjudged, declaring_role, execution_of, record_repository, where_it_runs,
+                             validator_workdir)
+from gfso.roster import default_agents, publish_the_workforce, staffed
 from gfso.adapters import worktrees as W
-from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, judged_at, snapshot, swap
-from gfso.adapters.execution import (IMPORTED, NODES as _NODES, ContainerExecution, committed, left_out,
-                                     scratch_of)
-from gfso.issuer import CONTACT_ROUND as _CONTACT
-from gfso.core.types import (BATCH, HOST, LAID, TERMINAL_STATES, VOLUME, AgentId, LLMProviderPort, Mode, PlaceUnavailable, Signal, State, TaskId, Stage,
+from gfso.adapters.execution import IMPORTED, ContainerExecution, committed, left_out
+from gfso.core.types import (HOST, TERMINAL_STATES, VOLUME, AgentId, Mode, Signal, State, TaskId, Stage,
                              Verdict, passed)
-from gfso.core.protocol.invariants import INTENT, RED_SET, criterion_meant, probes_of, red_set, spoken_verdict, verdict_word
-from gfso.core.protocol.procedure import (SYSTEMS_ACT, canonical_citations, laid_down_dirs, probe_id, with_engine_observations,
-                                          with_part_observations)
-from gfso.observe import FRESH_S, OBSERVE_S, run_checks
+from gfso.core.protocol.invariants import INTENT
 from gfso.places import cheap_to_ask
 from gfso.critic import runner as _critic_runner
 import gfso.decompose as _decompose
-from gfso.adapters.execution import component, network_of, node_key
+from gfso.adapters.execution import network_of, node_key
 from gfso.decompose import NoPlan, decompose_into, artifact as _artifact, planning as _planning, kept as _kept
 from gfso.engine.events import emit_cb
-from gfso.engine.findings import record_round
 from gfso.engine.moves import DOOR_KEYS, READS, SIGNERS, door_holder, door_role, role_holder, signer_arg, signer_due
-from gfso.engine.validation import StaleRun, _l0_holes, _l2_undischarged, his_seam, whole_waits_for_its_parts
+from gfso.engine.validation import (_l0_holes, _l2_undischarged, a_human, depth_of, hands_of, heard_on, his_seam,
+                                   holder_boundary, in_chat_names, mode_kind)
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS
 from gfso.core.graph.model import (MAX_ITERATIONS_CEILING, bounds_refusal, project_deadline_s, project_now,
-                                   project_state_bound, witnessed_count)
-from gfso.engine.loop import state_bound_left
-from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut, what_stopped
-from gfso.engine import PERSONS_WORDS, CheckRunning, Engine
+                                   witnessed_count)
+from gfso.adapters.llm.stats import stat_line, refused_by_limit, what_stopped
+from gfso.engine import PERSONS_WORDS, Engine
 from gfso import signin, tools as _tools
 from gfso.serverctl import open_the_page
 from gfso.tools import _agent_id
@@ -68,25 +59,15 @@ from gfso.engine.frontier import OBSERVE
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso import config as _config_module
 from gfso.config import (DEFAULT_EXECUTION, DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, executions,
-                         validation_batch, validate_internal, state_bound, WAIT_MAX_SECONDS, WAIT_POLL_SECONDS,
+                         WAIT_MAX_SECONDS, WAIT_POLL_SECONDS,
                          ANSWER_WITHIN_SECONDS)
-from gfso.packets import (BUILT, UNCOPIED, TECH_REPORT, _last_deliver_result, _scope_validator_packet, _validator_packet, file_tech_reports,
-                          owed_probes, snapshot_note)
-from gfso.llm import session_calls
-from gfso.inflight import _inflight, in_flight
+from gfso.inflight import flight, in_flight
+from gfso.validate import validate_result
+from gfso.tools import answering
+from gfso.in_chat import (a_chats_delivery, back_to_their_branch, chat_place, not_its_repository, on_their_branch,
+                          switches_branches, work_branch)
 
 log = logging.getLogger(__name__)
-
-
-def validate_internal_on() -> bool:
-    """Is every node independently validated, INTERNAL ones included (`GFSO_VALIDATE_INTERNAL`)?
-
-    The one owner of the question, so that the panel reporting it and the code obeying it cannot
-    drift: `/api/runtime` is the measurement arm's only preflight, and a declared value that the
-    mechanism does not actually have would let a run measure the wrong thing in silence. Read at
-    call time — the dial is set per run, after import (§10.3 is the default; this restores
-    every-node validation for measurement)."""
-    return validate_internal()
 
 
 def _how_many_are_open(gate_passed: bool, open_findings, a_model_ran: bool) -> dict:
@@ -274,1337 +255,9 @@ def review_decomposition(engine: Engine, task_id: str, model: Optional[str] = No
                else "no checker verdict")
     # …and do not announce a checker that did not run: "gate FAILED — fix L0/L1 first · checker
     # done" was printed for a round in which the checker never spoke (measured 2026-08-22).
-    _cb(f"{task_id}: {verdict}" + (f" · checker {_stat_line(llm)}" if out.get("gate_passed")
+    _cb(f"{task_id}: {verdict}" + (f" · checker {stat_line(llm)}" if out.get("gate_passed")
                                    else " · the Level-2 checker did not run"))
     return out
-
-
-#: What a validator may do: read and run, never write — the delivery is the executor's.
-_VALIDATOR_TOOLS = ("Read", "Bash", "Glob", "Grep")
-
-# The validator's report contract (parsed, never trusted): verdict PASS ⟺ every criterion passes;
-# failed_criteria = exactly what the issuer passes to FAIL. Inv-3: a FAIL is never criteria-less.
-_VALIDATOR_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "verdict": {"type": "string", "enum": [Verdict.PASS, Verdict.FAIL]},
-        "per_criterion": {"type": "array", "items": {
-            "type": "object",
-            "properties": {"criterion": {"type": "string"},
-                           "verdict": {"type": "string", "enum": ["pass", "fail", "undecidable"]},
-                           "evidence": {"type": "string"},
-                           # WHAT WAS OBSERVED THAT DIFFERS FROM WHAT THE CRITERION STATES — as
-                           # DATA, one short line each, not as prose inside the evidence. The
-                           # divergence is the criterion's value and that value is fail (Inv-2,
-                           # §12.8), so the engine refuses a `pass` carrying one. Measured on
-                           # `c_compiler` (2026-09-20/21): the closing verdict marked every
-                           # criterion pass and set aside its own observed divergences in prose by
-                           # citing ACCEPTED_RISKS — six of them behaviours the contract requires.
-                           # A waiver is the ISSUER's act (edit_criteria / accepted_risks), never a
-                           # sentence inside a pass, and only a field the engine can read makes
-                           # that structurally refusable rather than audit-only.
-                           "divergences": {"type": "array", "items": {"type": "string"},
-                                           "description": "each thing you OBSERVED that differs "
-                                                          "from what this criterion states — what "
-                                                          "the criterion demands, what the "
-                                                          "artifact did. Leave EMPTY only if there "
-                                                          "were none; a non-empty list means this "
-                                                          "criterion's verdict is `fail`, however "
-                                                          "the plan or the executor explains it"},
-                           # What the criterion NAMES, enumerated. A criterion is routinely a
-                           # conjunction ("N/P/D loops, hold-space accumulation across the whole
-                           # input, and multi-line address ranges"), and one probe over one conjunct
-                           # passes it while another is broken. Measured: a root closed DONE on
-                           # exactly that — the probe was honest and reproduced, it simply covered
-                           # one behaviour of three, and the untested one failed against real sed.
-                           # Reproducibility is not coverage; the canon leaves this to runtime
-                           # (§9.6: prohibition has no form guard, only FM-3 at runtime), so runtime
-                           # is where it is demanded.
-                           "behaviours": {"type": "array", "items": {"type": "string"},
-                                          "description": "each distinct behaviour this criterion "
-                                                         "requires — one entry per conjunct, in the "
-                                                         "criterion's own words"},
-                           # …and the person's words a fail of `answers_the_persons_words` stands on, checked against
-                           # their record (`invariants.verdict_report_defects`)
-                           "quote": {"type": "string", "description":
-                                     f"only on `{INTENT}` failed: the span of the person's own words the result misses — "
-                                     "3 words or more of one thing they said, or all of a shorter one, never the plan — "
-                                     "one unbroken span copied as written, no `…`; any verdict short of pass on it needs one"},
-                           # The claim must be RE-RUNNABLE, on the PASS side as much as the FAIL
-                           # side: the measurement's load-bearing direction is the false PASS.
-                           # ONE PROBE PER BEHAVIOUR, in the same order.
-                           "probe": {"type": "array", "items": {"type": "object", "properties": {
-                               # The pinned probe's own name, when this entry is one of them. The
-                               # contract pins its procedure before the work (A1/§2, Inv-1 §12.3)
-                               # and a PASS that skips a pinned probe is refused — so a report says
-                               # which of them it ran. Matching also works by the command text, so
-                               # an id is never a thing to fabricate — but a command or a bare hash
-                               # that two demanded probes share names neither (`procedure.part_credit`).
-                               "id": {"type": "string", "description":
-                                   "the id in brackets, when this entry runs a PINNED CHECK or a "
-                                   "REGRESSION line of the contract (omit for your own exploration). "
-                                   "Without it the probe is matched by its exact command; a command "
-                                   "or hash two demanded probes share counts for neither"},
-                               # …and for a PART'S PINNED CHECK, whether it held: the verdict is per criterion,
-                               # and only this says a failure is the part's, read on this delivery
-                               # (`procedure.parts_not_shown_holding`)
-                               "held": {"type": "boolean", "description":
-                                   "for a PART'S PINNED CHECK: did it show what it must on this delivery. "
-                                   "false fails every criterion resting on it; left out, it counts as "
-                                   "holding only under a criterion you pass. For a probe of your OWN that refutes "
-                                   "the criterion: false — beside a probe that says false, one that says nothing "
-                                   "is read as not refuting"},
-                               # …and a finding of an earlier validator's that this run does not reproduce
-                               "not_refuting": {"type": "string", "description":
-                                   "only on a REGRESSION line you re-ran exactly as written, whose output refutes nothing "
-                                   "the criterion requires: why. With `printed`, it is demanded no more"},
-                               "printed": {"type": "string", "description": "with `not_refuting`: what the command printed"},
-                               # …and whether it RAN: a probe whose own setup failed (a cd, a file it writes, a
-                               # build) printed whatever its fallback prints, which can be the line it expects
-                               "ran": {"type": "boolean", "description":
-                                   "false when the command could not run as written — its own setup failed (a cd, "
-                                   "a file it writes, a build it needs) and the artifact was never exercised; say "
-                                   "why in `expect`. It then observed nothing: it meets no demand, so a criterion "
-                                   "whose pinned check or regression line did not run cannot pass"},
-                               # Re-runnable BY SOMEONE ELSE, against the artifact as delivered.
-                               # Measured: validators copy the delivery into a scratch directory
-                               # under a new name and then cite that name (`from md_real import …`)
-                               # with an absolute path to their own interpreter — commands that run
-                               # for them and for nobody else. A probe only the issuer can execute
-                               # is not evidence, it is a claim about a claim.
-                               "command": {"type": "string", "description":
-                                           "the exact shell command you RAN, re-runnable AS-IS by "
-                                           "someone else in the delivered artifact's own directory: "
-                                           "name the delivered files as THEY are named (not your "
-                                           "scratch copies), and invoke `python`/`pytest` plainly "
-                                           "rather than by an absolute path to your interpreter "
-                                           "(e.g. `python -c \"import md; "
-                                           "print(md.parse_blocks('a\\n\\nb'))\"`)"},
-                               "expect": {"type": "string", "description":
-                                          "what its output must show for this verdict to hold — a "
-                                          "substring of the real output, not a paraphrase. It must "
-                                          "not be EMPTY, and an absence is where that bites: a "
-                                          "command that prints nothing cannot tell 'there are no "
-                                          "matches' from 'the command never ran', so a probe "
-                                          "expecting no output proves nothing and its behaviour is "
-                                          "counted unobserved. Write the absence so it SHOWS: "
-                                          "`grep -rc configparser iniq/ | grep -v ':0' | wc -l` "
-                                          "expecting `0`, or append `; echo exit=$?` and expect the "
-                                          "code. (Three honest reports in a row were sent back over "
-                                          "exactly this, at a paid round each — the rule was right "
-                                          "and was written down nowhere the writer of the probe "
-                                          "could read it: MCP door, wave 23, 2026-09-03.)"},
-                               # WHICH behaviour this command observes. Counting probes against
-                               # behaviours was a proxy for coverage and wrong in both directions:
-                               # one command can honestly observe two behaviours, and two commands
-                               # can observe the same one twice. Named, the engine checks coverage;
-                               # unnamed, it can only count, and the strict reading stands.
-                               "behaviour": {"type": "string", "description":
-                                             "the entry of `behaviours` this command observes — "
-                                             "repeat the same command with another name when one "
-                                             "run genuinely observes several"}},
-                               "required": ["command", "expect"]}}},
-            "required": ["criterion", "verdict", "evidence", "behaviours", "probe",
-                         "divergences"]}},
-        "seams": {"type": "string"},
-        # WHAT WAS SEEN BEYOND THE CRITERIA, as data for the issuer and never a verdict input (Inv-2): written in prose
-        # ("observed but outside the stated criteria … NOT IN (SELECT …) give NULL"), the row's held-out miss was seen
-        # at contact and no channel carried it to the one who could write the criterion (§8.3 FM-1.f at contact)
-        "outside": {"type": "array", "description":
-                    "what you OBSERVED that no criterion here states — a behaviour the goal or the spec plainly needs "
-                    "that the delivery lacks. Not a divergence and no verdict: it fails nothing; it goes to the issuer, "
-                    "who judges it against the goal. Leave it empty when there was none",
-                    "items": {"type": "object", "properties": {
-                        "what": {"type": "string", "description": "the behaviour, one line"},
-                        "evidence": {"type": "string", "description": "the command you ran and what it printed"}},
-                        "required": ["what"]}},
-        "failed_criteria": {"type": "array", "items": {"type": "string"}},
-        "tech_report": TECH_REPORT,
-    },
-    # …and neither `verdict` nor `failed_criteria` required: the engine computes both from the entries (§2.3, Inv-3),
-    # so a report that left one out was refused as unparsed over a word it did not need (AUTO coreutils, 2026-10-10)
-    "required": ["per_criterion"],
-}
-
-
-def _instrument_of(llm, model: str) -> tuple:
-    """(the tools it used, the model it ran on) — what a validator's record names about the run."""
-    return getattr(llm, "last_tool_calls", None), getattr(llm, "_model", None) or model
-
-
-def _keep_a_report_that_decided_nothing(engine, task_id: str, defects: str, text: str) -> dict:
-    """Store a report that produced no verdict — on disk AND on the node — and say so to the caller.
-
-    Both places, because they answer different readers: the file is the evidence, the node's record
-    is what `get_verdict` is built from, and under delegation the tool's caller is the dispatcher,
-    which reads a verdict and nothing else. Keeping only the first is how an ordinary user came to
-    poll `get_verdict` for four minutes on a node whose validation had already died."""
-    kept = _keep_rejected_report(engine.project_name, task_id, defects, text)
-    try:
-        engine.record_rejected_report(TaskId(task_id), defects, None)
-    except Exception:
-        log.warning(f"could not keep the unreadable report on {task_id}", exc_info=True)
-    return {"verdict": None, "report_text": text, "report_kept_at": kept,
-            "verdict_defects": defects,
-            "refusals_on_this_node": engine.refusals_on_this_delivery(TaskId(task_id))}
-
-
-def _keep_rejected_report(project: str, task_id: str, defects: str, text: str) -> "Optional[str]":
-    """Persist a report the engine refused to record as a verdict, and return its path.
-
-    ⊥ is not pass (§2), so a refused report ends the node's automatic progress and the issuer must
-    decide — which means the refused report is exactly the evidence needed, and it was exactly the
-    one thing thrown away: the tool returns `report_text` to its caller, and under delegation the
-    caller is the dispatcher, which logged one line and dropped it. Diagnosing why a validator could
-    not state a verdict then cost a fresh paid run. The verdict is NOT stored (it is not one); the
-    report is, beside the state, with its path named in the log.
-    """
-    try:
-        d = rejected_reports_dir(project)    # …under its project: a node id names a node in every project
-        d.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        f = d / f"{task_id}_{stamp}.txt"
-        f.write_text("# refused as a verdict: " + defects + "\n\n" + text, encoding="utf-8")
-        return str(f)
-    except Exception:
-        return None      # evidence-keeping must never break the pipeline it observes
-
-
-def _left_to_validate(engine: Engine, task) -> tuple[list, list]:
-    """(criteria to validate, entries kept) for this attempt.
-
-    WHAT THE LAST, REFUSED ATTEMPT ALREADY DECIDED on this delivery is kept, and only the rest is
-    validated again (`Engine.reusable_from_refused`): the retry used to re-validate everything and could
-    fail on a gap the first run had not had. Each kept entry carries who validated it
-    (`reused_from_refused`), and the merged report is checked whole against THIS run's ledger."""
-    kept = engine.reusable_from_refused(task.id)
-    names = {str(e.get("criterion")) for e in kept}
-    crits = [c for c in task.spec.criteria if c.name not in names]
-    if not kept or not crits:
-        return list(task.spec.criteria), []
-    return crits, kept
-
-
-def _validation_cap(task, graph) -> Optional[int]:
-    """THE VALIDATOR'S PROCESS CAP IS WHAT IS LEFT OF THIS VISIT'S T_validate (§12.2) — one clock, as the
-    executor's cap is its deadline. It was the adapter's fixed 900 s: on the delegated coreutils run
-    four validations of rich nodes were cut at it mid-stream (725–913 s) and came back ⊥, paid for again
-    on a slower tier. And the REMAINDER, not the whole bound: a retry after ⊥ runs in the same visit,
-    and a validator outliving it would land its verdict on a node the clock has already handed on."""
-    # …and never past the server's own T_validate, in or out of VALIDATING: a project's VALIDATING may be a person's
-    # week to sign, while a model validator's process is the machine's, its hour the same in every project (critic)
-    # The server's bound switched off (0): the adapter's own process cap, as before (critic)
-    if not (machine := state_bound("VALIDATING")):
-        return None
-    left = (state_bound_left(task, project_now(graph).timestamp(), graph) if task.state.name == "VALIDATING" else None)
-    return int(machine) if left is None else max(60, int(min(left, machine)))
-
-
-def _no_start(llm, ended: str, place: str, error: str) -> str:
-    """A validator run that never started, booked as its provider books one (`headless._never_started`): no answer."""
-    llm.calls.append({"duration_ms": 0, "ended": ended, "place": place, "error": error, "at": time.time()})
-    return ""
-
-
-def _own_place(scratch: Optional[str], i: int, ex) -> Optional[str]:
-    """The directory batch `i` copies the delivery into, under the validation's scratch — None without one."""
-    return _fresh(ex, str(Path(scratch) / f"{BATCH}{i + 1}")) if scratch else None
-
-
-def _fresh(ex, place: str) -> str:
-    """`place` made by the system where nothing stood: a batch's own writable root (`execution._writable_root`), which
-    no session has held — a directory or a link found there is refused, never copied into."""
-    if ex.files.exists(place):
-        raise OSError(f"{place} already stands: a batch's directory is made fresh")
-    ex.files.mkdir(place)
-    return place
-
-
-def _run_each(llm, spawn, scratch: Optional[str], batches: list, run, ex) -> list:
-    """One validator call per batch, `run(batch, client, place)`, the texts in batch order."""
-    if spawn is None:
-        # …ALONE, STILL IN A COPY: a validator judges the delivery and must not be able to change it (§10.3) — run in
-        # the place itself, an edit of its own went into the next commit as the executor's delivery
-        return [run(batch, None, _own_place(scratch, i, ex)) for i, batch in enumerate(batches)]
-    # THE BATCHES ARE INDEPENDENT, SO THEY RUN AT THE SAME TIME. Splitting the contract unblocked
-    # acceptance on a rich node but left its LATENCY additive, and latency is what stalls a run:
-    # measured over 170 recorded validations, the median validation takes 46 s at ≤5 criteria, 90 s
-    # at 6–12, 132 s at 13–24 and 312 s beyond — and a 25-minute wait is what ended the last
-    # `spreadsheet_engine` segment. Each batch carries a DISJOINT share of what the validation owes over
-    # the same unchanging delivery, so the conjunction (§2) is the same whichever order they finish in;
-    # what they must not share is the client (its per-call tick state is one call's) or the scratch
-    # (one run's leftovers validated by another is the bug the scratch exists to prevent).
-    texts: list[str] = [""] * len(batches)
-
-    def _one(i_batch):
-        i, batch = i_batch
-        client = spawn()
-        client.on_tick, client.stage_hint = llm.on_tick, llm.stage_hint
-        place = _own_place(scratch, i, ex)
-        try:
-            return i, run(batch, client, place)
-        finally:
-            # The spend and the tools are the VALIDATION's, whichever client made the call:
-            # `record_llm_usage` drains ONE provider, and calls left on a worker are calls that
-            # never happened as far as the record is concerned.
-            llm.calls.extend(client.calls)
-            for k, v in client.last_tool_calls.items():
-                llm.last_tool_calls[k] = llm.last_tool_calls.get(k, 0) + v
-    with ThreadPoolExecutor(max_workers=len(batches)) as pool:
-        for i, text in pool.map(_one, list(enumerate(batches))):
-            texts[i] = text
-    return texts
-
-
-def validation_execution(engine):
-    """Where a validation of this project runs, read ONCE for all of it — its model, scratch, exact checks and every batch: never the host
-    for a project whose places stand in volumes. Each read the roster again, and a role lost meanwhile put the later ones on the host. Work
-    in chat with no execution declared validates on the host, as it always did; a project that had one and lost its roles has only lost
-    its roles. Nor over a base no session of its project may run in (`agents_refused`): a volume holding a base as a tree gave its
-    validator its `.env` (critic)."""
-    if (ex := execution_of(engine)).files is not HOST and (why := ex.agents_refused()):
-        raise PlaceUnavailable(str(ex.base), why)
-    return ex
-
-
-def _refuse_validation(engine: Engine, task_id: str, deliverable, workdir, _llm, ex):
-    """Should a validator run be spent here at all — and if not, the answer that says why.
-
-    Six refusals, each bought by a run spent for nothing: an unknown node; children that
-    have not settled (Thm 1 would reject the verdict anyway); an internal node, which
-    self-verifies (§10.3); an empty working directory, where a validator would conclude from
-    an empty room; a delivery that was never made; and no workdir at all. Returns
-    `(reply_or_None, task, deliverable)` — resolving which delivery is being validated belongs
-    to the same question."""
-    task = engine.graph.get_task(TaskId(task_id))
-    if task is None:
-        return {"error": f"unknown task {task_id}"}, None, None
-    # DON'T SPEND A MODEL ON A VERDICT THE GATE WILL REFUSE. A parent's result is the AND over its
-    # children (Thm 1), so while one is still open there is nothing to validate — and the PASS gate
-    # already knows it: the verdict would be rejected on arrival. The dispatcher checks this before
-    # auto-validating; the hand-called door did not, so the cost fell on whoever asked. Measured
-    # 2026-08-20: a root was validated with a person's node still OFFERED, the report honestly
-    # reported the missing piece, and the node sat in VALIDATING with the work still undone.
-    # DELIVER itself stays admissible exactly as §12.4 writes it — this refuses the model run, not
-    # the signal.
-    # THE SAME PREDICATE THE GATE USES. This asked whether the children had "settled" and counted
-    # an ESCALATED one as settled — while the PASS gate requires every active child to have PASSED
-    # (Thm 1). So a parent with an escalated child bought a full validator run whose verdict the
-    # gate then refused: exactly the waste this pre-check exists to prevent, in the one case it
-    # let through. Two spellings of one rule, and the looser one was the one that spent money.
-    # …the owners themselves: the parts that have not landed (`open_parts`), and only where the PASS would wait for
-    # them (`whole_waits_for_its_parts`) — at a seam the PASS lands over them (§12.8), and refusing the run there left a
-    # hand record the only way to sign it (critic over session 475ba784)
-    _t = engine.graph.get_task(TaskId(task_id))
-    _open = engine.joins.open_parts(TaskId(task_id)) if whole_waits_for_its_parts(engine.graph, _t) else []
-    if _open:
-        return {"error": f"not validating {task_id} yet: it aggregates children that have not "
-                         f"settled — " + ", ".join(f"'{c.id}' is {c.state.name}" for c in _open)
-                         + ". A verdict here would be refused at the gate (Thm 1: the parent is the "
-                           "AND over its children), so the run is not spent. Drive those nodes "
-                           "first (`next_steps`); one that waits on a person waits.",
-                "waiting_on": [str(c.id) for c in _open]}, None, None
-    # A VALIDATION STANDS WHERE κ ENDS (`validation.observed_here`): at every seam and at the top of every
-    # scope one executor session carries. A node inside such a scope is that executor's own work — the
-    # scope's one validation at its top runs its criteria too (§10.3, §3.7).
-    # …but a node the person's agent holds in its chat it may have checked whenever it calls: its own check at any node
-    # (§10.2), as the kit's critic is called on a piece of work (the author, 2026-11-20)
-    if not engine.observed_here(TaskId(task_id)) and not engine.held_in_chat(TaskId(task_id)):
-        return {"task_id": task_id, "state": task.state.name, "internal": True, "verdict": None,
-                "note": "inside the scope of one executor session (its parent's whole was judged to fit one): "
-                        "self-verify by running its check yourself, put the evidence in the DELIVER "
-                        "self_validation, and PASS it directly — the scope's validation at its top covers "
-                        "it (GFSO_VALIDATE_INTERNAL=1 observes every delivery)."}, None, None
-    # AN EMPTY TREE IS NOT A FAILING ONE. A validator opened where the work is not reports what it
-    # honestly sees — "no implementation exists" — and that lands as a FAIL over every criterion, on
-    # code that may be perfect. Measured 2026-08-21: a stale roster entry pointed the instrument at
-    # another experiment's scratch directory and a root took a false FAIL on seventeen criteria,
-    # which then drove the run into the loop that ended it. The validator does not get to conclude from
-    # an empty room; refusing costs one comparison, and the alternative costs a run.
-    # …AND THE SAME RULE ABOUT WHAT IS CHEAP TO ASK. This door stats the workdir and then enumerates
-    # it, and asking either of a share whose host does not answer costs 7-21 seconds on the caller's
-    # own thread — the cost the dispatcher's guard was built to avoid, in the one other place that
-    # asks the same question of the same directory. A rule kept in two places moves in one of them,
-    # which is the defect this repository keeps paying for; both now read `cheap_to_ask`. A network
-    # workdir is therefore not pre-checked: the validator opens it and reports what it finds.
-    if _llm is None and cheap_to_ask(workdir) and not any(
-            q not in ("__pycache__", ".gfso-scratch") for q in workdir and ex.files.listdir(workdir) or ()):
-        # …and the way OUT of the refusal depends on whether the roster was able to answer. It used
-        # to read "`list_agents` shows where this node's executor works" in both cases — advice that
-        # is a dead end for a node held by a person, and homework the server has already done for a
-        # registered one (the caller reaches here only after `_registered_workdir` came back empty).
-        _out = ("Point `workdir` at the delivery and run it again." if workdir else
-                f"{task.assignee or 'this node'} has no registered workdir (the roster was asked "
-                f"first), so name the delivery's directory yourself: "
-                f"validate_result('{task_id}', workdir='…').")
-        return {"task_id": task_id, "state": task.state.name, "verdict": None,
-                "error": f"nothing to validate: the working directory {workdir!r} is empty (or absent), "
-                         f"so any verdict from here would be about the DIRECTORY, not the work. "
-                         f"{_out} This is the instrument's gap, not the "
-                         f"executor's: do not send the node to rework over it (§2.3, ⊥ is not a "
-                         f"verdict)."}, None, None
-    # …NOR A THIRD RUN ASKED AT A DOOR after two reports on this delivery decided nothing: that is about the contract, not
-    # the run (measured 2026-08-21: three ⊥ in a row, four runs, ~$0.5). The system's own asking (`Dispatcher`) is
-    # VALIDATING's issuer obtaining its verdict until the bound hands the node on (§16.14), never refused here
-    if CALLER.get() is not None and (n := engine.refusals_on_this_delivery(TaskId(task_id))) >= 2:
-        return {"task_id": task_id, "state": task.state.name, "verdict": None, "refusals_on_this_node": n,
-                "error": f"not validating {task_id} a third time: {n} reports on this delivery could not decide every "
-                         f"criterion, which is about the CONTRACT, not the run. Lifted by a move that is yours: "
-                         + ("its issuer revises what it promises (`edit_criteria`) or records the verdict with what "
-                            "they observed (`record_verdict`), or hands the node on (`reassign`): VALIDATING admits "
-                            "none of its executor's signals." if task.state == State.VALIDATING else
-                            "its holder CHALLENGEs the criterion no report could decide, and its issuer revises what "
-                            "it promises (`edit_criteria`); a repair of what failed is a new tree, checked afresh.")
-                         + " `get_verdict` shows what the refused reports did check."}, None, None
-    deliverable = deliverable or _last_deliver_result(engine, TaskId(task_id))
-    if not deliverable:
-        return {"error": f"nothing to validate: {task_id} has no recorded DELIVER result — "
-                         f"pass `deliverable` explicitly (state {task.state.name})"}, None, None
-
-    # NO WORKING DIRECTORY, SAID BEFORE ANYTHING IS SPENT — and said about THIS node. The refusal
-    # came from the transport, several steps in: after the in-flight key was claimed and a client
-    # built, phrased as a transport complaint that mentioned neither the node nor its state. The
-    # caller learnt that something needed a directory, not that their node was waiting for a verdict
-    # and where its work lives.
-    if not workdir and _llm is None:
-        return {"task_id": task_id, "state": task.state.name, "verdict": None,
-                "error": f"validate_result needs `workdir` — the directory the work was done in. A "
-                         f"validator opened anywhere else validates an empty tree and fails correct "
-                         f"work (measured). {task_id} is {task.state.name}; pass the workdir of the "
-                         f"role that executed it (`list_agents` shows it), e.g. "
-                         f"validate_result('{task_id}', workdir='…')."}, None, None
-
-
-    return None, task, deliverable
-
-
-#: the validation rounds this process is running in right now — never pruned, whatever their age (`_validation_place`)
-_LIVE_ROUNDS: set = set()
-
-
-def _round_epoch(name: str) -> int:
-    """The second a validation's round was made in, read off its name (`<node digest>_<epoch>`); 0 where it carries none."""
-    tail = name.rsplit("_", 1)[-1]
-    return int(tail) if tail.isdigit() else 0
-
-
-def _validation_place(task_id: str, workdir, ex, named: tuple = (), graph=None, project=None):
-    """Where the validator runs: a round of its own in the scratch beside the delivery, which its copy is read into.
-
-    Two needs once collapsed into one: a fresh scratch per validation (a shared one let
-    a run validate another's leftovers), and the working directory being the DELIVERY's (a
-    validator opened in the scratch saw an empty tree and failed correct work). The
-    scratch is a SIBLING of the delivery, so a criterion like "every file here belongs
-    to this package" stays true. None: no scratch (a delivery on a share), and no judge runs."""
-    scratch = None
-    if workdir and cheap_to_ask(workdir):
-        # …and not beside a delivery on a share: creating the scratch there is the same wait as
-        # asking about it, in a place the caller cannot see. Without one, the validator is simply
-        # offered no scratch — a path the code already carries (`place = … if scratch else None`).
-        # BESIDE the delivery, not inside it. One dotted directory rather than a loose
-        # `<task>_<epoch>/` per validation — and a SIBLING of the tree being validated, because a
-        # criterion like "every file under the target dir belongs to this package" is then true:
-        # our own scratch was sitting in the deliverable while the validator dutifully reported
-        # everyone else's leavings (measured on the human door 2026-08-22).
-        root = scratch_of(workdir, project)
-        # …a round of its own, never one an earlier validation in the same second holds: its batches are made fresh
-        at = int(time.time())
-        # …one path component, whatever the id spells: `db/schema` had a place and no round, a node stuck with no validator run (critic, ran)
-        # …named by a digest of the node, not its id: the copy and the work its checks make lie below, and a long id put
-        # their paths past Windows' 260 — `git init` refused in the validator's round alone, three validations of one
-        # node read {} where the system's own run, in a short temp, passed (2026-11-22..24)
-        key = hashlib.sha256(str(task_id).encode()).hexdigest()[:10]
-        while ex.files.exists(scratch := str(root / f"{key}_{at}")):
-            at += 1
-        ex.files.mkdir(scratch)
-        if graph is not None:              # …in the record of the rounds standing, as it goes (`findings.record_round`)
-            record_round(graph, scratch, True)
-        # Keep the recent ones (a verdict's evidence is worth reading after the fact) and drop
-        # the rest: one directory per validation, inside the repository being validated, otherwise
-        # accumulates for the life of the project — a rework loop alone makes several.
-        # …but never a round a standing finding runs: gone, its probe would read as unrunnable and stop being
-        # demanded with no ruling (a 16-round root, GB_c_compiler — critic 2026-10-11)
-        # …nor an issuer's contact running in this scratch beside them (`issuer._contact_place`): it removes itself
-        # …what was laid for a lone round beside it (`LAID`) going with it
-        # …the OLDEST by the epoch each round is named with, never by name (`<node>_<epoch>`: by name a node's every round
-        # went before another's), and none a validation is still running in — this process's by its record of them
-        # (`_LIVE_ROUNDS`), another's beside it by age, younger than VALIDATING's bound: pruned under a running batch,
-        # its directory went (flake, 2026-11-10)
-        _LIVE_ROUNDS.add(scratch)
-        rounds = sorted((d for d in ex.files.listdir(str(root)) if not d.startswith(_CONTACT) and not d.endswith(LAID)),
-                        key=_round_epoch)
-        live_since = at - (int(project_state_bound(graph, "VALIDATING")) or 0)
-        for old in rounds[:-20]:
-            if _round_epoch(old) >= live_since or str(root / old) in _LIVE_ROUNDS:
-                continue
-            if not any(f"{root.name}/{old}" in str(n).replace("\\", "/") for n in named):
-                with suppress(OSError):
-                    ex.remove_tree(str(root / (old + LAID)))
-                    ex.remove_tree(str(root / old))
-                    if graph is not None:
-                        record_round(graph, str(root / old), False)
-    return scratch
-
-
-def _registered_workdir(engine: Engine, task_id: str, validator: Optional[str]) -> Optional[str]:
-    """Where the work is, asked of the ONE owner instead of of this door's own order.
-
-    Both halves this door was built for are kept and neither is decided here any more: a
-    `validator=` naming a role registered against the delivery is asked (the run that refused with
-    "the working directory None is empty" while the roster held it — human door, 2026-08-22), and a
-    plain call on a node whose Del is a registered role is answered from the graph rather than
-    handed back as homework. What changed is the ORDER, which this door had wrong: it asked the
-    roster before the graph, which is the priority a false FAIL over seventeen criteria already
-    bought a correction for on the dispatcher's side, in one copy of two (probed 2026-09-07 —
-    the two doors sent the validator to different directories for the same node).
-    """
-    reg = _roster()
-    return _delegation().validator_workdir(
-        engine, reg, TaskId(task_id), named_validator=validator,
-        vcfg=(reg.get(str(validator)) if validator else None))
-
-
-def _the_validators_answer(engine, task_id, out, parsed, recorded, _cb, llm) -> dict:
-    """Assemble what the caller reads from what was RECORDED — never from what was claimed.
-
-    The record is the verdict: the engine demotes an under-probed criterion at the record,
-    and a reply built from the report's own `verdict` field would hand back the claim the
-    engine had just refused to store. Split out because the run and the answer are two
-    things, and the second had grown to half the verb.
-    """
-    verdict = recorded.get("verdict") or parsed.get("verdict")
-    failed = list(recorded.get("failed_criteria") or parsed.get("failed_criteria") or ())
-    out.update({"verdict": verdict, "per_criterion": parsed["per_criterion"],
-                "failed_criteria": failed, "seams": parsed.get("seams", ""),
-                **({"outside": parsed["outside"]} if parsed.get("outside") else {}),
-                # WHO IT WAS RECORDED UNDER, read off the record. The reply echoed the `validator`
-                # PARAMETER, so a run that named none answered `"validator": null` beside twelve
-                # per-criterion verdicts and twenty Bash calls — while the docstring says
-                # `get_verdict` names which validator validated (CLI door, wave 27, 2026-09-06).
-                "validator": recorded.get("validator"),
-                "tools_used": dict(getattr(llm, "last_tool_calls", None) or {})})
-    if failed:
-        # WHY IT FAILED, at the top of the answer. A FAIL came back as a list of criterion names
-        # and a `per_criterion` array whose reason lives under `evidence`; the first read of a
-        # refusal was "csv_parsing_robustness -> fail" and nothing else, and the person went
-        # looking through the whole object for the sentence (measured on the human door
-        # 2026-08-21). The verdict's reason is the point of reading a verdict.
-        _ev = {p.get("criterion"): p.get("evidence", "") for p in parsed["per_criterion"]
-               if p.get("criterion") in set(failed)}
-        out["why_failed"] = _ev
-    if verdict != parsed["verdict"]:
-        # Say it out loud: the difference between what a validator claimed and what its evidence
-        # earned is exactly the thing this instrument exists to surface.
-        out["verdict_demoted_from"] = parsed["verdict"]
-    # Tell the issuer the ONE signal this verdict calls for — the evidence tool never signals, and a
-    # bare verdict left agents guessing (observed live: after a FAIL an agent sent PASS from REWORKING,
-    # which the FSM refused, and it hung). The directive rides where the agent looks: this reply.
-    # …and say it against the node's CURRENT state, not against the verdict alone. A verdict can
-    # be read after the graph has already moved — the dispatcher's own validator signs on
-    # delivery, so by the time a caller asks, the node may be DONE. Measured live (2026-08-20):
-    # `validate_result` told an agent to `signal FAIL` on a node already DONE/PASS, and on
-    # another to `signal PASS`, which the FSM refused ("PASS is not valid in state DONE"). One
-    # of those obeyed would have dropped accepted work. A directive is an instruction to act,
-    # so it must be about the graph as it stands.
-    _node = engine.graph.get_task(TaskId(task_id))
-    _state = _node.state.name if _node is not None else None
-    if _state != "VALIDATING":
-        out["next"] = (
-            f"Nothing to sign: '{task_id}' is {_state}, not VALIDATING — this verdict was read "
-            f"after the graph moved on (a registered validator signs on delivery, so the node "
-            f"may already be settled). Read it as a RECORD, not as an instruction; check the "
-            f"node before acting.")
-    elif verdict == Verdict.PASS:
-        out["next"] = (f"Now sign it: signal('{task_id}','PASS'). This recorded verdict is what "
-                       f"unlocks your PASS at the seam (verifier ≠ executor, §10.3).")
-    else:
-        out["next"] = (f"Now sign it: signal('{task_id}','FAIL', failed_criteria={failed}). "
-                       f"The node returns to REWORKING; then fix EXACTLY those criteria and DELIVER again "
-                       f"(do NOT send PASS from REWORKING — re-deliver, and the next validation decides).")
-    _cb(f"{task_id}: validator verdict {verdict}"
-        + (" (demoted from PASS — a criterion's behaviours were never observed)"
-           if verdict != parsed["verdict"] else "")
-        + (f" — failed: {', '.join(failed)}" if failed else "")
-        + f" · {_stat_line(llm)}")
-    return out
-
-
-def _ready_to_validate(engine, task_id, deliverable, workdir, validator, model, _llm, _progress):
-    """Everything that can refuse BEFORE a validator is paid for, and the claim on the slot.
-
-    Returns `(refusal, ctx)`: a refusal dict and None, or None and everything the run needs.
-    Separate because `validate_result` answers two questions — may this run at all, and what did
-    the validator say — and the first had grown into the body of the second.
-    """
-    workdir = workdir or _registered_workdir(engine, task_id, validator)
-    ex = validation_execution(engine)
-    _stop, task, deliverable = _refuse_validation(engine, task_id, deliverable, workdir, _llm, ex)
-    if _stop is not None:
-        return _stop, None
-    _cb = emit_cb(engine, "validate_result", _progress)
-    llm = _llm or llm_factory(model, execution=ex)
-    if not (llm.runs_agents if isinstance(llm, LLMProviderPort) else hasattr(llm, "run_agent")):
-        return {"error": f"validate_result needs a provider that runs agents (tool calling): {model!r} answers "
-                         f"one-shots only — `gfso provider-check {model}` names the roles it can hold"}, None
-    # the claim names the delivery THIS run reads — the node's generation (§10.3 gate) — and where the log stood
-    inflight_key = engine.claims.begin_validation(TaskId(task_id), (engine.delivered(TaskId(task_id)) or (None,))[0])
-    if inflight_key is None:
-        # `verdict: None` EXPLICITLY, and said. The reply had no `verdict` key at all, so a caller
-        # doing the obvious `.get("verdict")` got exactly the value this verb's own help says must
-        # never be read as a pass — indistinguishable from "the report did not parse" (CLI door,
-        # 2026-09-02). Suppressing the duplicate spawn is right; answering in a shape that reads as
-        # ⊥ to a naive caller is not.
-        return {"task_id": task_id, "state": task.state.name, "inflight": True, "verdict": None,
-                "note": "a validator run is already in flight for this node generation "
-                        "(node, iteration, reopens) — duplicate spawn suppressed. This is NOT a "
-                        "verdict and not a failure to produce one: the running validator's verdict "
-                        "lands by itself, and `get_verdict` reads it when it does. "
-                        # …AND THE ARGUMENTS OF THIS CALL WENT NOWHERE, WHICH IS THE HALF THAT
-                        # MATTERED. A caller escalating the tier reads "suppressed", waits, and gets
-                        # a verdict from whatever was already running — so a `model` they chose
-                        # deliberately silently did not apply, and nothing in the reply said which
-                        # model would actually answer. Measured on the MCP door (wave 23,
-                        # 2026-09-03): "I could never tell whether my escalation had taken effect."
-                        "NOTE — this call started NOTHING, so any `model` or `workdir` you passed "
-                        "was not applied: the verdict that lands is the running validator's, on its own "
-                        "settings. "
-                        # …AND THE ADVICE THAT FOLLOWED WAS WRONG IN PRACTICE, which is worse than
-                        # none. It said "wait for that verdict — it frees the slot — then re-run
-                        # with the model you want", and a stranger tried exactly that twice: where
-                        # an instrument is BOUND to the node, the dispatcher takes the freed slot
-                        # again immediately, so a hand escalation can never win it (MCP door, wave
-                        # 24, 2026-09-04). The bound instrument does its own escalating — its retry
-                        # runs on GFSO_VALIDATOR_RETRY_MODEL — and what a person actually has is the
-                        # other door.
-                        "If an instrument is BOUND to this node it will take the slot again as soon "
-                        "as it frees, so a hand-run escalation cannot win the race: the retry it "
-                        "does itself is the escalation (`GFSO_VALIDATOR_RETRY_MODEL`), and after "
-                        "two reports it cannot decide, it parks the node and says so. Validating it "
-                        "yourself — `record_verdict` with what you observed — is the door that does "
-                        "not queue behind it."}, None
-    return None, (task, deliverable, llm, _cb, inflight_key, workdir, ex)
-
-
-def _before_its_delivery(engine: Engine, task_id: str, workdir, validator) -> Optional[dict]:
-    """{tree, commit, workdir, deliverable} of a check before the delivery — a seam the person issued, at work, its
-    holder's place a repository's top with a commit —, the refusal naming what is missing, or None: no such check here,
-    the validation as it always was."""
-    t = engine.graph.get_task(TaskId(task_id))
-    # …a check already running is not skipped here: the claim answers it (`CheckRunning`) — skipped, a second call in
-    # the same instant fell to the plain path on a node at work and could leave no verdict (critic over d7f8dc5)
-    if t is None or t.state not in (State.EXECUTING, State.REWORKING) or not engine.persons_seam(t.id):
-        return None
-    place = (workdir or _delegation().validator_workdir(engine, _delegation().default_agents(), t.id)
-             or _registered_workdir(engine, task_id, validator))
-    head = W.git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip() if place and W.is_repo_top(place) \
-        else ""
-    if not head:
-        return {"task_id": task_id, "state": t.state.name, "verdict": None,
-                "error": f"nothing to check before {task_id}'s delivery: {place or 'no place'} is not the top of a git "
-                         f"repository with a commit — the check judges the committed tree you will deliver; commit "
-                         f"your work there, or pass `workdir=` naming that repository"}
-    tree = W.git(place, "rev-parse", f"{head}^{{tree}}").stdout.strip()
-    return {"tree": tree, "commit": head, "workdir": str(place),
-            "deliverable": f"the committed tree of {task_id} at {place} (commit {head[:12]}), checked before its "
-                           f"delivery: what the holder will hand in"}
-
-
-def validate_result(engine: Engine, task_id: str, deliverable: Optional[str] = None,
-                  model: str = MODEL_DEFAULT, workdir: Optional[str] = None,
-                  validator: Optional[str] = None,
-                  _llm=None, _progress=None, _spawn=None) -> dict:
-    """Validate EXECUTION (≠ `review_decomposition`, which checks the decomposition PLAN): spawn ONE independent
-    read-only validator agent (Read/Bash/Glob/Grep — it RUNS tests; executed evidence outranks assessment)
-    against the node's criteria + the executor's DELIVER report, recording per-criterion verdicts and
-    `failed_criteria`. Call it while the node is VALIDATING, after every delivery. Answers at once: a refusal or a
-    run already in flight as itself, else `{running, checks: {tree, commit}}` while the validator runs on in the
-    server (minutes) — its verdict lands on the record, `get_verdict(task_id)` reads it, the node is in flight on
-    `next_steps` meanwhile, and a second call starts no other; the one wait on it is the server's (`gfso wait`). This tool is the
-    EVIDENCE INSTRUMENT — it never signals ITSELF: you (the issuer) read the report and send PASS or
-    FAIL(failed_criteria=...) (verifier = issuer, §10.3; the validator is a fresh context, never the
-    work's executor). One case looks otherwise and is not: when a `llm-validator` ROLE is registered
-    and the node's ISSUER is automated (the standing agent id, or a registered role — a person who
-    names themselves keeps the signature and only the validation is done for them),
-    the dispatcher runs that instrument on every delivery and relays ITS verdict as the issuer's
-    signal — so a node can reach DONE with no signal from you. That is the registered instrument
-    acting, not this verb; `get_verdict` names which validator validated. (Said here because an agent
-    read the old sentence and waited to be asked for a PASS that was never coming.) `deliverable` defaults to the node's last DELIVER result from the audit log —
-    pass it explicitly if the server restarted since delivery. `workdir` defaults to the registered
-    workdir of the node's Del (or of `validator`) — pass it only when the work is somewhere the roster does not say. `verdict: null` = the validator's report
-    did not parse; NEVER read that as pass — the raw report_text is attached for your own assessment
-    (`get_verdict` shows what a refused report did manage to check).
-
-    At a seam the person issued, called by its holder while the node is at work (EXECUTING, REWORKING), it checks the
-    holder's committed tree before the delivery: the same validator over that commit, recorded as a check of that tree,
-    no state moved. Its DELIVER of that tree is admitted once that check passes (`validation.unchecked_at_his_seam`)."""
-    if engine.judges_before_delivery(task_id):
-        return _a_check_running(engine, task_id)
-    if (before := _before_its_delivery(engine, task_id, workdir, validator)) is not None:
-        if before.get("error"):
-            return before
-        with ExitStack() as held:
-            try:      # …the claim on the check, taken at once: a second started with it starts nothing
-                held.enter_context(engine.judging_before_delivery(task_id, before["tree"], before["commit"]))
-            except CheckRunning:
-                return _a_check_running(engine, task_id)
-            out = _validated(engine, task_id, deliverable or before["deliverable"], model, before["workdir"],
-                             validator, _llm, _progress, _spawn)
-        return {**out, "checked_before_delivery": {"tree": before["tree"], "commit": before["commit"]}}
-    return _validated(engine, task_id, deliverable, model, workdir, validator, _llm, _progress, _spawn)
-
-
-def _a_check_running(engine: Engine, task_id: str) -> dict:
-    """The answer to a check asked while one of the node's committed tree before its delivery runs."""
-    tree, commit = (engine.delivered(TaskId(task_id)) or (None, None))[:2]
-    return {"task_id": task_id, "inflight": True, "verdict": None, "checks": {"tree": tree, "commit": commit},
-            "note": f"a check of {task_id}'s committed tree before its delivery is running now: this call started "
-                    f"nothing, and its verdict lands by itself — `get_verdict('{task_id}')` reads it"}
-
-
-def _validated(engine: Engine, task_id: str, deliverable, model, workdir, validator, _llm, _progress, _spawn) -> dict:
-    """The validator run `validate_result` makes, once whether it checks a tree before its delivery is decided."""
-    _stop, _ctx = _ready_to_validate(engine, task_id, deliverable, workdir, validator, model,
-                                 _llm, _progress)
-    if _stop is not None:
-        return _stop
-    task, deliverable, llm, _cb, inflight_key, workdir, ex = _ctx
-    try:
-        llm.on_tick = _cb
-        llm.stage_hint = f"{task_id} node-validator({validator or 'standalone'})"   # names whose trace it is
-        _cb(f"{task_id}: independent validator (read-only agent) over the deliverable…")
-        out, text = _validation_pass(engine, task_id, [(task, deliverable)], {task_id: inflight_key}, workdir,
-                                     validator, model, llm,
-                                     _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=ex)), _cb, ex=ex)
-        out["state"] = task.state.name
-        if out.get("error"):
-            # The transport refuses to spawn an agent with no working directory (it would run in the state home
-            # and validate artifacts it cannot see — a WRONG verdict, not a missing one). Reported as a result
-            # rather than raised, because the caller is an agent session.
-            return {"task_id": task_id, "state": task.state.name, "verdict": None,
-                    "error": f"{out['error']} — call validate_result(task_id, workdir=…)"}
-        if "verdicts" not in out:
-            _cb(f"{task_id}: validator report did not parse (verdict=null) · {_stat_line(llm)}"
-                + (f" · report kept: {out.get('report_kept_at')}" if out.get("report_kept_at") else ""))
-            return out
-        recorded, said = out.pop("verdicts")[task_id], out.pop("reports")[task_id]
-        if recorded.get("stale"):        # …an earlier round's run: no verdict, and no ⊥ of the round at work either
-            return {**out, "verdict": None, "stale": recorded["error"]}
-        if recorded["verdict"] is None:
-            # HOW MANY TIMES THIS HAS HAPPENED ON THIS DELIVERY: at two, a run asked at a door is refused
-            # (`_refuse_validation`)
-            _n = recorded["refusals"]
-            out.update({"verdict": None, "verdict_defects": recorded["error"], "report_text": text,
-                        "report_kept_at": recorded["report_kept_at"], "refusals_on_this_node": _n,
-                        "what_to_do": (
-                            f"the probes are the INSTRUMENT's to write, not yours: one more run is "
-                            f"the move, or record your own verdict with what you observed "
-                            f"(`record_verdict`)" if _n < 2 else
-                            f"{_n} reports on this delivery could not decide every criterion, which is about the "
-                            f"CONTRACT, not the run, so a third run here is refused. Its issuer revises what this "
-                            f"node promises (`edit_criteria`) or records the verdict with what they observed "
-                            f"(`record_verdict`); its executor CHALLENGEs the criterion no report could decide. "
-                            f"`get_verdict` shows what the refused reports did manage to check.")})
-            _cb(f"{task_id}: validator report is NOT a verdict — {recorded['error']} · {_stat_line(llm)}"
-                + (f" · report kept: {recorded['report_kept_at']}" if recorded["report_kept_at"] else ""))
-            return out
-        return _the_validators_answer(engine, task_id, out, said, recorded, _cb, llm)
-    finally:
-        engine.record_llm_usage(Stage.VALIDATOR, llm, TaskId(task_id))   # the validator's own spend, recorded
-        engine.claims.end_validation(inflight_key)
-
-
-def _naming_the_node(schema: dict) -> dict:
-    """The node validator's report schema, each per-criterion entry naming the node it is about."""
-    out = copy.deepcopy(schema)
-    for key, what in (("per_criterion", "criterion"), ("outside", "observation")):
-        item = out["properties"][key]["items"]
-        item["properties"]["task_id"] = {"type": "string", "description":
-                                         f"the node this {what} belongs to — its id exactly as its heading gives it"}
-        item["required"] = list(item["required"]) + ["task_id"]
-    return out
-
-
-#: A scope's report: the node validator's, each entry naming its node. One run validates every node of the
-#: scope, and a FAIL still names the node it is about, so attribution stays inside the scope (§4.4).
-_SCOPE_VALIDATOR_SCHEMA = _naming_the_node(_VALIDATOR_SCHEMA)
-
-
-def _scope_batches(engine: Engine, parts: list, size: int) -> list:
-    """The scope's validation cut into runs that each OWE at most `size` probes (`config.validation_batch`) — per run,
-    [(node, its deliverable, its criteria this run speaks to, {probe id: the criterion it is written under} for the
-    probes this run carries)], in scope order; one run where `size` is 0.
-
-    A criterion goes whole into the run with room for it, else into a fresh one; one owing more than `size` alone is
-    split between runs, and its value is their conjunction (`_conjoined`). A part's probe is owed once per node, under
-    the first criterion resting on it (`packets.owed_probes`), so it is placed in exactly one run; a criterion owing
-    nothing costs one, for its verdict."""
-    units = [(i, c, [pid for pid, _ in items] or [None]) for i, (t, _, crits) in enumerate(parts)
-             for c, items in owed_probes(engine, t, crits)]
-    size = size or sum(len(pids) for *_, pids in units) or 1
-    runs: list = []
-    room = 0
-    for i, c, pids in units:
-        if len(pids) > room and (len(pids) <= size or not room):
-            runs.append([])
-            room = size
-        while pids:
-            take, pids = pids[:room], pids[room:]
-            runs[-1].append((i, c, take))
-            room -= len(take)
-            if pids:
-                runs.append([])
-                room = size
-    return [[(parts[i][0], parts[i][1], list({c.name: c for j, c, _ in run if j == i}.values()),
-              {pid: c.name for j, c, take in run if j == i for pid in take if pid is not None})
-             for i in dict.fromkeys(j for j, _, _ in run)] for run in runs] or [parts]
-
-
-def _conjoined(entries: list) -> list:
-    """One entry per criterion over the runs of ONE validation: the runs a split criterion's probes went to each speak
-    of it over their share, and its value is their conjunction (§2: V = ⋀) — any `fail` fails it, any other word that
-    is not `pass` leaves it no pass, and what they observed (probes, behaviours, divergences, evidence) is the union,
-    which the record then holds to everything the criterion owes. NOT the last word: that reads a kept entry under a
-    fresh one (`_validation_pass`), and read between runs of one validation it would let whichever run finished last
-    pass a criterion another run refuted."""
-    by: dict = {}
-    for e in entries:
-        by.setdefault(str(e.get("criterion")), []).append(e)
-    return [es[0] if len(es) == 1 else _fold(es) for es in by.values()]
-
-
-def _fold(es: list) -> dict:
-    """Several entries on one criterion as one: the worst word (`fail`, else any non-pass, else `pass`) with its
-    evidence first — what a rework reads as the WHY (`Engine.rework_findings`) — and the union."""
-    words = [spoken_verdict(e.get("verdict")) for e in es]
-    worst = es[words.index("fail")] if "fail" in words else next(
-        (e for w, e in zip(words, es) if w != "pass"), es[0])
-    return {**es[0], "verdict": worst.get("verdict"), **({"quote": worst["quote"]} if worst.get("quote") else {}),
-            "evidence": " | ".join(str(e["evidence"]) for e in [worst] + [x for x in es if x is not worst]
-                                   if e.get("evidence")),
-            # …a probe of a run that PASSED its share refuted nothing: unioned unmarked into the failed
-            # entry, every one was filed as a refutation — one FAIL listed 1,036 probes, one of them refuting, and the
-            # store grew to 1,414 findings (GB_sql_database_tmxu0n436, 2026-10-15)
-            # (a mark of its own: `held` is the part-credit gate's word, and written here it vouched a part's probe a
-            # passing share only cited — critic, 2026-10-15)
-            "probe": [dict(p, share="pass") if w == "pass" else p
-                      for w, e in zip(words, es) for p in probes_of(e)],
-            **{k: [x for e in es for x in e.get(k) or ()] for k in ("behaviours", "divergences")}}
-
-
-def _entries_by_node(texts: list, parts: list, schema: dict, own: bool) -> Optional[tuple]:
-    """({node id: its per-criterion entries}, {node id: what its reports said of it}) read off the batches' reports —
-    None where one did not parse (a conjunct missing from every node it covered).
-
-    `own`: the reports are about ONE node, on its own packet — every entry is that node's, whatever it names, and the
-    reports' verdict and failed list are its claim, judged at the record (`invariants.verdict_report_defects`), so an
-    entry about a criterion it does not have is refused there as an answer to another contract.
-
-    Otherwise each entry goes to the node it names, or by its criterion's name where exactly one node has that
-    criterion, and is dropped where neither places it: the node it belonged to is then short of it, which its record
-    refuses (⊥). A report over several nodes is judged WHOLE before it is read per node: its word and its failed list
-    against its own entries (`_report_contradicts_itself`) — a FAIL that names nothing or names what no entry failed
-    decided nothing, for every node it covers (Inv-3; critic V1: read per node, such a report closed a project DONE).
-    Each node's failed list is then its own entries' red set — names alone collide, two consumers of one producer both
-    carrying a criterion of one name (critic V1)."""
-    owners: dict = {}
-    for task, _, crits in parts:   # …over the WHOLE contract: a criterion kept from a refused attempt has its owner too
-        for name in dict.fromkeys([c.name for c in crits] + [c.name for c in task.spec.criteria]):   # (critic r5)
-            owners.setdefault(name, []).append(str(task.id))
-    out: dict = {str(t.id): [] for t, _, _ in parts}
-    said: dict = {tid: {"verdict": Verdict.PASS if own else None, "failed_criteria": [], "seams": "", "outside": [],
-                        "contradiction": None} for tid in out}
-    failed_said, unplaced = set(), set()
-    for text in texts:
-        parsed = _shaped(parse_structured(text or "", schema))
-        if parsed is None:
-            return None
-        # every reader below — the node an entry goes to, the report against its own entries, the record — reads the
-        # contract's name, never the label as the validator decorated it
-        for e in parsed.get("per_criterion") or ():
-            e["criterion"] = criterion_meant(e.get("criterion"), list(owners))
-        if parsed.get("failed_criteria"):
-            parsed["failed_criteria"] = [criterion_meant(n, list(owners)) for n in parsed["failed_criteria"]]
-        _place_outside(parsed, said, own)
-        named = set()
-        for e in parsed.get("per_criterion") or ():
-            tid = next(iter(out)) if own else _named_node(e)
-            # …by its criterion's name only where it names no node: naming one outside this validation, a consumer's
-            # seam entry was credited to its sibling's like-named seam (critic over the round, 2026-10-19)
-            if not tid and len(owners.get(str(e.get("criterion")), ())) == 1:
-                tid = owners[str(e.get("criterion"))][0]
-            if tid in out:
-                out[tid].append(e)
-                named.add(tid)
-            elif spoken_verdict(e.get("verdict")) != "pass":
-                unplaced.add(str(e.get("criterion")))
-        # EVERY REPORT IS JUDGED WHOLE, a batch of one node's contract as a scope's report is: a word that decided
-        # nothing, or one its own entries contradict, decided nothing for any node it covers (Inv-3, §7.1) — the batches
-        # of one node read by a rule of their own made ⊥ or FAIL depend on which malformed word came (critic V4). A
-        # node's single report is judged by the same clause at the record, in the record's own words.
-        why = _report_contradicts_itself(parsed)   # one node's single report too: the record no longer reads its word
-        failed_said.update(_listed_failed(parsed), red_set(parsed.get("per_criterion")))   # held to the names' owners below
-        for tid in (out if own else named):
-            s = said[tid]
-            s["contradiction"] = s["contradiction"] or why
-            s["seams"] = (s["seams"] + " " + str(parsed.get("seams") or "")).strip()
-            if own:
-                # …and the decided words conjoined, in any order; an undecided one kept as said, so the record
-                # refuses it by name — None would read there as "derive it from the entries" (critics V2, V3)
-                word = Verdict.FAIL if red_set(parsed.get("per_criterion")) else verdict_word(parsed.get("verdict"))
-                s["verdict"] = (s["verdict"] if s["verdict"] not in (Verdict.PASS, Verdict.FAIL) else
-                                str(parsed.get("verdict") or "").strip() if word is None else
-                                Verdict.FAIL if Verdict.FAIL in (word, s["verdict"]) else Verdict.PASS)
-                s["failed_criteria"] = list(dict.fromkeys(  # …once each, a criterion split between runs too
-                    s["failed_criteria"] + (red_set(parsed.get("per_criterion")) or _listed_failed(parsed))))
-    if not own or len(texts) > 1:      # one node's single report: the record holds its list to its entries
-        for tid, why in _unanswered_fails(out, owners, failed_said, unplaced).items():
-            said[tid]["contradiction"] = said[tid]["contradiction"] or why
-    return out, said
-
-
-def _named_node(x: dict) -> str:
-    """The node a scope report's item names in `task_id`, as its heading gives it, the validator's quoting taken off."""
-    return str(x.get("task_id") or "").strip().strip("`'\"").strip()
-
-
-def _place_outside(parsed: dict, said: dict, own: bool) -> None:
-    """What the report observed outside the criteria, onto the node each observation names (one node's report: that
-    node) — data beside the verdict for its issuer, read by nothing that decides it (Inv-2). One naming no node of
-    this validation is dropped, as an unplaced entry is."""
-    for o in (o for o in parsed.get("outside") or () if isinstance(o, dict)):
-        tid = next(iter(said)) if own else _named_node(o)
-        if tid in said and str(o.get("what") or "").strip():
-            said[tid]["outside"].append({"what": str(o["what"]).strip(), "evidence": str(o.get("evidence") or "").strip()})
-
-
-def _shaped(parsed: Optional[dict]) -> Optional[dict]:
-    """The report in the shape it is read in, or None — a report that did not parse. `parse_structured` checks keys, not
-    types: a `failed_criteria` written as one string was read letter by letter, no letter had an owner, and a node passed
-    over its own criterion named failed (critic over 37579f8); entries that are not objects broke the read uncaught."""
-    if isinstance((parsed or {}).get("failed_criteria"), str):
-        parsed["failed_criteria"] = [parsed["failed_criteria"]]
-    ok = (parsed is not None and isinstance(parsed.get("per_criterion") or [], list)
-          and isinstance(parsed.get("failed_criteria") or [], list)
-          and all(isinstance(e, dict) for e in parsed.get("per_criterion") or ()))
-    return parsed if ok else None
-
-
-def _listed_failed(parsed: dict) -> list:
-    """The report's `failed_criteria` — or, where it wrote none or fewer than its own failing entries, those entries'
-    non-pass criteria: the list is the red set (Inv-3), derivable from the entries, so an absent or short summary is no
-    defect — refused whole for naming one of three red entries, three validations of four nodes left no verdict and the
-    clock escalated two delivered parts (GB_sql_database_tmwsep280, 2026-10-15). A list naming what its entries pass
-    still disagrees."""
-    red = red_set(parsed.get("per_criterion"))
-    listed = [str(n) for n in parsed.get("failed_criteria") or ()]
-    return listed if "failed_criteria" in parsed and not set(listed) < set(red) else red
-
-
-def _unanswered_fails(out: dict, owners: dict, failed_said: set, unplaced: frozenset = frozenset()) -> dict:
-    """{node: why} — for each criterion some report of this validation calls failed, by its list or by an entry under any
-    node's id, every owner of it when no owner's own entry fails it: the word is then a fail its owner does not carry,
-    and the owner decides nothing. Held per report or only where a red entry stood, a fail written under a non-owner's
-    id, or listed by a batch with no red entry, let the owner pass on its own pass or on one kept from a refused attempt
-    (critics over the round, 2026-10-19). A name two nodes share is answered by either owner failing it — except a red
-    entry placed under no node (`unplaced`), which may be either's: every owner not failing it itself decides nothing,
-    or the other owner's fail answered it and the second passed on a pass kept from a refused attempt (critic over
-    37579f8)."""
-    red_by = {(tid, n) for tid, es in out.items() for n in red_set(es)}
-    unanswered: dict = {}
-    for name in sorted(failed_said | set(unplaced)):
-        holders = [t for t in owners.get(name, ()) if t in out]
-        short = [t for t in holders if (t, name) not in red_by]
-        if name in unplaced or not any((t, name) in red_by for t in holders):
-            for tid in short:
-                unanswered.setdefault(tid, f"a report of this validation calls '{name}' failed and no entry of its node "
-                                           f"fails it — {RED_SET}")
-    return unanswered
-
-
-def _report_contradicts_itself(parsed: dict) -> Optional[str]:
-    """Why a report decided nothing its entries can carry, or None. Where an entry is red the report is a FAIL on its red
-    set, whatever its word or list say: a false FAIL is guarantee-safe (§8.4) and a PASS over a red entry is read as the
-    FAIL it is. Refused, one batch's `FAILED` or a list naming another batch's criterion voided a root's every batch and
-    the probed FAIL with them — of ~17 batches a round, all had to be well-formed (finder over 190f4db, after
-    GB_sql_database_tn03ao788). A FAIL claimed over entries that all pass names nothing observed, and decides nothing."""
-    red, listed = set(red_set(parsed.get("per_criterion"))), set(_listed_failed(parsed))
-    if red:      # what the list names beyond the red set is held to its owners' entries (`_entries_by_node`)
-        return None
-    said = verdict_word(parsed.get("verdict"))   # a word that is neither decided nothing: no verdict to agree (§7.1)
-    if parsed.get("verdict") is None and not listed:   # …and no word is no claim: the entries are the verdict (§2.3)
-        return None
-    if said != Verdict.PASS or listed:
-        return (f"the report's verdict {parsed.get('verdict') or '(none)'} and failed_criteria {sorted(listed)} contradict its own "
-                f"entries, whose non-pass criteria are {sorted(red)} — {RED_SET}")
-    return None
-
-
-def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm, claim, model, workdir,
-                 scratch, text: str = "") -> dict:
-    """Record ONE node's own verdict — its reports' claim over its entries — by `record_exec_verdict` over that node
-    alone, so every gate a node's record passes (a verdict at all, pinned probes run, divergences, regression,
-    probes, underprobed) applies to it unchanged. {verdict, failed_criteria, validator}, or verdict None with the
-    refusal.
-
-    RECORD FIRST, THEN SPEAK. What is recorded is not always what was claimed: a criterion whose named behaviours
-    were never observed is demoted at the record (an unobserved conjunct cannot carry a pass, §2.3), so the caller
-    reads the record, never the claim — measured live, a claim read past the record closed a node DONE on evidence
-    the engine had refused. A refused report is not a verdict (§2: V = ⋀ over ALL criteria; ⊥ is not pass) and ends
-    the node's automatic progress, so it is kept where its reader looks: on disk, and beside the node, where
-    `get_verdict` shows what it did manage to check (measured 2026-08-21: a 25-criterion contract refused twice, the
-    node parked, and the only trace of what was checked was a text file); with how many refusals the node has had."""
-    tools, _model = _instrument_of(llm, model)
-    parts = engine.parts_procedure(task.id)
-    entries = with_part_observations(parts, canonical_citations(entries, task.spec.criteria, parts))   # the packet's `{id, held}` form, read
-    # THE ENGINE'S CONJUNCTION, NOT THE REPORT'S WORD: V is the AND of the per-criterion values (§2.3) and the FAIL
-    # payload is their red set (Inv-3), so both are computed here from the entries over this node's criteria; a word or
-    # list the report adds decides nothing
-    failed = red_set(entries, [c.name for c in task.spec.criteria])
-    verdict = Verdict.FAIL if failed else Verdict.PASS
-    try:
-        if said.get("contradiction"):
-            raise ValueError(said["contradiction"])
-        # WHOSE INSTRUMENT SPOKE: the registered role's id when one drives this, else the verb's name
-        rec = engine.record_exec_verdict(task.id, verdict, failed,
-                                         validator or "validate_result", per_criterion=entries,
-                                         tools_used=tools, require_probe=True, generation=claim.key[1:],
-                                         log_at=claim.log_at, tree=claim.tree, model=_model, workdir=workdir,
-                                         outside=said.get("outside") or (),
-                                         inputs_dirs=laid_down_dirs(
-                                             engine.validation_procedure(task.id), scratch)) or {}
-    except StaleRun as e:       # …a run of an earlier round decides nothing now, nor counts against the round at work
-        return {"verdict": None, "failed_criteria": [], "error": str(e), "stale": True}
-    except ValueError as e:
-        kept = _keep_rejected_report(engine.project_name, str(task.id), str(e), text)
-        try:
-            engine.record_rejected_report(task.id, str(e), entries, tools_used=tools,
-                                          validated_by={"validator": validator or "validate_result", "model": _model})
-        except Exception:
-            log.warning(f"could not keep the refused report on {task.id}", exc_info=True)
-        return {"verdict": None, "failed_criteria": [], "error": str(e), "report_kept_at": kept,
-                "refusals": engine.refusals_on_this_delivery(task.id)}
-    return {"verdict": rec.get("verdict") or verdict,
-            "failed_criteria": list(rec.get("failed_criteria") or failed),
-            "validator": rec.get("validator")}
-
-
-def _scope_cap(batch: list, graph) -> Optional[int]:
-    """A scope run's cap: the longest bound left among the nodes it validates. One run serves every node in it, and
-    each node's own clock hands it on when its own bound passes (`_validation_cap` is that bound for a run of one);
-    capped at the first-listed node's remainder, or the shortest, a top that had waited in VALIDATING cut a run over
-    deliveries made seconds before to 119 s and 299 s, and every verdict in it came back ⊥ (critics, 2026-09-28)."""
-    return max((c for t, *_ in batch if (c := _validation_cap(t, graph))), default=None)
-
-
-def _observe_pins(engine: Engine, parts: list, workdir, built: Optional[list] = None, ex=None,
-                  touched: Optional[set] = None) -> dict:
-    """{(node, probe id): {matched, out, printed, note, …}} — every pinned probe of the criteria left to validate, own
-    and parts', run by the system itself ON THE DELIVERY: a fresh copy of it with the inputs laid from the contract
-    (`observe.run_checks`), once per validation and before any validator run, the `exact` ones first. The validator's
-    copy was no such run — a probe that leaves state printed "already exists" there, and the validator's edits changed
-    what it printed (critic over 38c16f9) — and a lone validator works in the place itself, so after it no copy is the
-    delivery. An exact probe builds what it runs and creates what it reads (`procedure.EXACT_TEXT`); one that is not is
-    matched as a part of what it prints, and its PASS is held to what it printed here (`procedure._reproduced`). A
-    probe the system could not run is a row with a `note` and no `matched`, said in the record as not observed. Laid
-    over the report before it is recorded (`procedure.with_engine_observations`); the place itself is never run in. The
-    copy is built first, what ran appended to `built`; a build that fails raises `BuildFailed`, and nothing here runs.
-    `touched`: gets the delivered files the checks changed in their copies (`_judged_elsewhere`)."""
-    probes = []
-    for task, _, crits in parts:
-        own = engine.parts_procedure(task.id)
-        probes += [((str(task.id), pid), c, p) for c in [*crits, *(pc for x in crits for pc in own.get(x.name, ()))]
-                   for p in (c.check or ()) if p.command.strip() and (pid := probe_id(c.name, p))]
-    # …the exact ones first: where the budget ends, the pins left unrun are ⊥ for their criteria (`PAST_BOUND`), and the
-    # next validation runs those alone, with the whole budget
-    probes.sort(key=lambda x: not x[2].exact)
-    if not probes:
-        return {}
-    ex, rows = ex or validation_execution(engine), {}
-    shell = bool(workdir) and ex.shell()
-    why = ("the delivery could not be copied" if shell else "no shell to run it in" if workdir else
-           "the delivery has no place to copy")
-    if shell:
-        # …in the system's own scratch, never the validation's round: these run the delivery's own scripts, and in the
-        # round a judge's copy follows they shared its container and CLI state and could plant or rewrite its tree
-        # (critic 3 over the judges slice)
-        with ex.scratch("gfso-exact-", system=True) as tmp:
-            ex.files.mkdir(str(at := Path(tmp) / "exact"))
-            # …a copy the delivery makes impossible raises `NotTheDelivery`: its FAIL, as a judge's copy's (`_unjudged`);
-            # one that failed for another cause leaves these not run, said so
-            try:
-                delivered = engine.delivered(*(t.id for t, *_ in parts))
-                with snapshot(_read_by_id(engine, delivered, workdir, ex), at / "delivery", ex, delivered=delivered,
-                              built=built) as tree:
-                    if tree:
-                        # …the tree DELIVER recorded, built, and never `git clean`ed: one emptied a shared place's
-                        # copy inside an enclosing repository (critic over the fresh copy). State an executor's own run
-                        # left in a place with no recorded commit is the pin's to start clean of (`EXACT_TEXT`)
-                        why, rows = ("its inputs could not be laid",
-                                     dict(run_checks(ex, probes, workdir, judged_at(tree, workdir, ex), OBSERVE_S + FRESH_S * len(probes),
-                                                     touched)))
-            except Uncopied as e:
-                why = str(e)
-    return {k: rows.get(k) or {"note": f"not run: {why}"} for k, _, _ in probes}
-
-
-def _read_by_id(engine: Engine, delivered: Optional[tuple], workdir, ex):
-    """Where a judge's copy of `delivered` is read from, as `snapshot` reads it when the copy is taken: the project's
-    store by its id, kept first if absent — from the
-    judge's directory, where the work stands, else where its record says it was made (`store.held`). `Absent`, an
-    `Uncopied`, where nothing holds it: no verdict. No commit recorded: the directory itself, which `snapshot` refuses
-    to copy as it stands."""
-    if not (delivered and delivered[1]):
-        return workdir
-    places = [(str(p), ex) for p in (workdir, W.base_of(str(workdir))) if p]   # …a node's place, its base
-    return lambda: store.held(engine, ex, delivered[1], *places)
-
-
-def _judged_elsewhere(out: dict, edits: list, touched: set) -> list:
-
-    """The delivered files a judge changed in its copy that no pinned check changes when the system runs it — each
-    changed one said in `out` (`validator_edits`), a fact either way."""
-    if edits:
-        out["validator_edits"] = sorted(set(edits))
-    return sorted(set(edits) - touched)
-
-
-def _unjudged(parts: list, e: Exception) -> tuple:
-    """The reports a validation stands on whose judge's copy could not be made (`NotTheDelivery`) or built
-    (`BuildFailed`), shaped as `_entries_by_node` reads them: every criterion left to validate failed on that one
-    observation — the delivery's FAIL, the cause said, no check run (JOINT judge-on-the-delivered-tree). A copy that
-    cannot be made is no verdict to wait for again and again: a false FAIL is guarantee-safe (§8.4), and its cause
-    reaches the executor's next packet (`packets._last_delivery_text`), whose re-delivery lifts it."""
-    # …each with the step that failed as its probe — a verdict states what it observed (§2), and a FAIL with none was
-    # refused as no verdict —, marked the system's own act: no finding stands on it (`SYSTEMS_ACT`), the next
-    # delivery's own build and copy re-check it
-    built = isinstance(e, BuildFailed)
-    probe = {"command": e.command if built else "the system's checkout of the commit DELIVER recorded",
-             "expect": "exit 0" if built else "the tree DELIVER recorded, read back whole", SYSTEMS_ACT: True}
-    return ({str(t.id): [{"criterion": c.name, "verdict": "fail", "evidence": str(e),
-                          "behaviours": ["the delivered tree builds in the validation's copy" if built else
-                                         "the tree DELIVER recorded is copied whole for its judge"],
-                          "probe": [probe]} for c in crits] for t, _, crits in parts},
-            {str(t.id): {"verdict": Verdict.FAIL, "failed_criteria": [c.name for c in crits], "seams": "",
-                         "outside": [], "contradiction": None} for t, _, crits in parts})
-
-
-def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
-                     edits: Optional[list] = None, built: Optional[list] = None, ex=None,
-                     seen: Optional[dict] = None) -> list:
-    """The validator's reports over the parts' deliveries — one run, or one per batch at the same time (`_run_each`),
-    each batch carrying a disjoint share of the probes the validation owes over one unchanging set of deliveries, so
-    their conjunction is the verdict whatever order they finish in (§2 V = ⋀ cᵢ; `_scope_batches`, `_conjoined`). A
-    scope's parts stand each under its own heading (`inside` its members); a node validated on its own (`inside` None) gets its own packet, its contract whole unless
-    batched or partly kept from a refused report. The engine refuses a report that leaves a criterion unspoken (⊥ is
-    not a pass, §2.3), and on a rich contract one report did: 44 refused against 57 recorded, two E3 runs stalled at 25
-    and 42 root criteria (2026-08-21) — so a long contract is batched, every owed probe carried exactly once.
-    `GFSO_VALIDATION_BATCH=0` restores the single run, whatever the size. Each copy is built before its run, what ran
-    appended to `built`; a build that fails raises `BuildFailed` (`snapshots._build`). `seen`: what the system's own
-    runs of the pinned checks observed (`_observe_pins`), told to the validator in its packet."""
-    system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
-    batches = _scope_batches(engine, parts, validation_batch())
-    ex, delivered = ex or validation_execution(engine), engine.delivered(*(t.id for t, *_ in parts))
-
-    def _run(batch, client=None, place=None) -> str:
-        if inside is not None:
-            body = (_scope_validator_packet(engine, batch, workdir, place or scratch, inside, seen)
-                    + schema_instruction(_SCOPE_VALIDATOR_SCHEMA))
-            cap = lambda: _scope_cap(batch, engine.graph)
-        else:
-            (task, deliverable, crits, *carry), = batch
-            body = (_validator_packet(engine, task, deliverable, workdir, place or scratch,
-                                      criteria=None if len(crits) == len(task.spec.criteria) else crits,
-                                      carry=carry[0] if carry else None, seen=seen)
-                    + schema_instruction(_VALIDATOR_SCHEMA))
-            cap = lambda: _validation_cap(task, engine.graph)
-        # RUNS SIDE BY SIDE EACH IN A COPY OF THE PLACE OF ITS OWN (`adapters.snapshots`): sharing the place, one run's
-        # pinned `make clean` took the binary from under the others' probes — a false root FAIL (GB_sql_database_tngtvm580).
-        # A run alone gets its copy too (`_run_each`); without a scratch no run starts: the delivery is read by its id
-        # into a scratch, never judged in the place. Mapped back, the report reads as run in the place.
-        # Its cap is read once the copy stands: what is left of T_validate when the run starts, not before the copy took
-        # its share — a cap read first let the run outlive the visit by the copy's minutes (`_validation_cap`).
-        ran: list = []
-        if workdir and not place:
-            # …no scratch to read the delivery into (a place on a share): never the executor's place in its stead —
-            # its container, its CLI state, its tree to change (§10.3). No validator started: the never-started
-            # run, asked again on its own tier and then of a person (critics: read as the place down, it flapped)
-            return _no_start(client or llm, "uncopied", str(workdir), f"no scratch beside {workdir} to copy the "
-                                                                       f"delivery into: no judge runs in the place")
-        try:
-            if not workdir:
-                # …a goal acted out in the world, no directory anywhere: its judge reads the world at contact (§3.5).
-                # A directory with no commit delivered is no such goal: no copy (`snapshot`), no verdict
-                return (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=place or None,
-                                                 timeout=cap())
-            with snapshot(_read_by_id(engine, delivered, workdir, ex), Path(place) / "delivery", ex, edits, delivered,
-                          ran) as tree:
-                here = judged_at(tree, workdir, ex)       # …the judge's own directory of the commit
-                body = swap(body, workdir, here) + snapshot_note(here, ran[0] if ran else "nothing")
-                text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=here, timeout=cap())
-                return swap(text, here, workdir)
-        except PlaceUnavailable as e:        # …the place down while copying: the stop a call that could not start makes
-            return _no_start(client or llm, "unavailable", e.place, str(e))
-        except Uncopied as e:                # …no copy, for a cause not the delivery's: no verdict, asked again
-            return _no_start(client or llm, "uncopied", str(workdir), str(e))
-        finally:
-            if built is not None:
-                built.extend(ran)
-            if place:          # …the run's container ended, whatever its processes left running (`release`)
-                ex.release(place)
-
-    def _run_again_if_unread(batch, client=None, place=None) -> str:
-        """A batch whose report does not parse is run once more, alone, inside this validation, in a fresh place of its
-        own: one or two dropped brackets voided the other batches and the root of coreutils was validated whole fifteen
-        times in an hour (AUTO haiku, GB_coreutils_tmsiyo732). Same delivery, same claim — nothing crosses from one
-        attempt to another, nor from the first run's scratch to the second's (critic over 779eade)."""
-        text = _run(batch, client, place)
-        schema = _SCOPE_VALIDATOR_SCHEMA if inside is not None else _VALIDATOR_SCHEMA
-        if parse_structured(text or "", schema) is not None:
-            return text
-        again = f"{place}_again" if place else None
-        if again:
-            _fresh(ex, again)
-            record_round(engine.graph, again, True)
-        return _run(batch, client, again)
-    # a lone run copies a node's own place; on this host never a shared directory with no git base: that is the user's
-    # whole tree (a copy per validation was refused on one of 77k files), and nothing there is isolated to begin with.
-    # Where places stand apart it copies whatever it judges, a root's base too: else it would run in its executor's
-    # …and wherever DELIVER recorded a commit, that commit checked out — the whole tree, a large one included: a chat's
-    # delivery in the user's own tree was recorded and still judged in the tree as it went on to be (inchat-live-1113-1835)
-    lone = scratch if workdir and (_NODES in str(workdir) or ex.apart or delivered) else None
-    return _run_each(llm, spawn if len(batches) > 1 else None, scratch if len(batches) > 1 else lone, batches,
-                     _run_again_if_unread if len(batches) > 1 else _run, ex)
-
-
-def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, workdir, validator, model, llm, spawn,
-                     _cb, inside: Optional[frozenset] = None, ex=None) -> tuple:
-    """ONE validation pass over deliveries — a scope's (`inside` its members), or one node's, a scope of one: the
-    validator's reports over every node's criteria left to validate (`_left_to_validate` keeps what a refused attempt
-    already decided), then each node's OWN verdict recorded over its own entries (`_record_node`). Records only; the
-    signatures are the caller's. `nodes`: [(task, its deliverable)]; `claims`: {node: its validation claim}.
-
-    Returns (out, the reports' text): out = {task_id, stats, verdicts: {node: …}, reports: {node: what its reports
-    claimed, with its entries}} — or, where the transport refused to start, `error`; where a report did not parse, the
-    kept report and no `verdicts`."""
-    left = {str(t.id): _left_to_validate(engine, t) for t, _ in nodes}
-    parts = [(t, d, left[str(t.id)][0]) for t, d in nodes]
-    ex = ex or validation_execution(engine)
-    # The validator runs WHERE THE WORK IS, with a private scratch BESIDE it (`_validation_place`): a shared scratch
-    # let one run validate another's leftovers, and a scratch made the working directory opened the validator in an
-    # empty tree, where it failed correct work saying nothing was there. A false FAIL at the seam is worse than none.
-    scratch = _validation_place(top_id, workdir, ex, tuple(
-        p.get("as_run") or p.get("command") for t in engine.all_tasks()
-        for ps in engine.regression_probes(t.id).values() for p in ps), engine.graph, engine.project_name)
-    edits, built, unbuilt, touched = [], [], None, set()
-    try:
-        # the system's own run of the pinned checks FIRST, on the delivery as delivered (`_observe_pins`)
-        if observed := _observe_pins(engine, parts, workdir, built, ex, touched):
-            _cb(f"{top_id}: the system ran {len(observed)} pinned check(s) on a fresh copy of the delivery — "
-                f"{sum(o.get('matched') is True for o in observed.values())} print what they pin, "
-                f"{sum('matched' not in o for o in observed.values())} could not be run")
-        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built, ex, observed)
-    except ValueError as ex:
-        return {"task_id": top_id, "error": str(ex)}, ""
-    except (BuildFailed, NotTheDelivery) as ex:       # …the delivery's FAIL, nothing checked (`_unjudged`)
-        observed, texts, unbuilt = {}, [], ex
-        _cb(f"{top_id}: {ex}")
-    finally:
-        _LIVE_ROUNDS.discard(scratch)                 # …its runs are over: an old round from now on
-    if said := str(unbuilt) if unbuilt else built[0] if built else None:
-        for t, _ in nodes:          # …said to each node's executor in its next packet (`packets._last_delivery_text`)
-            engine.emit_info("validation", f"{t.id}: {UNCOPIED if isinstance(unbuilt, NotTheDelivery) else BUILT}{said}")
-    text = "\n\n".join(x or "" for x in texts)
-    out: dict = {"task_id": top_id, "stats": session_calls(llm, Stage.VALIDATE_RESULT)}
-    _schema = _SCOPE_VALIDATOR_SCHEMA if inside is not None else _VALIDATOR_SCHEMA
-    for x in texts:
-        file_tech_reports(engine, parse_structured(x or "", _schema), "validator", validator or "validator", top_id)
-    if moved := _judged_elsewhere(out, edits, touched):    # …each PASS the system's own run does not decide is ⊥
-        _cb(f"{top_id}: the validator changed delivered file(s) in its copy ({', '.join(moved[:5])}) — its passes stand "
-            f"only where the system's own run of the pinned checks decides the criterion")
-    read = _unjudged(parts, unbuilt) if unbuilt else _entries_by_node(texts, parts, _schema, own=inside is None)
-    if read is None:
-        # No retry here: an agent run is minutes-long. The report is KEPT, on disk and on the node, as a report the
-        # engine refuses is: under delegation the caller is the dispatcher, which reads a verdict and nothing else,
-        # and a validation that died with nothing kept left a user polling `get_verdict` for minutes (wave 25,
-        # 2026-09-05). And "it wrote nothing" is not "it wrote something unreadable": a call the transport cut
-        # (`the_call_was_cut`, the provider's own observation first) is a run that stopped, worth re-running on the
-        # same tier, unlike a report that parsed and decided nothing (measured 2026-09-06: fifteen minutes, one
-        # sentence, $0.00).
-        if (_stopped := what_stopped(calls_of(llm))):
-            # …AND A CALL THE ACCOUNT'S LIMIT REFUSED IS NO REPORT AT ALL: booked as a refused one, every probe of a
-            # limit window raised the node's refusal count — the next validation bought on the retry tier, the issuer
-            # told to narrow the contract, the validator told "attempt 16" (critic over this fix, 2026-10-24)
-            return {**out, "error": f"{_stopped}: the validator's call was refused — nothing was validated"}, text
-        if getattr(llm, "calls", None):
-            llm.calls[-1]["parse_failed"] = True
-        _said = text.strip()
-        out.update(_keep_a_report_that_decided_nothing(
-            engine, top_id,
-            ("the validator produced NO REPORT — its run returned "
-             f"{len(_said)} characters and no structured answer at all"
-             + (f" ({_said[:120]!r})" if _said else " (nothing)")
-             + ". That is a run that stopped, not a validation: re-running the same tier is the "
-               "right move here, unlike a report that parsed and decided nothing"
-             if the_call_was_cut(llm, _said) else
-             "the validator's report did not parse — no verdict could be read from it"), text))
-        return out, text
-    entries, said = read
-    # the entries kept from a refused attempt FIRST, what this run saw over them: a criterion spoken again was seen again
-    # on the same delivery, and the record reads the last word on it — kept last, a kept `pass` hid a fresh `fail`
-    # and a PASS over its own red entry closed a node DONE (critic V5; main's order). The runs of THIS validation are
-    # read otherwise: a criterion split between them is their conjunction, never the word of whichever came last
-    # …and over them what the system itself saw its exact checks print (`_observe_pins`), so the record and the answer
-    # both read the same report
-    whole = {str(t.id): with_engine_observations(
-        left[str(t.id)][1] + _conjoined(entries[str(t.id)]), t.spec.criteria, engine.parts_procedure(t.id),
-        {pid: o for (tid, pid), o in observed.items() if tid == str(t.id)}, moved[:10]) for t, _ in nodes}
-    out["reports"] = {tid: {**said[tid], "per_criterion": whole[tid]} for tid in entries}
-    # …a FAIL the build or the copy made ran no model: it names none (one never asked was signed as the judge)
-    out["verdicts"] = {str(t.id): _record_node(engine, t, whole[str(t.id)], said[str(t.id)], validator,
-                                               None if unbuilt else llm, claims[str(t.id)],
-                                               None if unbuilt else model, workdir, scratch, text)
-                       for t, _ in nodes}
-    return out, text
-
-
-def validate_scope(engine: Engine, top_id: str, workdir: Optional[str], validator: Optional[str] = None,
-                   model: str = MODEL_DEFAULT, _llm=None, _spawn=None, only=None) -> dict:
-    """ONE validation over the deliveries of a scope one executor session carried (`only`: those of the named
-    nodes, the others' records standing): every delivered node's
-    criteria, pinned probes and regression lines in one run (batched across nodes as one node's contract
-    is), then each node's OWN verdict recorded over its own entries. Records only; the signatures are the
-    caller's. {verdicts: {node: {verdict, failed_criteria}}, stats} — `inflight` where a run already holds
-    one of them, and no verdicts where the report did not parse."""
-    members = engine.scope_members(TaskId(top_id))
-    nodes = [t for t in members if t.state.name == "VALIDATING" and (only is None or str(t.id) in only)]
-    ex = validation_execution(engine) if nodes else None    # …before a claim: refused past them, they stood held until a restart
-    keys = [engine.claims.begin_validation(t.id, (engine.delivered(t.id) or (None,))[0]) for t in nodes]
-    if not nodes or None in keys:
-        for k in keys:
-            if k is not None:
-                engine.claims.end_validation(k)
-        return {"task_id": str(top_id), "verdicts": {}, "inflight": bool(nodes)}
-    llm = _llm or llm_factory(model, execution=ex)
-    try:
-        llm.on_tick = _cb = emit_cb(engine, "validate_result")
-        llm.stage_hint = f"{top_id} scope-validator({validator or 'standalone'})"
-        _cb(f"{top_id}: one independent validator over the scope's {len(nodes)} deliveries…")
-        out, _ = _validation_pass(engine, str(top_id), [(t, _last_deliver_result(engine, t.id) or "(none recorded)")
-                                                        for t in nodes],
-                                  {str(t.id): k for t, k in zip(nodes, keys)}, workdir, validator, model, llm,
-                                  _spawn or (None if _llm is not None else lambda: llm_factory(model, execution=ex)), _cb,
-                                  inside=frozenset(str(m.id) for m in members), ex=ex)
-        out.pop("reports", None)
-        out["verdicts"] = {tid: {"verdict": v["verdict"], "failed_criteria": v["failed_criteria"],
-                                 **({"error": v["error"]} if v.get("error") else {})}
-                           for tid, v in (out.get("verdicts") or {}).items()}
-        if out["verdicts"]:
-            _cb(f"{top_id}: scope validated — " + ", ".join(f"{k} {v['verdict']}" for k, v in out["verdicts"].items()))
-        return out
-    finally:
-        engine.record_llm_usage(Stage.VALIDATOR, llm, TaskId(top_id))
-        for k in keys:
-            engine.claims.end_validation(k)
 
 
 _DOC_MAX = 256_000   # bytes of one named document carried into the goal's contract
@@ -1661,7 +314,7 @@ def _work_places(engine: Engine, ex) -> list:
     another role's workdir, a typo or a role left from a name reused, gave the contract a repository never imported (critic, ran)."""
     if ex.files is not HOST:
         return [Path(os.path.normpath(ex.base))]
-    return sorted({Path(os.path.normpath(w)) for c in _roster().list().values()
+    return sorted({Path(os.path.normpath(w)) for c in staffed().list().values()
                    if (c or {}).get("kind") in ("llm-executor", "llm-validator")
                    and c.get("project") and c.get("project") == engine.project_name
                    and (w := c.get("workdir")) and cheap_to_ask(w) and Path(w).is_dir()})
@@ -1856,7 +509,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
     if (unjudged := _no_place_at_the_go(engine)) is not None:
         return unjudged
     request, spec = (_the_go(engine, plan, request, spec, root_id) if plan is not None
-                     else (request, _no_deferral_nobody_makes(spec, open_plan or engine.mode_kind() != Mode.AUTO)))
+                     else (request, _no_deferral_nobody_makes(spec, open_plan or mode_kind(engine.graph) != Mode.AUTO)))
     given, model = request, model or engine.planner_model()
     _cb = emit_cb(engine, "decompose", _progress)
     # …and SAY it, once, at the moment it happens: naming someone else here makes them the issuer of
@@ -1894,7 +547,7 @@ def auto_decompose(engine: Engine, request: str = "", root_id: str = ROOT_ID,
                              # against, so the seams move with the model rather than with a number we set
                              # …the session that DOES the parts: the user-agent's hands where it dispatches (critic:
                              # under solo/semi-dispatch both doors judged against nobody)
-                             executor=engine.workforce.executor_session(engine.hands_of(executor or assignee)
+                             executor=engine.workforce.executor_session(hands_of(engine.graph, executor or assignee)
                                                                         or executor or assignee),
                              # …a root's, on every route of its go — a plan file, a spec, a request — and every go again
                              system_root=lambda s: with_the_intent(engine, s, root_id))
@@ -1975,7 +628,7 @@ def _held_as_the_mode_says(engine: Engine, root_id: str, assignee: Optional[str]
     else:
         assignee = str(_root.assignee)
     return assignee, _childrens_executor(engine, root_id, assignee, executor,
-                                         engine.del_at(engine.depth_of(TaskId(root_id)) + 1 if _root else 1,
+                                         engine.del_at(depth_of(engine.graph, TaskId(root_id)) + 1 if _root else 1,
                                                        AgentId(assignee))), author
 
 
@@ -2011,7 +664,7 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
         # by the system's model (critic over 354554c)
         engine.reviewed_in_its_file(root_id)
         engine.emit_info("go", f"{root_id}: the plan's review is the person's own, given with the go")
-        place = _delegation().validator_workdir(engine, _delegation().default_agents(), TaskId(str(root_id)))
+        place = validator_workdir(engine, default_agents(), TaskId(str(root_id)))
         theirs = on_their_branch(engine, place) if place and switches_branches(engine, root_id) else ""
         if place and W.is_repo_top(place):
             engine.graph.store_setting(f"{past.CHAT_START}{root_id}", json.dumps({
@@ -2041,7 +694,7 @@ def _built_from_a_file(engine: Engine, plan: Optional[str], spec: dict, root_id,
 def _no_place_at_the_go(engine: Engine) -> Optional[dict]:
     """The go refused where a role of the project works in a directory no delivery from it could be judged by
     (`unjudged`): never sessions paid for with no verdict possible. None: the go goes on."""
-    if got := unjudged(engine, _delegation().default_agents()):
+    if got := unjudged(engine, default_agents()):
         return {"refused": True, "error": "the go is refused: " + "; ".join(
             f"{aid} works in a directory no delivery is judged in — {why}" for aid, why in got)}
     return None
@@ -2059,182 +712,11 @@ def _a_new_roots_go(engine: Engine, root_id: str, request: str, plan, spec, mode
     if plan is None and spec is None and model is None and holds_its_work(engine, root_id) and str(request or "").strip():
         engine.hear(root_id, "request", request)
         return yours_to_write(engine, request)
-    if engine.mode_kind() in (Mode.SOLO, Mode.SEMI) and not str(user_said).strip():
+    if mode_kind(engine.graph) in (Mode.SOLO, Mode.SEMI) and not str(user_said).strip():
         raise ValueError("auto_decompose: under solo and semi the go is the person's — show them the plan's criteria "
                          "and checks, end your turn, and give the go with their own words agreeing to it as "
                          "`user_said`, recorded on the project's feed")
     return None
-
-
-def work_branch(engine: Engine) -> str:
-    """The branch of the person's repository the work performed in their own chat goes on (`in_chat`): the system's, by
-    name, so their checked-out branches stay theirs; what its root's PASS accepts is named `accepted_branch` there."""
-    return f"gfso/{component(engine.project_name or DEFAULT_PROJECT)}/work"
-
-
-def switches_branches(engine: Engine, node) -> bool:
-    """Does a chat performing `node` switch the person's checkout to the work's branch and back? Not in a mode scope:
-    its checkout is shared with the other streams' holders, so a switch would move their work under them — the holder
-    commits where it works, and its ask's PASS lands nothing (slice 1's boundary)."""
-    return engine.scope_at(node) is None
-
-
-def on_their_branch(engine: Engine, place) -> str:
-    """What a chat performing its work at `place` hears where that repository stands anywhere but the work's branch —
-    their own, the accepted one, a detached HEAD — or "". Said, never refused: the repository is the chat's own tools', and no check of where it stands holds what is
-    committed next; their branches stay theirs by the work going where the system names (`work_branch`). A client told
-    the person "your main did not change" over commits it made on main (s20g1)."""
-    if not (place and W.is_repo_top(place)):
-        return ""
-    on = W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
-    if on == work_branch(engine):
-        return ""
-    return (f"{place} is the person's own working tree, standing on {f'`{on}`' if on else 'a detached HEAD'}: what you "
-            f"commit there lands on it. Work on the system's branch — `git switch -c {work_branch(engine)}` (`git switch "
-            f"{work_branch(engine)}` once it exists) before your first commit, which changes their checkout — tell the "
-            f"person so in one line, and switch it back to `{on or 'where it stood'}` once the work is delivered")
-
-
-def _past(place, start: str, head: str) -> bool:
-    """Has `head`, read in the git at `place`, moved past `start` — differs and descends from it (any head, where no start
-    is recorded)?"""
-    return bool(head) and head != start and (not start or W.git(
-        place, "merge-base", "--is-ancestor", start, head).returncode == 0)
-
-
-def _trees(place) -> list:
-    """[(path, HEAD, branch or "")] of the work trees of `place`'s repository, its main one first."""
-    out = []
-    for entry in W.git(place, "worktree", "list", "--porcelain").stdout.split("\n\n"):
-        lines = dict(ln.split(" ", 1) for ln in entry.splitlines() if " " in ln)
-        if lines.get("worktree") and lines.get("HEAD"):
-            out.append((str(Path(lines["worktree"])), lines["HEAD"], lines.get("branch", "").removeprefix("refs/heads/")))
-    return out
-
-
-def _work_tip(engine: Engine, tid, top) -> Optional[tuple]:
-    """(where the work's branch is checked out, else `top`; its tip) where the mode works on the system's branch
-    (`work_branch`) and the work moved it past where it started — the commit a chat that names none delivers —, or
-    None. Never a HEAD by inference: the person's main tree at his own commit was judged as the agent's work, and a
-    linked worktree's work went unnamed until the start itself was handed in (critics over ac9dcaa, f96cb2b)."""
-    wb = work_branch(engine)
-    tip = W.git(top, "rev-parse", "--verify", "-q", f"refs/heads/{wb}^{{commit}}").stdout.strip()
-    if not (switches_branches(engine, tid) and _past(top, past.start_of(engine, tid), tip)):
-        return None
-    return next((p for p, _, b in _trees(top) if b == wb), top), tip
-
-
-def _unnamed(engine: Engine, tid, top, why: str = "no commit of the work is named") -> str:
-    """The refusal of a chat's DELIVER that names no commit past where its work started, before any write (§12.16
-    (ii)): its lifts — commit on the work's branch where the mode works on one, or name the place or commit — and the
-    linked work trees and branches of the repository standing past the start, never the person's main tree nor his
-    branches: only the sender knows where its work is committed."""
-    start, wb = past.start_of(engine, tid), work_branch(engine)
-    trees = _trees(top)
-    theirs = {json.loads(engine.graph.setting(f"{past.CHAT_START}{tid}") or "{}").get("branch"),
-              *(b for *_, b in trees[:1])}
-    there = [f"`place={p}` (at {h[:12]})" for p, h, _ in trees[1:] if _past(top, start, h)]
-    held = {b for *_, b in trees}
-    there += [f"`place={h}` (branch `{b}`)" for b, h in (ln.split(" ", 1) for ln in W.git(
-        top, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads").stdout.splitlines() if " " in ln)
-        if b not in held | theirs and _past(top, start, h)]
-    return (f"NOT delivered — {why}: "
-            + (f"commit it on `{wb}` and DELIVER again, or " if switches_branches(engine, tid) else "")
-            + "name the work tree you committed in: place=<its path>, or the commit: place=<its id>"
-            + (f". Of {W.main_worktree(top)}, these stand past where the work started ({start[:12]}): "
-               + "; ".join(there) if there else "")
-            + ". If the work changed nothing, an empty commit says so. No validator was started")
-
-
-def _chat_place(engine: Engine, source, tid, named):
-    """Where `source` performs `tid` in its own chat — the place it names (`named`), else its judge's directory, else
-    the project's repository —, or a falsy answer: the git a chat's ACCEPT records the HEAD of and its DELIVER reads
-    the commit it names in, or the work's branch (`_work_tip`)."""
-    agents = _delegation().default_agents()
-    return performer(engine, agents, source)[0] is None and (
-        named or _delegation().validator_workdir(engine, agents, tid) or repository(engine, agents))
-
-
-def _roots(repo, rev: str) -> set:
-    """The root commits of `rev`'s history in the git at `repo` — empty where it does not hold `rev`."""
-    return set(W.git(repo, "rev-list", "--max-parents=0", rev).stdout.split())
-
-
-def _unrelated(engine: Engine, place, commit: str) -> Optional[str]:
-    """Why `commit`, read in the git at `place`, is no commit of the project's repository — it shares no root commit
-    with what the project holds: the repository it recorded, its volume's imported commit, the deliveries its store
-    keeps — or None. Any git holding a commit of the project delivers it, a plain clone too; an unrelated repository
-    named by `place=` became the log's repository, its tree judged against this project's contract (critic over
-    4ac5e3a). Nothing the project holds to compare with: admitted, the first delivery stands as its history."""
-    rec = repository(engine, _delegation().default_agents())
-    known = ((_roots(rec, "HEAD") if rec and cheap_to_ask(rec) and W.is_repo_top(rec) else set())
-             | (_roots(place, first) if (first := store.imported(engine)) else set())
-             | store.roots(engine, execution_of(engine)))
-    if not known or _roots(place, commit) & known:
-        return None
-    return (f"NOT delivered — commit {commit[:12]} at {place} shares no history with the project's repository"
-            f"{f' {rec}' if rec else ''}: deliver a commit of it, from a work tree or a clone of it (`place=`). No "
-            f"validator was started")
-
-
-def _not_its_repository(engine: Engine, place) -> Optional[str]:
-    """Why the place a chat names for its DELIVER is no git it can deliver from — not a work tree's top with a commit
-    — or None. Any git holding the commit delivers it, a plain clone as a linked worktree: the commit is
-    taken into the project's store by its id once admitted, and read there, never in the place."""
-    return None if W.is_repo_top(place) else f"{place} is not the top of a git work tree with a commit"
-
-
-def _a_chats_delivery(engine: Engine, tid, top, rev: Optional[str]) -> tuple[Optional[dict], dict]:
-    """(why a chat's DELIVER of `rev` — named by its sender: a place's HEAD or a commit id —, read in the git at `top`,
-    a repository's top, is refused — the answer's fields — or None; what it delivers: `_recorded`, the act that `keep`s
-    it once accepted, and what its answer says besides). Named nothing (`rev` None): the work's branch past the start
-    (`_work_tip`), else refused, its lifts named (`_unnamed`). REFUSED ONLY ON WHAT ITS SENDER LIFTS, EVERY REFUSAL
-    BEFORE ANY WRITE (§12.16 (ii)): the admission test reads the commit whole in the sender's git and writes nothing
-    (`store.admit`); a system's failure is no refusal — its keep, the system's act once the DELIVER is accepted, is
-    retried by the first reader (`store.held`)."""
-    place = top
-    if rev is None:
-        if not (work := _work_tip(engine, tid, top)):
-            return {"refused": True, "error": _unnamed(engine, tid, top)}, {}
-        place, rev = work
-    elif rev != "HEAD" and not W.git(place, "rev-parse", "--verify", "-q", f"{rev}^{{commit}}").stdout.strip():
-        return {"refused": True, "error": f"NOT delivered — {rev} is no commit of {place}: name one of the project's "
-                                          f"repository, or the work tree it is committed in (`place=<its path>`). "
-                                          f"No validator was started"}, {}
-    try:
-        tree, commit, left = W.read_head(place, rev)
-        left = left if W.git(place, "rev-parse", "HEAD").stdout.strip() == commit else []   # …another tree's files
-    except OSError as ex:
-        return {"error": f"NOT delivered — the commit at {place} could not be recorded: {ex}"}, {}
-    if inner := W.nested(place, commit):        # …refused where its sender lifts it, not FAILed at the copy
-        return {"error": f"NOT delivered — {W.nested_cause(inner)}"}, {}
-    if why := store.shallow(place):     # …before its roots are read: its boundary is one, shared with nothing
-        return {"refused": True, "error": f"NOT delivered — {why}, and DELIVER again. No validator was started"}, {}
-    if no := _unrelated(engine, place, commit):
-        return {"refused": True, "error": no}, {}
-    if not _past(place, start := past.start_of(engine, tid), commit):   # …the start judged FAILed true work (s21)
-        return {"refused": True, "error": _unnamed(engine, tid, place, (
-            f"{commit[:12]} is the commit the work started from" if commit == start else
-            f"{commit[:12]} does not descend from {start[:12]}, the commit the work started from")
-            + (f", and these stand uncommitted at {place}: {', '.join(left[:10])}{', …' if len(left) > 10 else ''}"
-               if left else ""))}, {}
-    pack = None
-    try:
-        pack = store.admit(engine, execution_of(engine), commit, place)
-    except store.Unreadable as ex:
-        return {"refused": True, "error": f"NOT delivered — {ex}, and DELIVER again. No validator was started"}, {}
-    except (OSError, subprocess.TimeoutExpired) as ex:   # …the system's own reading failed: no cause of the sender's
-        engine.emit_info("delivery", f"{tid}: the admission read of {commit[:12]} failed on the system's side ({ex}): "
-                                     f"admitted, its keep reads it again")
-    got = {"_recorded": (tree, commit, W.main_worktree(place)),
-           "keep": lambda: store.keep(engine, execution_of(engine), commit, place, place, pack=pack),
-           "drop": lambda: store.discard(pack)}
-    if switches_branches(engine, tid) and (notice := not_the_work(engine, place, commit)):
-        got["notice"] = notice
-    if left:
-        got["not_delivered"] = (f"delivered: commit {commit[:12]}; not committed, so no part of it: "
-                                f"{', '.join(left[:10])}{', …' if len(left) > 10 else ''}")
-    return None, got
 
 
 REASSIGN, persons_move = _tools.REASSIGN, _tools.persons_move
@@ -2264,39 +746,6 @@ def _the_persons_move(engine: Engine, tid, sig: str) -> Optional[dict]:
     engine.emit_info(act, f"{tid}: {sig} on the person's words: «{said[:300]}»")
     engine.hear(tid, act, said)
     return None
-
-
-def back_to_their_branch(engine: Engine, tid) -> str:
-    """What a chat hears at its root's PASS where the person's repository was left on the work's branch: switch it back."""
-    start = json.loads(engine.graph.setting(f"{past.CHAT_START}{tid}") or "{}")
-    place = _delegation().validator_workdir(engine, _delegation().default_agents(), tid)
-    if not (place and W.is_repo_top(place) and switches_branches(engine, tid)):
-        return ""
-    on = W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
-    if on != work_branch(engine) or not (was := start.get("branch")) or was == on:
-        return ""
-    return (f"{place} still stands on `{on}`: switch it back to theirs, `git switch {was}`, and tell them the result is "
-            f"`{accepted_branch(engine)}` (or tell them how, if they would rather do it)")
-
-
-def not_the_work(engine: Engine, place, commit: str) -> str:
-    """What a chat's DELIVER hears where the commit it recorded — what `place`, the registered top, stands on — is not
-    on the work's branch: an agent working in a linked worktree on `work_branch` delivered the person's start commit,
-    and its judge FAILed true work (critic over 354554c). A notice, never a refusal: the report may be true. A commit
-    named by its id is told as named, never as what `place` stands on (critic over 1d84a75). Or ""."""
-    wb = work_branch(engine)
-    if (there := W.git(place, "rev-parse", "--verify", "-q", f"refs/heads/{wb}^{{commit}}").stdout.strip()) == commit:
-        return ""
-    if W.git(place, "rev-parse", "HEAD").stdout.strip() != commit:
-        return (f"delivered: commit {commit[:12]}, named by its id, not the tip of `{wb}`"
-                + (f" ({there[:12]}): if your work is there, DELIVER naming nothing" if there else "")
-                + ". The judge reads this commit.")
-    on = W.git(place, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
-    return (f"delivered: commit {commit[:12]}, what {place} stands on ({f'`{on}`' if on else 'a detached HEAD'}), not "
-            f"`{wb}`" + (f", which stands at {there[:12]}: if your work is there, `git switch --detach {wb}` at {place} "
-                         f"(a branch a linked worktree holds cannot be checked out twice — or remove that worktree "
-                         f"first, then `git switch {wb}`), and deliver again" if there else "")
-            + ". The judge reads this commit.")
 
 
 def _heard_at_the_go(engine: Engine, goal: str, user_said: str, root_id, fresh: bool) -> dict:
@@ -2342,7 +791,7 @@ def _once(key: tuple, write, engine=None) -> dict:
     A new plan asked for is the one its project waits on. An error is answered once and written again when asked again.
     On the CLI's direct path the writing is done in the call: no thread would outlive its process."""
     if _config_written_in_the_call.get():
-        return _answering(write)()
+        return answering(write)()
     handle, project = _handle_of(key), key[1]
     with _PLANNING_LOCK:
         _kept.sweep()
@@ -2423,8 +872,8 @@ def _written_in_its_thread(key: tuple, w: _Writing, write, engine) -> None:
     """Write one plan, marked in flight under its project (`engine`; none: `write` marks itself), so a reconcile from
     another session does not restart under it; what it came to is kept: the answer by its handle, and the state of the
     plan its project waits on."""
-    with _inflight(key[0], engine, ROOT_ID) if engine is not None else nullcontext():
-        out = _answering(write)()
+    with flight(key[0], engine, ROOT_ID) if engine is not None else nullcontext():
+        out = answering(write)()
     with _PLANNING_LOCK:
         if "error" in out:
             _kept.mark(key[1], w.handle, state="failed", error=str(out["error"])[:2000])
@@ -2505,7 +954,7 @@ def plan(engine: Engine, request: str = "", model: Optional[str] = None, executo
             executor = _childrens_executor(engine, ROOT_ID, str(root), executor, kid)
     if executor:
         # …held by the user-agent, its parts run in its hands' session where it dispatches, as the go judges
-        executor = engine.hands_of(executor) or (None if str(executor) == _agent_id() else executor)
+        executor = hands_of(engine.graph, executor) or (None if str(executor) == _agent_id() else executor)
     # …the goal as the project's root will hold it — with the documents it names written under it, as the go would add
     # them — so the plan and its review are written against the contract the work will run on (critic)
     docs = _documents_named(engine, request or "")
@@ -2587,7 +1036,7 @@ def with_the_intent(engine: Engine, spec: dict, root_id: str = ROOT_ID) -> dict:
     root = engine.graph.get_task(TaskId(str(root_id)))
     if not engine.intent_check(node=root_id) or not engine.goal_top(root_id):
         return spec
-    theirs = {_decompose.criterion_key(h["intent"]) for h in engine.heard_on(root_id) if h.get("intent")}
+    theirs = {_decompose.criterion_key(h["intent"]) for h in heard_on(engine.graph, root_id) if h.get("intent")}
     mine = next(({"name": c.name, "description": c.description, "check": [p.to_dict() for p in c.check]}
                  for c in (root.spec.criteria if root else ())
                  if c.name == INTENT and _decompose.criterion_key(c) in theirs), INTENT_CRITERION)
@@ -2886,7 +1335,7 @@ def _shown(engine: Engine, out: dict, spec: Optional[dict] = None, root_id: str 
                 "any of the plan's under that name: a validator other than you reads the result against the person's "
                 "own words, and fails it only quoting them — name it to the person with the criteria; their words "
                 "switch it off, `set_mode(intent_check=False, user_said=<their words>)`.")
-        if engine.mode_kind() == Mode.AUTO:
+        if mode_kind(engine.graph) == Mode.AUTO:
             open_the_page(engine.project_name)
     return out
 
@@ -2901,7 +1350,7 @@ def _given_at(engine: Optional[Engine], at: dict) -> Optional[float]:
         return None
     text = "\n".join(x for x in at["text"].splitlines() if not x.lstrip().startswith("#"))
     heard = any(h.get("act") == "plan" and str(h.get("said", "")).strip() == text.strip()
-                for t in engine.all_tasks() for h in engine.heard_on(t.id))
+                for t in engine.all_tasks() for h in heard_on(engine.graph, t.id))
     return at["at"] if heard or at["at"] <= root.created_at.timestamp() else None
 
 
@@ -3005,7 +1454,7 @@ def _tracked(name, fn):
     def wrapper(*a, **kw):
         """Run the verb while it is marked in flight, so a second call can be refused."""
         at = sig.bind_partial(*a, **kw).arguments
-        with _inflight(name, at.get("engine"), at.get("task_id") or at.get("root_id", ROOT_ID)):
+        with flight(name, at.get("engine"), at.get("task_id") or at.get("root_id", ROOT_ID)):
             return fn(*a, **kw)
     return wrapper
 
@@ -3014,10 +1463,10 @@ def _off_the_call(name: str, fn, lands):
     """`fn`, a verb that runs a model, at a door: run in a thread of the server's, as a plan is written (`_once`). What it
     answers within ANSWER_WITHIN_SECONDS is the call's answer — a refusal, a run already in flight, a short run —; past
     that the call answers that it runs, and where its result lands (`lands(engine, node)`), and the run goes on, in flight
-    under its node (`_inflight`), an error it ends with unread said on the feed. A call held for minutes held its client's
+    under its node (`flight`), an error it ends with unread said on the feed. A call held for minutes held its client's
     turn, and the person with it: the one wait on a run is the server's (`POST /api/wait`). On the CLI's direct path it
     runs in the call: no thread would outlive its process."""
-    sig, answered = inspect.signature(fn), _answering(fn)
+    sig, answered = inspect.signature(fn), answering(fn)
 
     @functools.wraps(fn)
     def _call(*a, **kw):
@@ -3078,7 +1527,7 @@ def _written_past_its_call(fn):
         def write() -> dict:
             """The authoring, its subtree let go at its end, an error past the call said on the feed."""
             with engine.authorings.writing(node):
-                out = _answering(fn)(*a, **kw)
+                out = answering(fn)(*a, **kw)
             if out.get("error") and not engine.all_tasks():
                 out["error"] = (f"{out['error']} — project {engine.project_name} holds nothing: "
                                 f"`delete_project('{engine.project_name}')` removes it")
@@ -3121,89 +1570,6 @@ OFF_THE_CALL = {
     "review_decomposition": lambda engine, node: {
         "lands": f"its verdict lands on the record, `get_review('{node}')` reads it, and the plan's gate opens on it"},
 }
-
-
-def _answering(fn):
-    """A verb ANSWERS; it does not raise into a door.
-
-    The three doors are generated from this registry, so an exception is not a polite failure: over
-    HTTP it is a 500 with an empty body, over MCP a protocol error, over the CLI a traceback printed
-    at a person — and the careful message the engine raised (`predictability 'HIGH' is not one of the
-    three STD-2 categories …`) is lost in every one of them. Measured 2026-08-20: `create_task` with
-    a string spec and a wrong `predictability` both arrived as bare failures, and a sweep over the
-    whole registry then found eleven more verbs that raise on ordinary wrong input.
-
-    The refusals the engine states — ValueError/KeyError/TypeError — become `{error: …}`, which every
-    door already knows how to carry. Anything else is still answered rather than thrown, and marked
-    `unexpected: true`: a defect in here must be visible as a defect, not disguised as a refusal.
-    """
-    sig = inspect.signature(fn)
-
-    @functools.wraps(fn)
-    def _call(*a, **kw):
-        # The SHAPE of the call is checked outside the guard on purpose: a missing or unknown
-        # argument is not a refusal by the verb, it is a call that never happened, and each door
-        # already answers it in its own terms (the HTTP door names the parameter and lists the rest;
-        # the CLI names the typo). Swallowing those into `{error: …}` took that away.
-        sig.bind(*a, **kw)
-        try:
-            return fn(*a, **kw)
-        except (ValueError, KeyError, TypeError) as ex:
-            msg = str(ex) or f"{type(ex).__name__} with no message"
-            # `refused` marks THIS path — the verb could not act at all. A verb's own `{error: …}`
-            # is a different thing: `signal` reporting `accepted: false` DID interact with the FSM
-            # and is a successful call with a negative outcome. The HTTP door reads the marker to
-            # choose its status code, which is why it is here rather than guessed from the shape.
-            # A KeyError from INSIDE a verb means the caller's payload is missing a key the verb
-            # needs — not that it passed an unknown one. The old wording said "unknown key
-            # 'task_id'" to someone who had never written `task_id`, and they reverse-engineered
-            # three payload shapes by feeding wrong ones and reading which key it named next
-            # (measured 2026-08-21, ~40% of that session).
-            if isinstance(ex, KeyError):
-                msg = (f"the payload is missing a required key: {msg}. `gfso run {fn.__name__} "
-                       f"--help` (or the tool's description) gives the shape it expects.")
-            return {"error": msg, "refused": True}
-        except PlaceUnavailable as ex:
-            # …met outside a model call — a place's file read or written through its execution: the stop a booked call
-            # makes (`Engine.stop_for_the_place`)
-            if (engine := sig.bind(*a, **kw).arguments.get("engine")) is not None:
-                engine.stop_for_the_place(ex.place, str(ex))
-            return {"error": str(ex)}
-        except Exception as ex:                                   # noqa: BLE001 — see the docstring
-            log.exception(f"{getattr(fn, '__name__', 'verb')} failed")
-            return {"error": f"{type(ex).__name__}: {ex}", "unexpected": True}
-    return _call
-
-
-def _roster(engine: Engine = None):
-    """The one server-wide delegation roster, with this engine's dispatcher attached.
-
-    Imported here rather than at module scope because `gfso.delegate` imports THIS module (the
-    dispatcher asks it whether internal nodes are being validated), and one lazy accessor is the
-    whole of that cycle rather than one import inside each verb that needs the roster."""
-    agents = _delegation().default_agents()
-    if engine is not None:
-        _delegation().ensure_dispatcher(engine, agents)
-    return agents
-
-
-_DELEGATION = None
-
-
-def _delegation():
-    """The ONE lazy door to `gfso.delegate`, crossed once for the whole module.
-
-    `gfso.delegate` imports this module at module level, so the edge back can only be taken at call
-    time — and the accessor above already said that a single lazy crossing is the whole of the
-    cycle "rather than one import inside each verb that needs it". A second verb needing a second
-    thing from there is exactly the drift that sentence was written against, so it goes through
-    here instead of growing a new import of its own.
-    """
-    global _DELEGATION
-    if _DELEGATION is None:
-        from gfso import delegate as _d
-        _DELEGATION = _d
-    return _DELEGATION
 
 
 def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_DEFAULT,
@@ -3262,7 +1628,7 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
                 f"would attach to whoever simply omitted a name. Register the role under its own id "
                 f"(`{agent_id}-val`, `{agent_id}-exec`, or anything else) and assign nodes to THAT id — which is also what makes the "
                 f"delegation visible in the graph."}
-    agents = _roster(engine)
+    agents = staffed(engine)
     # …a role of this project registered again keeps where it runs: to change its model, its project's only declaring role came back
     # with none, the project on the host and its validations there, said nowhere (critic, ran)
     own = agents.get(agent_id) or {}
@@ -3276,7 +1642,7 @@ def register_agent(engine: Engine, agent_id: str, kind: str, model: str = MODEL_
                           project=engine.project_name, execution=execution)
     if kind == "external" and (p := CALLER.get()) is not None and p.person:
         signin.own(agent_id, p.person)           # …a person's kind is its registrant's to sign as
-    _delegation().publish_the_workforce(engine, agents.list())
+    publish_the_workforce(engine, agents.list())
     # THE SPELLING THAT BINDS, not the one that was typed. The roster stores the workdir RESOLVED,
     # and the workspace binding is decided on that value — while the advice below interpolated the
     # caller's own argument, so a relative `workdir='work'` came back as an instruction that names a
@@ -3355,7 +1721,7 @@ def unregister_agent(engine: Engine, agent_id: str, workdir: Optional[str] = Non
     if not isinstance(agent_id, str) or not agent_id.strip():
         return {"error": f"agent_id must be the registered role's id (a non-empty string), got {agent_id!r}"}
     agent_id = agent_id.strip()
-    role = _roster().list().get(agent_id) or {}
+    role = staffed().list().get(agent_id) or {}
     # the engine's own reading of "this project" — and a guard against an ACCIDENT, not an owner
     # check: `project=` is the caller's word, and an unscoped role (registered with no project)
     # belongs to nobody and can be removed by anyone
@@ -3364,11 +1730,11 @@ def unregister_agent(engine: Engine, agent_id: str, workdir: Optional[str] = Non
         return {"unregistered": None,
                 "error": f"{agent_id} was registered by project '{role['project']}', not this one — pass "
                          f"its `workdir` to show it is the role you staffed"}
-    out = _roster().unregister(agent_id, workdir=workdir)
+    out = staffed().unregister(agent_id, workdir=workdir)
     if out.get("unregistered") and engine is not None:
         # …told where a role put on is told: published only by the dispatcher's round, a role taken off reached an open
         # page late, and never in a project no round serves (ui stream, 2026-11-13)
-        _delegation().publish_the_workforce(engine, _roster().list())
+        publish_the_workforce(engine, staffed().list())
         live = [t for t in engine.graph.active_tasks()]
         out["assigned_live"] = sorted(str(t.id) for t in live if str(t.assignee) == agent_id)
         # by the dispatcher's own reading of who issued a node (a root is its own issuer)
@@ -3423,8 +1789,8 @@ def mode_staffing(engine: Engine, mode: str, perform: str = "dispatch") -> dict:
     the system validates wherever κ ends, whoever holds the node, so solo needs the instrument as much
     as auto does — without one, the agent is its own only verifier."""
     m = Mode(str(mode).strip().lower())
-    agents = _roster(engine)
-    _delegation().publish_the_workforce(engine, agents.list())
+    agents = staffed(engine)
+    publish_the_workforce(engine, agents.list())
     pool = [str(a) for a in engine.workforce.executor_pool()]
     validators = _validators_of(engine, agents)
     dispatch = perform == "dispatch" and m != Mode.AUTO          # under AUTO the user-agent holds nothing
@@ -3452,7 +1818,7 @@ def run_state(engine: Engine) -> dict:
     """THE RUN'S ONE STATE — `running`; `stopping` once stopped while sessions of this project still run (`working`:
     each one's verb, node and since); `stopped` when none does. Derived from the stop as set and the work in flight,
     never a second flag."""
-    if not (stop := engine.paused()):
+    if not (stop := engine.stops.paused()):
         return {"state": "running"}
     working = [w for w in in_flight() if w.get("project") == (engine.project_name or DEFAULT_PROJECT)]
     # `off_s` is the doors' own reading of the stop (`model.door_off_s`), nothing a client acts on
@@ -3464,14 +1830,14 @@ def stop_project(engine: Engine, why: str = "", by: Optional[str] = None) -> dic
     """STOP the project's run: the system starts no new session in it (executor, validator, issuer); those running
     finish and their signals land — `stopping` until the last one has, then `stopped`. No timeout fires while stopped
     and the graph is not changed. `start_project` runs it again."""
-    engine.pause(by or _agent_id(), why)
+    engine.stops.pause(by or _agent_id(), why)
     return run_state(engine)
 
 
 def start_project(engine: Engine, by: Optional[str] = None) -> dict:
     """RUN the project again after `stop_project`; the time it stood stopped is left off its clocks, so no bound ran out
     in it (`project_now`)."""
-    engine.resume(by or _agent_id())
+    engine.stops.resume(by or _agent_id())
     return {**run_state(engine), **({} if engine.graph.setting(VOLUME + IMPORTED) else _not_imported(engine))}
 
 
@@ -3565,7 +1931,7 @@ def held_steps(engine: Engine) -> dict:
     me, p = caller_id(), CALLER.get()
     # …`current`: the node of the signer's latest move the log took — the task it is on, read off the system's record
     on = next((str(a.task_id) for a in reversed(engine.audit_log()) if not a.rejected and str(a.source or "") == me), None)
-    return {**next_steps(engine, actor=me), "signer": me, "in_chat": me in engine.in_chat_names(), "current": on,
+    return {**next_steps(engine, actor=me), "signer": me, "in_chat": me in in_chat_names(engine.graph), "current": on,
             **({"refused": p.lift} if p is not None and p.via == signin.REFUSED else
                {"unsigned": True} if p is not None and p.via == signin.BARE.via else {})}
 
@@ -3724,7 +2090,7 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
             return {"refused": True, "error": str(e)}
         return {**rec, "executors": [str(a) for a in pool],
                 "holds": {"solo": "you hold every node",
-                          "semi": f"you hold depths below {engine.holder_boundary()}; the system the rest",
+                          "semi": f"you hold depths below {holder_boundary(engine.graph)}; the system the rest",
                           "auto": "the system holds every node; you are the customer"}[m.value]}
     out = _with_its_validator(engine, workdir, system_model, lambda: _in_the_default(
         engine, {"mode": m.value, **({} if m == Mode.AUTO else {"perform": perform})}, held))
@@ -3757,7 +2123,7 @@ def _by_an_agent(engine: Engine, held, task=None) -> bool:
     nothing of that work, and a criterion pinning no runnable probe decides nothing either (A1). He checks a human's
     node himself by default, reading his own words; a criterion restating them adds no check, so his criteria there are
     the ones he writes."""
-    return not (engine.executed_by_a_human(task.id) if task is not None else engine.a_human(held))
+    return not (engine.executed_by_a_human(task.id) if task is not None else a_human(engine.graph, held))
 
 
 def _his_criteria_mapped(engine: Engine, parent_id, children, mappings) -> list:
@@ -3847,7 +2213,7 @@ def _with_its_validator(engine: Engine, workdir: Optional[str], model: Optional[
     where the project has none (`register_agent`, the roster's one door; `validator` in the answer), and taken off again
     where the mode is refused: every mode needs one (`mode_staffing`), and the setup of a small task was three calls
     for one choice (e2e5 G_3)."""
-    if workdir is None or _validators_of(engine, _roster(engine)):
+    if workdir is None or _validators_of(engine, staffed(engine)):
         return held()
     val = register_agent(engine, f"{engine.project_name or DEFAULT_PROJECT}-val", "llm-validator",
                          model=str(model).strip() if model and str(model).strip() else MODEL_DEFAULT, workdir=workdir)
@@ -3901,7 +2267,7 @@ def _in_the_default(engine: Engine, mode: dict, held) -> dict:
     default meanwhile (`_default_execution`), and moved back on any way out but the mode recorded: one that raised past
     the refusals left them in the container and the user with no choice left (critic: a moved executor's workdir gone
     made the move itself raise half done)."""
-    agents = _roster(engine)
+    agents = staffed(engine)
     default = _default_execution(engine, mode, agents)
     if default and (gone := [a for a, c in _movable(engine, agents).items() if not os.path.isdir(c.get("workdir") or "")]):
         return {"refused": True, "error": f"executor(s) {', '.join(gone)} of this project name a workdir that no longer "
@@ -3947,7 +2313,7 @@ def list_agents(engine: Engine, match: str = "", limit: int = 25) -> dict:
     # sibling entry put a STRING where every reader expects a role config: the measurement arm's
     # preflight iterated the map and died on `'str' object has no attribute 'get'` (2026-08-22, my
     # own change). A map of roles is a map of roles.
-    _reg = _roster()
+    _reg = staffed()
     _all = _reg.list()
     # …AND WHO WOULD VALIDATE EACH EXECUTOR, which the roster never showed. `validator: null` on every
     # entry means "no per-executor override", not "nobody" — the binding is by workspace and is
@@ -4109,7 +2475,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
     # …a commit id named, read in the git the chat's place stands in
     commit = named if named and re.fullmatch(r"[0-9a-fA-F]{7,40}", named) else None
     named = None if commit else named
-    if sig == "ACCEPT" and (place := _chat_place(engine, source, tid, named)) and W.is_repo_top(place) and (
+    if sig == "ACCEPT" and (place := chat_place(engine, source, tid, named)) and W.is_repo_top(place) and (
             head := W.git(place, "rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()):
         # …where the work goes on the system's branch, it starts from that branch's tip once it exists: the person's
         # own commit between two takes was the start, and honest work on the branch could descend from it no way
@@ -4121,13 +2487,13 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
         if switches_branches(engine, tid) and (theirs := on_their_branch(engine, place)):
             said["say"] = theirs
     deliver = sig == "DELIVER" and (st := engine.graph.get_state(tid)) in (State.EXECUTING, State.REWORKING)
-    if deliver and (place := _chat_place(engine, source, tid, named)):
-        if named and (no := _not_its_repository(engine, named)):
+    if deliver and (place := chat_place(engine, source, tid, named)):
+        if named and (no := not_its_repository(engine, named)):
             return {"accepted": False, "refused": True, "state": st.name, "error": f"NOT delivered — {no}"}
         # …a directory inside a work tree delivers that tree's commit: no directory is judged as it stands
         top = W.git(place, "rev-parse", "--show-toplevel").stdout.strip() if not W.is_repo_top(place) else place
         if top and W.is_repo_top(top):
-            no, got = _a_chats_delivery(engine, tid, top, commit or ("HEAD" if named else None))
+            no, got = a_chats_delivery(engine, tid, top, commit or ("HEAD" if named else None))
             if no:
                 return {"accepted": False, "state": st.name, **no}
             kw["_recorded"], keep = got.pop("_recorded"), got.pop("keep")
@@ -4163,7 +2529,7 @@ def signal(engine: Engine, task_id: str, signal: str, source: str, **kw) -> dict
 
 
 #: …and `confirm`, the holder's answer to the reminder before a self-signed PASS (`unchecked_self_pass`); and `place`,
-#: the work tree, clone or commit id of the project's repository a chat's DELIVER names (`_a_chats_delivery`)
+#: the work tree, clone or commit id of the project's repository a chat's DELIVER names (`a_chats_delivery`)
 signal.__signature__ = (lambda sig: sig.replace(parameters=[*sig.parameters.values(), inspect.Parameter(
     "confirm", inspect.Parameter.KEYWORD_ONLY, default=False, annotation=bool),
     inspect.Parameter("place", inspect.Parameter.KEYWORD_ONLY, default="", annotation=str)]))(
@@ -4177,7 +2543,7 @@ def metrics(engine: Engine) -> dict:
     others, never refused."""
     seen = engine.witnessed_writes()
     return {**(out := _tools.metrics(engine)),
-            "past_the_system": past.past_the_system(engine, _delegation().default_agents()),
+            "past_the_system": past.past_the_system(engine, default_agents()),
             "witnessed": {"count": witnessed_count(seen), "last": seen[-5:]},
             "means": {**out["means"], **{k: DIAGNOSTIC_MEANS[k] for k in ("past_the_system", "witnessed")}}}
 
@@ -4262,7 +2628,7 @@ def _mode_lock(name: str, fn):
                     f"'{due}' is. Sign it as '{due}' (`{signer_arg(name)}`), or ask '{due}' to make it.")
             return fn(*a, **kw)
         mode = engine.mode()
-        if engine.mode_kind() == Mode.AUTO:
+        if mode_kind(engine.graph) == Mode.AUTO:
             raise ValueError(
                 f"this project runs in AUTO (set by {mode.get('by')}): every role on its nodes is held "
                 f"by a machine — the autonomous level of §10.4 — and you are the goal's customer: you "
@@ -4338,7 +2704,7 @@ def _signed(name: str, fn):
 
 
 # The COMPLETE transport registry the doors bind — every verb wrapped so none of them can raise
-# into one (`_answering`, above), each signed by its call's credential (`_signed`).
+# into one (`answering`, above), each signed by its call's credential (`_signed`).
 #: the arguments of a move that name a node
 _NODE_ARGS = ("task_id", "parent_id", "child_id", "from_id", "to_id", "blocker_task_id", "blocker_task_ids")
 
@@ -4385,7 +2751,7 @@ def _at_a_door(name: str, fn):
                                _off_the_call(name, fn, OFF_THE_CALL[name]) if name in OFF_THE_CALL else fn)
 
 
-TOOLS = {name: _answering(_signed(name, _mode_lock(name, _at_a_door(name, fn)))) for name, fn in _RAW_TOOLS.items()}
+TOOLS = {name: answering(_signed(name, _mode_lock(name, _at_a_door(name, fn)))) for name, fn in _RAW_TOOLS.items()}
 # The same verbs for the system's own in-process moves: answering, never locked — the mode hands the
 # work TO the system, so a lock here refused its own validation of every AUTO delivery (measured live).
-SYSTEM_TOOLS = {name: _answering(fn) for name, fn in _RAW_TOOLS.items()}
+SYSTEM_TOOLS = {name: answering(fn) for name, fn in _RAW_TOOLS.items()}

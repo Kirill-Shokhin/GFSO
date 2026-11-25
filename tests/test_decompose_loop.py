@@ -249,7 +249,7 @@ def test_refine_frozen_terminal_children_surface_as_holes():
     # …and the issuer `human` a machine on the roster: an instrument's signature is the issuer's only there (§10.2)
     e.workforce.publish_roster({"human": "llm-executor", "vx": "llm-validator"})
     # …and the validator RECORDS before it signs, which is what the real one does
-    # (`delegate._validate_with` → `record_exec_verdict` on both its branches). Omitted, this setup
+    # (`validate._validate_with` → `record_exec_verdict` on both its branches). Omitted, this setup
     # reached DONE through a hole closed 2026-09-08: a PASS from a roster id closed an INTERNAL
     # node over no verdict record at all. The subject of this test is refine over a FROZEN child,
     # so how the child froze is setup — but setup that stands on a defect goes green with it.

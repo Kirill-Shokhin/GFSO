@@ -26,6 +26,7 @@ from gfso.api.server import create_app
 from gfso.config import VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE
 from gfso.core.types import TaskId
 from tests.support import criterion, make_engine, REGISTER
+from gfso.engine.closures import closure_of
 
 _RISK = REGISTER
 _NAMES = ("alpha", "beta", "gamma")
@@ -494,5 +495,5 @@ def test_the_closure_names_the_record_it_closed_on_not_a_later_one():
     assert e.graph.get_task(TaskId("kid")).state.name == "DONE"
     e.closing_verdict = lambda tid: {"verdict": "PASS", "validator": "a-reviewer", "by_hand": True}
     e.get_exec_verdict = lambda tid: {"verdict": "FAIL", "validator": "validate_result", "by_hand": False}
-    closure = e.closure_of(TaskId("kid"))
+    closure = closure_of(e, TaskId("kid"))
     assert closure["validator"] == "a-reviewer" and closure["by_hand"] is True, closure

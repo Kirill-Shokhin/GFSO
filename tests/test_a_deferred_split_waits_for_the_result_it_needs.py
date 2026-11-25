@@ -30,6 +30,7 @@ from gfso.decompose.build import _record_the_session_fit
 from gfso.decompose.extract import extract_spec
 from gfso.decompose.planning import changes
 from gfso.decompose.seams import DEFERRED, deferral_problems, with_deferrals
+from gfso.engine.validation import session_fit
 from gfso.roster import AgentRegistry
 from tests.support import REGISTER, criterion, instrument_passes, make_engine, declare, undeclare
 
@@ -284,8 +285,8 @@ def test_a_rebuild_over_a_settled_producer_records_every_part_and_owes_the_split
     _record_the_session_fit(e, {"subtasks": [
         {"id": "checker", "volume": "v", "fits_one_session": True, "split_after": {"after": ["parser"], "why": WHY}},
         {"id": "docs", "volume": "v", "fits_one_session": False}]}, TaskId("root"), ns)
-    assert e.session_fit(TaskId("root.checker")) == {"volume": "v", "fits": False}
-    assert e.session_fit(TaskId("root.docs"))["fits"] is False
+    assert session_fit(e.graph, TaskId("root.checker")) == {"volume": "v", "fits": False}
+    assert session_fit(e.graph, TaskId("root.docs"))["fits"] is False
 
 
 def test_the_review_and_the_customer_read_each_deferral():

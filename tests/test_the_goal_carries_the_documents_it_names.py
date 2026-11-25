@@ -19,6 +19,7 @@ from gfso.core.graph.model import USERS_PLAN_KEY
 from gfso.core.types import TaskId
 from gfso.roster import AgentRegistry
 from tests.support import REGISTER, a_repository, criterion, make_engine
+import gfso.validate as VAL
 
 _PLAN = {"name": "g", "root_criteria": [criterion("g", "G holds")],
          "subtasks": [{"id": "a", "name": "a", "description": "part a", "criteria": [criterion("a_ok", "a holds")]}],
@@ -34,7 +35,7 @@ def _goal(tmp_path, monkeypatch, request: str, roles=(("exec-1", "llm-executor",
         (tmp_path / d / "prompt.md").write_text(f"THE STATEMENT IN {d}", encoding="utf-8")
         reg.register(aid, kind, workdir=str(tmp_path / d), project=proj)
     (tmp_path / "outside.md").write_text("A FILE OUTSIDE EVERY BASE", encoding="utf-8")
-    monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
+    monkeypatch.setattr(TL, "staffed", lambda engine=None: reg)
     e = make_engine(validate_signals=True, state_timeout=0)
     e.project_name = "p"
     e.start()
@@ -84,7 +85,7 @@ def test_a_plan_the_system_writes_carries_the_files_its_place_names(tmp_path, mo
     (tmp_path / "base" / "prompt.md").write_text("THE STATEMENT IN base", encoding="utf-8")
     (tmp_path / "base" / "Makefile").write_text("THE BUILD IN base", encoding="utf-8")
     reg.register("exec-1", "llm-executor", workdir=str(tmp_path / "base"), project="p")
-    monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
+    monkeypatch.setattr(TL, "staffed", lambda engine=None: reg)
     monkeypatch.setattr(TL, "llm_factory", lambda model=None, **_: _Reader())
     e = make_engine(validate_signals=True, state_timeout=0)
     e.project_name = "p"
@@ -113,7 +114,7 @@ def test_a_project_in_a_container_carries_its_documents_as_its_next_root_imports
     reg.register("val-1", "llm-validator", workdir=str(other), project="p")
     left = SimpleNamespace(base=str(base), files=SimpleNamespace(exists=lambda p: True, is_dir=lambda p: False,
                                                  read_bytes=lambda p, size=None: b"what the earlier root's executor wrote"))
-    monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
+    monkeypatch.setattr(TL, "staffed", lambda engine=None: reg)
     monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: left)
     e = make_engine(validate_signals=True, state_timeout=0)
     e.project_name = "p"
@@ -155,12 +156,12 @@ def test_a_volume_holding_its_base_as_a_live_tree_is_refused_whatever_the_base_i
     record[E.VOLUME + E.IMPORTED] = '{"commit": "tree"}'
     assert "live tree" in x.agents_refused()
     e = SimpleNamespace(graph=SimpleNamespace(setting=lambda k: None))
-    TL.execution_of, was = (lambda engine, agents=None: x), TL.execution_of
+    VAL.execution_of, was = (lambda engine, agents=None: x), VAL.execution_of
     try:
         with pytest.raises(E.PlaceUnavailable, match="live tree"):
-            TL.validation_execution(e)          # …its validator read that tree, `.env` and all (critic)
+            VAL.validation_execution(e)          # …its validator read that tree, `.env` and all (critic)
     finally:
-        TL.execution_of = was
+        VAL.execution_of = was
 
 
 def test_a_volume_held_as_a_tree_binds_nothing_and_its_stop_does_not_lift_by_itself(tmp_path, monkeypatch):
@@ -180,8 +181,8 @@ def test_a_volume_held_as_a_tree_binds_nothing_and_its_stop_does_not_lift_by_its
 
 def test_a_plan_handed_in_whole_is_recorded_as_the_users(tmp_path, monkeypatch):
     """`auto_decompose` with `spec` on an empty project builds the user's own plan, and the project records it so: under
-    AUTO the system does not re-split it (`Engine.users_plan`, `issuer.settle`); a plan the system authors is not."""
-    monkeypatch.setattr(TL, "_roster", lambda engine=None: AgentRegistry(str(tmp_path / "roster.json")))
+    AUTO the system does not re-split it (`validation.users_plan`, `issuer.settle`); a plan the system authors is not."""
+    monkeypatch.setattr(TL, "staffed", lambda engine=None: AgentRegistry(str(tmp_path / "roster.json")))
     e = make_engine(validate_signals=True, state_timeout=0)
     e.project_name = "p"
     e.start()
@@ -204,7 +205,7 @@ def test_where_places_stand_apart_the_reader_works_beside_the_base_not_in_it(tmp
             return super().run_agent(system, user, allowed_tools, cwd=cwd, **kw)
     apart = SimpleNamespace(files=SimpleNamespace(holds=lambda p: True, mkdir=made.append),
                             temp_root=lambda: str(tmp_path / "tmp"), agents_refused=lambda: None, base=str(tmp_path / "base"))
-    monkeypatch.setattr(TL, "_roster", lambda engine=None: reg)
+    monkeypatch.setattr(TL, "staffed", lambda engine=None: reg)
     monkeypatch.setattr(TL, "llm_factory", lambda model=None, **_: Reader())
     monkeypatch.setattr(TL, "execution_of", lambda engine, agents=None: apart)
     e = make_engine(validate_signals=True, state_timeout=0)

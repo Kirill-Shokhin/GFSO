@@ -28,7 +28,7 @@ def people():
 def test_a_graph_people_hold_goes_on_past_a_refused_call(people, ended):
     people.record_llm_usage("L2-checker", [{"ended": ended, "error": "api_error: 403 Failed to authenticate"}],
                             TaskId("root"))
-    assert people.paused() is None, people.paused()
+    assert people.stops.paused() is None, people.stops.paused()
     assert not people.system_carries_work()
 
 
@@ -36,7 +36,7 @@ def test_a_live_node_the_system_moves_for_stops_it(people):
     people.workforce.publish_roster({"bob": "llm-executor"})
     assert people.system_carries_work()
     people.record_llm_usage("executor", [{"ended": "unauthorized", "error": "403"}], TaskId("root.a"))
-    assert people.paused() and "authentication" in people.paused()["why"], people.paused()
+    assert people.stops.paused() and "authentication" in people.stops.paused()["why"], people.stops.paused()
 
 
 def test_a_finished_systems_node_carries_nothing(people):
@@ -54,6 +54,6 @@ def test_the_ai_review_of_a_peoples_graph_answers_the_refusal_and_stops_nothing(
     _cli(monkeypatch, REFUSED_STREAM)
     monkeypatch.setattr(TL, "llm_factory", lambda model=None, execution=None: H.ClaudeCodeProvider(model))
     out = TL.TOOLS["review_decomposition"](people, task_id="root")
-    assert people.paused() is None, people.paused()
+    assert people.stops.paused() is None, people.stops.paused()
     said = str(out)
     assert "authenticat" in said or "refused" in said, said[:600]

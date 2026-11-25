@@ -18,6 +18,7 @@ from gfso.mcp import protocol, server as S
 from tests.test_a_solo_chat_writes_its_own_plan_and_the_person_gives_the_go import ASKED, _filled, _gone, no_model  # noqa: F401
 from tests.support import hold_a_credential
 from tests.test_the_mode_decides_who_holds_what import _engine, _goal
+import gfso.in_chat as IC
 
 
 def _repo(tmp_path):
@@ -43,14 +44,14 @@ def test_a_delivery_of_the_start_with_the_work_elsewhere_carries_the_work(no_mod
     _gone(e, _filled(TL.plan(e, ASKED)["text"]))
     git, start = _repo(tmp_path)
     _started(e, start)
-    assert TL._work_tip(e, TaskId("root"), str(tmp_path)) is None, "no work's branch: nothing delivered by inference"
+    assert IC._work_tip(e, TaskId("root"), str(tmp_path)) is None, "no work's branch: nothing delivered by inference"
     git("worktree", "add", "-q", "-b", "gfso/p/work", str(wt := tmp_path / "wt"))
-    assert TL._work_tip(e, TaskId("root"), str(tmp_path)) is None, "the work's branch at the start: not the work"
+    assert IC._work_tip(e, TaskId("root"), str(tmp_path)) is None, "the work's branch at the start: not the work"
     git(*IDENT, "commit", "-q", "--allow-empty", "-m", "work", at=wt)
     work = git("rev-parse", "gfso/p/work")
-    at, tip = TL._work_tip(e, TaskId("root"), str(tmp_path))
+    at, tip = IC._work_tip(e, TaskId("root"), str(tmp_path))
     assert tip == work and same_place(at, wt), (at, tip)
-    assert TL.not_the_work(e, at, work) == ""
+    assert IC.not_the_work(e, at, work) == ""
 
 
 def test_the_start_is_never_delivered_and_its_refusal_names_the_lifts(no_model, tmp_path):
@@ -60,7 +61,7 @@ def test_the_start_is_never_delivered_and_its_refusal_names_the_lifts(no_model, 
     _gone(e, _filled(TL.plan(e, ASKED)["text"]))
     git, start = _repo(tmp_path)
     _started(e, start)
-    no = TL._unnamed(e, TaskId("root"), str(tmp_path))
+    no = IC._unnamed(e, TaskId("root"), str(tmp_path))
     assert "commit it on `gfso/p/work`" in no and "place=<its path>" in no and "empty commit" in no, no
     assert "No validator" in no and "stand past" not in no, no
 
@@ -89,8 +90,8 @@ def test_the_roots_pass_says_to_switch_the_person_back(no_model, tmp_path, monke
     git("switch", "-q", "-c", "gfso/p/work")
     e = _engine(Mode.SOLO)
     e.graph.store_setting("chat_start:root", json.dumps({"branch": "main", "head": ""}))
-    monkeypatch.setattr(D, "validator_workdir", lambda *a, **k: str(tmp_path))
-    said = TL.back_to_their_branch(e, TaskId("root"))
+    monkeypatch.setattr(IC, "validator_workdir", lambda *a, **k: str(tmp_path))
+    said = IC.back_to_their_branch(e, TaskId("root"))
     assert "git switch main" in said and "gfso/p/accepted" in said, said
 
 
@@ -138,7 +139,7 @@ def test_the_work_held_by_a_linked_worktree_is_named_with_the_move_that_works(no
     git, start = _repo(tmp_path)
     git("worktree", "add", "-q", "-b", "gfso/p/work", str(tmp_path / "wt"))
     git(*IDENT, "commit", "-q", "--allow-empty", "-m", "work", at=tmp_path / "wt")
-    said = TL.not_the_work(e, str(tmp_path), start)
+    said = IC.not_the_work(e, str(tmp_path), start)
     assert "git switch --detach gfso/p/work" in said and "remove that worktree" in said, said
     git("switch", "-q", "--detach", "gfso/p/work")
     assert git("rev-parse", "HEAD") == git("rev-parse", "gfso/p/work")
@@ -150,7 +151,7 @@ def test_a_root_passed_from_the_page_says_the_way_back_on_the_feed(no_model, tmp
     e = _engine(Mode.SOLO)
     _gone(e, _filled(TL.plan(e, ASKED)["text"]))
     _started(e, "")
-    monkeypatch.setattr(D, "validator_workdir", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(IC, "validator_workdir", lambda *a, **k: str(tmp_path))
     monkeypatch.setattr(TL._tools, "signal", lambda *a, **k: {"accepted": True})
     told = []
     e.emit_info = lambda kind, msg, *a, **k: told.append(msg)

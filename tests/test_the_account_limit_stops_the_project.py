@@ -69,47 +69,47 @@ def test_a_refused_call_stops_the_project_until_the_limit_lifts():
     e = make_engine(llm=None)
     lift = time.time() + 3600
     e.record_llm_usage("executor", _refused(lift), TaskId("n"))
-    stop = e.paused()
+    stop = e.stops.paused()
     assert stop and stop["until"] >= lift and "usage limit" in stop["why"] and "executor" in stop["why"], stop
-    e.lift_the_system_stop(lift - 1)
-    assert e.paused(), "started before the limit lifted"
-    e.lift_the_system_stop(stop["until"])
-    assert e.paused() is None, "the system did not start what it stopped"
+    e.stops.lift_the_system_stop(lift - 1)
+    assert e.stops.paused(), "started before the limit lifted"
+    e.stops.lift_the_system_stop(stop["until"])
+    assert e.stops.paused() is None, "the system did not start what it stopped"
 
 
 def test_with_no_lift_time_known_the_limit_is_probed_after_the_retry_wait():
     e = make_engine(llm=None)
     t0 = time.time()
     e.record_llm_usage("validator", _refused(), TaskId("n"))
-    assert t0 + LIMIT_RETRY_S <= e.paused()["until"] <= time.time() + LIMIT_RETRY_S + 60
+    assert t0 + LIMIT_RETRY_S <= e.stops.paused()["until"] <= time.time() + LIMIT_RETRY_S + 60
 
 
 def test_a_persons_stop_is_never_started_by_the_system_and_a_persons_start_is_honoured():
     e = make_engine(llm=None)
-    e.pause("alice", "mine")
+    e.stops.pause("alice", "mine")
     e.record_llm_usage("executor", _refused(time.time()), TaskId("n"))
-    e.lift_the_system_stop(time.time() + 10 ** 6)
-    assert e.paused()["by"] == "alice", "the system took over a person's stop"
-    e.resume("alice")
+    e.stops.lift_the_system_stop(time.time() + 10 ** 6)
+    assert e.stops.paused()["by"] == "alice", "the system took over a person's stop"
+    e.stops.resume("alice")
     e.record_llm_usage("executor", _refused(time.time()), TaskId("n"))
-    e.pause("alice", "mine, over the limit's")                 # a person's stop over the system's is the person's
-    e.lift_the_system_stop(time.time() + 10 ** 6)
-    assert e.paused()["by"] == "alice", "the system started a stop a person had made over its own"
-    e.resume("alice")
-    assert e.paused() is None
+    e.stops.pause("alice", "mine, over the limit's")                 # a person's stop over the system's is the person's
+    e.stops.lift_the_system_stop(time.time() + 10 ** 6)
+    assert e.stops.paused()["by"] == "alice", "the system started a stop a person had made over its own"
+    e.stops.resume("alice")
+    assert e.stops.paused() is None
 
 
 def test_the_start_is_rearmed_from_the_stop_record_after_a_restart(tmp_path):
     db = str(tmp_path / "p.db")
     e = make_engine(storage=SqliteStorage(db), llm=None)
     e.record_llm_usage("executor", _refused(time.time() - 120), TaskId("n"))     # lifted while the server was down
-    assert e.paused()
+    assert e.stops.paused()
     e = make_engine(storage=SqliteStorage(db), llm=None, check_interval=0.1)
     e.start()
     t0 = time.time()
-    while e.paused() and time.time() - t0 < 5:
+    while e.stops.paused() and time.time() - t0 < 5:
         time.sleep(0.1)
-    assert e.paused() is None, "a restarted engine never started the project the limit had stopped"
+    assert e.stops.paused() is None, "a restarted engine never started the project the limit had stopped"
     e.stop()
 
 
@@ -124,13 +124,13 @@ def test_a_date_shown_during_a_stop_comes_back_as_it_was(monkeypatch):
     T.create_task(e, "d", {"description": "x", "criteria": [criterion("a", "A")]}, "w", deadline=due.isoformat())
     e.wait_idle()
     inside = e.graph.get_task(TaskId("d")).deadline
-    e.pause("the-user", "")
+    e.stops.pause("the-user", "")
     shift["s"] = 10.0
     shown = T.task_out(e.graph.get_task(TaskId("d")), e)["deadline"]
     shift["s"] = 100.0
     assert abs((T._deadline(shown, e.graph) - inside).total_seconds()) < 1e-3, "the round trip moved the date"
     assert abs((datetime.fromisoformat(shown) - due).total_seconds()) < 1, "a date read differently once stopped"
-    e.resume("the-user")
+    e.stops.resume("the-user")
     e.stop()
 
 
@@ -138,6 +138,6 @@ def test_a_round_the_limit_refused_comes_back_at_the_lift_not_on_its_own_timer()
     """A round given back on a fixed LIMIT_RETRY_S after a lift due sooner would spend project time with nobody moving
     (critic, 2026-10-26: up to ~570 s); it waits exactly until the system's limit stop lifts."""
     e = make_engine(llm=None)
-    assert e.stop_wait_s() is None                            # no limit stop: each door keeps its own pace
+    assert e.stops.stop_wait_s() is None                            # no limit stop: each door keeps its own pace
     e.record_llm_usage("executor", _refused(time.time() + 120), TaskId("n"))
-    assert 120 < e.stop_wait_s() < 200 < LIMIT_RETRY_S
+    assert 120 < e.stops.stop_wait_s() < 200 < LIMIT_RETRY_S

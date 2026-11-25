@@ -86,7 +86,7 @@ def test_the_ledger_says_which_credential_each_call_ran_on_and_a_move_stops_noth
     engine.record_llm_usage("validator", llm)
     rows = engine._storage.get_usage()
     assert [(r["ended"], r["credential"]) for r in rows] == [("moved", "a"), ("answered", "b")]
-    assert engine.paused() is None, "a refused attempt the next credential carried stopped the project"
+    assert engine.stops.paused() is None, "a refused attempt the next credential carried stopped the project"
 
 
 def test_a_persons_switch_stands_when_an_old_call_is_refused(seen):  # noqa: F811

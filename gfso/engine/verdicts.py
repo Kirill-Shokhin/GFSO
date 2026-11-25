@@ -16,7 +16,7 @@ from gfso.core.protocol.invariants import verdict_word
 from gfso.core.types import TaskId
 from gfso.core.types.enums import Verdict
 from gfso.core.graph.model import stamp
-from gfso.core.protocol.procedure import coverage as procedure_coverage
+from gfso.core.protocol.accounting import coverage as procedure_coverage
 
 
 #: The records kept BESIDE a node's verdict, each under its own key in the critique store — one table of their names and

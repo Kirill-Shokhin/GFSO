@@ -133,7 +133,7 @@ def _replies(monkeypatch, tmp_path, name, *verbs):
                 create_server(reg)._mcp_server, client_info=types.Implementation(name=name, version="1")) as c:
             await c.call_tool("act_as", {"name": "user"})      # …the person's agent, logged in as him
             await c.call_tool("use_project", {"project": "p1"})
-            reg.engine("p1").pause("user", "held")
+            reg.engine("p1").stops.pause("user", "held")
             return [json.loads((await c.call_tool(v, {})).content[0].text) for v in verbs]
     try:
         return anyio.run(go)

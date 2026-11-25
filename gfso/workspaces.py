@@ -26,16 +26,17 @@ from gfso.core.types import HOST, MADE, NODES, SCRATCH, THIS_HOST, VOLUME, Place
 from gfso.core.protocol.procedure import round_of
 from gfso.engine.findings import record_round
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
+from gfso.engine.validation import delivered_repository, hands_of
 from gfso.roster import AgentRegistry
 
 
 def performer(engine, agents: "AgentRegistry", party) -> tuple:
     """(id, roster entry) of the executor whose session performs `party`'s nodes: a registered role itself, the
-    standing agent's hands where its mode dispatches (`Engine.hands_of`) — else (None, None), a party that performs
+    standing agent's hands where its mode dispatches (`validation.hands_of`) — else (None, None), a party that performs
     in its own chat, or a person."""
     if (cfg := agents.get(str(party or ""))) is not None:
         return str(party), cfg
-    h = engine.hands_of(party)
+    h = hands_of(engine.graph, party)
     return (h, agents.get(h)) if h and agents.get(h) is not None else (None, None)
 
 
@@ -858,7 +859,7 @@ def drop_node_branches(project: str, bases) -> list[str]:
 
 
 def rejected_reports_dir(project: str) -> Path:
-    """Where a project's reports refused as verdicts are kept (`tools_llm._keep_rejected_report`): under the project's
+    """Where a project's reports refused as verdicts are kept (`validate._keep_rejected_report`): under the project's
     own name, a node's id naming a node in every project."""
     return data_dir() / "rejected_verdicts" / component(project or DEFAULT_PROJECT)
 
@@ -1011,3 +1012,66 @@ def results_a_split_waits_on(engine, agents: "AgentRegistry", task_id) -> str:
             "Split this node over what these parts actually delivered: their interfaces, files and verdicts below, "
             "not over what the plan guessed they would be. They are inputs to the split, not requirements of this node: "
             "its criteria are its contract above.\n\n" + "\n\n".join(out)) if out else ""
+
+
+def _oracle_workdir(engine, vcfg: dict):
+    """The workspace for this project from the issuer-side oracle map (same map the unittest-checker
+    uses), so a criteria validator runs the code where the executor delivered it. None if absent."""
+    project = getattr(engine, "project_name", None) or DEFAULT_PROJECT
+    try:
+        entry = json.loads(Path(vcfg["oracle_map"]).read_text(encoding="utf-8")).get(project)
+        return entry.get("workdir") if entry else None
+    except Exception:
+        return None
+
+
+def _children_workdir(engine, agents: AgentRegistry, task_id: TaskId) -> str | None:
+    """Where this node's work actually lives: the workdir of a registered child executor.
+
+    A parent whose own Del is the unregistered user-agent has no directory of its own, but its
+    children do — and their directory is the one holding the artifact the parent aggregates."""
+    for kid in engine.graph.get_active_children(task_id):
+        if (wd := (agents.get(kid.assignee or "") or {}).get("workdir")):
+            return wd
+    return None
+
+
+def validator_workdir(engine, agents: AgentRegistry, task_id: TaskId,
+                    named_validator: str | None = None, vcfg: dict | None = None) -> str | None:
+    """WHERE THE VALIDATOR OF THIS NODE STANDS — one answer, whichever door asked.
+
+    There were two, and they disagreed. Probed 2026-09-07 with an executor registered against
+    `WORK` and a validator against `SCRATCH`: the dispatcher sent the validator to `WORK`, a manual
+    `validate_result(node, validator="val-1")` sent it to `SCRATCH`, and on a node held by an
+    unregistered person the manual door sent it to `SCRATCH` even with no validator named. Three
+    orders of priority for one question.
+
+    The order below is the dispatcher's, and it is the one a run already paid for: **the graph
+    before the roster**. The validator's registered directory is a roster fact; where the work IS is
+    a graph fact, and only the second is true by construction (measured 2026-08-21 — a stale `val-1`
+    from an older experiment pointed at a scratch directory, the root was validated there, the report
+    said "no implementation exists", and a false FAIL over seventeen criteria drove the run into the
+    rework loop that ended it).
+
+    The roster is still asked, and that is the OTHER fix this keeps: a root is normally held by the
+    caller themselves, an id the roster does not know, so the graph answers nothing and the named
+    validator's own directory is what saves the call (measured on the HTTP door 2026-09-02, where
+    the refusal "agent has no registered workdir" stood while a validator with the right directory sat
+    in the same roster). It answers second, not first.
+    """
+    task = engine.graph.get_task(task_id)
+    executor = task.assignee if task is not None else None
+    roster_side = (named_validator, executor,
+                   agents.validator_for(executor, project=engine.project_name))
+    # …and before the roster's directory, the node's OWN place when it has one: the roster names the base every
+    # executor branches from, where a sibling may be mid-edit — the torn read a node workspace exists against
+    # …and last but the oracle the repository its last DELIVER recorded (its main worktree's top): a chat registered
+    # nowhere is validated with no workdir passed by hand, while a judge registered below that top keeps its directory
+    recorded = delivered_repository(engine.graph.audit, task)
+    return (node_workspace(engine, agents, task_id)
+            or (agents.get(executor or "") or {}).get("workdir")
+            or _children_workdir(engine, agents, task_id)
+            or next((wd for who in roster_side
+                     if who and (wd := (agents.get(str(who)) or {}).get("workdir"))), None)
+            or (recorded if recorded and execution_of(engine, agents).files.is_dir(recorded) else None)
+            or _oracle_workdir(engine, vcfg or {}))

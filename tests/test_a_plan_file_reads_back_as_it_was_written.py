@@ -14,6 +14,7 @@ import pytest
 from gfso import tools as T, tools_llm as TL
 from gfso.core.types import Mode, TaskId
 from gfso.decompose import artifact as A, planning as P
+from gfso.engine.validation import users_plan
 from tests.support import criterion
 from tests.test_the_mode_decides_who_holds_what import _engine
 
@@ -88,7 +89,7 @@ def test_the_go_builds_the_project_from_the_file_as_it_stands(monkeypatch, tmp_p
     e = _engine(Mode.AUTO)
     out = TL.auto_decompose(e, plan=str(path))
     assert seen == {"request": GOAL, "spec": _plan()}
-    assert e.users_plan() is False, "the system wrote this plan: contact repairs a check of its own"
+    assert users_plan(e.graph) is False, "the system wrote this plan: contact repairs a check of its own"
     assert "error" not in out, out      # a plan handed in calls no model: none answering is no provider's fault
 
 

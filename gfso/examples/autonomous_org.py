@@ -10,7 +10,8 @@ from gfso.examples import delegation, scratch
 from gfso.engine import Engine
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.adapters.agents.human import HumanAgent
-from gfso.delegate import Dispatcher, default_agents
+from gfso.delegate import Dispatcher
+from gfso.roster import default_agents
 from gfso import tools as T
 from gfso import tools_llm as TL
 from gfso.config import MODEL_DEFAULT

@@ -20,6 +20,7 @@ from gfso.engine.verdicts import CLOSING, ledger_read, observations, refuted_ver
 from gfso.roster import AgentRegistry
 from gfso.signin import PAGE
 from tests.support import REGISTER, a_repository, criterion, instrument_passes, make_engine
+from gfso.engine.closures import closure_of
 
 SEAM, HOLDER, CHECKER, OTHER, ROLE = "root.eng", "engineering", "rev", "ann", "exec-2"
 CONSOLE = Principal(HOLDER, (HOLDER,), "tok-eng", "token")
@@ -297,7 +298,7 @@ def test_every_reader_reads_the_named_partys_pass_as_the_verdict(tmp_path):
     t, tid = e.graph.get_task(TaskId(SEAM)), TaskId(SEAM)
     for rec in (e.get_exec_verdict(tid), e.current_exec_verdict(tid), e.graph.exec_verdict_record(tid)):
         assert (rec["verdict"], rec["validator"]) == ("PASS", CHECKER), rec
-    assert not (e.closure_of(tid) or {}).get("refuted"), e.closure_of(tid)
+    assert not (closure_of(e, tid) or {}).get("refuted"), closure_of(e, tid)
     assert not pass_was_refuted(e.graph, t) and not pass_stands_refuted(e.graph, t)
     assert SEAM not in q_V_reversed(e.graph)
     v = T.get_verdict(e, SEAM)
@@ -413,7 +414,7 @@ def _self_checked(tmp_path):
 
 def _not_refuted(e):
     t, tid = e.graph.get_task(TaskId(SEAM)), TaskId(SEAM)
-    assert not (e.closure_of(tid) or {}).get("refuted"), e.closure_of(tid)
+    assert not (closure_of(e, tid) or {}).get("refuted"), closure_of(e, tid)
     assert not pass_was_refuted(e.graph, t) and SEAM not in q_V_reversed(e.graph)
 
 

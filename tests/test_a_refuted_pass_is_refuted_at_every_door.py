@@ -18,6 +18,7 @@ from __future__ import annotations
 from gfso import tools as T
 from gfso.core.types import TaskId
 from tests.support import criterion, make_engine, REGISTER
+from gfso.engine.closures import refuted_passes
 
 
 def _a_node_standing_at_pass_over_its_own_fail(e, tid="leaf"):
@@ -47,7 +48,7 @@ def _a_node_standing_at_pass_over_its_own_fail(e, tid="leaf"):
                                           "evidence": "ran `ls NEVER.txt`: No such file or directory",
                                           "behaviours": ["NEVER.txt exists"]}])
     e.wait_idle()
-    assert e.refuted_passes() == [tid], "the probe never produced a refuted pass at all"
+    assert refuted_passes(e) == [tid], "the probe never produced a refuted pass at all"
 
 
 def test_the_scoped_answer_refuses_complete_exactly_as_the_whole_graph_one_does():

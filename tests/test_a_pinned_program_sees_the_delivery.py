@@ -21,8 +21,8 @@ import gfso.engine.admission as A
 
 from gfso import tools as T
 from gfso.core.handlers.structural import check_procedure
-from gfso.core.protocol.procedure import (admission_defects, probes_off_the_workdir, probes_unittest_cannot_import,
-                                        shared_scratch)
+from gfso.core.protocol.procedure import admission_defects, shared_scratch
+from gfso.core.protocol.probe_runs import probes_off_the_workdir, probes_unittest_cannot_import
 from gfso.core.protocol.shell import commands
 from gfso.core.types import AgentId, Criteria, Probe, Spec, State, Task, TaskId
 from tests.support import make_engine, REGISTER

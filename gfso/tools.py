@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Union
 
-from gfso.core.types import (HOST, 
+from gfso.core.types import (HOST, INPUTS_TOKEN,
     TaskId, AgentId, Spec, Criteria, AcceptedRiskItem, CriterionMapping, DepEdge, seams_apart,
     SignalData, Signal, Predictability, Action, EXECUTOR_ACTIONS, SPAWNABLE_ACTIONS, Verdict, State,
     RevisionReason, Register, register_of, settled_positive, passed, TERMINAL_STATES,
@@ -25,7 +25,7 @@ from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_GRADES, Q_MEANS, alarm, 
 from gfso.core.graph.model import door_off_s, on_the_wall, root_of, signs_as
 from gfso.core.graph.mutations import producers_of, readers_index
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent, verdict_word
-from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
+from gfso.core.protocol.procedure import (admission_defects, materialize_inputs, probe_id,
                                           probes_from as _checks_of)
 from gfso.core.protocol.validation import P2P_SIGNALS, Role
 from gfso.config import (DEFAULT_PROJECT, data_dir as _data_dir, for_the_hands, how_it_is_waited,
@@ -35,7 +35,12 @@ from gfso.engine import Engine, second_root_refusal
 from gfso.engine.frontier import OBSERVE, WITHHOLDS, recovery_said, refuted_reading, step_role
 from gfso.engine.moves import CHECKS, DOOR_KEYS, READS, Move, door_holder, role_holder, signal_role, signer_due
 from gfso.engine.verdicts import OUTSIDE_NOTE
-from gfso.engine.validation import party_kind as _party_kind
+from gfso.engine.validation import hands_of, holder_boundary, mode_kind, mode_scopes, party_kind as _party_kind
+from gfso.engine.closures import closure_of, verdict_provenance
+import functools
+import inspect
+import logging
+from gfso.core.types import PlaceUnavailable
 
 
 # The verbs that may bring a PROJECT into existence — everything else answers "no such project"
@@ -226,7 +231,7 @@ def task_out(t, engine: Engine, plan: bool = True) -> Optional[dict]:
         "iteration": t.iteration, "max_iterations": t.max_iterations, "reopens": t.reopens,
         "deadline": wall(t.deadline),
         # …and every move of it on the wall a stop's held time made, which no packet version carries
-        **({"deadline_moves": moves} if (moves := engine.deadline_moves(t.id)) else {}),
+        **({"deadline_moves": moves} if (moves := engine.stops.deadline_moves(t.id)) else {}),
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "state_entered_at": wall(t.state_entered_at),
         "was_challenged": t.was_challenged,
@@ -766,7 +771,7 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
     if t is None:
         return {"error": f"unknown task {task_id}"}
     rec = engine.get_exec_verdict(TaskId(task_id))
-    _prov = engine.verdict_provenance(TaskId(task_id))
+    _prov = verdict_provenance(engine, TaskId(task_id))
     # 0 = no bound. One spelling of "is this read bounded", used by every branch below.
     _keep = VERDICT_FIELD_CHARS if _trim else 0
     _per_criterion, _trimmed = _trim_per_criterion((rec or {}).get("per_criterion") or [], _keep)
@@ -854,7 +859,7 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
                      f"and did not close anything — a later record is evidence about the same "
                      f"delivery, never a replacement for the one that was acted on."),
         }
-    if (engine.closure_of(TaskId(task_id)) or {}).get("refuted"):    # this node's own: the list walks every node
+    if (closure_of(engine, TaskId(task_id)) or {}).get("refuted"):    # this node's own: the list walks every node
         out["contradicts_state"] = (
             f"{task_id} is {t.state.name} at PASS, and the verdict above — its CURRENT one — is "
             f"FAIL. The state is showing a signature that landed before this verdict did. This is "
@@ -1111,6 +1116,61 @@ def _coverage_lost_by(engine: Engine, task_id: str) -> Optional[dict]:
                          f"(`map_criterion`) or add one")}
 
 
+log = logging.getLogger(__name__)
+
+
+def answering(fn):
+    """A verb ANSWERS; it does not raise into a door.
+
+    The three doors are generated from this registry, so an exception is not a polite failure: over
+    HTTP it is a 500 with an empty body, over MCP a protocol error, over the CLI a traceback printed
+    at a person — and the careful message the engine raised (`predictability 'HIGH' is not one of the
+    three STD-2 categories …`) is lost in every one of them. Measured 2026-08-20: `create_task` with
+    a string spec and a wrong `predictability` both arrived as bare failures, and a sweep over the
+    whole registry then found eleven more verbs that raise on ordinary wrong input.
+
+    The refusals the engine states — ValueError/KeyError/TypeError — become `{error: …}`, which every
+    door already knows how to carry. Anything else is still answered rather than thrown, and marked
+    `unexpected: true`: a defect in here must be visible as a defect, not disguised as a refusal.
+    """
+    sig = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def _call(*a, **kw):
+        # The SHAPE of the call is checked outside the guard on purpose: a missing or unknown
+        # argument is not a refusal by the verb, it is a call that never happened, and each door
+        # already answers it in its own terms (the HTTP door names the parameter and lists the rest;
+        # the CLI names the typo). Swallowing those into `{error: …}` took that away.
+        sig.bind(*a, **kw)
+        try:
+            return fn(*a, **kw)
+        except (ValueError, KeyError, TypeError) as ex:
+            msg = str(ex) or f"{type(ex).__name__} with no message"
+            # `refused` marks THIS path — the verb could not act at all. A verb's own `{error: …}`
+            # is a different thing: `signal` reporting `accepted: false` DID interact with the FSM
+            # and is a successful call with a negative outcome. The HTTP door reads the marker to
+            # choose its status code, which is why it is here rather than guessed from the shape.
+            # A KeyError from INSIDE a verb means the caller's payload is missing a key the verb
+            # needs — not that it passed an unknown one. The old wording said "unknown key
+            # 'task_id'" to someone who had never written `task_id`, and they reverse-engineered
+            # three payload shapes by feeding wrong ones and reading which key it named next
+            # (measured 2026-08-21, ~40% of that session).
+            if isinstance(ex, KeyError):
+                msg = (f"the payload is missing a required key: {msg}. `gfso run {fn.__name__} "
+                       f"--help` (or the tool's description) gives the shape it expects.")
+            return {"error": msg, "refused": True}
+        except PlaceUnavailable as ex:
+            # …met outside a model call — a place's file read or written through its execution: the stop a booked call
+            # makes (`Stops.stop_for_the_place`)
+            if (engine := sig.bind(*a, **kw).arguments.get("engine")) is not None:
+                engine.stops.stop_for_the_place(ex.place, str(ex))
+            return {"error": str(ex)}
+        except Exception as ex:                                   # noqa: BLE001 — see the docstring
+            log.exception(f"{getattr(fn, '__name__', 'verb')} failed")
+            return {"error": f"{type(ex).__name__}: {ex}", "unexpected": True}
+    return _call
+
+
 def is_refusal(out) -> bool:
     """Did this verb REFUSE the act — the one question both doors ask, asked in one place.
 
@@ -1328,7 +1388,7 @@ def _mode_read(engine: Engine) -> Optional[dict]:
     from the record's `boundary` counted a SEMI node the user holds as the system's (ui critic, 2026-11-13). `None` under
     SOLO, which holds every depth."""
     m = engine.mode()
-    b = engine.holder_boundary() if m else None
+    b = holder_boundary(engine.graph) if m else None
     return m and {**m, "holds_above": b if b is not None and b != float("inf") else None, **heard(engine)}
 
 
@@ -1388,7 +1448,7 @@ def graph_read(engine: Engine) -> dict:
               # said which were the completion answer's lists — reported when a graph is COMPLETE,
               # i.e. never while there is still work in it (wave 26, 2026-09-06). `null` until the
               # node settles positive: there is nothing to weigh about a node still in flight.
-              "closure": engine.closure_of(t.id),
+              "closure": closure_of(engine, t.id),
               # …and who checks its deliveries where the validator does (a seam, or its issuer's choice), as the page
               # draws its box; absent, its holder self-verifies
               **({"checker": c} if (c := engine.checker(t.id, staffed)) != "self" else {}),
@@ -1408,7 +1468,7 @@ def graph_read(engine: Engine) -> dict:
     # …and where the accepted result lies, once it has landed: said only in a line of the log, a person who opened the
     # page on a closed goal could not tell where the work was
     landed = engine.graph.setting("landed")
-    return {"nodes": nodes, "edges": edges, "mode": _mode_read(engine), "scopes": engine.mode_scopes(),
+    return {"nodes": nodes, "edges": edges, "mode": _mode_read(engine), "scopes": mode_scopes(engine.graph),
             "heard": heard(engine), "parties": _parties(engine, tasks), "landed": json.loads(landed) if landed else None,
             }
 
@@ -1575,7 +1635,7 @@ def del_by_mode(engine: Engine, parent_id: Optional[str], asked: Optional[str], 
                                                    TaskId(task_id) if task_id else None)]
     if system_side and str(asked) != me and str(asked) in keepers:
         return AgentId(asked)
-    mode = engine.mode_kind()
+    mode = mode_kind(engine.graph)
     # the lift is the caller's own (§12.16 (ii)), and `reassign` takes a name it cannot leave out (critic round 10)
     others = keepers
     lift = (f"name one of this project's executors ({', '.join(others) or 'none registered'})"
@@ -2963,7 +3023,7 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
         if _t is not None and persons_move(engine, _t.id, _STEP_SIGNAL.get(s.get("action"))):
             s["persons"] = True
         # …AND A RULING THE USER MAY MAKE IS NOT A MOVE THE GRAPH WAITS ON: the system answers that dispute itself
-        if s["mine"] and s.get("action") == Action.RESOLVE and _t is not None and engine.users_dispute(_t.id)                 and not engine.paused():
+        if s["mine"] and s.get("action") == Action.RESOLVE and _t is not None and engine.users_dispute(_t.id)                 and not engine.stops.paused():
             s["optional"] = True
         if _named_checkers_wait(engine, s, _t, me):
             continue
@@ -2984,7 +3044,7 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
             continue
         # …a leaf's: a taken whole's step is its holder's own choice of the part to start, which no hands perform
         # (they skip a node with children) — told "performed by", the console stopped with the whole owed (critic, 11-23)
-        if s["mine"] and s.get("action") in SPAWNABLE_ACTIONS and (hands := engine.hands_of(a)) and not (
+        if s["mine"] and s.get("action") in SPAWNABLE_ACTIONS and (hands := hands_of(engine.graph, a)) and not (
                 s.get("action") == Action.EXECUTE and engine.graph.get_active_children(TaskId(s["task_id"]))):
             # DISPATCH: consent is the holder's, the work its hands' — told so, or it builds the node in its chat
             s["directive"] = ((f"ACCEPT it (consent is yours); then {hands} performs it in a clean session in the "
@@ -3281,7 +3341,7 @@ def _named_offer(engine: Engine, s: dict) -> dict:
     """An offer as the frontier carries it: what, whose, and to its holder how to take it. Spelled out, 243 offers made
     one frontier 271,290 characters, past what a client reads (2026-11-20)."""
     t = engine.graph.get_task(TaskId(s["task_id"]))
-    hands = s.get("mine") and engine.hands_of(s.get("assignee"))
+    hands = s.get("mine") and hands_of(engine.graph, s.get("assignee"))
     how = (f"NOT YOURS — {s.get('performed_by')}'s to take." if not s.get("mine") else
            f"ACCEPT it (consent is yours); then {hands} performs it in a clean session — do not build it yourself. "
            f"`get_task` holds its contract." if hands else

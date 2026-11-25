@@ -761,7 +761,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
                 # WHY A SESSION GAVE NO ANSWER, kept with it: a context grown past the window and an account
                 # limit both come back as zero tokens at zero cost, and only this layer can tell them apart
                 "ended": _ended(out, envelope is None),
-                # …and when the limit that refused it lifts: the system stops the project until then (`Engine.pause`)
+                # …and when the limit that refused it lifts: the system stops the project until then (`Stops.pause`)
                 "limit_resets_at": _lifts_at(out) or self.last_lift,
                 # whether it CONTINUED a conversation (`--resume`, a round cut at its turn cap) rather than opening
                 # a context of its own: real contexts are the calls that did not

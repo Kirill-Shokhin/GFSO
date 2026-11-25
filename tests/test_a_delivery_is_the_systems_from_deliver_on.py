@@ -23,6 +23,8 @@ import gfso.workspaces as WS
 from gfso.core.types import AgentId, Mode, TaskId
 from tests.support import REGISTER, criterion, make_engine, reviewer_passes
 from tests.test_a_chat_delivery_is_the_tree_it_handed_in import _commit, _git, _in_chat, _repo, _take
+from gfso.roster import default_agents
+import gfso.validate as VAL
 
 
 @pytest.fixture(autouse=True)
@@ -163,7 +165,7 @@ def test_an_unregistered_chat_names_the_work_tree_it_committed_in(tmp_path):
     _kept()
     assert out["accepted"] and e.delivered(TaskId("root"))[1] == head, out
     assert _keeps(e) == {f"{ST.KEEP}{head}": head}, _why(e)
-    assert os.path.samefile(TL._registered_workdir(e, "root", None), repo), "the validator is sent where it delivered"
+    assert os.path.samefile(VAL._registered_workdir(e, "root", None), repo), "the validator is sent where it delivered"
     e.stop()
 
 
@@ -416,9 +418,9 @@ def test_the_projects_repository_is_recorded_at_its_first_role_and_derived_for_a
     repo = _repo(tmp_path)
     _git(repo, "worktree", "add", "-q", "-b", "side", str(wt := tmp_path / "wt"))
     e = _in_chat(tmp_path, wt)                                # …its first role, registered in a linked worktree
-    assert WS.repository(e, TL._delegation().default_agents()) == str(repo), "recorded by its main worktree"
+    assert WS.repository(e, default_agents()) == str(repo), "recorded by its main worktree"
     e.graph.store_setting(WS.REPOSITORY, "")                  # …a project made before the record
-    assert WS.repository(e, TL._delegation().default_agents()) == str(repo), "not derived from its role's workdir"
+    assert WS.repository(e, default_agents()) == str(repo), "not derived from its role's workdir"
     bare = make_engine(validate_signals=True, state_timeout=0)
     bare.project_name = "q"
-    assert WS.repository(bare, TL._delegation().default_agents()) is None, "a repository named by nothing"
+    assert WS.repository(bare, default_agents()) is None, "a repository named by nothing"

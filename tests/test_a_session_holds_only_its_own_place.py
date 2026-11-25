@@ -28,7 +28,7 @@ import gfso.issuer as I
 from gfso.core.types import LAID, TaskId, laid_beside
 from gfso.issuer import CONTACT_ROUND, _contact_place
 from gfso.observe import _run
-from gfso.tools_llm import _observe_pins
+from gfso.validate import _observe_pins
 from tests.test_the_mode_decides_who_holds_what import _auto_goal
 
 IMAGE = os.environ.get("GFSO_TEST_IMAGE", "e3-linux-agent:2")   # CI: the product's own image
@@ -231,7 +231,7 @@ def test_a_session_whose_directory_is_gone_is_stopped_and_one_started_by_its_pro
 
 
 SYSTEMS_OWN = {"issuer/__init__.py": ("gfso-derive-",), "observe.py": ("gfso-observe-",),
-               "tools_llm.py": ("gfso-exact-",)}
+               "validate.py": ("gfso-exact-",)}
 
 
 def test_the_systems_own_copies_and_checks_take_the_systems_scratch():

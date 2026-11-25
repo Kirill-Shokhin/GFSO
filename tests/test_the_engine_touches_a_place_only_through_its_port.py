@@ -13,10 +13,10 @@ from pathlib import Path
 
 GFSO = Path(__file__).resolve().parents[1] / "gfso"
 #: the modules that work over places
-RADIUS = ("workspaces.py", "adapters/worktrees.py", "adapters/snapshots.py", "tools_llm.py", "delegate.py",
-          "issuer/__init__.py", "packets.py", "core/protocol/procedure.py", "adapters/execution.py",
-          "adapters/llm/toolloop.py", "adapters/llm/headless.py", "adapters/llm/chat.py", "adapters/llm/conformance.py",
-          "roster.py", "observe.py", "sessions.py", "store.py", "adapters/git.py")
+RADIUS = ("workspaces.py", "adapters/worktrees.py", "adapters/snapshots.py", "tools_llm.py", "delegate.py", "validate.py",
+          "issuer/__init__.py", "packets.py", "core/protocol/procedure.py", "core/protocol/accounting.py",
+          "adapters/execution.py", "adapters/llm/toolloop.py", "adapters/llm/headless.py", "adapters/llm/chat.py",
+          "adapters/llm/conformance.py", "roster.py", "observe.py", "sessions.py", "store.py", "adapters/git.py")
 #: a path's own methods that touch the file system, and how many positional arguments the path's form takes — the
 #: port's methods of the same name take the path first (`ex.is_dir(p)`), which is what tells the two apart
 PATH_CALLS = {**dict.fromkeys(("is_dir", "is_file", "exists", "iterdir", "read_text", "read_bytes", "mkdir", "unlink",
@@ -35,8 +35,8 @@ HOSTS_OWN = {
     ("workspaces.py", "stands", "Path(where).is_dir()"): "a directory that is no node's place is a base",
     ("workspaces.py", "made", "HOST.is_dir(place)"): "the legacy record's fallback, a host directory until V2",
     ("workspaces.py", "_place_of", "HOST.is_dir(str(old))"): "a host place laid out beside its base before the places moved into the installation (2026-11-15)",
-    ("core/protocol/procedure.py", "_gone", "HOST.exists(path)"): "a path in no round: the base or outside the places",
-    ("core/protocol/procedure.py", "_gone", "HOST.exists(str(Path(path).parent))"): "a path in no round, as above",
+    ("core/protocol/accounting.py", "_gone", "HOST.exists(path)"): "a path in no round: the base or outside the places",
+    ("core/protocol/accounting.py", "_gone", "HOST.exists(str(Path(path).parent))"): "a path in no round, as above",
     ("adapters/git.py", "is_top", "shutil.which('git')"): "this host's git",
     ("adapters/git.py", "is_top", "Path(base).is_dir()"): "a base: the user's repository, or a workdir asked of",
     ("adapters/execution.py", "Volume._import_base", "open(carried, 'rb')"): "the user's repository, carried in",
@@ -69,15 +69,15 @@ HOSTS_OWN = {
     ("workspaces.py", "_name_the_delivery", "Path(repo).is_dir()"): "the repository a chat's root was delivered from, on this host",
     ("adapters/execution.py", "fetched_on_host", "tempfile.TemporaryDirectory(prefix='gfso-land-')"):
         "the accepted result, landing in the user's repository",
-    ("tools_llm.py", "_keep_rejected_report", "d.mkdir(parents=True, exist_ok=True)"): "the server's state",
-    ("tools_llm.py", "_keep_rejected_report",
+    ("validate.py", "_keep_rejected_report", "d.mkdir(parents=True, exist_ok=True)"): "the server's state",
+    ("validate.py", "_keep_rejected_report",
      "f.write_text('# refused as a verdict: ' + defects + '\\n\\n' + text, encoding='utf-8')"): "the server's state",
-    ("tools_llm.py", "_validator_texts",
+    ("validate.py", "_validator_texts",
      "(Path(__file__).parent / 'mcp' / 'prompts' / 'validator.md').read_text(encoding='utf-8')"): "the product's prompt",
     ("tools_llm.py", "_work_places", "Path(w).is_dir()"): "a role's workdir: a base",
-    ("delegate.py", "_oracle_workdir", "Path(vcfg['oracle_map']).read_text(encoding='utf-8')"): "the issuer's oracle map",
-    ("delegate.py", "_checker_validate", "Path(vcfg['oracle_map']).read_text(encoding='utf-8')"): "the issuer's oracle map",
-    ("delegate.py", "_checker_validate", "Path(entry['canonical']).read_text(encoding='utf-8')"): "the hidden tests",
+    ("workspaces.py", "_oracle_workdir", "Path(vcfg['oracle_map']).read_text(encoding='utf-8')"): "the issuer's oracle map",
+    ("validate.py", "_checker_validate", "Path(vcfg['oracle_map']).read_text(encoding='utf-8')"): "the issuer's oracle map",
+    ("validate.py", "_checker_validate", "Path(entry['canonical']).read_text(encoding='utf-8')"): "the hidden tests",
     ("issuer/__init__.py", "_prompt", "PROMPT.read_text(encoding='utf-8')"): "the product's prompt",
     ("sessions.py", "_spawn", "(_PROMPTS / prompt).read_text(encoding='utf-8')"): "the product's prompt",
     ("roster.py", "_put_atomically", "write_atomic(path, text)"): "the roster file",

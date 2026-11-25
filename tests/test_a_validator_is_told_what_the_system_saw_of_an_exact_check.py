@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from gfso.core.protocol.procedure import EXACT_READ, EXACT_TEXT, probe_id, without_pinned_runs
+from gfso.core.protocol.procedure import EXACT_READ, EXACT_TEXT, probe_id
+from gfso.core.protocol.accounting import without_pinned_runs
 from gfso.core.types import Criteria, Probe
 from gfso.issuer import crit_block
 from gfso.packets import _crit_line

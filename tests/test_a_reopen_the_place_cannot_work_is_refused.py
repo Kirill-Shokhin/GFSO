@@ -39,7 +39,7 @@ def _call(e, verb):
 def test_no_verb_reopens_over_a_place_gone(engine, verb):
     t = _drive_to_done(engine)
     engine.graph.store_setting(VOLUME + "places", "gfso-v")
-    engine.probe_the_place_with(lambda p: GONE)
+    engine.stops.probe_the_place_with(lambda p: GONE)
     out = _call(engine, verb)
     after = engine.graph.get_task(TaskId("n1"))
     assert GONE in str(out.get("error")) and "new goal" in str(out.get("error")), out
@@ -51,7 +51,7 @@ def test_a_re_admission_does_not_reissue_a_settled_child_over_a_place_gone(engin
     `_revise` (critic, measured 0 → 1); R′'s gate is what every such door reads, `refusal_for` included."""
     _parent_child(engine)
     engine.graph.store_setting(VOLUME + "places", "gfso-v")
-    engine.probe_the_place_with(lambda p: GONE)
+    engine.stops.probe_the_place_with(lambda p: GONE)
     assert GONE in (engine.refusal_for(TaskId("ch"), Signal.ASSIGN).why or "")
     with pytest.raises(Exception, match="gone"):
         engine.decompose_task(TaskId("root"), [(TaskId("ch"), spec("child goal, changed", "cc"), AgentId("w"))],
@@ -63,7 +63,7 @@ def test_an_answering_place_is_asked_once_a_minute_and_a_fix_is_read_at_once(eng
     _drive_to_done(engine)
     engine.graph.store_setting(VOLUME + "places", "gfso-v")
     said, asked = [GONE], []
-    engine.probe_the_place_with(lambda p: asked.append(p) or said[0])
+    engine.stops.probe_the_place_with(lambda p: asked.append(p) or said[0])
     assert engine.reopen_refusal(TaskId("n1"))
     said[0] = None                                  # …the person brought it back
     for _ in range(3):
@@ -78,7 +78,7 @@ def test_an_edge_shut_for_good_is_not_told_to_bring_the_place_back(engine):
     t.reopens = t.max_reopens
     engine.graph.save_task(t)
     engine.graph.store_setting(VOLUME + "places", "gfso-v")
-    engine.probe_the_place_with(lambda p: GONE)
+    engine.stops.probe_the_place_with(lambda p: GONE)
     assert "spent" in engine.reopen_refusal(TaskId("n1"))
     assert "does not answer" not in str(T.signal(engine, "n1", "ASSIGN", "boss").get("error"))
 
@@ -93,6 +93,6 @@ def test_a_reopen_goes_on_where_the_place_answers(engine, probe, in_volume):
     if in_volume:
         engine.graph.store_setting(VOLUME + "places", "gfso-v")
     if probe is not None:
-        engine.probe_the_place_with(probe)
+        engine.stops.probe_the_place_with(probe)
     out = T.reopen(engine, "n1", "boss")
     assert "error" not in out and engine.graph.get_task(TaskId("n1")).state == State.OFFERED

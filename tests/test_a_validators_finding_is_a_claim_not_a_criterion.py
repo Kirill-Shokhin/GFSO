@@ -19,7 +19,8 @@ import json
 import pytest
 
 import gfso.tools as T
-from gfso.core.protocol.procedure import probe_id, refuting_probes, with_engine_observations
+from gfso.core.protocol.procedure import probe_id
+from gfso.core.protocol.accounting import refuting_probes, with_engine_observations
 from gfso.core.types import AgentId, Criteria, Probe, RevisionReason, TaskId
 from tests.support import criterion
 from tests.test_a_check_of_the_plan_is_not_the_goal import ROOT, STUB, STUB_SAYS, _finding, _pin, _settled, _standing, _whole

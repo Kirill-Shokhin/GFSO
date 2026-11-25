@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import Optional
 
 from gfso.core.protocol.invariants import INTENT, QUOTE_WORDS
-from gfso.core.protocol.procedure import EXACT_READ, INPUTS_TOKEN, laid, materialize_inputs, probe_id, probe_key, same_probe, unrerunnable
-from gfso.core.types import Signal, TaskId, files_at, set_aside_of
+from gfso.core.protocol.procedure import EXACT_READ, laid, materialize_inputs, probe_id, probe_key, same_probe
+from gfso.core.protocol.accounting import unrerunnable
+from gfso.core.types import INPUTS_TOKEN, Signal, TaskId, files_at, set_aside_of
 from gfso.engine import Engine
 from gfso.engine.audit import rejected_on_current_version
 from gfso.engine.findings import round_stands
 from gfso.engine.verdicts import OUTSIDE_NOTE
-from gfso.engine.validation import is_auto_root
+from gfso.engine.validation import heard_on, is_auto_root
 from gfso.observe import TAIL
 from gfso.workspaces import _unjoined_text, base_of, execution_of, node_temp
 
@@ -175,7 +176,7 @@ def must_show(p, seen: Optional[dict] = None) -> str:
 
 def _judged_as(p, seen: Optional[dict]) -> str:
     """Of an EXACT pinned check: that it is one, how its output is compared (`EXACT_READ`); of any — to its validator —
-    what the system's own run of it on this delivery observed (`tools_llm._observe_pins`)."""
+    what the system's own run of it on this delivery observed (`validate._observe_pins`)."""
     if not p.exact:
         return ("" if not (seen or {}).get("printed") else
                 "\n      (The system ran it on this delivery: its output shows that.)" if seen.get("matched") else
@@ -428,7 +429,7 @@ def _scope_node_block(engine, i: int, t, top, inside: frozenset, seen: dict | No
 
 
 #: what is said of a node's last delivery — `reports` held it, or handed it in; its validation built it
-#: (`tools_llm._validation_pass`) — the latest per node deciding
+#: (`validate._validation_pass`) — the latest per node deciding
 HELD, DELIVERED, BUILT, UNCOPIED = ("delivery held — ", "executor DELIVERED", "the validation's build — ",
                                     "the validation's copy — ")
 #: the heading each is said to the executor under; a hand-in is said under none
@@ -522,7 +523,7 @@ def owed_probes(engine: Engine, task, crits) -> list:
     pinned probes, the pinned probes of the DONE parts it rests on, and the probes that once refuted it.
 
     A part's probe is owed ONCE, under the first criterion resting on it: one observation serves every criterion on
-    it (`procedure.part_credit`) — and not at all where the same probe is already owed, the whole's own or another
+    it (`accounting.part_credit`) — and not at all where the same probe is already owed, the whole's own or another
     part's (`procedure.same_probe`): a copy owed again was the same command run two or three times under ids a weak
     validator mixed, and a whole's functional checks copied into a part landed under its first criterion, "build and
     hygiene", where the validator read them as out of scope (the sql root, 2026-10-27: six ⊥ validations of one sound
@@ -547,8 +548,8 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
     must re-run — over this round's inputs directories, laid down under `scratch` from the contract.
 
     `carry`: {probe id: the criterion it is written under} for the probes THIS run carries, when one validation is
-    split between runs by what it owes (`tools_llm._scope_batches`); None = everything `owed_probes` lists.
-    `seen`: {(node, probe id): the system's own run of that pinned probe on this delivery} (`tools_llm._observe_pins`)."""
+    split between runs by what it owes (`validate._scope_batches`); None = everything `owed_probes` lists.
+    `seen`: {(node, probe id): the system's own run of that pinned probe on this delivery} (`validate._observe_pins`)."""
     tid = str(task.id)
     # THE PROCEDURE EACH CRITERION PINS, handed over as part of the contract. It is not advice: a
     # PASS that skips a pinned probe is refused at the record, so the validator has to see them — and
@@ -671,14 +672,14 @@ _HEARD = {"request": "The person's request, as they asked it", "go": "The person
 
 def _persons_words(engine: Engine, task, crits) -> str:
     """What `answers_the_persons_words` is read against, where `crits` carry it: every word recorded over the goal, in
-    the order said (`Engine.heard_on`); the goal as given is the node's description. "" elsewhere."""
+    the order said (`validation.heard_on`); the goal as given is the node's description. "" elsewhere."""
     if INTENT not in {c.name for c in crits}:
         return ""
     return (f"## The person's recorded words — what `{INTENT}` is read against\n"
             "The goal as given is the node's description above; then, as recorded. Any verdict short of pass carries "
             "`quote`: ONE unbroken span (no `…`) of at least "
             f"{QUOTE_WORDS} words of ONE of the person's own utterances (the goal, their words), or the whole of a shorter one:\n\n"
-            + "".join(f"### {_HEARD.get(h['act'], h['act'])}\n{h['said']}\n\n" for h in engine.heard_on(task.id)))
+            + "".join(f"### {_HEARD.get(h['act'], h['act'])}\n{h['said']}\n\n" for h in heard_on(engine.graph, task.id)))
 
 
 def _issuers_fails(engine: Engine, task, validating: bool) -> str:

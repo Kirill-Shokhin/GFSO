@@ -17,6 +17,7 @@ from gfso.decompose.build import build_graph_live
 from gfso.engine.audit import AuditLog
 from tests.support import issuer_sweep, criterion
 from tests.test_the_mode_decides_who_holds_what import _FakeLLM, _Roster, _admit, _engine, _goal, _kid, _split
+import gfso.validate as VAL
 
 
 def _rows(e, task, signal):
@@ -167,7 +168,7 @@ def test_a_re_presentation_is_marked():
     T.signal(e, "kid", "ACCEPT", "exec-2")
     T.signal(e, "kid", "DELIVER", "exec-2", result="r")
     e.wait_idle()
-    assert D._represent(e, e.graph.get_task(TaskId("kid")), "exec-1", {"x"})
+    assert VAL._represent(e, e.graph.get_task(TaskId("kid")), "exec-1", {"x"})
     e.wait_idle()
     assert _rows(e, "kid", Signal.ASSIGN)[-1].by_system
 
@@ -232,7 +233,7 @@ def test_a_verdict_is_the_systems_signature_where_it_signs_and_the_parties_where
     T.signal(e, "kid", "ACCEPT", "exec-2")
     T.signal(e, "kid", "DELIVER", "exec-2", result="r")
     e.wait_idle()
-    assert D._replay_a_standing_verdict(e, None, TaskId("kid"), {"verdict": Verdict.FAIL, "failed_criteria": ["k"]}, "val",
+    assert VAL._replay_a_standing_verdict(e, None, TaskId("kid"), {"verdict": Verdict.FAIL, "failed_criteria": ["k"]}, "val",
                                         True) == "fail"
     e.wait_idle()
     T.signal(e, "kid", "DELIVER", "exec-2", result="again")

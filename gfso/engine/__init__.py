@@ -8,42 +8,39 @@ import dataclasses
 import json
 import logging
 import threading
-import time
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
-from gfso.core.types import (
-    Signal, State, SignalData, SignalOutcome, Refusal, VOLUME,
-    TaskId, AgentId, Verdict, passed, settled_positive,
-    Spec, Criteria, Probe, AcceptedRiskItem, Register, register_of, Task, CheckResult, CriterionMapping, DepEdge, seams_apart,
-    LLMProviderPort, AgentPort, StoragePort,
-    ClockPort, SystemClock, RunnerPort, ThreadRunner,
-    TERMINAL_STATES, DoneReason, Mode, RevisionReason, mode_starts_sessions,
-)
+from gfso.core.types import (Signal, State, SignalData, SignalOutcome, Refusal, TaskId, AgentId, Verdict,
+                             settled_positive, Spec, Criteria, Probe, AcceptedRiskItem, Register, register_of, Task,
+                             CheckResult, CriterionMapping, DepEdge, seams_apart, LLMProviderPort, AgentPort,
+                             StoragePort, ClockPort, SystemClock, RunnerPort, ThreadRunner, TERMINAL_STATES,
+                             DoneReason, Mode, RevisionReason, mode_starts_sessions)
 from gfso.core.graph import Graph
-from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
-                                   start_waits, signs_as, is_its_executor, persons_over, issuer_moves_key,
-                                   non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, checker_choices_key, root_of, root_issuer_key,
-                                   register_log_key, stamp, stamped_with, keep_the_beat, project_now, clock_off_s,
-                                   logged_criteria, goal_deps_key)
+from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without,
+                                   dep_order_refutations, dep_scope, generation_of_task, start_waits, signs_as,
+                                   is_its_executor, persons_over, issuer_moves_key, non_leaf_ids, TECH_KEY,
+                                   WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key,
+                                   checker_choices_key, root_of, root_issuer_key, register_log_key, stamp,
+                                   stamped_with, project_now, logged_criteria, goal_deps_key)
 from gfso.core.graph.mutations import InvariantViolation, declare, one_per_pair, retire_if_moved, stand_ins_index
 from gfso.core.handlers.structural import run_structural
-from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share, pass_stands_refuted
+from gfso.core.graph import q_T, q_D, q_V, q_Dep, q_Del, false_fail_share
 from gfso.core.graph.review import SESSION_FIT, finding_about, finding_keys, progress_baseline
 from gfso.core.graph.projection import build as build_projection, render as render_projection
 from gfso.core.protocol.fsm import available_signals, not_admissible_here, transition
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, probes_of, probes_that_expected_nothing,
-                                          verdict_report_defects, probe_labels, unrun_probes, INTENT)
-from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_not_reproduced, plan_pins, runs_pin, same_expectation, BOUND_SPENT,PAST_BOUND, PAST_WHOLE, admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
-                                          refuting_probes, merge_regression, probe_id, probe_key, layable_over, unrerunnable,
-                                          unaccounted_for, orphaned_regression,
+                                           verdict_report_defects, probe_labels, unrun_probes, INTENT, PAST_BOUND)
+from gfso.core.protocol.procedure import (admission_defects, criterionless, probe_id, probe_key, layable_over,
                                           claim_digest)
+from gfso.core.protocol.accounting import (findings_not_reproduced as _findings_not_reproduced, plan_pins, runs_pin,
+                                           same_expectation, BOUND_SPENT, PAST_WHOLE, canonical_citations,
+                                           parts_not_shown_holding, refuting_probes, merge_regression, unrerunnable,
+                                           unaccounted_for)
 
-from gfso.config import (
-                         PIPELINE_PAGE, USAGE_PAGE, LIMIT_RETRY_S, PERSONS_NAMES, SYSTEM, CALLER,
-                         MODEL_DEFAULT, VERDICT_FIELD_CHARS, agent_id as _config_agent_id, caller_via,
-                         state_timeout as _config_state_timeout)
+from gfso.config import (PIPELINE_PAGE, USAGE_PAGE, PERSONS_NAMES, SYSTEM, CALLER, MODEL_DEFAULT, VERDICT_FIELD_CHARS,
+                         agent_id as _config_agent_id, state_timeout as _config_state_timeout)
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
                     resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
@@ -58,37 +55,37 @@ from .claims import Claims
 from .joins import Joins
 from .moves import Move, door_holder
 from .parking import Parking
+from .stops import Stops
+from .closures import open_nodes
 from .tech_reports import addressee as report_addressee, read as read_reports, report_id, resolution_refusal, resolved as resolved_report
 from .workforce import Workforce
 from .admission import (admit as _admit, admit_register as _admit_register, refuse_a_contract_that_pins_nothing,
                         refuse_what_the_act_cannot_take,
                         refuse_a_d_cycle)
-from .validation import (AdmissionRefused, pause_record, users_plan as _users_plan, _l0_holes, _l2_undischarged, l2_gate_on, no_live_deadline, dep_cycle_closed,
-                         issuing_condition, rule_refusal, signer_refusal, whole_waits_for_its_parts,
-                         parts_outside_the_delivery as _parts_outside_the_delivery, mode_kind, party_kind, is_auto_root,
-                         displaces_a_refutation, observation_blocker,
-                         fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here, held_in_chat as _held_in_chat,
+from .validation import (AdmissionRefused, _l0_holes, _l2_undischarged, l2_gate_on,
+                         no_live_deadline, dep_cycle_closed, issuing_condition, rule_refusal, signer_refusal,
+                         whole_waits_for_its_parts, parts_outside_the_delivery as _parts_outside_the_delivery,
+                         mode_kind, party_kind, is_auto_root, displaces_a_refutation, observation_blocker,
+                         checked_by_contact as _checked_by_contact,
+                         observed_here as _observed_here, held_in_chat as _held_in_chat,
                          owed_observer as _owed_observer, VALIDATOR_CHOSEN, named_checker as _named_checker,
                          checker_refused as _checker_refused, checker_choices as _checker_choices,
-                         others_records as _others_records, of_record as _of_record_by, of_record_now as _of_record_now, appointee as _appointee,
-                         session_fit as _session_fit, scope_top as _scope_top,
-                         scope_members as _scope_members, split_owed as _split_owed,
+                         others_records as _others_records, of_record as _of_record_by,
+                         of_record_now as _of_record_now, appointee as _appointee, session_fit as _session_fit,
+                         scope_top as _scope_top, scope_members as _scope_members, split_owed as _split_owed,
                          deferral_refused as _deferral_refused, split_waits_on as _split_waits_on,
-                         split_after as _split_after,
-                         checks_no_longer_run as _checks_no_longer_run,
+                         split_after as _split_after, checks_no_longer_run as _checks_no_longer_run,
                          parts_procedure as _parts_procedure, plans_own_findings as _plans_own_findings,
-                         settled_procedure as _settled_procedure,
-                         observation_binds as _observation_binds,
-                         observation_standing, record_stands as _record_stands,
-                         redelivery_refusal, execution_admitted as _execution_admitted,
-                         hole_kind, project_mode as _project_mode, depth_of as _depth_of,
-                         holder_boundary as _holder_boundary, held_plan_node_refusal, hands_of as _hands_of,
-                         HEARD_ON, IN_CHAT, in_chat_names as _in_chat_names, mode_scopes as _mode_scopes, mode_at as _mode_at, scope_at as _scope_at,
-                         outside_the_scopes, heard_on as _heard_on, goal_top as _goal_top, persons_node as _persons_node,
+                         settled_procedure as _settled_procedure, observation_binds as _observation_binds,
+                         observation_standing, record_stands as _record_stands, redelivery_refusal,
+                         execution_admitted as _execution_admitted, hole_kind, project_mode as _project_mode,
+                         depth_of as _depth_of, holder_boundary as _holder_boundary, held_plan_node_refusal,
+                         HEARD_ON, IN_CHAT, in_chat_names as _in_chat_names,
+                         mode_scopes as _mode_scopes, mode_at as _mode_at, scope_at as _scope_at, outside_the_scopes,
+                         heard_on as _heard_on, goal_top as _goal_top, persons_node as _persons_node,
                          observes_by_itself as _observes_by_itself, would_be_a_top as _would_be_a_top,
-                         persons_seam as _persons_seam, his_check as _his_check, a_human as _a_human,
-                         executed_by_a_human as _executed_by_a_human,
-                         STAFF_HIS_SEAMS, fails_on_this_version, StaleRun)
+                         persons_seam as _persons_seam, his_check as _his_check,
+                         executed_by_a_human as _executed_by_a_human, STAFF_HIS_SEAMS, fails_on_this_version, StaleRun)
 from .events import EventBus, PlanWatch, TransitionCallback, ErrorCallback, RejectCallback
 from .loop import _guard_context, event_loop, record_refusal, refresh_checks, timeout_monitor
 
@@ -100,8 +97,6 @@ log = logging.getLogger(__name__)
 SETTINGS = ("system_model", "planner_model", "l2_gate", "network", "deadline_s", "observe", "bounds", "max_iterations",
             "intent_check")
 
-#: How long after the account's limit says it lifts the system starts the project it stopped: a clock or two apart.
-LIFT_MARGIN_S = 30
 #: THE PERSON'S OWN WORDS on the act a door is making now (`set_mode`'s `user_said`, carried to every verb that can revise
 #: a root's packet): under `solo` and `semi` the root's criteria are the person's agreement, and they change only on their
 #: words, recorded on the feed for the person to see — a solo agent rewrote an agreed check after the go into one that
@@ -109,10 +104,6 @@ LIFT_MARGIN_S = 30
 PERSONS_WORDS: ContextVar[str] = ContextVar("persons_words", default="")
 #: the acts whose recorded words are the person's own (`Engine.hear`) — the plan agreed at the go is the agent's text
 PERSONS_ACTS = ("request", "go", "revise", "verdict", "answer")
-#: what of a stop's record the system lifts it by: a time, an execution place, a credential store's stamp
-LIFTS = ("until", "place", "account")
-#: How long what the place probe said stands for R′'s gate (`place_down`): each asking is a container of its own.
-PLACE_SEEN_S = 60
 #: set once the roots an earlier build created under AUTO read their issuer as the system party
 #: (`Engine._the_system_party_where_auto_created`)
 SYSTEM_PARTY_READ = "system_party_read"
@@ -143,16 +134,6 @@ def _typed_cause(reason):
     if reason is not None and not isinstance(reason, RevisionReason):
         raise TypeError(f"a revision's reason is a RevisionReason, not {type(reason).__name__} {reason!r}")
     return reason
-
-
-def _via() -> dict:
-    """The credential the act came through, as the log keeps it beside a signer (`config.caller_via`) — none in process."""
-    return {"via": v} if (v := caller_via()) else {}
-
-
-def _via_said() -> str:
-    """…and as an event line says it: a page's stop told from a console's."""
-    return f" via {v}" if (v := caller_via()) else ""
 
 
 def second_root_refusal(tasks, task_id) -> Optional[str]:
@@ -206,10 +187,6 @@ class Engine:
         storage = PlanWatch(storage, self._events)
         self._graph = Graph(storage)
         self._storage = storage           # the port this engine was given — its own, not reached for under the graph
-        self._stop_lock = threading.Lock()  # a person's stop and the system's start of its own stop never cross
-        self._place_probe = None            # where the project runs, asked while it is down (`probe_the_place_with`)
-        self._place_seen = None             # when the place probe last said it answers (`place_down`)
-        self._account_probe = None          # the credential store's stamp, asked under an account's stop
         self._tech_lock = threading.Lock()  # one writer of each list kept in one setting (`_appended`)
         self._agents = agents
         self._llm = llm
@@ -254,6 +231,9 @@ class Engine:
         self.joins = Joins(self._graph)          # where each passed result stands (`mark_joining`)
         self.workforce = Workforce(self._graph, lambda: self.project_name)   # who works here (published)
         self.parking = Parking(self._graph, self.accepted_moves)   # what waits on an undecided park
+        # …its lines through `emit_info` as it stands when said: a reader wrapping the engine's event line hears them
+        self.stops = Stops(self._graph, storage, self._audit, lambda *a, **k: self.emit_info(*a, **k), self._records,
+                           self._appended)
         self._graph.carries_work = self.system_carries_work         # whether a stop or a gap holds its time (`time_holds`)
 
     # === Lifecycle ===
@@ -265,7 +245,7 @@ class Engine:
         self._started = True
         # …the gap since the project's last beat, decided before anything reads a bound (§12.2) by the monitor's own rule
         # over the stored beat (`keep_the_beat`): an engine opened beside a running one finds it kept
-        self._keep_the_beat("the server was down", "the server's start")
+        self.stops.keep_the_beat("the server was down", "the server's start")
         # THE CACHED CHECKS ARE THIS BUILD'S: a project written by an older one carried its verdicts, and `list_holes`
         # answered [] from them while the plan gate, reading the live rule, named the hole (critic r15)
         for t in self.all_tasks():
@@ -279,8 +259,8 @@ class Engine:
 
         self._runner.spawn(
             lambda: timeout_monitor(self._graph, self._queue, self._check_interval, self._stop,
-                                    self._state_timeout, self._clock, self.lift_the_system_stop,
-                                    lambda since, before: self._record_the_gap("the host slept", since, before,
+                                    self._state_timeout, self._clock, self.stops.lift_the_system_stop,
+                                    lambda since, before: self.stops.record_the_gap("the host slept", since, before,
                                                                                "the monitor's next tick")),
             name="gfso-timeout-monitor")
 
@@ -327,7 +307,7 @@ class Engine:
         """What a signal is refused before the queue, in its sender's thread: an ASSIGN on a settled node — R′'s edge,
         whatever door sent it — while the place cannot work it (`reopen_place_refusal`, a probe the loop never runs)."""
         t = self._graph.get_task(sd.task_id) if sd.signal in (Signal.ASSIGN, Signal.ACCEPT_CHALLENGE) else None
-        if t is not None and sd.signal == Signal.ASSIGN and (why := self.reopen_place_refusal(t)):
+        if t is not None and sd.signal == Signal.ASSIGN and (why := self.stops.reopen_place_refusal(t)):
             raise ValueError(why)
         # …and a root's criteria changed only on the person's words, by every act that installs a packet: a re-ASSIGN
         # and an ACCEPT_CHALLENGE alike (§11.3: it "installs a packet exactly as an ASSIGN does"; §12.16)
@@ -534,7 +514,6 @@ class Engine:
 
     # === Query API ===
 
-
     def get_checks(self, task_id: TaskId) -> list[CheckResult]:
         """Read the CACHED L0/L1 checks (O(1)) — kept fresh by _recompute_checks on
         every decomposition change (cheap eager invalidation). Many watchers read this
@@ -574,7 +553,7 @@ class Engine:
         «oversight at the level above»), and so recorded."""
         if self._graph.get_task(task_id) is not None:
             raise ValueError(f"'{task_id}' exists — its issuer was fixed when it was created")
-        if str(issuer) in PERSONS_NAMES and self.mode_kind() == Mode.AUTO:
+        if str(issuer) in PERSONS_NAMES and mode_kind(self._graph) == Mode.AUTO:
             issuer = AgentId(SYSTEM)
         self._storage.store_setting(root_issuer_key(task_id), str(issuer))
 
@@ -662,24 +641,16 @@ class Engine:
         at = _scope_at(self._graph, t) if t is not None else None
         return at and {**at[0], "top": str(at[1].id), "holder": str(at[1].assignee)}
 
-    def mode_scopes(self) -> dict:
-        """{the node above a top: its record} over this project's live tops (`validation.mode_scopes`)."""
-        return _mode_scopes(self._graph)
-
     def performs_in_chat(self, name) -> None:
         """Record that `name` performs in a chat here — a move signed under it over MCP (`tools_llm._signed`), taken by
         `act_as` or launched with its token, the executor's own fact:
         each seam the person issues to it is then a top it holds as his solo agent holds his project (`scope_at`). Kept
         once, with its time; never for a name of his, nor for a role of the system's (`take` refuses one)."""
-        if not name or str(name) in PERSONS_NAMES or str(name) in self.in_chat_names():
+        if not name or str(name) in PERSONS_NAMES or str(name) in _in_chat_names(self._graph):
             return
         self._storage.store_setting(IN_CHAT, json.dumps({**json.loads(self._storage.get_setting(IN_CHAT) or "{}"),
                                                          str(name): {"since": datetime.now().isoformat()}}))
         self.emit_info("mode", f"{name} performs in a chat: each seam the person issues to it is held solo there")
-
-    def in_chat_names(self) -> dict:
-        """{name: {since}} of the names that perform in a chat here (`validation.in_chat_names`)."""
-        return _in_chat_names(self._graph)
 
     def would_be_a_top(self, parent_id, held) -> Optional[dict]:
         """The record a node issued under `parent_id` to `held` would be a top under (`validation.would_be_a_top`)."""
@@ -689,7 +660,6 @@ class Engine:
     def goal_top(self, node) -> bool:
         """Is `node` the top of a goal's contract — a root, one not made yet, or a mode scope's top (`validation.goal_top`)?"""
         return _goal_top(self._graph, self._graph.get_task(TaskId(str(node))))
-
 
     def settings(self) -> dict:
         """What the project sets for itself (`set_mode`'s settings) as it stands; unset ones are the server's."""
@@ -718,10 +688,10 @@ class Engine:
                 f"a boundary is the depth down to which the user-agent holds the tree in SEMI-AUTO, "
                 f"at least 1 (the root); SOLO holds everything and AUTO nothing, so {mode.value} takes "
                 f"none")
-        if scopes := self.mode_scopes():
+        if scopes := _mode_scopes(self._graph):
             raise ValueError(f"seams the person issued here are held in their holders' chats (under "
                              f"{', '.join(scopes)}): a project mode beside them would answer who holds a node twice")
-        was = self.mode_kind()
+        was = mode_kind(self._graph)
         # numbered and stamped: a mode switched and switched back leaves a DIFFERENT record, so a reader
         # comparing records (an experiment's validity check, an audit) sees that it moved at all
         rec = {"mode": mode.value, "boundary": boundary, "by": str(author),
@@ -776,12 +746,8 @@ class Engine:
         shows them cut: what `answers_the_persons_words` is read against (`persons_words`). `with_it`: what the act
         wrote with those words (a revision's `intent`, the criterion's text it installed). Said twice, kept once."""
         if (said := str(said or "").strip()) and (h := {"act": act, "said": said, **with_it}) not in (
-                was := self.heard_on(root_id)):
+                was := _heard_on(self._graph, root_id)):
             self._storage.store_setting(f"{HEARD_ON}{root_id}", json.dumps([*was, h]))
-
-    def heard_on(self, root_id) -> list[dict]:
-        """[{act, said}] recorded over the goal `root_id` (`hear`), oldest first."""
-        return _heard_on(self._graph, root_id)
 
     def persons_words(self, task) -> Optional[list[str]]:
         """What a FAIL of `answers_the_persons_words` on `task` may quote, one utterance each: the goal as given — its
@@ -795,7 +761,7 @@ class Engine:
         over, t = [task], self._graph.get_parent(task.id) if seam else None
         while t is not None:
             over, t = [*over, t], self._graph.get_parent(t.id)
-        return [task.spec.description, *(h["said"] for n in over for h in self.heard_on(n.id) if h["act"] in PERSONS_ACTS)]
+        return [task.spec.description, *(h["said"] for n in over for h in _heard_on(self._graph, n.id) if h["act"] in PERSONS_ACTS)]
 
     def set_settings(self, settings: dict, author: AgentId, said: str = "") -> dict:
         """Change only what the project sets for itself (`set_mode`'s settings), leaving who holds what as recorded — a
@@ -815,217 +781,6 @@ class Engine:
                        + (f" — «{said}»" if said else ""))
         return rec
 
-    def paused(self) -> Optional[dict]:
-        """The project's stop as set — {by, at, why} — or None while it runs (`validation.pause_record`)."""
-        return pause_record(self._graph)
-
-    def pause(self, by: str, why: str = "", until: Optional[float] = None, place: Optional[str] = None,
-              account: Optional[str] = None) -> dict:
-        """STOP: the system starts no session of any role here — sessions already running finish and their signals land
-        — and the clock fires no timeout; its time is left off the project's clocks, tick by tick. It writes
-        nothing into the graph: a stop is the user's act on the run, not a protocol move. A stop standing already is
-        kept as it was: a second one would lose the time of the first — except one the system starts again by itself
-        (`until`, the account's limit; `place`, an execution place down): a later lift extends it, and any other stop
-        over it takes it, keeping its start, so the system never starts what a person stopped. `off_s`: the doors' off
-        time while it stands (`model.door_off_s`). `account`: the credential store's stamp an account's stop was made
-        on — a person setting a credential changes it, and the stop lifts then (`lift_the_system_stop`)."""
-        self._keep_the_beat("the host slept", "the stop")
-        with self._stop_lock:
-            was = self.paused()
-            held = {k: was[k] for k in LIFTS if (was or {}).get(k) or k == "account" and (was or {}).get(k) is not None}
-            lifts = {**held, **({"until": max(until, held.get("until", 0))} if until else {}),
-                     **({"place": place} if place else {}),
-                     **({"account": account} if account is not None else {})} if until or place else {}
-            if was and (not held or lifts == held):
-                return was
-            rec = {**{k: v for k, v in (was or {"at": datetime.now().isoformat(timespec="seconds"),
-                                                "off_s": clock_off_s(self._graph)}).items() if k not in held},
-                   "by": str(by), "why": str(why or ""), **lifts, **_via()}
-            self._storage.store_setting(PAUSE_KEY, json.dumps(rec))
-        # …ONE LINE PER STOP: the system's own stop only extended by the same cause says nothing new — one refused
-        # authoring booked its calls at once and wrote five STOPPED lines for one missing credential (s20g1)
-        if not (was and held and str(by) == "system" and set(lifts) == set(held)):
-            self.emit_info("pause", f"STOPPED by {by}{_via_said()}" + (f": {why}" if why else "") + " — nothing new starts")
-        return rec
-
-    def resume(self, by: str) -> Optional[dict]:
-        """START again: the stop that stood, or None where none did. Its time is already off the project's clocks: the
-        monitor leaves off every tick made under a stop (`project_now`)."""
-        self._keep_the_beat("the host slept", "the start")
-        with self._stop_lock:
-            was = self._take_the_stop()
-        if was:
-            self.emit_info("pause", f"STARTED again by {by}{_via_said()} (stopped since {was.get('at')})")
-            self._record_the_held_time(was, by)
-        return was
-
-    def _keep_the_beat(self, cause: str, by: str) -> None:
-        """The beat kept NOW, before a start, a stop or its lift reads the clock (`keep_the_beat`): the gap since the last
-        beat is decided under the stop as it stood across it — a sleep a Start right after a wake would count once in the
-        stop's held time and again at the next tick, and a Stop there would leave off unrecorded — and recorded, `cause`."""
-        if gap := keep_the_beat(self._graph, time.time()):
-            self._record_the_gap(cause, *gap, by)
-
-    def _take_the_stop(self, standing: Optional[dict] = None) -> Optional[dict]:
-        """The stop taken off as one act on the store (`Graph.swap_settings`) — `standing`, where given, only while it is
-        the stop that stood: of two engines over one project lifting it, one takes it and records its held time."""
-        took = None
-
-        def take(get):
-            """The stop cleared inside the store's one act, if it stands (as `standing`, where given)."""
-            nonlocal took
-            was = json.loads(get(PAUSE_KEY) or "null")
-            if not was or standing is not None and was != standing:
-                return {}
-            took = was
-            return {PAUSE_KEY: ""}
-        self._graph.swap_settings(take)
-        return took
-
-    def _record_the_gap(self, cause: str, since: float, before: float, by: str) -> None:
-        """A gap nobody ran the project in, left off its clocks — a server down, a host asleep — recorded on the deadlines
-        it moves as a stop's held time is (`_record_the_held_time`), `cause` in the stop's place — told by the one caller
-        that kept it (`keep_the_beat`)."""
-        self._record_the_held_time({"by": cause, "at": datetime.fromtimestamp(since).isoformat(timespec="seconds"),
-                                    "off_s": before, "gap": True}, by)
-
-    def _record_the_held_time(self, was: dict, by: str) -> None:
-        """THE RECORD OF THE DECLARED DEPARTURE, ON EVERY DEADLINE IT MOVES. Where the system carries the work, the time
-        a stop held is left off the project's clocks (`time_holds`) — a decision the canon does not make, its deadline
-        "never suspended" (§12.2), declared as the product's (architecture, corner 16) — so each live deadline reads that
-        much later on the wall, and Thm 11 asks that decision a record: the node's own says the deadline as it read before
-        and after, how long the time held, who or what stopped it and what started it again. Beside the log, as a
-        finding's ruling is (corner 18), not a revision: a re-ASSIGN would re-offer every consented node (Inv-1),
-        re-present every delivery (§12.10) and make a person's issuer move on his own nodes."""
-        if was.get("off_s") is None or (held := clock_off_s(self._graph) - float(was["off_s"])) < 1:
-            return
-        rec = {"held_s": round(held, 1), "stopped_by": was.get("by"), "why": was.get("why") or "",
-               "since": was.get("at"), "started_by": str(by), "at": datetime.now().isoformat(timespec="seconds"),
-               "log_at": len(self._audit)}
-        for t in self._graph.active_tasks():
-            if t.deadline is not None:
-                now = on_the_wall(self._graph, t.deadline)
-                self._appended(f"{DEADLINE_MOVES}{t.id}", {
-                    "was": (t.deadline + timedelta(seconds=float(was["off_s"]))).isoformat(), "now": now.isoformat(), **rec})
-                self.emit_info("clock", f"{t.id}: its deadline reads {held / 60:.0f} min later, {now:%Y-%m-%d %H:%M} — "
-                                        f"{'' if was.get('gap') else 'the stop by '}{was.get('by')} since "
-                                        f"{was.get('at')}, the project's time held; "
-                                        f"its contract and consent stand")
-
-    def deadline_moves(self, task_id) -> list[dict]:
-        """How the node's deadline moved on the wall, oldest first (`_record_the_held_time`)."""
-        return self._records(f"{DEADLINE_MOVES}{task_id}")
-
-    def stop_for_the_limit(self, role: str, lifts_at: Optional[float]) -> dict:
-        """THE ACCOUNT'S LIMIT IS A STOP IN SUBSTANCE: while it refuses every call nobody can move, so no bound may run
-        (docs/notes/PROJECT_CLOCK.md, case 10). The system stops the project until the limit lifts — when the CLI said,
-        else after LIMIT_RETRY_S, when the next refused call (a second's probe) stops it again."""
-        until = float(lifts_at) + LIFT_MARGIN_S if lifts_at else time.time() + LIMIT_RETRY_S
-        return self.pause("system", f"the account's usage limit refused {role}'s call — until "
-                                    f"{datetime.fromtimestamp(until):%Y-%m-%d %H:%M}", until)
-
-    def stop_for_the_account(self, role: str, why: str, remedy: Optional[str] = None) -> dict:
-        """AN ACCOUNT THAT REFUSES AUTHENTICATION IS A STOP IN SUBSTANCE, as the limit is: no call of any role answers
-        until a person sets its credential (`remedy`, the provider's words), and the redials of a cut call spent an hour
-        on it while every bound ran (GB_c_compiler_tncfs1160, 2026-10-23 11:29–12:29: four nodes timed out). Stopped, and
-        asked again after LIMIT_RETRY_S — the next refused call stops it again — or at once when a credential is set: a
-        stop timed alone held a project ten minutes past the credential that lifted it (s20g1, 01:47→01:57)."""
-        until = time.time() + LIMIT_RETRY_S
-        said = remedy or (f"the account refused authentication ({why[:160]}): set its credential again "
-                          f"(`gfso credential <provider>`)")
-        return self.pause("system", f"{role}'s call: {said}; asked again {datetime.fromtimestamp(until):%Y-%m-%d %H:%M}, "
-                                    f"or once a credential is set", until, account=self._account_stamp() or "")
-
-    def probe_the_account_with(self, stamp) -> None:
-        """Hand the engine `stamp()`: the credential store's state as one string, changed by any credential set
-        (`credentials.stamp`) — from the layer that knows the store, as the place probe is handed."""
-        self._account_probe = stamp
-
-    def _account_stamp(self) -> Optional[str]:
-        """The credential store's stamp now, or None where no layer handed a probe or it did not answer."""
-        try:
-            return None if self._account_probe is None else str(self._account_probe())
-        except Exception:                               # noqa: BLE001 — a probe that fails says nothing changed
-            return None
-
-    def stop_for_the_place(self, place: str, why: str) -> dict:
-        """AN EXECUTION PLACE DOWN IS A STOP IN SUBSTANCE, as the limit is: no session of any role can start, so nobody
-        can move (PROJECT_CLOCK.md, case 14). Stopped until the place answers its probe (`lift_the_system_stop`)."""
-        return self.pause("system", why, place=place)
-
-    def probe_the_place_with(self, probe) -> None:
-        """Hand the engine the probe of where its project runs — `probe(place)`: why the place its stop names cannot
-        answer a call, or None — the execution's (`ExecutionPort.unavailable`), or a model server's address
-        (`chat.answers`) — from the layer that knows the places, as `joins.set_join_owed` is handed."""
-        self._place_probe = probe
-
-    def reopen_place_refusal(self, t: Task) -> Optional[str]:
-        """Why a settled node may not cross R′'s edge now: the place its project runs in does not answer, so the
-        reopened node could not be worked and the reopen would be spent for nothing — or None. §12.16 (ii): it names
-        the requirement and the person's lift. Read by R′'s gate (`reopen_refusal`), which every door that reopens asks
-        — `reopen`, a re-admission re-issuing a settled child, `refusal_for` — and by `_revise`, the FSM's own door."""
-        # …and not where the edge is shut for good: a place brought back would not lift that, its own gate says why
-        if t.state not in TERMINAL_STATES or issuing_condition(self._graph.get_parent(t.id), t.id) \
-                or self._graph.is_consumed(t) or t.reopens >= t.max_reopens or not (down := self.place_down()):
-            return None
-        return (f"{t.id} stays {t.state.name}: the place its project runs in does not answer ({down}), so a reopened "
-                f"node could not be worked and the reopen would be spent for nothing. Bring the place back and reopen; "
-                f"where its volume is gone, what of the work landed is on the branch `gfso/<project>/accepted` of your "
-                f"repository, and the goal is taken up again as a new goal from there (§12.14).")
-
-    def place_down(self) -> Optional[str]:
-        """Why the volumes this project's places are recorded in cannot answer a call now (its daemon, its storage, a
-        volume gone), or None — None too where none is recorded (a host's place is never down: its probe answers whether
-        unattended work may run there, which a person's own work does not ask) or no layer handed a probe."""
-        if self._place_probe is None or not self.graph.setting(VOLUME + "places"):
-            return None
-        # …one answer a minute: the R′ gate reads it on every surface that lists a reopen, each a probe container
-        # …"answers" kept; "down" asked again each time, so the person's fix is read at once
-        if self._place_seen is not None and time.monotonic() - self._place_seen <= PLACE_SEEN_S:
-            return None
-        if (down := self._probe_says("")) is None:
-            self._place_seen = time.monotonic()
-        return down
-
-    def _probe_says(self, place: str) -> Optional[str]:
-        """The place probe's answer; one that raises did not answer — raised here, it killed the monitor's thread, and
-        no bound fired again (Inv-5)."""
-        try:
-            return self._place_probe(place)
-        except Exception as e:                          # noqa: BLE001 — a probe that fails is a place that does not answer
-            return f"{type(e).__name__}: {e}"
-
-    def stop_wait_s(self) -> Optional[float]:
-        """Seconds until the system's own stop can lift — its `until`; a place's next probe is a tick away and nothing
-        starts meanwhile — or None where none stands: a round it refused, parked on a wall timer past the lift, would
-        spend project time with nobody moving."""
-        stop = self.paused() or {}
-        if until := stop.get("until"):
-            return max(1.0, float(until) - time.time() + 1.0)
-        return 1.0 if stop.get("place") else None
-
-    def lift_the_system_stop(self, wall: float) -> None:
-        """START what the system stopped by itself once what stopped it is gone — the limit lifted (`until`), the place
-        answering its probe (`place`) — only that stop: a person's never. The monitor asks at every tick under a stop,
-        so an engine started over a standing one re-arms it from its record."""
-        was = self.paused()
-        # …an account's stop lifts too once its credential store moved: a person set what it waited for
-        now = self._account_stamp() if was and was.get("account") is not None else None
-        moved = now is not None and now != was["account"]
-        if not (was and (was.get("until") or was.get("place"))) or (was.get("until") or 0) > wall and not moved:
-            return
-        if was.get("place") and (self._place_probe is None or self._probe_says(was["place"]) is not None):
-            return
-        with self._stop_lock:
-            if not self._take_the_stop(was):      # a stop made while the place was probed is that stop's
-                return
-        self.emit_info("pause", "STARTED again by system: " + " and ".join(
-            ([f"the execution place {was['place']} answers"] if was.get("place") else [])
-            + ([] if not was.get("until") else ["a credential was set"] if moved else
-               ["the time to ask the account again came"] if was.get("account") is not None else
-               ["the account's limit lifted"])) + f" (stopped since {was.get('at')})")
-        self._record_the_held_time(was, "system")
-
     def tech_report(self, text: str, role: str, actor: str, task_id=None) -> dict:
         """A report about the SYSTEM, not the task — a check contradicting its contract, a tool that cannot run, an answer
         that ignored what was shown. Outside the twelve signals: it moves nothing and no packet reads it back; it lies
@@ -1041,10 +796,6 @@ class Engine:
         self.emit_info("tech_report", f"TECH REPORT from {role} {actor}" + (f" on {task_id}" if task_id else "")
                                       + f": {rec['text'][:300]}")
         return rec
-
-    def users_plan(self) -> bool:
-        """Is this project's plan the user's (`validation.users_plan`)?"""
-        return _users_plan(self._graph)
 
     def outside_of_this_delivery(self, task_id) -> list:
         """[{what, evidence}] the verdict on the node's current delivery saw outside the criteria, unanswered
@@ -1170,22 +921,9 @@ class Engine:
         with self._tech_lock:
             self._storage.store_setting(key, json.dumps((self._records(key) + [rec])[-(kept or 0):]))
 
-    def hands_of(self, party) -> Optional[str]:
-        """The executor whose session performs `party`'s nodes, or None (`validation.hands_of`)."""
-        return _hands_of(self._graph, party)
-
-    def depth_of(self, task_id: TaskId) -> int:
-        """How many edges from the root down to this node (the root is 0)."""
-        return _depth_of(self._graph, task_id)
-
-    def holder_boundary(self) -> Optional[float]:
-        """b: the user-agent holds depths < b, the system holds b and below; None with no mode set
-        (`validation.holder_boundary` — one reading, shared with the engine's own rule on held nodes)."""
-        return _holder_boundary(self._graph)
-
     def held_by_the_user_agent(self, depth: int) -> Optional[bool]:
         """Does the mode put a node at this depth in the user-agent's hands? None with no mode set."""
-        b = self.holder_boundary()
+        b = _holder_boundary(self._graph)
         return None if b is None else depth < b
 
     def held_node_refusal(self, task_id: TaskId, signal: Signal) -> Optional[str]:
@@ -1378,11 +1116,11 @@ class Engine:
                 self.emit_info("account", f"{c.get('stage') or stage}'s call ended {c.get('ended')} — nothing of the "
                                           f"system's runs here, so the project goes on: {str(c.get('error'))[:200]}")
             elif c.get("ended") == "limit":
-                self.stop_for_the_limit(str(c.get("stage") or stage), c.get("limit_resets_at"))
+                self.stops.stop_for_the_limit(str(c.get("stage") or stage), c.get("limit_resets_at"))
             elif c.get("ended") == "unavailable":
-                self.stop_for_the_place(str(c.get("place")), str(c.get("error")))
+                self.stops.stop_for_the_place(str(c.get("place")), str(c.get("error")))
             elif c.get("ended") == "unauthorized":
-                self.stop_for_the_account(str(c.get("stage") or stage), str(c.get("error")), c.get("remedy"))
+                self.stops.stop_for_the_account(str(c.get("stage") or stage), str(c.get("error")), c.get("remedy"))
         # told to live observers the moment it is booked (not persisted: the ledger itself is the record), so an open
         # page re-reads its spend when there is something new rather than on a clock of its own
         if n:
@@ -1420,7 +1158,6 @@ class Engine:
         return tot
 
     # === Execution-validation record (the validate_result verdict; feeds the self-pass gate) ===
-
 
     def _as_reported(self, task_id: TaskId, per_criterion: Optional[list], failed: list) -> tuple:
         """(the node, its report with every pinned probe it cites as the system spelled it cited by its id —
@@ -2028,7 +1765,6 @@ class Engine:
                          **stamp(gen), **({"tree": tree} if tree else {}),
                          "ts": datetime.now().isoformat(sep=" ", timespec="seconds")})
 
-
     def pass_blocked_by(self, task_id: TaskId) -> Optional[dict]:
         """Why a PASS on this node would be refused whoever signs it — or None when nothing does.
 
@@ -2239,7 +1975,7 @@ class Engine:
         happen after that", which the log's order answers and a clock does not (`AuditLog.last_at`)."""
         return self._audit.last_at(task_id, signal=signal, new_state=new_state)
 
-    def _authoring_digest(self, task_id: TaskId) -> Optional[str]:
+    def authoring_digest(self, task_id: TaskId) -> Optional[str]:
         """The procedure digest of the contract this node was FIRST assigned — the pre-registered
         one. Read off the append-only log (every ASSIGN stores its spec), so nothing is duplicated."""
         for e in self._audit.get_entries(task_id):
@@ -2663,7 +2399,6 @@ class Engine:
             return
         self._admit(to.parent_id, [(to.id, to.spec, to.assignee)], {}, deps={str(to.id): tuple(edges)}, check=False)
 
-
     def map_criterion(self, parent_id: TaskId, covers: dict) -> Task:
         """Bind EXISTING children to the parent's criteria (`covers`: child → criteria) — a re-admission of the
         parent's split (§11.5), the battery over the split as it will then stand, logged as the admission it is.
@@ -2686,7 +2421,6 @@ class Engine:
             f"{', '.join(v)} → {k}" for k, v in covers.items())
             + " (the split re-admitted; every child's contract as it was)")
         return self._graph.get_task(parent_id)
-
 
     def users_dispute(self, task_id: TaskId) -> list[str]:
         """The findings a CHALLENGE at an AUTO root asks to rule out of the user's goal — a ruling only the user, the
@@ -2730,7 +2464,6 @@ class Engine:
                 return e.reason
         return None
 
-
     def _the_persons_packet(self, old: Task, new_spec: Optional[Spec], deadline) -> None:
         """A root's packet changed under `solo` or `semi` — its goal's words, criteria, scope, register or deadline: every
         field is the contract (Inv-1) — only on the person's own words (`PERSONS_WORDS`), which go on the feed; refused
@@ -2739,7 +2472,7 @@ class Engine:
         criteria he wrote: each top's criterion read against his words quotes them (`persons_words`); none is asked.
         His signed-in page is his act wherever his word stands — what he typed there is his words, heard as the
         criteria he wrote — so it is asked for none."""
-        persons, scope = self.guards_his_word(old.id), str(old.id) in self.mode_scopes()
+        persons, scope = self.guards_his_word(old.id), str(old.id) in _mode_scopes(self._graph)
         if not (persons or scope):
             return
         field = lambda s: (s.description, tuple(s.criteria), tuple(s.scope), tuple(s.accepted_risks))
@@ -2793,7 +2526,7 @@ class Engine:
         (ASSIGN is an issuer signal → FSM-validated). Returns the revised node (back in OFFERED —
         the executor must re-ACCEPT)."""
         old = self._graph.get_task(task_id)
-        if why := f"task {task_id} not found" if old is None else self.reopen_place_refusal(old):
+        if why := f"task {task_id} not found" if old is None else self.stops.reopen_place_refusal(old):
             raise ValueError(why)
         # …its cause typed at the call: a string from a door dropped the re-ASSIGN in the loop, unrefused (edit_scope)
         reason = _typed_cause(reason)
@@ -2921,13 +2654,10 @@ class Engine:
         """E_Dep — what the execution order reads: declared edges and confirmed discoveries (§11.3)."""
         return self._graph.dep_edges(adopted=True)
 
-    def start_unit(self, task: Task, edges: "list | None" = None) -> str:
-        """What starts with this node: the top of the one session that carries it (`scope_top`), else the node."""
-        return str((_scope_top(self._graph, task, edges) or task).id)
-
     def start_waits(self) -> dict:
-        """{node: the producers its start waits on} (`model.start_waits` over `start_unit`) — computed once by a reader
-        that asks `producers_awaited` of many nodes. A wait through φ left out for the cycle it would close is said
+        """{node: the producers its start waits on} (`model.start_waits` over what starts with each node: the top of the
+        one session that carries it, `scope_top`, else the node) — computed once by a reader that asks
+        `producers_awaited` of many nodes. A wait through φ left out for the cycle it would close is said
         once per node, producer and version of the node (`waits_not_taken`)."""
         waits, dropped = self._start_waits()
         for (t, p), cycle in sorted(dropped.items()):
@@ -2947,7 +2677,7 @@ class Engine:
         def read():
             """The waits, over E_Dep read once."""
             edges = self._graph.dep_edges(adopted=True)
-            return start_waits(self._graph, lambda t: self.start_unit(t, edges))
+            return start_waits(self._graph, lambda t: str((_scope_top(self._graph, t, edges) or t).id))
         return self._graph.kept(("start_waits",), read)
 
     def producers_awaited(self, task_id: TaskId, waits: "dict | None" = None) -> list[str]:
@@ -3058,64 +2788,6 @@ class Engine:
 
     # === Actions API (per-role affordances, §11.2) ===
 
-    def nodes_with_a_refused_report(self) -> list[str]:
-        """Nodes where a validator ran, reported, and the engine refused the report as ⊥ (§2.3).
-
-        NOT a contradiction and NOT a blocker: ⊥ is not fail, and treating it as one is the precise
-        error the canon names. But it must be VISIBLE where completion is announced — measured on
-        the HTTP door 2026-09-02, an instrument returned ⊥ on a root that had closed by hand
-        forty-six seconds earlier, and `next_steps` went on answering "the goal is met" with nothing
-        anywhere saying a validator had tried and failed to decide it.
-        """
-        return [str(t.id) for t in self.all_tasks() if self.rejected_report(t.id)]
-
-    def closed_over_an_open_plan_review(self, root_id: Optional[TaskId] = None) -> list[str]:
-        """Settled nodes whose OWN current Level-2 review still names findings nobody dispositioned.
-
-        The gate holds a parent's CHILDREN until its plan is dispositioned — so on a decomposed node
-        this cannot happen. On a LEAF it can: there are no children to hold, the review is advisory,
-        and nothing consulted it before answering COMPLETE. Two doors closed a leaf root on
-        vacuous-but-true criteria and read the contradiction straight off the database (wave 25,
-        2026-09-05): `get_review` → `execution_admitted: false` and `next_steps` → `complete: true`,
-        same node, same second, and the one that says done is the one that never asks.
-
-        Advisory means advisory: this does not withhold `complete`, because the checker is an
-        a-priori approximation (§9.9) and the real Level-2 verdict is contact's. What it does is
-        stop the two surfaces from disagreeing in silence.
-        """
-        return [str(t.id) for t in self._within(root_id)
-                if settled_positive(t) and (self.open_l2_findings(t.id) or [])]
-
-    def _within(self, root_id: Optional[TaskId] = None) -> list:
-        """The nodes a question scoped to `root_id` is about: that node and its subtree, else all.
-
-        The id-prefix convention was spelled out at four call sites, which is four chances for one
-        of them to scope differently from the rest — the exact shape of "a rule that holds at one
-        door and not at the next".
-
-        …AND THE SUBTREE IS THE EDGES, not the spelling. Scoping by the `root.child` prefix is true
-        of graphs `auto_decompose` builds and false of every graph built by hand, where a person
-        names a node `parser` and the engine records its parent perfectly well. Those graphs then
-        fell out of every scoped question silently: probed 2026-09-07, a child accepted by the clock
-        under `root` was absent from the scoped list and present in the unscoped one. The prefix is
-        kept as well — an id that spells its ancestry still answers, even before its parent edge
-        exists — but the relation the graph actually holds is what decides.
-        """
-        tasks = self.all_tasks()
-        if root_id is None:
-            return tasks
-        by_parent, seen = {}, {str(root_id)}
-        for t in tasks:
-            by_parent.setdefault(str(t.parent_id), []).append(t)
-        frontier = [str(root_id)]
-        while frontier:
-            for kid in by_parent.get(frontier.pop(), ()):
-                if str(kid.id) not in seen:
-                    seen.add(str(kid.id))
-                    frontier.append(str(kid.id))
-        return [t for t in tasks
-                if str(t.id) in seen or str(t.id).startswith(f"{root_id}.")]
-
     def execution_admitted(self, task_id: TaskId) -> bool:
         """May this node's children start? — the gate's own answer, for the surfaces that display it.
 
@@ -3126,240 +2798,19 @@ class Engine:
         """
         return _execution_admitted(self._graph, self._graph.get_task(task_id))
 
-    def closure_of(self, task_id: TaskId) -> Optional[dict]:
-        """How ONE node closed: who produced the standing verdict, and what it displaced or contradicts.
-
-        The per-node owner of the facts `_how_this_closed` reports over a whole graph. It exists
-        because the graph-wide lists were the ONLY place they were said, and a list of ids is a
-        fact about a project, not about the node a reader is looking at: `/api/tasks/<id>` carried
-        no verdict provenance at all, so the page a person watches drew every DONE node the same —
-        the one earned through an instrument's probes and the one asserted by a name invented in
-        the same command (wave 26, 2026-09-06, named by three doors independently).
-
-        None for a node that has not settled positive: there is no closure to describe, and an
-        empty dict there would read as "closed, nothing to weigh". The three list methods below
-        filter on settledness and then read THIS — one predicate per fact, so a surface and a list
-        cannot come to disagree about one node.
-        """
-        t = self._graph.get_task(task_id)
-        if t is None or not settled_positive(t):
-            return None
-        # …the record it CLOSED on: a later one landed on top is evidence beside it, not who closed it (`closing_verdict`)
-        rec = self.closing_verdict(task_id) or self.get_exec_verdict(task_id) or {}
-        displaced = self.overruled_verdict(task_id) or {}
-        return {
-            # by_hand / self / instrument / none — §10.3's three weights of evidence
-            "provenance": self.verdict_provenance(task_id),
-            "by_hand": bool(rec.get("by_hand")),
-            # a hand verdict that replaced an instrument's OPPOSITE one on the same delivery
-            "overruled": bool(displaced and not displaced.get("by_hand") and rec.get("by_hand")),
-            "overruled_verdict": (str(displaced.get("verdict")) if displaced else None),
-            # standing at PASS while its own current record says FAIL — a green that is not green
-            "refuted": pass_stands_refuted(self._graph, t),
-            # CLOSED BY THE CLOCK, not by anyone's verdict. v4.0 routed a timed-out VALIDATING to
-            # DONE(auto_pass) and v4.1 removed it (§16.14) — the clock, answering for a silent party,
-            # invents no verdict — so no route produces this any more and what the field reads is a
-            # row written by an older build. It stays visible for exactly that reason: a parent's
-            # conjunction may still stand on such a child, and an acceptance nobody made is the
-            # silent half of a weaker conjunct unless every surface can say which kind of DONE it is
-            # looking at.
-            "auto_accepted": t.done_reason is DoneReason.AUTO_PASS,
-            "validator": rec.get("validator"),
-            # WHAT THE CLOSURE ACTUALLY REACHED — the honest half, said at the close rather than
-            # left to be inferred. A node closes on the procedure its contract pinned plus whatever
-            # the validation went on to explore; everything outside that is UNCHECKED, and a criterion
-            # can be decidable and still insensitive to a real divergence. That residue is the FM-3
-            # boundary (Ch. 20, §15.7 — no structural check guards it), and naming it is the only
-            # honest thing the system can do with it. Measured on `c_compiler`: a root closed PASS
-            # by an independent validator, and 205 probes written from the same contract found 34 real
-            # divergences in the tree it closed over.
-            "checked_by": {
-                "procedure_digest": rec.get("procedure_digest"),
-                # …AND THE AUTHORING ONE BESIDE IT. A contract narrowed mid-run closes green and
-                # the narrowing is visible only to someone who pulls `claim_drift` by hand — which
-                # is exactly how the 0.074 of scope the executor-as-issuer cut on `c_compiler` was
-                # found: by hand, at call #14. Two digests side by side make it a glance.
-                # The WHOLE claim, not the procedures alone: a claim narrows through its risk
-                # register as readily as through its checks, and reading one as the other is a
-                # false green (measured on `c_compiler`, where the register grew from four
-                # entries to ten after the work began and the procedures never moved).
-                "authoring_digest": (_auth := self._authoring_digest(task_id)),
-                "claim_digest": (_now := claim_digest(t.spec, register_of(t))),
-                "claim_moved_since_authoring": bool(_auth and _auth != _now),
-                # …AND WHICH WAY IT MOVED, on the node itself. A flag that says "the claim moved"
-                # sends the reader to another verb; a green node is read where it is, and the
-                # movement that matters is the one that made passing easier. So the exclusions
-                # added after authoring are named here, beside the verdict they qualify.
-                "narrowed_after_authoring": ({
-                    k: v for k, v in (self.claim_drift(task_id) or {}).items()
-                    if k in ("risks_added", "scope_added", "dropped", "reworded_after_refutation") and v
-                } or None) if _auth and _auth != _now else None,
-                # …AND A REFUTATION ITS ISSUER RULED OUT, which moves no digest: the claim reads the same and the PASS
-                # re-ran less than what once failed it (`findings`)
-                "retired_after_refutation": sorted({r["criterion"] for r in self.lifted(
-                    task_id, "retired_after_refutation")["retired_after_refutation"]}) or None,
-                "pinned_probes": rec.get("pinned_probes"),
-                "pinned_probes_run": rec.get("pinned_probes_run"),
-                # …AND WHICH OF THEM READ A SET THE CONTRACT DOES NOT PIN. Such a probe's object can
-                # grow or shrink under it while the procedure's digest holds still, so its PASS says
-                # less than the record otherwise reads — measured on `c_compiler`, where the corpus
-                # went 60 → 79 files under a node that closed with `procedure_moved_since_authoring:
-                # false`. Named on the CLOSURE, not only on the node's checks, because this is what
-                # a later reading of the verdict has to be able to weigh.
-                "probes_over_unpinned_sets": reads_an_unpinned_set(t.spec.criteria) or None,
-                "beyond_the_procedure": rec.get("probes_beyond_the_procedure"),
-                # …and the behaviours the validator NAMED past a pinned procedure it ran whole: exploration, decided by
-                # nothing — the criterion stood on its procedure (`procedure.named_beyond_procedure`)
-                "named_not_separately_observed": rec.get("named_beyond_the_procedure") or None,
-                # A refutation whose criterion was renamed or replaced by a plan repair: the
-                # obligation to re-run it cannot be enforced against a criterion that no longer
-                # exists, so it is named here rather than lost. Silence is the failure mode this
-                # whole change exists against.
-                "orphaned_refutations": orphaned_regression(       # a finding filed under a bare Dep edge is one too
-                    t.spec.criteria, self.regression_probes(task_id)) or None,
-                # THE RESIDUE, AND IT IS NOT ONE SENTENCE. What the pinned set does not reach is
-                # unchecked; so is a pinned probe that never ran (the internal self-report door, §10.3, closes a
-                # node without running any); and so is the sensitivity of the procedure ITSELF — no
-                # check anywhere decides whether a pinned command CAN fail, and §9.6 says none
-                # can. Saying only the first would be the honest-sounding half of three.
-                "residue": (
-                    ("NOT checked by the pinned procedure: "
-                     f"{(rec.get('pinned_probes') or 0) - (rec.get('pinned_probes_run') or 0)} of "
-                     f"{rec.get('pinned_probes')} pinned probes were never run on this closure "
-                     "(an internal node closes on its executor's own report — §10.3). "
-                     if (rec.get("pinned_probes_run") or 0) < (rec.get("pinned_probes") or 0)
-                     else "checked by the pinned procedure and what the validation explored. ")
-                    + "Behaviour outside that is UNCHECKED; the procedure's own sensitivity is "
-                      "unchecked too (a decidable criterion can be insensitive to a real "
-                      "divergence, and no structural check guards that — FM-3, Ch. 8 / §15.7); "
-                      "and what a pinned probe's output actually SHOWED is the validator's word — the "
-                      "engine matches the command that ran, never the observation it returned"),
-            } if rec else None,
-        }
-
-    def closures_by_hand(self, root_id: Optional[TaskId] = None) -> list[str]:
-        """Settled nodes whose standing verdict was ASSERTED BY HAND, not produced by an instrument.
-
-        The §10.3 degenerate case, and §15.7's named boundary: at a door where a person names
-        themselves, the engine cannot establish that the reviewer is independent or that the
-        observations happened. That is a declared limit, not a defect — what was a defect is that it
-        was declared in one place and invisible in the two a reader consults. THREE doors reported
-        the same thing across two waves (2026-09-04/05): a root closed with zero work through an
-        invented reviewer, and `status`, `next_steps` and `q_V` gave it exactly what an earned root
-        gets, while `get_verdict` and `gfso log` said plainly whose word it rested on.
-
-        Not a reason to withhold `complete`: a person validating their own project by hand is the
-        product's documented solo path. It is the one fact about such a graph a reader must not have
-        to ask a second verb for. `hand_overruled_closures` is the sharper subset — those also
-        displaced an instrument that said the opposite.
-        """
-        return [str(t.id) for t in self._within(root_id)
-                if (self.closure_of(t.id) or {}).get("by_hand")]
-
-    def passes_over_open_parts(self, root_id: Optional[TaskId] = None) -> list[str]:
-        """Wholes that stand PASSed while a part is not accepted — the departure from AND §12.8 reads off the log rather
-        than gating, admitted at a seam where the signer could not lift it (`whole_waits_for_its_parts`). FM-4's trace
-        where the PASS is untrue; a split's denial carried to its decomposer where the check showed the part unneeded."""
-        return [str(t.id) for t in self._within(root_id) if passed(t)
-                and any(not settled_positive(k) for k in self._graph.get_active_children(t.id))]
-
-    def auto_accepted_closures(self, root_id: Optional[TaskId] = None) -> list[str]:
-        """Settled nodes that reached DONE on the CLOCK — the issuer never answered (§12.4, §16.14).
-
-        The third weight of evidence beside a hand verdict and an instrument's: none at all. The
-        canon makes auto_pass an acceptance (§16.14), so a parent's conjunction stands on such a
-        child exactly as it stands on a validated one — which is why the fact has to travel. Before
-        this, the conjunction refused it instead, and a child accepted by the clock locked its whole
-        ancestry with no exit (probed 2026-09-07: the parent's PASS refused, `reopen` refused as
-        consumed, `next_step` reporting `stuck: false`). Accepting it and SAYING so is the trade;
-        accepting it silently would be the same lock's mirror image, a green nobody can weigh.
-        """
-        return [str(t.id) for t in self._within(root_id)
-                if (self.closure_of(t.id) or {}).get("auto_accepted")]
-
-    def hand_overruled_closures(self, root_id: Optional[TaskId] = None) -> list[str]:
-        """Settled nodes that closed on a HAND verdict which displaced an instrument's opposite one.
-
-        The sibling of `refuted_passes`, for the other order of events. There, the instrument's
-        refutation lands after the signature and the state is left showing the signature. Here it
-        landed FIRST, on the same delivery, and a self-named party's record replaced it before the
-        close — so the node's current verdict agrees with its state and nothing was contradicted at
-        the moment anyone looked (CLI door, wave 24, 2026-09-04).
-
-        Overruling is legitimate: the verdict is the issuer's act (§10.2), and §15.7 says no
-        structural check can establish that a self-named reviewer is independent. So this is not a
-        reason to withhold `complete` — a run where a person correctly overrode a wrong instrument
-        would never finish. It is the one fact about such a graph that a reader has to weigh, and
-        the surfaces carry it beside the answer instead of instead of it.
-        """
-        return [str(t.id) for t in self._within(root_id)
-                if (self.closure_of(t.id) or {}).get("overruled")]
-
-    def open_nodes(self, root_id: Optional[TaskId] = None) -> list[str]:
-        """The nodes not settled yet: what a goal's end, a clearing of its places and `complete` all ask of it (Thm 1: a
-        passed parent over an open child is a claim that no longer holds)."""
-        return [str(t.id) for t in self._within(root_id) if t.state not in TERMINAL_STATES]
-
     def nothing_left(self) -> bool:
         """The goal's end as the engine reads it: there is work, and none of it is still under way — every node settled,
         no verdict or review running, no refuted pass the goal still rests on (`frontier.uncovered`), every passed root's
         result landed. Vacuous on no work, which is a goal not yet stated, never one ended. Read where the mode's hold on
         the project lapses."""
         tasks = self.all_tasks()
-        return (bool(tasks) and not self.open_nodes() and not uncovered(self) and not self.joins.joining_nodes()
+        return (bool(tasks) and not open_nodes(self) and not uncovered(self) and not self.joins.joining_nodes()
                 and not any(self.claims.validation_in_flight(t.id) or self.claims.review_in_flight(t.id) for t in tasks)
                 and all(self.joins.root_landed(t) for t in tasks if t.parent_id is None and t.state == State.DONE))
-
-    def questions_left_standing(self, root_id: Optional[TaskId] = None) -> list[str]:
-        """What validators observed outside the criteria and no issuer answered, over nodes now settled: asked of no one any
-        more (`issuer.open_questions` stops at a settled node), so said where a person reads the end."""
-        return [f"{t.id}: {o['node']} saw {o['what']}" for t in self._within(root_id) if t.state in TERMINAL_STATES
-                for o in self.outside_the_criteria(t.id, own=self._graph.get_parent(t.id) is None)]
 
     def parts_outside_the_delivery(self, task) -> set[str]:
         """The active parts a machine's PASS would close this whole without (`validation.parts_outside_the_delivery`)."""
         return _parts_outside_the_delivery(self._graph, self._audit, task)
-
-    def refuted_passes(self, root_id: Optional[TaskId] = None) -> list[str]:
-        """Nodes standing at PASS whose OWN current record says FAIL — a green that is not green.
-
-        The engine has always detected this (it is q_V's numerator, and `q_V_from` names the nodes),
-        but only the metric said so: measured on the CLI door 2026-09-02, a node signed PASS, an
-        instrument returned FAIL four seconds later, the FSM correctly refused that signal because
-        the node was terminal — and from then on `status` printed `[x] DONE` and the frontier
-        answered COMPLETE, permanently, while `get_verdict` on the same node said FAIL. Two sources
-        of truth disagreeing, with every surface a person reads on the wrong side of it.
-
-        One predicate, and the surfaces read it rather than each deciding for themselves.
-        """
-        return [str(t.id) for t in self._within(root_id)
-                if (self.closure_of(t.id) or {}).get("refuted")]
-
-    def verdict_provenance(self, task_id: TaskId) -> str:
-        """WHAT KIND OF PARTY produced this node's standing verdict: by_hand / self / instrument.
-
-        Three kinds, not two. A record a person asserted at a door where identity is self-declared,
-        an INTERNAL node's own executor stamping its DELIVER (§10.3), and a registered instrument
-        that is somebody other than the executor are three different weights of evidence, and the
-        read collapsed the middle one into the last: a self-report came back as "produced by the
-        registered instrument named in `validator`" while the evidence line beside it said
-        SELF-REPORTED (measured on the MCP door 2026-09-02). Anything keying on the summary read a
-        self-stamp as an independent check.
-
-        The dispatcher has decided this correctly since the day it stopped REUSING a self-report as
-        an independent verdict — the same comparison, in the same words. One owner, so the two
-        cannot drift into disagreeing about one record.
-        """
-        rec = self.get_exec_verdict(task_id)
-        if not rec:
-            return "none"
-        if rec.get("by_hand"):
-            return "by_hand"
-        task = self._graph.get_task(task_id)
-        if task is not None and is_its_executor(task, rec.get("validator")):
-            return "self"
-        return "instrument"
-
 
     def accepted_moves(self, task_id: TaskId) -> int:
         """How many transitions of this node the log has ACCEPTED — changes with every one (Thm 11), which
@@ -3367,18 +2818,17 @@ class Engine:
         inside one clock tick) is guaranteed to do."""
         return sum(1 for x in self.audit_log(task_id) if not x.rejected)
 
-
     def system_carries_work(self) -> bool:
         """Do the system's own roles carry this project's work — a mode set, or a live node held or issued by a party
         the system moves for (`_machine_holds_a_live_node`)? Where none does, people hold everything and nothing of
         the system's would run into a refusal."""
-        return self.mode_kind() is not None or self._machine_holds_a_live_node()
+        return mode_kind(self._graph) is not None or self._machine_holds_a_live_node()
 
     def system_starts_sessions(self) -> bool:
         """Does the system start sessions of its own here (`mode_starts_sessions`), or hold a live node — what a server's
         start stops until the person's Start. A SOLO performed in the chat starts none: after a restart it runs on, its
         user-agent's next move meeting no stop the system made for nothing; nor does a scope of it (`mode_scopes`)."""
-        return (any(mode_starts_sessions(r) for r in (_project_mode(self._graph), *self.mode_scopes().values()))
+        return (any(mode_starts_sessions(r) for r in (_project_mode(self._graph), *_mode_scopes(self._graph).values()))
                 or self._machine_holds_a_live_node())
 
     def _machine_holds_a_live_node(self) -> bool:
@@ -3390,7 +2840,7 @@ class Engine:
         hands here: it starts only on a delivery inside one, which a solo in_chat scope's holder makes. With a scope, a
         node on a name of the person's is his — he set it there, holding the node the scope stands at — never the
         system's, whatever executors the project has."""
-        scoped = bool(self.mode_scopes())
+        scoped = bool(_mode_scopes(self._graph))
         instrument = self.workforce.has_an_instrument() and (self.mode() is not None or not scoped)
         roster, hands = self.workforce.roster(), self.workforce.executor_pool() or instrument
         def _moved(p) -> bool:
@@ -3405,10 +2855,6 @@ class Engine:
         return party_kind(self._graph, str(self._graph.issuer_of(task_id)),
                           self.workforce.roster() if registered is None else registered)
 
-    def mode_kind(self) -> Optional[Mode]:
-        """The project's mode, typed (`validation.mode_kind`)."""
-        return mode_kind(self._graph)
-
     def mode_holder(self, node, role: Optional[str], ruling: bool = False) -> Optional[str]:
         """Who the project's mode gives a move on `node` to when no door may take it — the machine holding `role` there
         ("issuer": the node's issuer; "split": its Del), "system" for one the mode hands to no named machine — or None:
@@ -3421,7 +2867,7 @@ class Engine:
             return None
         owner = self.owner_of(node, role)
         machine = str(owner) if owner is not None and AgentId(owner) in self.workforce.executor_pool() else None
-        return machine or (SYSTEM if self.mode_kind() == Mode.AUTO else None)
+        return machine or (SYSTEM if mode_kind(self._graph) == Mode.AUTO else None)
 
     def owner_of(self, node, role: Optional[str]) -> Optional[str]:
         """The party a door takes a move on `node` from: its issuer for the issuer's — the person over the system party
@@ -3483,7 +2929,6 @@ class Engine:
         return (task is not None and self.workforce.has_an_instrument() and not outside_the_scopes(self._graph, task)
                 and self.issuer_kind(task_id) == "machine")
 
-
     def record_session_fit(self, task_id: TaskId, volume: str, fits: Optional[bool],
                            after: Optional[dict] = None) -> None:
         """The decomposer's count of a node's work and its judgement that one executor session builds and
@@ -3492,7 +2937,7 @@ class Engine:
         waits is not a leaf, so its split is owed. Refused unless every producer it names is a ground the split can
         wait on (`deferral_refused`), its lift naming one or splitting now (§12.16 (ii)); a record already standing
         on the same producers is the same fixing read back (its reason re-worded by a fold), not a new one."""
-        if after and ((self.session_fit(task_id) or {}).get("after") or {}).get("producers") != after.get("producers") and (
+        if after and ((_session_fit(self._graph, task_id) or {}).get("after") or {}).get("producers") != after.get("producers") and (
                 why := _deferral_refused(self._graph, task_id, after)):
             raise ValueError(why)
         self._storage.store_setting(f"{SESSION_FIT}{task_id}", json.dumps(
@@ -3529,14 +2974,6 @@ class Engine:
         t = self._graph.get_task(task_id)
         return [] if t is None else [[c.name, [p.command for p in c.check or ()]] for c in t.spec.criteria
                                      if not c.depends_on]
-
-    def session_fit(self, task_id: TaskId) -> Optional[dict]:
-        """The recorded count and judgement for a node (`validation.session_fit`)."""
-        return _session_fit(self._graph, task_id)
-
-    def fits_one_session(self, task_id: TaskId) -> bool:
-        """Does one executor session carry this node's whole subtree (`validation.fits_one_session`)?"""
-        return _fits_one_session(self._graph, task_id)
 
     def held_in_chat(self, task_id: TaskId) -> bool:
         """Is this node the person's agent's own, worked in its chat (`validation.held_in_chat`)?"""
@@ -3620,10 +3057,6 @@ class Engine:
     def persons_seam(self, task_id) -> bool:
         """Is this node a seam the person issues, the validator owed at it by his check (`validation.persons_seam`)?"""
         return _persons_seam(self._graph, self._graph.get_task(TaskId(str(task_id))))
-
-    def a_human(self, name) -> bool:
-        """Is `name` a human outside the system (`validation.a_human`)?"""
-        return _a_human(self._graph, name)
 
     def executed_by_a_human(self, task_id) -> bool:
         """Was this node's Del a human when it was handed to it (`validation.executed_by_a_human`)?"""
@@ -3767,7 +3200,7 @@ class Engine:
         parent = self._graph.get_task(parent_id) if parent_id else None
         if parent is not None and (scoped := _scope_at(self._graph, parent)) is not None:
             return AgentId(scoped[1].assignee)
-        return self.del_at(0 if parent is None else self.depth_of(parent.id) + 1,
+        return self.del_at(0 if parent is None else _depth_of(self._graph, parent.id) + 1,
                            parent.assignee if parent is not None else None)
 
     def seam_keepers(self, parent_del: Optional[AgentId], task_id: Optional[TaskId] = None) -> list[AgentId]:
@@ -3832,7 +3265,6 @@ class Engine:
             return False
         self._said_once.add(key)
         return True
-
 
     def refusal_of(self, task_id: TaskId, signal: Signal, entry=None) -> SignalOutcome:
         """The system's answer to a transition that moved nothing — ONE record, every door.
@@ -3910,7 +3342,7 @@ class Engine:
                 return Refusal(kind="rule", why=str(ex))
         if why := rule_refusal(sd, self._graph, self._audit):
             return Refusal(kind="rule", why=why)
-        if terminal and signal == Signal.ASSIGN and (why := self.reopen_place_refusal(t)):
+        if terminal and signal == Signal.ASSIGN and (why := self.stops.reopen_place_refusal(t)):
             return Refusal(kind="rule", why=why)
         if transition(t.state, sd, _guard_context(self._graph, self._audit, task_id, t.state)) is None:
             return Refusal(kind="guard", why=(self.reopen_refusal(task_id) if terminal and signal == Signal.ASSIGN
@@ -3936,7 +3368,7 @@ class Engine:
         if why := no_live_deadline(self._graph, t):
             return (f"reopening {task_id} under its standing contract: {why} — `reopen` carries none; "
                     f"`revise('{task_id}', …, deadline=…)` reopens it with one")
-        return self.reopen_place_refusal(t)          # …last: the one gate that asks Docker
+        return self.stops.reopen_place_refusal(t)          # …last: the one gate that asks Docker
 
     def available_actions(self, task_id: TaskId, agent_id: Optional[AgentId] = None) -> list[Signal]:
         """Signals valid in this task's current state, filtered by the agent's role.
@@ -3991,7 +3423,6 @@ class Engine:
         return self._storage.get_all_tasks()
 
     # === Execution forcing-point ===
-
 
     def refused_report_for_this_delivery(self, task_id: TaskId) -> Optional[dict]:
         """The refused report standing on the CURRENT delivery of this node, or None.
@@ -4057,7 +3488,6 @@ class Engine:
                 and not unaccounted_for(task, [e], False, None, regression, parts=parts,
                                         standing=round_stands(self._graph))
                 and not unrun_probes([e], e["reused_from_refused"].get("tools_used"))]
-
 
     def _redelivery_refusal(self, task) -> Optional[str]:
         """What the re-delivery gate would say about this node right now, or None if it would pass.
@@ -4252,7 +3682,6 @@ class Engine:
                                                               if p.get("command") and str(p.get("id")) not in gone])))
                 for c in rec.get("failed_criteria") or []], {c: list(dict.fromkeys(v)) for c, v in settled.items() if v}
 
-
     def next_step(self, root_id: Optional[TaskId] = None) -> dict:
         """The ONE next required action from the graph's current state, or `complete=True` (`Frontier.next_step`)."""
         return self.frontier.next_step(root_id)
@@ -4260,7 +3689,6 @@ class Engine:
     def next_steps(self, root_id: Optional[TaskId] = None) -> dict:
         """The parallel frontier: every currently actionable node, priority-ordered (`Frontier.next_steps`)."""
         return self.frontier.next_steps(root_id)
-
 
     def in_flight_nodes(self) -> list[dict]:
         """The nodes that are BUSY right now — being validated, or being worked on by a machine.
@@ -4295,7 +3723,6 @@ class Engine:
         out += [{"task_id": t, "state": "DONE", "why": "has passed and its result is being joined where its whole "
                  "works", "opens_with": "nothing: the join ends by itself"} for t in self.joins.joining_nodes()]
         return out
-
 
     def issuer_moves_on(self, task_id) -> str:
         """The acts an ESCALATED node admits, WRITTEN ONCE because three surfaces said otherwise.
@@ -4357,7 +3784,6 @@ class Engine:
                        if t.state in (State.ESCALATED, State.ABANDONED)
                        or (t.state == State.DONE and t.done_reason == DoneReason.FAIL)),
                       key=lambda t: str(t.id))
-
 
     def graph_holes(self, root_id: Optional[TaskId] = None) -> list[dict]:
         """Every UNMET structural check across the whole graph (or the subtree under root_id), each with what it does

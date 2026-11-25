@@ -14,6 +14,7 @@ import json
 import gfso.tools as T
 import gfso.tools_llm as TL
 from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fenced
+import gfso.validate as VAL
 
 
 def _refusable_report() -> str:
@@ -31,7 +32,7 @@ def test_a_refused_report_is_written_beside_the_state(tmp_path, monkeypatch):
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
     e = _eng()
     _delivered_node(e)
-    out = TL.validate_result(e, "n1", _llm=_ValidatorLLM(_refusable_report()))
+    out = VAL.validate_result(e, "n1", _llm=_ValidatorLLM(_refusable_report()))
     assert out["verdict"] is None                       # the precondition: it was refused
     kept = out.get("report_kept_at")
     assert kept, "the refused report was not kept anywhere"
@@ -47,7 +48,7 @@ def test_the_log_names_where_the_refused_report_went(tmp_path, monkeypatch):
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
     e = _eng()
     _delivered_node(e)
-    out = TL.validate_result(e, "n1", _llm=_ValidatorLLM(_refusable_report()))
+    out = VAL.validate_result(e, "n1", _llm=_ValidatorLLM(_refusable_report()))
     lines = [r.get("message", "") for r in e.pipeline_log(limit=50)]
     assert any("NOT a verdict" in m and out["report_kept_at"] in m for m in lines), \
         "the pipeline log does not say where the refused report was kept"

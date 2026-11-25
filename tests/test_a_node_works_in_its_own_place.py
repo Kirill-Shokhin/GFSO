@@ -24,7 +24,8 @@ from gfso.adapters import worktrees as W
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.protocol.procedure import probe_id
 from gfso.core.types import PlaceUnavailable, State, TaskId, nodes_root
-from gfso.delegate import Dispatcher, _auto_validate
+from gfso.delegate import Dispatcher
+from gfso.validate import auto_validate
 from gfso.engine.joins import NOT_ON_ITS_BRANCH, Joins
 from gfso.sessions import run_consent, run_executor
 from gfso.workspaces import _ensure_place, _workspace, land_accepted, left_to_merge, node_workspace
@@ -133,7 +134,7 @@ def _drive(e, d, until, bound: float = 90.0) -> None:
 def _run(e, agents, sessions: dict, until, validated: dict | None = None):
     d = Dispatcher(e, agents, poll=30,
                    runner=lambda en, t, ex, ag: run_executor(en, t, ex, ag, _llm=sessions[str(t)]),
-                   validator_runner=lambda en, t, ag, **k: _auto_validate(
+                   validator_runner=lambda en, t, ag, **k: auto_validate(
                        en, t, ag, _llm=_Validator(en, t, validated if validated is not None else {}), **k))
     _drive(e, d, until)
     return d
@@ -919,5 +920,5 @@ def test_a_consent_that_meets_its_place_down_waits_and_is_not_parked(tmp_path, m
     d = Dispatcher(e, agents)
     for _ in range(2):
         d._consent_guarded(TaskId("r"), "exec-1")
-    assert e.paused(), "the place down is its project's stop"
+    assert e.stops.paused(), "the place down is its project's stop"
     e.stop()

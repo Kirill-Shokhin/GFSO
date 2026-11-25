@@ -25,6 +25,7 @@ from __future__ import annotations
 from gfso import tools as T
 from gfso.core.types import TaskId
 from tests.support import criterion, make_engine, REGISTER
+from gfso.engine.closures import hand_overruled_closures
 
 _INSTRUMENT_FAIL = [{"criterion": "ghost_runs", "verdict": "fail",
                      "evidence": "python -m ghost: No module named ghost",
@@ -68,7 +69,7 @@ def test_a_node_cannot_close_over_an_observed_fail():
 
     assert not r.get("accepted"), r
     assert e.next_steps()["complete"] is False
-    assert e.hand_overruled_closures() == []
+    assert hand_overruled_closures(e) == []
     e.stop()
 
 
@@ -110,5 +111,5 @@ def test_two_verdicts_that_AGREE_leave_no_trace_of_a_conflict():
                                      "ran": ["check c"]}})
 
     assert "overruled" not in T.get_verdict(e, "ok")
-    assert e.hand_overruled_closures() == []
+    assert hand_overruled_closures(e) == []
     e.stop()

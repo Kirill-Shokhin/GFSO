@@ -133,7 +133,7 @@ def test_the_executor_round_names_its_nodes_conversation(monkeypatch):
         calls = []
         def run_agent(self, *a, **k): got.append(k.get("session")); return ""
 
-    monkeypatch.setattr(S, "_inflight", lambda *a: contextlib.nullcontext())
+    monkeypatch.setattr(S, "flight", lambda *a: contextlib.nullcontext())
     monkeypatch.setattr(S, "session_calls", lambda *a: {})
     monkeypatch.setattr(S, "emit_cb", lambda *a: (lambda m: None))
     S._spawn(_E(), "root.dml", "exec-2", {}, _L(), "executor", "executor.md", "p", S.EXECUTOR_SCHEMA, "v", ".")

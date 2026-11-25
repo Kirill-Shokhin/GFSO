@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from gfso.core.types import TaskId, register_of
 from gfso.config import ROOT_ID
+from gfso.engine.validation import session_fit
 
 
 def extract_spec(engine, root_id: str = ROOT_ID) -> dict:
@@ -70,7 +71,7 @@ def _asked(cr) -> dict:
 
 def _fit(engine, task_id, prefix: str) -> dict:
     """The decomposer's recorded count and judgement, under the spec's own keys — absent if never judged."""
-    f = engine.session_fit(task_id)
+    f = session_fit(engine.graph, task_id)
     return {} if f is None else {f"{prefix}volume": f.get("volume", ""),
                                  f"{prefix}fits_one_session": bool(f.get("fits"))} | (
         # …its producers as the split names its siblings: `{parent}.{id}` read back as `{id}`

@@ -26,7 +26,7 @@ from gfso.core.handlers import solver_findings
 from gfso.core.handlers.recommend import suggest_criteria
 from gfso.core.handlers.structural import CHECK_TO_FM, FM_LABEL
 from gfso.core.types import TaskId, AgentId, State, RETIRED_STATES
-from gfso.delegate import default_agents
+from gfso.roster import default_agents
 from gfso.runtime import data_dir
 from gfso.serverctl import home as _home
 
@@ -39,9 +39,10 @@ try:
     _CODE_VERSION = _sfp()
 except Exception:                                    # never let a diagnostic field break the server
     _CODE_VERSION = "unknown"
-from gfso.engine.validation import l2_gate_on as _l2_gate_on
+from gfso.engine.validation import l2_gate_on as _l2_gate_on, session_fit
 from gfso.engine.verdicts import observations
-from gfso.tools_llm import validate_internal_on as _validate_internal_on, mode_staffing
+from gfso.tools_llm import mode_staffing
+from gfso.validate import validate_internal_on as _validate_internal_on
 from gfso.adapters.children import end_this_process, reap as reap_children
 from gfso.adapters import resources as _resources
 from gfso.adapters.netrecord import said_apart
@@ -298,7 +299,7 @@ def _mount_acts(app, _e, _req_project, _scope_name) -> None:
         try:
             out = reg.kept_if_done(made, e, lambda: fn(e, **body)) if reg else fn(e, **body)
             # A REFUSAL KEEPS ITS STATUS AND ITS SHAPE. The verbs answer rather than raise (one
-            # wrapper over the registry, `tools_llm._answering`) so that the MCP and CLI doors get
+            # wrapper over the registry, `tools.answering`) so that the MCP and CLI doors get
             # structure instead of an exception — but HTTP has a status code for "I understood you
             # and will not do it", and dropping to 200 would have made every refusal look like a
             # success to anything reading the code alone. The BODY is the verb's own dict either way,
@@ -596,7 +597,7 @@ def _mount_reads(app, _e, _req_project, _scope_name) -> None:
         # read one node
         return {**_get_task_tool(e, task_id),
                 "split_after": _split_after(e, TaskId(task_id)),
-                "closure": e.closure_of(TaskId(task_id)),
+                "closure": closure_of(e, TaskId(task_id)),
                 "checks": [CheckResultOut.of(c).model_dump() for c in checks],
                 "recommendation": {"suggestions": list(rec.suggestions)} if rec else None,
                 "audit": [audit_to_out(a).model_dump() for a in audit],
@@ -1438,7 +1439,7 @@ def _lifespan(mcp):
 def _split_after(e: Engine, task_id: TaskId) -> Optional[dict]:
     """A split deferred until named parts deliver (FM-6's remedy, §8.6): the engine's own record — the parts it names, its
     reason — and those whose results do not stand yet; the panel says "split after" from it (ON_THE_FLY §5 item 5)."""
-    after = (e.session_fit(task_id) or {}).get("after")
+    after = (session_fit(e.graph, task_id) or {}).get("after")
     return after and {**after, "waits_on": e.split_waits_on(task_id)}
 
 
@@ -1547,6 +1548,7 @@ def create_app(engine: Engine, with_mcp: bool = False, registry=None) -> FastAPI
 # http://127.0.0.1:8000/mcp instead of spawning a stdio server per session (a second stdio process
 # shares the DB file but NOT the event bus — its live ticks are invisible to the UI).
 from gfso.runtime import ProjectRegistry as _PR
+from gfso.engine.closures import closure_of
 _registry = _PR(default_storage="memory", default_llm="stub",
                 # Seeding is OPT-IN here too. Importing this module — which the release smoke test
                 # and any introspection tool does — used to build an engine AND write a demo graph.

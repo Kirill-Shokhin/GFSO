@@ -15,6 +15,7 @@ from __future__ import annotations
 import gfso.tools as T
 from gfso.core.types import DoneReason, Signal, SignalData, State, TaskId
 from tests.support import criterion, make_engine, REGISTER
+from gfso.engine.closures import auto_accepted_closures
 
 _RISK = REGISTER
 
@@ -77,7 +78,7 @@ def test_the_completion_says_which_part_nobody_checked():
     e = _graph()
     _child_a_clock_accepted(e)
     _parent_claims_the_aggregate(e)
-    assert e.auto_accepted_closures(TaskId("root")) == ["kid"], \
+    assert auto_accepted_closures(e, TaskId("root")) == ["kid"], \
         "the scoped list must find it — a subtree is the parent edges, not a spelling of the ids"
     step = T.next_step(e, "root")
     assert step.get("complete") is True

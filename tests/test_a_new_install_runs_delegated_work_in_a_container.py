@@ -20,6 +20,7 @@ import gfso.workspaces as WS
 from gfso.adapters.execution import ContainerExecution
 from gfso.core.types import AgentId, Mode
 from tests.support import a_repository, make_engine
+from gfso.roster import default_agents
 
 
 @pytest.fixture
@@ -46,14 +47,14 @@ def _dispatching():
 def _registered(e, home, who, kind="llm-executor", **kw):
     got = TL.register_agent(e, who, kind, workdir=str(home / "w"), **kw)
     assert not got.get("refused"), got
-    return TL._roster().get(who).get("execution")
+    return default_agents().get(who).get("execution")
 
 
 def test_an_executor_naming_no_execution_takes_the_default_and_its_project_runs_there(home):
     _declare(home)
     e = _dispatching()
     assert _registered(e, home, "p-exec") == "default"
-    assert isinstance(WS.execution_of(e, TL._roster()), ContainerExecution)
+    assert isinstance(WS.execution_of(e, default_agents()), ContainerExecution)
 
 
 def test_the_default_is_not_taken_where_the_work_is_attended_or_placed_already(home, monkeypatch):
@@ -75,7 +76,7 @@ def test_a_role_registered_again_keeps_the_execution_it_declares(home):
     e = _dispatching()
     assert _registered(e, home, "p-exec") == "default"
     assert _registered(e, home, "p-exec", model="claude-sonnet-5-5") == "default"
-    assert isinstance(WS.execution_of(e, TL._roster()), ContainerExecution)
+    assert isinstance(WS.execution_of(e, default_agents()), ContainerExecution)
 
 
 def test_an_executor_beside_the_users_own_chat_works_in_the_default_container(home):
@@ -167,8 +168,8 @@ def test_on_the_doors_order_the_mode_places_the_executors_already_registered(hom
     assert _registered(e, home, "p-exec") is None and _registered(e, home, "p-val", "llm-validator") is None
     got = TL.set_mode(e, "solo")
     assert not got.get("refused"), got
-    assert TL._roster().get("p-exec")["execution"] == "default" and e.mode()["perform"] == "dispatch"
-    assert TL._roster().get("p-val").get("execution") is None, "a validator alone keeps its registration"
+    assert default_agents().get("p-exec")["execution"] == "default" and e.mode()["perform"] == "dispatch"
+    assert default_agents().get("p-val").get("execution") is None, "a validator alone keeps its registration"
 
 
 def test_a_docker_below_the_floor_stops_every_container_execution_not_only_doctor(monkeypatch):
@@ -186,7 +187,7 @@ def test_a_role_on_a_directory_that_is_no_repository_is_refused_and_leaves_the_r
     (plain := home / "plain").mkdir()
     got = TL.register_agent(e, "p-exec", "llm-executor", workdir=str(plain))
     assert got.get("refused") and "git init" in got["error"], got
-    assert TL._roster().get("p-exec") is None and not (plain / ".git").exists()
+    assert default_agents().get("p-exec") is None and not (plain / ".git").exists()
 
 
 def test_a_mode_that_raises_or_cannot_move_every_executor_leaves_them_where_they_were(home, monkeypatch):
@@ -200,12 +201,12 @@ def test_a_mode_that_raises_or_cannot_move_every_executor_leaves_them_where_they
     shutil.rmtree(home / "w2", onerror=lambda f, p, _: (os.chmod(p, 0o700), f(p)))
     got = TL.set_mode(e, "solo")
     assert got.get("refused") and "p-exec2" in got["error"], got
-    assert {a: TL._roster().get(a).get("execution") for a in ("p-exec", "p-exec2")} == {"p-exec": None, "p-exec2": None}
+    assert {a: default_agents().get(a).get("execution") for a in ("p-exec", "p-exec2")} == {"p-exec": None, "p-exec2": None}
     TL.unregister_agent(e, "p-exec2")
     monkeypatch.setattr(TL, "mode_staffing", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("git")))
     with pytest.raises(TimeoutError):
         TL.set_mode(e, "solo")
-    assert TL._roster().get("p-exec").get("execution") is None
+    assert default_agents().get("p-exec").get("execution") is None
 
 
 def test_a_container_with_no_login_is_a_sign_in_to_name_not_an_empty_session():

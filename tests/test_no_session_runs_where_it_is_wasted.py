@@ -11,7 +11,7 @@ from types import SimpleNamespace as NS
 
 import gfso.tools as T
 from gfso.delegate import Dispatcher
-from gfso.inflight import _inflight
+from gfso.inflight import flight
 from gfso.roster import AgentRegistry
 from gfso.sessions import MIN_SESSION_S, _too_late
 from tests.support import REGISTER, criterion, make_engine
@@ -36,7 +36,7 @@ def test_a_node_under_a_decomposition_in_flight_is_not_dispatched(tmp_path):
         assert d._being_rewritten("kid") and d._being_rewritten("root")
     with e.authorings.holding("kid"):
         assert d._being_rewritten("kid") and not d._being_rewritten("root"), "nothing above the rewritten subtree waits"
-    with _inflight("validate_result", e, "root"):
+    with flight("validate_result", e, "root"):
         assert not d._being_rewritten("kid"), "only a decomposition rewrites the subtree"
     e.stop()
 

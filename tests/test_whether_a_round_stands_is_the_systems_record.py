@@ -12,7 +12,8 @@ from types import SimpleNamespace
 
 import gfso.adapters.execution as E
 from gfso.adapters.execution import ContainerExecution
-from gfso.core.protocol.procedure import finding_id, runs_a_past_build, unrerunnable
+from gfso.core.protocol.procedure import finding_id, runs_a_past_build
+from gfso.core.protocol.accounting import unrerunnable
 from gfso.core.types import HOST, files_at, hold_places
 from gfso.engine.findings import record_round, round_stands
 

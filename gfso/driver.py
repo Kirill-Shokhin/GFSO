@@ -305,7 +305,7 @@ def _how_a_node_reads(state: str, closure: dict | None) -> tuple:
     `next_steps`, which reports them only on the branch where a graph is COMPLETE — so the marks
     vanished exactly while a project still had work in it, which is when someone is looking (CLI and
     fresh-install doors reported it independently, wave 26, 2026-09-06). The node carries its own
-    closure now (`Engine.closure_of`), so the tree says the same thing at every moment of a run.
+    closure now (`closures.closure_of`), so the tree says the same thing at every moment of a run.
     """
     cl = closure or {}
     if cl.get("refuted"):

@@ -28,6 +28,7 @@ from tests.test_validate_result import _delivered_node, _eng, _fenced
 from tests.support import REGISTER, a_repository, criterion
 import tests.test_a_seam_he_issues_is_checked_by_the_validator as S
 import tests.test_the_go_only_adds_to_the_plan as Go
+import gfso.validate as VAL
 
 
 #: the threads a model was called on
@@ -237,7 +238,7 @@ def test_a_check_before_the_delivery_is_a_claim_its_taker_alone_lets_go(tmp_path
     e, _ = S._issued(tmp_path)
     repo = str(a_repository(tmp_path / "repo"))
     slow = _SlowValidator(entries=S._entries(e))
-    first = threading.Thread(target=lambda: TL.validate_result(e, S.SEAM, workdir=repo, _llm=slow), daemon=True)
+    first = threading.Thread(target=lambda: VAL.validate_result(e, S.SEAM, workdir=repo, _llm=slow), daemon=True)
     try:
         first.start()
         assert slow.started.wait(20)
@@ -245,7 +246,7 @@ def test_a_check_before_the_delivery_is_a_claim_its_taker_alone_lets_go(tmp_path
             pass
         # …and the door's second check, past the read that let it through, meets the claim
         monkeypatch.setattr(e, "judges_before_delivery", lambda task_id: False)
-        again = TL.validate_result(e, S.SEAM, workdir=repo, _llm=_SlowValidator())
+        again = VAL.validate_result(e, S.SEAM, workdir=repo, _llm=_SlowValidator())
         monkeypatch.undo()
         assert again.get("inflight") and again["verdict"] is None, again
         assert e.judges_before_delivery(S.SEAM)

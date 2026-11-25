@@ -10,7 +10,7 @@ import json
 
 import gfso.cli as cli
 from gfso import tools as T
-from gfso.delegate import default_agents
+from gfso.roster import default_agents
 from gfso.adapters.storage.sqlite import SqliteStorage
 from gfso.config import SERVES_ENV, serves, subprocess_env
 from gfso.runtime import HELD_AT_START, ProjectRegistry
@@ -36,24 +36,24 @@ def _registry(monkeypatch, tmp_path, serving=True):
 def test_a_project_that_stood_opens_stopped_and_one_made_after_runs(monkeypatch, tmp_path):
     _stood(tmp_path / "old.db")
     reg = _registry(monkeypatch, tmp_path)
-    stop = reg.engine("old").paused()
+    stop = reg.engine("old").stops.paused()
     assert stop and stop["by"] == "system" and not stop.get("until") and not stop.get("place")
-    assert reg.engine("new").paused() is None, "a project made after the start runs"
+    assert reg.engine("new").stops.paused() is None, "a project made after the start runs"
 
 
 def test_only_the_serving_process_stops_them(monkeypatch, tmp_path):
     _stood(tmp_path / "old.db")
-    assert _registry(monkeypatch, tmp_path, serving=False).engine("old").paused() is None
+    assert _registry(monkeypatch, tmp_path, serving=False).engine("old").stops.paused() is None
 
 
 def test_a_person_s_stop_stays_his_and_a_start_runs_it(monkeypatch, tmp_path):
     e = make_engine(storage=SqliteStorage(str(tmp_path / "old.db")))
-    e.pause("someone", "reading it")
+    e.stops.pause("someone", "reading it")
     e.stop()
     eng = _registry(monkeypatch, tmp_path).engine("old")
-    assert eng.paused()["by"] == "someone"
-    eng.resume("someone")
-    assert eng.paused() is None
+    assert eng.stops.paused()["by"] == "someone"
+    eng.stops.resume("someone")
+    assert eng.stops.paused() is None
 
 
 def test_the_mark_gfso_serve_sets_is_the_one_read_and_no_child_inherits_it(monkeypatch, tmp_path):
@@ -63,7 +63,7 @@ def test_the_mark_gfso_serve_sets_is_the_one_read_and_no_child_inherits_it(monke
     monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("GFSO_PROJECT", raising=False)
     monkeypatch.setenv(SERVES_ENV, "1")   # what `mark_the_server` sets, restored after the test
-    assert serves() and ProjectRegistry().engine("old").paused() is not None
+    assert serves() and ProjectRegistry().engine("old").stops.paused() is not None
     assert SERVES_ENV not in subprocess_env(), "an agent's own gfso is no server: it must not stop the live one's"
 
 
@@ -71,22 +71,22 @@ def test_a_project_made_again_after_the_start_runs(monkeypatch, tmp_path):
     st = _stood(tmp_path / "old.db").graph._storage
     st.close()                       # …else Windows keeps the file it then deletes
     reg = _registry(monkeypatch, tmp_path)
-    assert reg.engine("old").paused() is not None
+    assert reg.engine("old").stops.paused() is not None
     reg.delete("old")
-    assert reg.engine("old").paused() is None
+    assert reg.engine("old").stops.paused() is None
 
 
 def test_the_list_says_a_project_that_stood_is_stopped_before_it_is_opened(monkeypatch, tmp_path):
     """Its file says nothing of the stop until its first opening makes it, and the project list read it running."""
     _stood(tmp_path / "old.db")
     e = make_engine(storage=SqliteStorage(str(tmp_path / "held.db")))
-    e.pause("someone", "reading it")
+    e.stops.pause("someone", "reading it")
     e.stop()
     reg = _registry(monkeypatch, tmp_path)
     about = reg.about(["old", "held"])
     assert about["old"]["stopped"]["by"] == "system", "a project that stood is listed stopped before it is opened"
     assert about["held"]["stopped"]["by"] == "someone", "a stop already on file is said as it stands"
-    reg.engine("old").resume("someone")
+    reg.engine("old").stops.resume("someone")
     assert reg.about(["old"])["old"]["stopped"] is None, "opened and started, it is listed running"
     assert _registry(monkeypatch, tmp_path, serving=False).about(["held", "old"])["old"]["stopped"] is None
 
@@ -97,7 +97,7 @@ def test_a_graph_people_hold_runs_on_at_the_server_s_start(monkeypatch, tmp_path
     _stood(tmp_path / "people.db", mode=None)
     reg = _registry(monkeypatch, tmp_path)
     assert reg.about(["people"])["people"]["stopped"] is None, "listed running before it is opened"
-    assert reg.engine("people").paused() is None, "opened running"
+    assert reg.engine("people").stops.paused() is None, "opened running"
 
 
 def test_the_stop_an_earlier_start_left_on_a_people_s_graph_comes_off(monkeypatch, tmp_path):
@@ -105,12 +105,12 @@ def test_the_stop_an_earlier_start_left_on_a_people_s_graph_comes_off(monkeypatc
     stood their deadlines still — the author's graphs kept it (critic, 2026-11-15). A person's own stop stays his."""
     for name, by in (("people", "system"), ("own", "someone")):
         e = make_engine(storage=SqliteStorage(str(tmp_path / f"{name}.db")))
-        e.pause(by, HELD_AT_START if by == "system" else "reading it")
+        e.stops.pause(by, HELD_AT_START if by == "system" else "reading it")
         e.stop()
     reg = _registry(monkeypatch, tmp_path)
     assert reg.about(["people"])["people"]["stopped"] is None, "listed as its opening will leave it"
-    assert reg.engine("people").paused() is None, "the start's stop comes off at its opening"
-    assert reg.engine("own").paused()["by"] == "someone", "a person's stop is never lifted for him"
+    assert reg.engine("people").stops.paused() is None, "the start's stop comes off at its opening"
+    assert reg.engine("own").stops.paused()["by"] == "someone", "a person's stop is never lifted for him"
 
 
 def test_solo_performed_in_the_chat_runs_on_and_the_modes_the_system_works_stand(monkeypatch, tmp_path):
@@ -122,10 +122,10 @@ def test_solo_performed_in_the_chat_runs_on_and_the_modes_the_system_works_stand
         _stood(tmp_path / f"{name}.db", mode=mode, perform=perform)
     reg = _registry(monkeypatch, tmp_path)
     about = reg.about(["chat", "hands", "semi", "auto"])
-    assert about["chat"]["stopped"] is None and reg.engine("chat").paused() is None, "solo in the chat runs on"
+    assert about["chat"]["stopped"] is None and reg.engine("chat").stops.paused() is None, "solo in the chat runs on"
     for name in ("hands", "semi", "auto"):
         assert about[name]["stopped"]["by"] == "system", f"{name}: listed stopped before it is opened"
-        assert reg.engine(name).paused()["by"] == "system", f"{name}: opened stopped"
+        assert reg.engine(name).stops.paused()["by"] == "system", f"{name}: opened stopped"
 
 
 def test_a_node_a_registered_executor_holds_stops_its_project_at_the_start(monkeypatch, tmp_path):
@@ -140,7 +140,7 @@ def test_a_node_a_registered_executor_holds_stops_its_project_at_the_start(monke
     e.graph._storage.close()
     reg = _registry(monkeypatch, tmp_path)
     default_agents().register("bob", "llm-executor", workdir=str(tmp_path))
-    assert reg.engine("bobs").paused()["by"] == "system", "a machine holds its node: stopped until the person's Start"
+    assert reg.engine("bobs").stops.paused()["by"] == "system", "a machine holds its node: stopped until the person's Start"
 
 
 def test_a_people_s_graph_with_a_node_on_the_standing_agent_runs_on_until_the_system_has_hands_there(monkeypatch, tmp_path):
@@ -158,8 +158,8 @@ def test_a_people_s_graph_with_a_node_on_the_standing_agent_runs_on_until_the_sy
         e.graph._storage.close()
     reg = _registry(monkeypatch, tmp_path)
     default_agents().register("w-val", "llm-validator", workdir=str(tmp_path), project="watched")
-    assert reg.engine("mine").paused() is None, "nothing of the system's runs there"
-    assert reg.engine("watched").paused()["by"] == "system", "its own validator would run unattended"
+    assert reg.engine("mine").stops.paused() is None, "nothing of the system's runs there"
+    assert reg.engine("watched").stops.paused()["by"] == "system", "its own validator would run unattended"
 
 
 def test_a_node_the_person_issues_to_another_runs_on(monkeypatch, tmp_path):
@@ -173,4 +173,4 @@ def test_a_node_the_person_issues_to_another_runs_on(monkeypatch, tmp_path):
     e.wait_idle()
     e.stop()
     e.graph._storage.close()
-    assert _registry(monkeypatch, tmp_path).engine("given").paused() is None
+    assert _registry(monkeypatch, tmp_path).engine("given").stops.paused() is None

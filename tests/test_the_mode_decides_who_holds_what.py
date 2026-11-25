@@ -27,6 +27,7 @@ from gfso.decompose.extract import extract_spec
 from gfso.sessions import run_consent
 from gfso.roster import AgentRegistry
 from gfso.core.protocol.procedure import probe_id
+from gfso.engine.validation import depth_of, fits_one_session, holder_boundary
 from gfso.core.types import register_of, AgentId, Criteria, Mode, Probe, Register, Signal, SignalData, State, TaskId
 from tests.support import issuer_sweep, DENIAL_ENTRY, criterion, instrument_passes, make_engine, REGISTER
 
@@ -132,7 +133,7 @@ def test_a_name_that_contradicts_the_mode_is_refused_not_obeyed():
 def test_semis_default_boundary_is_the_middle_of_the_plans_depth():
     e = _engine(Mode.SEMI)
     _goal(e)
-    assert e.holder_boundary() == 1, "root + children: the agent holds the root, the system the rest"
+    assert holder_boundary(e.graph) == 1, "root + children: the agent holds the root, the system the rest"
 
 
 class _FakeLLM:
@@ -661,7 +662,7 @@ def test_work_taken_before_semi_was_chosen_is_not_refused_below_its_boundary():
     TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
     assert TL.TOOLS["signal"](e, "kid", "ACCEPT", "user").get("accepted"), "the leaf taken in SOLO"
     e.set_mode(Mode.SEMI, None, AgentId("user"))
-    assert not e.held_by_the_user_agent(e.depth_of(TaskId("kid")))
+    assert not e.held_by_the_user_agent(depth_of(e.graph, TaskId("kid")))
     out = TL.TOOLS["signal"](e, "kid", "DELIVER", "user", result="done")
     assert not out.get("error"), out
 
@@ -704,7 +705,7 @@ def test_work_taken_before_semi_is_handed_in_whatever_its_depth():
     TL.TOOLS["signal"](e, "root", "ACCEPT", "user")
     assert TL.TOOLS["signal"](e, "b", "ACCEPT", "user").get("accepted")
     e.set_mode(Mode.SEMI, None, AgentId("user"))
-    assert e.held_by_the_user_agent(e.depth_of(TaskId("b"))), "b lies above the moved boundary"
+    assert e.held_by_the_user_agent(depth_of(e.graph, TaskId("b"))), "b lies above the moved boundary"
     out = TL.TOOLS["signal"](e, "b", "DELIVER", "user", result="done")
     assert not out.get("error"), out
 
@@ -1038,7 +1039,7 @@ def test_a_node_below_the_boundary_is_told_to_hand_over_whatever_is_under_it(mon
     _admit(e, "mid", _kid("leaf", ["m"], criterion("l", "L holds")))
     e.set_mode(Mode.SEMI, 1, AgentId("user"), said="the root is mine")
     mid = e.graph.get_task(TaskId("mid"))
-    assert str(mid.assignee) == "user" and not e.held_by_the_user_agent(e.depth_of(TaskId("mid")))
+    assert str(mid.assignee) == "user" and not e.held_by_the_user_agent(depth_of(e.graph, TaskId("mid")))
     assert e.frontier.steps._held_step_verb(mid, e.graph.get_active_children(TaskId("mid"))) == "HAND OVER"
 
 
@@ -1139,7 +1140,7 @@ def test_under_auto_a_split_one_session_carries_stays_with_its_executor_and_the_
     build_graph_live(_split(True), "the goal", e, assignee=str(e.graph.get_task(TaskId("root")).assignee))
     kids = e.graph.get_active_children(TaskId("root"))
     assert {str(k.assignee) for k in kids} == {str(e.graph.get_task(TaskId("root")).assignee)}
-    assert e.fits_one_session(TaskId("root"))
+    assert fits_one_session(e.graph, TaskId("root"))
     assert not e.observed_here(kids[0].id) and e.observed_here(TaskId("root"))
     got = extract_spec(e)
     assert got["whole_fits_one_session"] is True and got["subtasks"][0]["fits_one_session"] is True

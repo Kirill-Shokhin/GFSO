@@ -123,7 +123,7 @@ def test_next_steps_offers_a_reopen_only_where_its_gate_admits_it(engine, monkey
     _cancel(engine, "root", "boss")
     open_ = T.next_steps(engine)["directive"]
     assert "`reopen('root')` (1 of 1 reopens left)" in open_ and "is refused" not in open_, open_
-    monkeypatch.setattr(engine, "place_down", lambda: "its daemon does not answer")
+    monkeypatch.setattr(engine.stops, "place_down", lambda: "its daemon does not answer")
     shut = T.next_steps(engine)["directive"]
     assert "a reopen of 'root' is refused: root stays ABANDONED" in shut and "To take the goal up again" not in shut, shut
 

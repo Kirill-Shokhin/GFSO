@@ -21,8 +21,10 @@ from gfso import delegate as DG, issuer as I, tools as T
 from gfso.adapters.llm import budget as B
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.types import AgentId, Mode, State, TaskId
-from gfso.delegate import Dispatcher, _auto_validate
-from gfso.inflight import _inflight
+from gfso.delegate import Dispatcher
+from gfso.engine.validation import session_fit
+from gfso.validate import auto_validate
+from gfso.inflight import flight
 from gfso.packets import CHALLENGE_WHEN
 from gfso.roster import AgentRegistry
 from gfso.sessions import run_executor
@@ -127,7 +129,7 @@ def test_a_node_larger_than_a_session_is_worked_across_sessions_delivered_and_va
         once = Dispatcher(e, agents, runner=lambda *a: None)
         once._publish_the_roster()                                       # …whose instrument signs for the issuer
         e._events._on_transition.remove(once._on_bus)
-        assert _auto_validate(e, node.id, agents, _llm=_Validator(e, node.id)) == "pass"
+        assert auto_validate(e, node.id, agents, _llm=_Validator(e, node.id)) == "pass"
         e.wait_idle()
         assert e.graph.get_state(node.id) == State.DONE and not e.graph.get_children(node.id)
     finally:
@@ -156,7 +158,7 @@ def test_a_too_large_challenge_is_answered_by_the_work_going_on_under_its_contra
         e.wait_idle()
         assert out["status"] == "applied", out
         assert e.graph.get_state(node.id) == State.EXECUTING, "the work did not resume under its contract"
-        assert e.session_fit(node.id) is None and not e.graph.get_children(node.id)
+        assert session_fit(e.graph, node.id) is None and not e.graph.get_children(node.id)
         assert "names no defect" in I.QUESTIONS["dispute"]["ask"]
     finally:
         e.stop()
@@ -168,7 +170,7 @@ def test_a_block_saying_only_its_size_resumes_and_no_split_is_made_for_it(tmp_pa
         assert (node.id, "external") in I.open_questions(e), I.open_questions(e)
         refused = I.issuer_turn(e, node.id, "external", str(e.graph.issuer_of(node.id)),
                                 _llm=_Answers({"move": "split", "justification": LARGE}))
-        assert refused["status"] == "refused" and e.session_fit(node.id) is None, refused
+        assert refused["status"] == "refused" and session_fit(e.graph, node.id) is None, refused
         out = I.issuer_turn(e, node.id, "external", str(e.graph.issuer_of(node.id)), _llm=_Answers(
             {"move": "resolve_block", "action": "it names no prerequisite: the work is its own", "justification": "size"}))
         e.wait_idle()
@@ -184,7 +186,7 @@ def test_a_plan_the_user_gave_still_stops_with_the_reason(tmp_path):
         e.give_users_plan(TaskId("root"))
         assert (TaskId("root"), "repair") in I.open_questions(e)
         out = I.settle(e, agents, TaskId("root"), "repair", str(e.graph.get_task(TaskId("root")).assignee),
-                       I.Verbs(llm=None, busy=_inflight, review=None, refine=None))
+                       I.Verbs(llm=None, busy=flight, review=None, refine=None))
         assert out["status"] == "users" and "only the user re-plans" in out["why"], out
         assert {str(k.id) for k in e.graph.get_active_children(TaskId("root"))} == {"root.pp", "root.fe", "root.cg"}
     finally:
@@ -203,7 +205,7 @@ def test_a_challenge_under_a_review_gone_stale_opens_its_plan_and_then_is_answer
         assert (root.id, "plan") in I.open_questions(e) and e.execution_blocked_by(node.id), I.open_questions(e)
         answers = _Answers({"decision": "reject", "justification": "size is no defect: work it"})
         monkeypatch.setattr(I, "_ran_a_shell", lambda ran: True)
-        monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=lambda m, **k: answers, busy=_inflight,
+        monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=lambda m, **k: answers, busy=flight,
                                                         review=lambda en, n: (_reviewed(en, n), {"stats": [{"cost_usd": 0}]})[1],
                                                         refine=None))
         d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: {"status": "accepted"},

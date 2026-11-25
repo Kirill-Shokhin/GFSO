@@ -144,7 +144,7 @@ def test_a_stopped_project_still_clears_what_a_verdict_held(monkeypatch):
     key = d._engine.claims.begin_validation("t0")
     d._join("t0")
     d._engine.claims.end_validation(key)
-    monkeypatch.setattr(d._engine, "paused", lambda: {"why": "the user's stop"})
+    monkeypatch.setattr(d._engine.stops, "paused", lambda: {"why": "the user's stop"})
     d.dispatch_once()
     assert cleared == ["t0"]
 

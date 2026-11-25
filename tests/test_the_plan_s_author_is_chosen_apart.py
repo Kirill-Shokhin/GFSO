@@ -120,8 +120,8 @@ def test_a_dispute_a_closed_plan_cannot_answer_stops_the_run_and_says_why(monkey
     monkeypatch.setattr(I, "review_due", lambda *a: False)
     monkeypatch.setattr(I, "refused_on_this_version", lambda *a: "")
     monkeypatch.setattr(I, "issuer_turn", lambda *a, **k: {"status": "unparsed", "why": "changed no criterion"})
-    monkeypatch.setattr(e, "users_plan", lambda: True)
-    monkeypatch.setattr(e, "pause", lambda who, why: paused.append(why))
+    monkeypatch.setattr(I, "users_plan", lambda graph: True)
+    monkeypatch.setattr(e.stops, "pause", lambda who, why: paused.append(why))
     monkeypatch.setattr(e, "challenge_reason", lambda t: "the check contradicts the spec")
     assert I.settle(e, {}, "t", "dispute", "a", None)["status"] == "users"
     assert "the check contradicts the spec" in paused[0]

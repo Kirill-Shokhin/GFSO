@@ -10,10 +10,13 @@ import json
 
 import gfso.observe as O
 import gfso.tools_llm as TL
-from gfso.delegate import _classify_no_verdict
-from gfso.core.protocol.procedure import BOUND_SPENT, PAST_BOUND, PAST_WHOLE, probe_id, with_engine_observations
+from gfso.validate import _classify_no_verdict
+from gfso.core.protocol.procedure import probe_id
+from gfso.core.protocol.accounting import BOUND_SPENT, PAST_WHOLE, with_engine_observations
+from gfso.core.protocol.invariants import PAST_BOUND
 from gfso.core.types import Criteria, Probe
 from tests.test_the_system_runs_an_exact_check_itself import _validated
+import gfso.validate as VAL
 
 CMD = "cat out.txt"
 C = Criteria("c", "prints hello", check=(Probe("it greets", CMD, "hello", exact=True),))
@@ -57,8 +60,8 @@ def test_a_looping_check_after_slow_honest_ones_is_no_pass(tmp_path, monkeypatch
     """The delivery's own code spends the observation's budget: a loop placed after slow checks met a cut bound, not
     its own, and passed on the judge's word (critic over the first form)."""
     monkeypatch.setattr(O, "PROBE_S", 2)
-    monkeypatch.setattr(TL, "OBSERVE_S", 0, raising=False)
-    monkeypatch.setattr(TL, "FRESH_S", 1.5, raising=False)
+    monkeypatch.setattr(VAL, "OBSERVE_S", 0, raising=False)
+    monkeypatch.setattr(VAL, "FRESH_S", 1.5, raising=False)
     out = _validated(tmp_path, "hello", cmd="sleep 1.6; while :; do :; done; cat out.txt")
     assert out.get("verdict") not in ("PASS", "FAIL"), out
 
@@ -76,7 +79,7 @@ def test_a_whole_bound_spent_is_not_asked_again(tmp_path, monkeypatch):
 def test_a_bound_the_budget_cut_is_asked_again(tmp_path, monkeypatch):
     """Cut by the shared budget, the check never had its own bound: the re-run with the whole budget may decide it."""
     monkeypatch.setattr(O, "PROBE_S", 2)
-    monkeypatch.setattr(TL, "OBSERVE_S", 0, raising=False)
-    monkeypatch.setattr(TL, "FRESH_S", 1.5, raising=False)
+    monkeypatch.setattr(VAL, "OBSERVE_S", 0, raising=False)
+    monkeypatch.setattr(VAL, "FRESH_S", 1.5, raising=False)
     out = _validated(tmp_path, "hello", cmd="sleep 1.6; while :; do :; done; cat out.txt")
     assert out.get("verdict") not in ("PASS", "FAIL") and BOUND_SPENT not in str(out.get("verdict_defects")), out

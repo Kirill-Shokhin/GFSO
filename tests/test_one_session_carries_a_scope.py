@@ -22,9 +22,11 @@ from gfso.core.types import AgentId, Mode, Signal, State, TaskId
 from gfso.decompose.build import build_graph_live
 from gfso.delegate import Dispatcher
 from gfso.roster import AgentRegistry
-from gfso.engine.validation import record_stands, split_owed
+from gfso.engine.validation import record_stands, session_fit, split_owed
 from gfso.issuer import Verbs, open_questions, settle
 from tests.support import REGISTER, a_repository, committed, criterion, instrument_passes, make_engine
+from gfso.roster import publish_the_workforce
+import gfso.validate as VAL
 
 _RISK = REGISTER
 _NODES = ("root", "root.a", "root.b")
@@ -63,7 +65,7 @@ def _project(tmp_path, fits=True, mode=Mode.AUTO):
         a_repository(tmp_path)            # …where its roles work: a repository, as every directory a role is named in
     for aid, kind in (("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(aid, kind, workdir=str(tmp_path), project="p")
-    D.publish_the_workforce(e, agents.list())
+    publish_the_workforce(e, agents.list())
     e.set_mode(mode, None, AgentId("user"))
     T.create_task(e, "root", {"description": "the goal", "accepted_risks": _RISK,
                               "criteria": [criterion("g", "G holds")]})
@@ -131,7 +133,7 @@ def _dispatcher(e, agents, executor, validator, per_node: list):
                       consent_runner=lambda en, t, *a, **k: per_node.append(("consent", str(t))) or {
                           "status": "not_offered"},
                       scope_runner=lambda en, t, ex, ag: D.run_scope_executor(en, t, ex, ag, _llm=executor),
-                      scope_validator=lambda en, t, ag, sign=True: D._auto_validate_scope(en, t, ag, _llm=validator,
+                      scope_validator=lambda en, t, ag, sign=True: VAL.auto_validate_scope(en, t, ag, _llm=validator,
                                                                                          sign=sign))
 
 
@@ -222,8 +224,8 @@ def test_no_session_starts_while_its_scope_is_being_signed(tmp_path, monkeypatch
     """The signatures move the nodes one at a time: between the part's FAIL and its consumer's re-presentation the
     scope reads as a part to rework beside two deliveries, and a session started there worked the part alone — the
     round split over three sessions (once in three full suites under load; every time with the signing slowed)."""
-    represent = D._represent
-    monkeypatch.setattr(D, "_represent", lambda *a: time.sleep(0.5) or represent(*a))
+    represent = VAL._represent
+    monkeypatch.setattr(VAL, "_represent", lambda *a: time.sleep(0.5) or represent(*a))
     test_a_part_that_fails_is_reworked_with_its_whole_in_one_session_as_a_leaf_would_be(tmp_path)
 
 
@@ -266,7 +268,7 @@ def test_a_consumer_beside_a_producer_reworked_in_an_earlier_run_is_not_signed(t
                           require_probe=True)
     assert D._signal(e, TaskId("root.a"), Signal.FAIL, "exec-1", failed_criteria=("a_ok",), reason="a does not hold")
     e.wait_idle()
-    D._sign_scope(e, e.graph.get_task(TaskId("root")), {"root.b": {"verdict": "PASS", "failed_criteria": []}}, "val-1", True)
+    VAL._sign_scope(e, e.graph.get_task(TaskId("root")), {"root.b": {"verdict": "PASS", "failed_criteria": []}}, "val-1", True)
     e.wait_idle()
     assert e.graph.get_state(TaskId("root.b")) == State.OFFERED, "re-presented over its producer's rework, not PASSed"
     e.stop()
@@ -318,8 +320,8 @@ def test_a_scope_run_is_not_cut_to_the_bound_of_a_node_that_waited_longest(monke
     """One run serves every node in it; a top that had waited must not cut a run over fresh deliveries to its own
     remainder (critics, 2026-09-28: 119 s, then 299 s, every verdict ⊥)."""
     left = {"root.a": 3599, "root.b": 3599, "root": 299}
-    monkeypatch.setattr(TL, "_validation_cap", lambda t, g: left[str(t.id)])
-    assert TL._scope_cap([(type("T", (), {"id": k})(), "", []) for k in ("root", "root.a", "root.b")], None) == 3599
+    monkeypatch.setattr(VAL, "_validation_cap", lambda t, g: left[str(t.id)])
+    assert VAL._scope_cap([(type("T", (), {"id": k})(), "", []) for k in ("root", "root.a", "root.b")], None) == 3599
 
 
 def test_a_split_nobody_judged_keeps_a_session_and_a_validation_per_node(tmp_path):
@@ -579,7 +581,7 @@ def test_per_node_reuse_does_not_replay_a_record_that_no_longer_stands(tmp_path)
     e._graph._storage.store_exec_verdict(TaskId("root"), json.dumps({**rec, "log_at": 0}))   # made before the parts
     assert e.current_exec_verdict(TaskId("root")) is None
     validator = _Validator(e)
-    D._auto_validate(e, TaskId("root"), agents, _llm=validator, sign=False)
+    VAL.auto_validate(e, TaskId("root"), agents, _llm=validator, sign=False)
     assert len(validator.calls) == 1, "validated again, not replayed"
     assert e.current_exec_verdict(TaskId("root")) is not None, "and the fresh record stands"
     e.stop()
@@ -686,7 +688,7 @@ def test_a_scope_whose_part_fails_the_same_criterion_round_after_round_stays_one
     d = _dispatcher(e, agents, executor, validator, per_node)
     _drive(e, d, lambda: len(executor.calls) >= rounds and len(validator.calls) >= rounds, rounds=400)
     assert len(executor.calls) >= rounds, "a scope stuck on one criterion stopped getting its session"
-    assert e.scope_top(TaskId("root.a")) is not None and (e.session_fit(TaskId("root")) or {}).get("fits") is not False
+    assert e.scope_top(TaskId("root.a")) is not None and (session_fit(e.graph, TaskId("root")) or {}).get("fits") is not False
     assert ("exec", "root.a") not in per_node, "a count of equal FAILs handed a part a session of its own"
     e.stop()
 

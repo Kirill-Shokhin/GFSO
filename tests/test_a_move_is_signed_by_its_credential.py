@@ -227,15 +227,15 @@ def test_the_sign_in_state_is_no_project_and_an_earlier_file_moves_once(tmp_path
 
 def test_a_stop_and_a_start_carry_the_credential_they_came_through(door):
     """The run's events said «STOPPED by agent» for a page's stop and a console's alike (ui). CONTROL: drop `_via()`
-    from `Engine.pause` and the record carries none."""
+    from `Stops.pause` and the record carries none."""
     e, app = door
     _, token = signin.issue("engineering")
     c = _client(app, Authorization=f"Bearer {token}")
     c.post("/api/run/create_task", json={"task_id": "n", "spec": SPEC, "assignee": "engineering"})
     c.post("/api/run/stop_project", json={"why": "lunch"})
-    assert (e.paused() or {}).get("via", "").startswith("tok-"), e.paused()
+    assert (e.stops.paused() or {}).get("via", "").startswith("tok-"), e.stops.paused()
     c.post("/api/run/start_project", json={})
-    assert e.paused() is None
+    assert e.stops.paused() is None
 
 
 def test_a_revision_through_a_door_is_signed_by_its_credential_not_refused_as_no_one(door):

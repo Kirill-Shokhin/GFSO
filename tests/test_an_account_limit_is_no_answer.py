@@ -35,6 +35,7 @@ from tests.support import hold_a_credential, make_engine
 from tests.test_equal_fails_do_not_measure_kappa import _leaf, _leaves
 from tests.test_one_session_carries_a_scope import _project
 from tests.test_delegate import _agents
+import gfso.validate as VAL
 
 #: The envelope the CLI wrote for that session (agent trace 20261023T080135-8dd47b36, `result` event).
 LIMIT_ENVELOPE = {"is_error": True, "subtype": "success", "terminal_reason": "api_error", "api_error_status": 429,
@@ -118,10 +119,10 @@ def test_a_validation_the_limit_refused_spends_no_retry_and_buys_no_tier(tmp_pat
 def test_the_validator_door_reads_the_limit_off_the_calls():
     """`_auto_validate`'s classification: a run any of whose calls the limit refused is `no-verdict:limit`."""
     e = make_engine()
-    ret = D._classify_no_verdict(e, "kid", {"verdict": None, "stats": [
+    ret = VAL._classify_no_verdict(e, "kid", {"verdict": None, "stats": [
         {"error": "api_error: usage_limit_reached: You've hit your session limit"}]})
     assert ret == "no-verdict:limit"
-    assert D._classify_no_verdict(e, "kid", {"verdict": None, "stats": [{"error": None, "cost_usd": 0.1}]}) == "no-verdict"
+    assert VAL._classify_no_verdict(e, "kid", {"verdict": None, "stats": [{"error": None, "cost_usd": 0.1}]}) == "no-verdict"
 
 
 def test_the_runners_say_which_session_the_limit_ended(monkeypatch, tmp_path):
@@ -153,8 +154,8 @@ def test_an_unsigned_validation_reads_the_limit_too(tmp_path, monkeypatch):
     e.start()
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     _a_delivery(e)
-    monkeypatch.setattr(D, "_validate_with", lambda *a, **k: dict(_LIMITED))
-    assert D._auto_validate(e, "kid", agents, sign=False) == "no-verdict:limit"
+    monkeypatch.setattr(VAL, "_validate_with", lambda *a, **k: dict(_LIMITED))
+    assert VAL.auto_validate(e, "kid", agents, sign=False) == "no-verdict:limit"
     e.stop()
 
 
@@ -163,14 +164,14 @@ def test_the_scope_validation_door_reads_the_limit(monkeypatch):
     `no-verdict:limit`, and the dispatcher waits it out instead of re-asking every 30 s."""
     e = make_engine()
     member = types.SimpleNamespace(id="kid", state=types.SimpleNamespace(name="VALIDATING"))
-    monkeypatch.setattr(D, "_which_instrument_validates", lambda *a: "val-1")
-    monkeypatch.setattr(D, "_standing_verdicts", lambda *a: {})
-    monkeypatch.setattr(D, "validator_workdir", lambda *a, **k: None)
+    monkeypatch.setattr(VAL, "_which_instrument_validates", lambda *a: "val-1")
+    monkeypatch.setattr(VAL, "_standing_verdicts", lambda *a: {})
+    monkeypatch.setattr(VAL, "validator_workdir", lambda *a, **k: None)
     monkeypatch.setattr(e, "scope_members", lambda top: [member])
     agents = types.SimpleNamespace(get=lambda k: {}, list=lambda: {})
     for stats, want in ((_LIMITED["stats"], "no-verdict:limit"), ([{"error": None}], "no-verdict")):
-        monkeypatch.setattr(D.T, "validate_scope", lambda *a, _s=stats, **k: {"verdicts": {}, "stats": _s})
-        assert D._auto_validate_scope(e, "root", agents) == want
+        monkeypatch.setattr(VAL, "validate_scope", lambda *a, _s=stats, **k: {"verdicts": {}, "stats": _s})
+        assert VAL.auto_validate_scope(e, "root", agents) == want
     waits = []
     monkeypatch.setattr(D, "LIMIT_RETRY_S", 0)
     d = D.Dispatcher(e, agents, scope_validator=lambda *a, **k: "no-verdict:limit")
@@ -207,7 +208,7 @@ def test_a_limit_refused_validation_leaves_no_refused_report(tmp_path):
     agents = _agents(tmp_path, ("exec-1", "llm-executor"), ("val-1", "llm-validator"))
     _a_delivery(e, tmp_path)
     for sign in (True, False, True):
-        assert D._auto_validate(e, "kid", agents, _llm=_LimitedProvider(), sign=sign) == "no-verdict:limit", sign
+        assert VAL.auto_validate(e, "kid", agents, _llm=_LimitedProvider(), sign=sign) == "no-verdict:limit", sign
     assert e.rejected_report("kid") is None, e.rejected_report("kid")
     e.stop()
 

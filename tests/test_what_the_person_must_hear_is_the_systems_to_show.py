@@ -19,6 +19,7 @@ from tests.test_a_plan_s_answer_holds_its_text import home  # noqa: F401 — the
 from tests.test_a_plan_the_go_refuses_says_so import _by_build
 from tests.test_the_go_only_adds_to_the_plan import GOAL, _plan, go  # noqa: F401 — `go` is a fixture
 from tests.test_the_mode_decides_who_holds_what import _engine
+from gfso.roster import publish_the_workforce
 
 KEYS = {"path", "written_at", "given_at", "goal", "executor", "parts", "root_criteria", "deps", "open", "taken_back",
         "refused_by_the_go", "undecided", "notes", "documents"}
@@ -129,7 +130,7 @@ def test_the_go_records_where_it_runs_what_is_left_out_and_the_goal_as_given(go)
     both, and the goal verbatim, by the same reading; the go's `say` leads with the host. CONTROL: publish no `on_host`
     in `publish_the_workforce` and every assertion on it is red."""
     e = _engine(Mode.AUTO)
-    TL._delegation().publish_the_workforce(e, {f"exec-{n}": {"kind": "llm-executor", "project": "p"} for n in (1, 2)})
+    publish_the_workforce(e, {f"exec-{n}": {"kind": "llm-executor", "project": "p"} for n in (1, 2)})
     out = TL.auto_decompose(e, plan=A.render(GOAL, _plan(), {"by": "m", "gate_passed": True}))
     said = {"runs_on_host": True, "not_imported": [], "goal_as_given": GOAL}
     assert {k: out[k] for k in said} == said
@@ -142,7 +143,7 @@ def test_where_the_work_runs_is_on_the_graph_before_the_go():
     CONTROL: publish no `on_host` in `publish_the_workforce` and the first assertion is red."""
     e = _engine(Mode.AUTO)
     for execution, on_host in ((None, True), ("default", False)):
-        TL._delegation().publish_the_workforce(e, {"exec-1": {"kind": "llm-executor", "project": "p",
+        publish_the_workforce(e, {"exec-1": {"kind": "llm-executor", "project": "p",
                                                               **({"execution": execution} if execution else {})}})
         assert TL._tools.graph_read(e)["mode"]["runs_on_host"] is on_host
 
@@ -151,7 +152,7 @@ def test_where_the_work_runs_is_said_with_no_mode_too():
     """A project with no mode, its executors on this machine: the graph's `heard` says so (ui critic, 2026-11-17).
     CONTROL: drop `heard` from `graph_read` and it is red."""
     e = _engine(None)
-    TL._delegation().publish_the_workforce(e, {"exec-1": {"kind": "llm-executor", "project": "p"}})
+    publish_the_workforce(e, {"exec-1": {"kind": "llm-executor", "project": "p"}})
     assert TL._tools.graph_read(e)["mode"] is None and TL._tools.graph_read(e)["heard"]["runs_on_host"] is True
 
 
@@ -167,9 +168,9 @@ def test_every_fresh_go_says_where_it_runs_and_what_its_copy_lacks(mode):
 def test_the_plan_says_where_its_work_will_run(home):
     """CONTROL: drop the `runs_on_host` line in `_shown` and the first assertion is red."""
     e = _engine()
-    TL._delegation().publish_the_workforce(e, {"exec-1": {"kind": "llm-executor", "project": "p"}})
+    publish_the_workforce(e, {"exec-1": {"kind": "llm-executor", "project": "p"}})
     assert written(TL.plan, e, GOAL)["say"].startswith(TL.ON_HOST)
-    TL._delegation().publish_the_workforce(e, {"exec-1": {"kind": "llm-executor", "project": "p", "execution": "d"}})
+    publish_the_workforce(e, {"exec-1": {"kind": "llm-executor", "project": "p", "execution": "d"}})
     assert not written(TL.plan, e, GOAL + "In a container.\n")["say"].startswith(TL.ON_HOST)
 
 

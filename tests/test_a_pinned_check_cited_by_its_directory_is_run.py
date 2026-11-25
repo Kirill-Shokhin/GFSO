@@ -1,8 +1,8 @@
 """A validator that ran a pinned check and cited it by a spelling the system itself gave the probe — the directory its
 inputs were laid down in — ran it: 65 truthful PASS reports over 7 E3 rows were refused as not having run their pinned
 checks (`root.wc` five times running), each a validation bought again (2026-10-22)."""
-from gfso.core.protocol.procedure import (canonical_citations, inputs_dir_name, pinned_run, probe_id, refuting_probes,
-                                         unrun_parts, unrun_pinned)
+from gfso.core.protocol.procedure import inputs_dir_name, probe_id
+from gfso.core.protocol.accounting import canonical_citations, pinned_run, refuting_probes, unrun_parts, unrun_pinned
 from gfso.core.types import Criteria, Probe
 
 CRIT = "Statements and control flow"

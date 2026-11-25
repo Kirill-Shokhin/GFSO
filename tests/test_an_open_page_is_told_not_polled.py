@@ -21,7 +21,7 @@ def _client(monkeypatch, tmp_path):
 def test_a_process_starting_and_ending_reaches_the_open_page(monkeypatch, tmp_path):
     eng, client = _client(monkeypatch, tmp_path)
     with client.websocket_connect("/ws/events") as ws:
-        with inflight._inflight("validate_result", eng, "r1"):
+        with inflight.flight("validate_result", eng, "r1"):
             started = ws.receive_json()
             assert started["type"] == "inflight"
             assert [(w["verb"], w["task_id"]) for w in started["in_flight"]] == [("validate_result", "r1")]
@@ -37,7 +37,7 @@ def test_the_list_of_projects_hears_the_server_and_opens_no_graph(monkeypatch, t
     reg = client.app.state.registry
     monkeypatch.setattr(reg, "engine", lambda *a, **k: pytest.fail("the list opened a graph"))
     with client.websocket_connect("/ws/events?projects=1") as ws:
-        with inflight._inflight("plan", eng, "r1"):
+        with inflight.flight("plan", eng, "r1"):
             assert ws.receive_json()["type"] == "inflight"
         assert ws.receive_json() == {"type": "inflight", "in_flight": []}
         reg._on_create("another")

@@ -22,7 +22,8 @@ import pytest
 
 import gfso.tools as T
 from gfso import issuer as I
-from gfso.core.protocol.procedure import probe_id, with_engine_observations
+from gfso.core.protocol.procedure import probe_id
+from gfso.core.protocol.accounting import with_engine_observations
 from gfso.core.types import AgentId, DoneReason, RevisionReason, State, TaskId
 from gfso.tools_llm import TOOLS as LOCKED
 from tests.support import a_place, criterion
@@ -176,12 +177,12 @@ def test_a_plan_handed_in_is_never_changed_it_stops_with_the_signal(tmp_path):
     ids = _disputed(e, ("g", _finding("g")), ("h", _finding("h")))
     out = I.settle(e, _Roster(), ROOT, "dispute", "user", verbs(answers[0]))
     e.wait_idle()
-    assert out["status"] == "applied" and not e.paused(), "a rejection is an answer: nothing stops"
+    assert out["status"] == "applied" and not e.stops.paused(), "a rejection is an answer: nothing stops"
     assert T.signal(e, "root", "CHALLENGE", str(e.graph.get_task(ROOT).assignee), reason=", ".join(ids))["accepted"]
     e.wait_idle()
     out = I.settle(e, _Roster(), ROOT, "dispute", "user", verbs({"decision": "accept", "justification": "false", "retire_findings": ids}))
     e.wait_idle()
-    assert out["status"] == "users" and e.paused() and "only the user changes a check" in out["why"], out
+    assert out["status"] == "users" and e.stops.paused() and "only the user changes a check" in out["why"], out
     assert _standing(e) == set(ids) and STUB in _pins(e, "g") and e.graph.get_state(ROOT) == State.CHALLENGED
     # …and even the person's own ruling on a finding leaves a check of his own plan to his re-plan
     assert T.signal(e, "root", "ACCEPT_CHALLENGE", "user", retire_findings=ids, justification="not my goal")["accepted"]

@@ -26,6 +26,8 @@ from gfso.roster import AgentRegistry
 from tests.support import REGISTER, criterion, instrument_passes, make_engine
 from tests.test_a_chat_delivery_is_the_tree_it_handed_in import _Reads, _commit, _git, _in_chat, _repo, _take
 from tests.test_a_delivery_is_the_systems_from_deliver_on import _deliver, _gone, _kept, _keeps, _unregistered
+from gfso.roster import default_agents
+import gfso.validate as VAL
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +62,7 @@ def test_a_removed_places_delivery_is_judged_and_landed_by_its_id(tmp_path):
     (`NotTheDelivery`) — and its landing had nothing to name."""
     repo, e, head = _delivered_from_a_worktree(tmp_path)
     # …the judge's own read (`_validator_texts`, `_observe_pins`): from the directory it stands in, by the id
-    with snapshot(TL._read_by_id(e, e.delivered(TaskId("root")), repo, None), tmp_path / "judge",
+    with snapshot(VAL._read_by_id(e, e.delivered(TaskId("root")), repo, None), tmp_path / "judge",
                   LocalExecution(), delivered=e.delivered(TaskId("root"))) as at:
         assert (Path(at) / "f.txt").read_text().strip() == "v1", "the judge did not read the delivery by its id"
     instrument_passes(e, TaskId("root"), "validator")
@@ -112,7 +114,7 @@ def test_a_delivery_no_store_holds_is_no_verdict_never_a_fail(tmp_path):
     repo, e, head = _delivered_from_a_worktree(tmp_path)
     _gone(ST._where(e, None)[0])
     with pytest.raises(Uncopied) as got:
-        with snapshot(TL._read_by_id(e, e.delivered(TaskId("root")), repo, None), tmp_path / "judge",
+        with snapshot(VAL._read_by_id(e, e.delivered(TaskId("root")), repo, None), tmp_path / "judge",
                       LocalExecution(), delivered=e.delivered(TaskId("root"))):
             pass
     assert not isinstance(got.value, NotTheDelivery)
@@ -134,7 +136,7 @@ def test_a_judge_registered_below_a_work_trees_top_stands_in_that_directory_of_i
     head = _commit(repo, "pkg/f.txt")
     out = TL.TOOLS["signal"](e, "root", "DELIVER", "user", result="pkg/f.txt", self_validation="PASS")
     assert out["accepted"] and e.delivered(TaskId("root"))[1] == head, out
-    TL.validate_result(e, "root", _llm=(llm := _Reads()))
+    VAL.validate_result(e, "root", _llm=(llm := _Reads()))
     assert llm.read == "v1" and Path(llm.cwd).name == "pkg", (llm.cwd, llm.read)
     e.stop()
 
@@ -340,7 +342,7 @@ def test_the_one_time_migration_keeps_what_the_log_names_and_names_what_it_canno
     assert got["accepted"], got
     (plain := tmp_path / "plain").mkdir()                 # …a role's directory from before a no-git one was refused
     AgentRegistry().register("old-exec", "llm-executor", workdir=str(plain), project="p")
-    agents = TL._delegation().default_agents()
+    agents = default_agents()
     got = ST.migrate(e, None, WS.repository(e, agents), WS.unjudged(e, agents))
     assert head in got["kept"] and _keeps(e).get(f"{ST.KEEP}{head}") == head, got
     assert ("root", State.VALIDATING.name) in got["no_commit"], got

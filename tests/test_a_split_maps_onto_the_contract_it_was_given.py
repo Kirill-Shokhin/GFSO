@@ -16,6 +16,7 @@ from gfso.roster import AgentRegistry
 from gfso.issuer import open_questions, system_splits
 from gfso.engine.moves import SIGNERS
 from tests.support import REGISTER, criterion, make_engine
+from gfso.roster import publish_the_workforce
 
 _PLAN = {"name": "g", "root_criteria": [criterion("g", "G holds"), criterion("z", "a goal the author made up")],
          "subtasks": [{"id": "a", "name": "a", "description": "part a", "criteria": [criterion("a_ok", "a holds")]}],
@@ -32,7 +33,7 @@ def _goal(tmp_path=None):
         e.project_name = "p"
         agents = AgentRegistry(path=str(tmp_path / "agents.json"))
         agents.register("exec-1", "llm-executor", workdir=str(tmp_path), project="p")
-        D.publish_the_workforce(e, agents.list())
+        publish_the_workforce(e, agents.list())
         e.set_mode(Mode.AUTO, None, AgentId("user"))
     else:
         e.record_root_issuer(TaskId("root"), AgentId("user"))
@@ -120,7 +121,7 @@ def test_a_held_refine_round_spends_no_repair_on_the_contract_it_does_not_author
     monkeypatch.setattr(DEC._Agreement, "judge", lambda self, spec: None)
     for n in ("_stage", "tag_stage"):
         monkeypatch.setattr(DEC, n, lambda *a, **k: None)
-    monkeypatch.setattr(DEC, "_stat_line", lambda llm: "")
+    monkeypatch.setattr(DEC, "stat_line", lambda llm: "")
     changed, _, problems = DEC._refine_round(e, "", "root", "exec-1", object(), contract_fixed=True)
     assert changed and problems == [] and calls == [], calls
     e.stop()

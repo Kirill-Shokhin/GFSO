@@ -61,11 +61,11 @@ def test_a_refused_account_stops_the_project_and_is_asked_again():
     t0 = time.time()
     e.record_llm_usage("validator", [{"ended": "unauthorized", "error": "api_error: 403 Failed to authenticate"}],
                        TaskId("n"))
-    stop = e.paused()
+    stop = e.stops.paused()
     assert stop and "authentication" in stop["why"] and "validator" in stop["why"], stop
     assert t0 + LIMIT_RETRY_S <= stop["until"] <= time.time() + LIMIT_RETRY_S + 60
-    e.lift_the_system_stop(stop["until"])
-    assert e.paused() is None, "the system did not start what it stopped"
+    e.stops.lift_the_system_stop(stop["until"])
+    assert e.stops.paused() is None, "the system did not start what it stopped"
 
 
 def _plan_refused(monkeypatch) -> tuple:
@@ -74,7 +74,7 @@ def _plan_refused(monkeypatch) -> tuple:
     _cli(monkeypatch, REFUSED_STREAM)
     e = carried_by_the_system(make_engine(llm=None))
     out = written(TL.TOOLS["plan"], e, request="count the words of a file")
-    return str(out.get("error")), e.paused() or {}
+    return str(out.get("error")), e.stops.paused() or {}
 
 
 def _no_wrong_remedy(said: str) -> None:

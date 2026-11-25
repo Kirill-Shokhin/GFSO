@@ -20,9 +20,11 @@ import tests.test_one_session_carries_a_scope as S
 from gfso.core.types import AgentId, Mode, State, TaskId
 from gfso.decompose.build import build_graph_live
 from gfso.roster import AgentRegistry
-from gfso.tools_llm import _SCOPE_VALIDATOR_SCHEMA, _entries_by_node
+from gfso.validate import _SCOPE_VALIDATOR_SCHEMA, _entries_by_node
 from tests.support import REGISTER, criterion, make_engine
 from tests.support import FakeSpec
+from gfso.roster import publish_the_workforce
+import gfso.validate as VAL
 
 
 class _Says(S._LLM):
@@ -60,7 +62,7 @@ def _two_consumers_of_one_producer(tmp_path):
     agents = AgentRegistry(path=str(tmp_path / "agents.json"))
     for aid, kind in (("exec-1", "llm-executor"), ("exec-2", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(aid, kind, workdir=str(tmp_path), project="p")
-    D.publish_the_workforce(e, agents.list())
+    publish_the_workforce(e, agents.list())
     e.set_mode(Mode.AUTO, None, AgentId("user"))
     T.create_task(e, "root", {"description": "the goal", "accepted_risks": REGISTER, "criteria": [criterion("g", "G holds")]})
     e.wait_idle()
@@ -91,7 +93,7 @@ def test_a_glue_failed_by_reading_it_fails_neither_consumer(tmp_path):
     def report():
         ents = [x for t in e.all_tasks() if t.state == State.VALIDATING for x in S._entries(e, t)]
         return S._fenced({"verdict": "PASS", "per_criterion": ents, "failed_criteria": []})
-    out = TL.validate_scope(e, "root", None, "val-1", _llm=_Says(report))
+    out = VAL.validate_scope(e, "root", None, "val-1", _llm=_Says(report))
     assert (out["verdicts"]["root.b"]["verdict"], out["verdicts"]["root.c"]["verdict"]) == ("PASS", "PASS")
     e.stop()
 
@@ -110,7 +112,7 @@ def test_a_failed_list_read_as_written_never_passes_the_node_it_names(tmp_path, 
     def report():
         ents = [x for t in e.all_tasks() if t.state == State.VALIDATING for x in S._entries(e, t, {("root.b", "dep__a")})]
         return S._fenced({"verdict": "FAIL", "per_criterion": ents, "failed_criteria": listed})
-    out = TL.validate_scope(e, "root", None, "val-1", _llm=_Says(report))
+    out = VAL.validate_scope(e, "root", None, "val-1", _llm=_Says(report))
     assert out["verdicts"]["root.c"]["verdict"] != "PASS", out["verdicts"]
     e.stop()
 

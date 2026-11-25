@@ -21,15 +21,18 @@ from gfso.core.graph.model import admission_key
 from gfso.core.graph.mutations import InvariantViolation
 from gfso.core.types import settled_positive
 from gfso.core.types.enums import Verdict
-from gfso.delegate import Dispatcher, _auto_validate
+from gfso.delegate import Dispatcher
+from gfso.validate import auto_validate
 from gfso.driver import _frontier_line
 from gfso.engine import loop
-from gfso.inflight import _inflight
+from gfso.inflight import flight
 from gfso.roster import AgentRegistry
 from gfso.sessions import run_executor
 from tests import test_one_session_carries_a_scope as S
 from tests.support import committed, REGISTER, criterion, instrument_passes, make_engine
 from tests.test_a_node_works_in_its_own_place import _Executor, _git, _repo
+import gfso.validate as VAL
+from gfso.engine.closures import open_nodes, passes_over_open_parts, refuted_passes
 
 SEEN = "a subquery in NOT IN (SELECT …) gives NULL"
 LATE = {"move": "add_child", "justification": "the goal's SQL has subqueries", "child": {
@@ -121,7 +124,7 @@ def _deliver(e, tid):
 
 def _through_a_seam(e, agents, tid, **kw):
     _deliver(e, tid)
-    assert _auto_validate(e, TaskId(tid), agents, _llm=_Validator(e, tid, **kw)) == "pass"
+    assert auto_validate(e, TaskId(tid), agents, _llm=_Validator(e, tid, **kw)) == "pass"
     e.wait_idle()
 
 
@@ -133,7 +136,7 @@ def _the_race(e, agents, verdict="PASS"):
         out["turn"] = I.issuer_turn(e, TaskId("root"), "outside", "user", _llm=_Issuer(LATE))
         e.wait_idle()
 
-    out["validated"] = _auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root", verdict=verdict, first=turn))
+    out["validated"] = auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root", verdict=verdict, first=turn))
     e.wait_idle()
     assert out["turn"]["status"] == "applied", out
     return None, out
@@ -153,7 +156,7 @@ class _Run:
         self.lied, self.turned, self.tmp = [], False, tmp_path
         self.sessions = {"root.kid": ("kid.txt", "the part\n"), "root": ("root.txt", "the whole\n"),
                          "root.late": ("late.txt", "the late part\n")}
-        monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=None, busy=_inflight, review=self._review, refine=None))
+        monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=None, busy=flight, review=self._review, refine=None))
         monkeypatch.setattr(I, "settle", self._settle)
         self.first, self.verdicts, self.at_done, self.runs, self.over_open = {}, {}, [], 0, []
         self.answer, self.in_turn, self.go, self.validated = None, threading.Event(), threading.Event(), []
@@ -211,7 +214,7 @@ class _Run:
         self.validated.append((str(tid), len([x for x in e.audit_log(tid) if x.signal == Signal.DELIVER and not x.rejected])))
         row = [{"what": SEEN, "evidence": "printed NULL"}] if str(tid) == "root.kid" else []
         said = self.verdicts.get(str(tid)) or ["PASS"]
-        return _auto_validate(e, tid, agents, _llm=_Validator(e, tid, verdict=said.pop(0) if len(said) > 1 else said[0], outside=row,
+        return auto_validate(e, tid, agents, _llm=_Validator(e, tid, verdict=said.pop(0) if len(said) > 1 else said[0], outside=row,
                                                               first=self.first.pop(str(tid), None)), **k)
 
     def in_base(self, name):
@@ -310,7 +313,7 @@ def test_an_add_child_stepped_after_the_pass_attaches_nothing_and_leaves_no_reco
                                                                       list(e._storage.get_dep_edges()))), real_admit(*a, **k))[1]
         run.drive(lambda: ended.is_set() and e.next_steps(root).get("complete") is True and not e.joins.joining_nodes())
         assert not armed and turn["status"] == "refused" and "§12.7" in turn["why"], turn
-        assert e.graph.get_task(TaskId("root.late")) is None and run.over_open == [] and e.open_nodes() == []
+        assert e.graph.get_task(TaskId("root.late")) is None and run.over_open == [] and open_nodes(e) == []
         assert e._storage.get_critique(admission_key(root)) == was[-1][0] and e._storage.get_dep_edges() == was[-1][1]
         assert e.next_steps()["complete"] is True and e.graph.get_task(root).reopens == 0
         assert run.in_base("kid.txt") and run.in_base("root.txt") and not run.in_base("late.txt")
@@ -390,7 +393,7 @@ def test_a_review_that_moved_nothing_lifts_the_hold_though_it_counts_nothing(tmp
         go.wait(20)
         return {"stats": [{"cost_usd": 0}]}
 
-    monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=None, busy=_inflight, review=review, refine=None))
+    monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=None, busy=flight, review=review, refine=None))
     d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None,
                    validator_runner=lambda *a, **k: "rejected")
     try:
@@ -488,7 +491,7 @@ def test_a_reopened_pass_its_fresh_run_failed_stands_green_after_its_rework(tmp_
         e.wait_idle()
         run.drive(lambda: e.graph.get_task(root).false_positive and e.next_steps(root).get("complete") is True
                   and not e.joins.joining_nodes())
-        assert e.refuted_passes() == [] and e.next_steps()["complete"] is True, e.next_steps()
+        assert refuted_passes(e) == [] and e.next_steps()["complete"] is True, e.next_steps()
         assert q_V_reversed(e._graph) == ["root"], "the history stands: that pass was found wrong"
         assert run.in_base("root.txt") and run.landed("root.txt").endswith(f"{run.runs}"), "the rework's tree landed"
     finally:
@@ -547,7 +550,7 @@ def test_under_auto_the_system_reopens_a_refuted_pass_whose_issuer_role_it_holds
         _until(lambda: not e.joins.joining_nodes(), "join")
         rec = dict(e.get_exec_verdict(TaskId("root")), verdict=Verdict.FAIL, failed_criteria=["g"], reopens=0)
         e._graph._storage.store_exec_verdict(TaskId("root"), json.dumps(rec))
-        assert e.refuted_passes() == ["root"], "the probe made no refuted pass"
+        assert refuted_passes(e) == ["root"], "the probe made no refuted pass"
         out = e.next_steps()
         assert out["complete"] is False and out["refuted_passes"] == ["root"] and not out.get("steps"), out
         assert "made without you" in out["directive"] and "nothing in the system makes" not in out["directive"], out
@@ -627,7 +630,7 @@ def test_a_holders_signature_lands_where_an_instruments_is_held(tmp_path):
         assert e.graph.get_state(TaskId("kid")) == State.VALIDATING
         assert "error" not in (o := T.signal(e, "kid", "PASS", "user")), o
         e.wait_idle()
-        assert e.graph.get_state(TaskId("kid")) == State.DONE and e.passes_over_open_parts() == ["kid"]
+        assert e.graph.get_state(TaskId("kid")) == State.DONE and passes_over_open_parts(e) == ["kid"]
     finally:
         e.stop()
 
@@ -666,7 +669,7 @@ def test_a_stale_pass_moves_nothing_of_a_node_no_longer_validating(tmp_path):
     def again(e):
         I.issuer_turn(e, TaskId("root"), "outside", "user", _llm=_Issuer(LATE))
         e.wait_idle()
-        DG._represent(e, e.graph.get_task(TaskId("root")), str(e.graph.issuer_of(TaskId("root"))), {"root.late"})
+        VAL._represent(e, e.graph.get_task(TaskId("root")), str(e.graph.issuer_of(TaskId("root"))), {"root.late"})
         e.wait_idle()
         T.signal(e, "root", "ACCEPT", str(e.graph.get_task(TaskId("root")).assignee))
         e.wait_idle()
@@ -682,7 +685,7 @@ def test_a_stale_pass_moves_nothing_of_a_node_no_longer_validating(tmp_path):
         tmp.mkdir()
         e, agents = _delivered_whole(tmp)
         try:
-            out = _auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root", first=lambda m=move, en=e: m(en)))
+            out = auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root", first=lambda m=move, en=e: m(en)))
             e.wait_idle()
             t = e.graph.get_task(TaskId("root"))
             assert out == "rejected" and t.state == state, (name, out, t.state)
@@ -697,7 +700,7 @@ def test_a_standing_pass_is_not_replayed_over_a_part_attached_since(tmp_path):
         instrument_passes(e, TaskId("root"))
         assert I.issuer_turn(e, TaskId("root"), "outside", "user", _llm=_Issuer(LATE))["status"] == "applied"
         e.wait_idle()
-        assert _auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root")) == "rejected"
+        assert auto_validate(e, TaskId("root"), agents, _llm=_Validator(e, "root")) == "rejected"
         assert e.graph.get_state(TaskId("root")) == State.OFFERED, "re-presented, not signed"
     finally:
         e.stop()
@@ -727,7 +730,7 @@ def test_where_the_system_does_not_issue_it_waits_and_its_bound_hands_it_over(tm
     """A person keeps the node's issuer moves; the machine does not sign over them, and a lapse hands the delivery to him."""
     e, agents = _delivered_whole(tmp_path)
     try:
-        monkeypatch.setattr(DG, "_system_issues", lambda *a: False)
+        monkeypatch.setattr(VAL, "system_issues", lambda *a: False)
         _, out = _the_race(e, agents)
         assert out["validated"] == "rejected" and e.graph.get_state(TaskId("root")) == State.VALIDATING, out
         assert e.get_exec_verdict(TaskId("root"))["verdict"] == "PASS"

@@ -20,8 +20,8 @@ from gfso.core.protocol.validation import Role, required_role
 from gfso.core.protocol.invariants import (validate_fail_has_criteria,
                                            fail_names_this_contract)
 from gfso.core.handlers.structural import run_structural
-from gfso.core.protocol.procedure import (criteria_without_procedure, findings_a_ruling_could_lift, part_criteria, pins_ruled_out,
-                                          probe_id, runs_pin, same_probe, without_pins)
+from gfso.core.protocol.procedure import criteria_without_procedure, part_criteria, probe_id, same_probe
+from gfso.core.protocol.accounting import findings_a_ruling_could_lift, pins_ruled_out, runs_pin, without_pins
 from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
@@ -277,7 +277,7 @@ def footing(graph: Graph, task) -> list:
 
 def parts_procedure(graph: Graph, task, audit) -> dict:
     """{criterion of the whole: the pinned procedure of each part mapped to it (`part_criteria`)} — what a
-    validation of `task` runs over its delivered result besides its own procedure (`procedure.unrun_parts`).
+    validation of `task` runs over its delivered result besides its own procedure (`accounting.unrun_parts`).
 
     Less a pinned check the system's issuer ruled out under that criterion (`_ruled_out`): a part's pin true only while
     its siblings were stubs is false on the finished whole, and retiring the finding alone left the system running the
@@ -326,7 +326,7 @@ def _pins_then(graph: Graph, audit, task, ts: str) -> set:
 
 
 def _ruled_out(graph: Graph, audit, task, raw: dict) -> dict:
-    """{criterion: the ids of the parts' checks the system's rulings in force took off it} (`procedure.pins_ruled_out`)."""
+    """{criterion: the ids of the parts' checks the system's rulings in force took off it} (`accounting.pins_ruled_out`)."""
     if not raw or not _system_may_lift(graph):
         return {}
     rulings = [{**r, "then": _pins_then(graph, audit, task, r["ts"])}
@@ -366,7 +366,7 @@ def plans_own_findings(graph: Graph, audit, task) -> list[str]:
     """The findings standing on `task` that only say a settled part's pinned check does not hold: a check of the plan the
     system wrote, which contact may refute and its issuer may rule on, even at an AUTO root (the author, 2026-11-04: «он
     может быть сильным но не идеальным»). Only a check of a part THEIR criterion rests on, none the task's own criteria
-    pin too, and never the criterion's last check: those speak for the goal (`procedure.findings_a_ruling_could_lift`).
+    pin too, and never the criterion's last check: those speak for the goal (`accounting.findings_a_ruling_could_lift`).
     None under a plan the user handed in."""
     if task is None or not _system_may_lift(graph):
         return []
@@ -996,7 +996,7 @@ def _refuted_coverage_refusal(graph: Graph, task, rec: dict, audit) -> Optional[
         an unchanged aggregate over an unchanged plan decides nothing. A coverer whose own pinned probe the
         FAIL showed not holding is not untouched in this sense — it failed on the delivered result (§8.5),
         so the repair is the aggregate's — and so is one the FAIL did not show holding there: the pattern needs
-        every child shown passing on the delivered result (`procedure.parts_not_shown_holding`, with the record).
+        every child shown passing on the delivered result (`accounting.parts_not_shown_holding`, with the record).
       · REPAIRED — a coverer was touched (reopened, revised, or newly added), or the criterion's coverage was
         re-admitted (§2.4: a remap is the split's, and moves no child): admitted, as before.
     """
@@ -1111,7 +1111,7 @@ def whole_waits_for_its_parts(graph: Graph, task) -> bool:
 
     The canon gates neither: the issuer's check is "a contact over the delivered result reading no child state", and
     its departure from AND is read off the log (§12.8). At a seam the issuer can do nothing about another scope's
-    children or split, so there the PASS is admitted and the departure said (`Engine.passes_over_open_parts`; sync
+    children or split, so there the PASS is admitted and the departure said (`closures.passes_over_open_parts`; sync
     audit, B-F4 = A-F2)."""
     return task is not None and signs_as(graph.issuer_of(task.id), task.assignee)
 
@@ -1817,7 +1817,7 @@ def persons_node(graph: Graph, task) -> bool:
 
 def pause_record(graph: Graph) -> Optional[dict]:
     """The project's stop as set — {by, at, why} — or None while it runs: the one reading the dispatcher and the
-    clock share (`Engine.pause`)."""
+    clock share (`Stops.pause`)."""
     raw = graph._storage.get_setting(PAUSE_KEY)
     return json.loads(raw) if raw else None
 

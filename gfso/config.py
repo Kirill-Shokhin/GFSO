@@ -548,7 +548,7 @@ def default_deadline_s() -> float:
 def validation_batch() -> int:
     """How many PROBES one validator run owes at most — `GFSO_VALIDATION_BATCH`, default 16, `0` = one run over
     the whole validation. A run owes its criteria's pinned probes, the parts' pinned probes they rest on (each once)
-    and their regression lines; a criterion owing none counts one (`tools_llm._scope_batches`).
+    and their regression lines; a criterion owing none counts one (`validate._scope_batches`).
 
     A dial rather than a constant because it is the knob of a MEASURED trade: batching unblocked
     acceptance on rich contracts (a report must speak to every criterion, §2.3, and on long ones it
@@ -1053,7 +1053,7 @@ def spawned_server_popen_env() -> dict:
     return {**{k: v for k, v in os.environ.items() if k != TOKEN_ENV},
             "GFSO_AUTOEXIT": os.environ.get("GFSO_AUTOEXIT", "0")}
 
-#: The longest a question — and a project the account's limit stopped with no lift time said (`Engine.stop_for_the_limit`)
+#: The longest a question — and a project the account's limit stopped with no lift time said (`Stops.stop_for_the_limit`)
 #: — waits while the account's usage limit refuses every call: the limit lifts at a time of day, so probing it costs a
 #: refused call of a second and nothing else, and a doubling past it idled a root for an hour after the window closed.
 LIMIT_RETRY_S = 600

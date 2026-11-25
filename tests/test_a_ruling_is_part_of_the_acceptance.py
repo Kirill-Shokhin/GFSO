@@ -93,7 +93,7 @@ def test_a_customer_waits_on_the_systems_answer_only_while_the_run_runs():
     _challenged_with_a_finding(e, "root", "g")
     (step,) = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "root"]
     assert step["optional"] and "keep waiting" in step["directive"], step
-    e.pause("system", "the plan the user gave cannot go on")
+    e.stops.pause("system", "the plan the user gave cannot go on")
     (step,) = [s for s in T.next_steps(e)["steps"] if s["task_id"] == "root"]
     assert not step.get("optional") and "keep waiting" not in step["directive"], step
     e.stop()

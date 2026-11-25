@@ -46,17 +46,17 @@ def test_one_missing_credential_is_one_stop_one_line_and_one_refused_call(monkey
 def test_a_credential_set_lifts_the_account_stop_at_once_and_says_so(monkeypatch, tmp_path):
     _no_credential(monkeypatch, tmp_path)
     e = carried_by_the_system(make_engine(llm=None))
-    e.probe_the_account_with(credentials.stamp)            # …as the dispatcher hands it (`delegate.Dispatcher`)
+    e.stops.probe_the_account_with(credentials.stamp)            # …as the dispatcher hands it (`delegate.Dispatcher`)
     said = _said(e)
     e.record_llm_usage("plan", [{"ended": "unauthorized", "error": "no credential of 'claude' is in force"}], None)
     e.record_llm_usage("plan", [{"ended": "unauthorized", "error": "no credential of 'claude' is in force"}], None)
-    stop = e.paused()
+    stop = e.stops.paused()
     assert stop and stop.get("until"), stop
-    e.lift_the_system_stop(0)                               # …long before its time
-    assert e.paused(), "nothing changed: the stop stands"
+    e.stops.lift_the_system_stop(0)                               # …long before its time
+    assert e.stops.paused(), "nothing changed: the stop stands"
     credentials.put("claude", "token", "t-new", name="new")
-    e.lift_the_system_stop(0)
-    assert e.paused() is None, "a credential set did not lift the stop it was waited on for"
+    e.stops.lift_the_system_stop(0)
+    assert e.stops.paused() is None, "a credential set did not lift the stop it was waited on for"
     started = [x for x in said if "STARTED" in x]
     assert started and "credential" in started[-1] and "limit" not in started[-1], said
     assert len([x for x in said if "STOPPED" in x]) == 1, said
@@ -66,9 +66,9 @@ def test_the_limits_own_lift_still_names_the_limit(monkeypatch, tmp_path):
     hold_a_credential(monkeypatch, tmp_path)
     e = carried_by_the_system(make_engine(llm=None))
     said = _said(e)
-    e.stop_for_the_limit("executor", None)
-    e.lift_the_system_stop(e.paused()["until"] + 1)
-    assert e.paused() is None and "the account's limit lifted" in said[-1], said
+    e.stops.stop_for_the_limit("executor", None)
+    e.stops.lift_the_system_stop(e.stops.paused()["until"] + 1)
+    assert e.stops.paused() is None and "the account's limit lifted" in said[-1], said
 
 
 def test_doctor_does_not_tell_a_chat_its_work_needs_no_credential(monkeypatch, tmp_path):

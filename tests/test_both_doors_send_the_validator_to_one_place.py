@@ -24,10 +24,11 @@ import pytest
 
 import gfso.tools as T
 import gfso.tools_llm as TL
-from gfso.delegate import validator_workdir
+from gfso.workspaces import validator_workdir
 from gfso.roster import AgentRegistry
 from gfso.core.types import TaskId
 from tests.support import criterion, make_engine, REGISTER
+import gfso.validate as VAL
 
 _RISK = REGISTER
 
@@ -58,7 +59,7 @@ def test_the_two_doors_agree_on_where_the_work_is(box, node, named):
     e, reg, tmp_path = box
     owner = validator_workdir(e, reg, TaskId(node), named_validator=named,
                             vcfg=(reg.get(named) if named else None))
-    door = TL._registered_workdir(e, node, named)
+    door = VAL._registered_workdir(e, node, named)
     assert owner == door == str(tmp_path / "WORK"), (
         f"{node} with validator={named}: the owner says {owner}, the manual door says {door}. "
         f"A validator run against a directory that does not hold the delivery reports "
@@ -76,6 +77,6 @@ def test_the_roster_still_answers_when_the_graph_cannot(box):
     T.create_task(e, "orphan", {"description": "held by a person", "accepted_risks": _RISK,
                                 "criteria": [criterion("o", "O holds")]},
                   assignee="a-person-not-on-the-roster", parent_id="par")
-    assert TL._registered_workdir(e, "orphan", "val-1") == str(tmp_path / "SCRATCH"), \
+    assert VAL._registered_workdir(e, "orphan", "val-1") == str(tmp_path / "SCRATCH"), \
         "with nothing in the graph to go on, refusing while the roster holds the answer is the " \
         "call that was measured failing on the HTTP door"

@@ -153,8 +153,8 @@ builds and checks it; the instrument validates at every seam and at the top of e
 carries, and a node inside such a scope is covered by that scope's validation (`validation.observed_here`).
 Where a registered executor holds the whole scope, the dispatcher runs it as one piece: one executor
 session over every open node in build order (`sessions.run_scope_executor`), then one validator run over
-every delivered node, each node's own verdict recorded and signed parts first (`tools_llm.validate_scope`,
-`delegate._sign_scope`); a failing part fails the wholes above it on the criteria mapped to it. A childless
+every delivered node, each node's own verdict recorded and signed parts first (`validate.validate_scope`,
+`validate._sign_scope`); a failing part fails the wholes above it on the criteria mapped to it. A childless
 node judged larger than one session gets no session: its split is owed (`validation.split_owed`), and where
 the system moves for its executor the machine issuer's `split` question runs the refine round on it.
 Under a mode a PASS at an observed node stands on an appointed observer's record, never on the executor's
@@ -308,7 +308,9 @@ gfso/
     protocol/               # fsm.py = THE TABLE (+ `not_admissible_here`: why a signal moves nothing
                             # here and where the intent goes) · invariants.py · validation.py (role map) ·
                             # procedure.py (a pinned check: its identity, admission's one ladder) ·
-                            # shell.py (a probe's command read as a POSIX shell reads it)
+                            # accounting.py (a validation report read against the pinned procedure) ·
+                            # shell.py (a probe's command read as a POSIX shell reads it) · probe_runs.py
+                            # (what a probe's command runs, walked over the shell's reading)
     handlers/               # CHECK-1-6 structural · CHECK-7-8 numeric-bound tier (capability-honest
                             # skips; the formula/solver tier is a declared, unimplemented extension)
     graph/                  # model · mutations (incl. RECORD_DEP/ADJUDICATE_DEP) · metrics (∅→None) ·
@@ -323,6 +325,8 @@ gfso/
     claims.py · joins.py    # in-memory state the engine holds beside the log: who runs a model over a node
     workforce.py            # now (`Claims`), where a passed result stands (`Joins`), who works here as the
     parking.py              # dispatcher published it (`Workforce`), what waits on an undecided park (`Parking`)
+    stops.py                # the project's stops, the person's and the system's own, and their lift (`engine.stops`)
+    closures.py             # how settled nodes closed: `closure_of`, `verdict_provenance` and the lists from them
     __init__.py             # Engine facade (takes clock=/runner= ports); audit.py; events.py; verdicts.py
                             # (one writer of the verdict record); validation.py — the gates, one rule
                             # family per signal (`_pass_rules` / `_accept_rules` / `_resolve_block_rules`
@@ -330,8 +334,11 @@ gfso/
                             # stands, whoever signs; `record_reviewer_verdict` refuses reviewer==Del
 
   tools.py                  ← L1: the STRUCTURAL action surface (core+engine only; ships with the core dist)
-  tools_llm.py              ← L2: the LLM verbs (auto_decompose/review_decomposition/validate_result); its TOOLS =
-                            #     the COMPLETE transport registry (structural ∪ LLM)
+  tools_llm.py              ← L2: the LLM verbs (auto_decompose/review_decomposition, validate_result from
+                            #     validate.py); its TOOLS = the COMPLETE transport registry (structural ∪ LLM)
+  in_chat.py                ← L2: the work a chat performs in the person's own repository (its branch, its DELIVER)
+  validate.py               ← L2: validation, one job — the verbs that judge a delivery and the dispatcher's
+                            #     own validation of what it holds; imports neither delegate nor tools_llm
 
   adapters/                 ← port implementations (import core only)
     storage/ (sqlite, memory) · agents/ (human, …) · llm/ (stub | the provider registry: headless
@@ -391,7 +398,7 @@ No upward dependencies, and the matrix above is the one the gate enforces (`test
 ## The Level-2 review — the ONE map (canon §9.5)
 
 ⚠ Naming collision, named explicitly: the CODE LAYERS above are L0 `core/` · L1 `engine/`,
-`tools.py` · L2 `tools_llm.py`, `decompose/`, `critic/`, `delegate.py`, `runtime.py` · L3
+`tools.py` · L2 `tools_llm.py`, `validate.py`, `decompose/`, `critic/`, `delegate.py`, `runtime.py` · L3
 `adapters/`, with binding above all of them. The canon's VERIFICATION LEVELS are a different scale
 entirely (§9.5, Morris: **Syntactic** = level 0, topology · **Semantic** = level 1, formal
 entailment · **Pragmatic** = level 2, causal correctness, pre-contact) — the collision is at "2",
@@ -911,7 +918,7 @@ encoding is where they show, or are engine gaps.)*
    make. At every lift of a stop that held time, and wherever a gap outside a stop is held (a server down, at the
    engine's start; a host asleep, at the monitor's next tick), each live node with a deadline gets a record of how its
    deadline moved on the wall — before, after, how long the time held, who or what stopped it and what started it
-   again, one carrier for all three (`Engine._record_the_held_time`, served on the node as `deadline_moves`, and a
+   again, one carrier for all three (`Stops._record_the_held_time`, served on the node as `deadline_moves`, and a
    `clock` line of the feed; a gap under a stop is the stop's, recorded at its lift). Once across engines: a gap is
    recorded by the one caller whose act on the store kept it, and a stop is taken off in one act (`_take_the_stop`),
    so of two engines lifting it one records. The record is no revision: a revision enters OFFERED (§12.3), so it
@@ -982,7 +989,7 @@ encoding is where they show, or are engine gaps.)*
    began (`ValidationClaim.tree`), never the place as it stands when the run lands. A run of an earlier round is not
    recorded at his seam at all (`StaleRun`). So a DELIVER of a tree is refused while no check of it stands, or a
    FAIL does, naming the failed criteria and the lift: rework, commit, have the tree checked. `validate_result` on
-   the node at work judges the holder's committed tree (`tools_llm._before_its_delivery`,
+   the node at work judges the holder's committed tree (`validate._before_its_delivery`,
    `Engine.judging_before_delivery`) and moves no state, and no DELIVER lands while it runs. A refused report counts
    against the tree it was made on (`Engine._on_this_delivery`), so a repaired tree is checkable afresh and reuses
    no entry of another's. The holder's step says the check before the DELIVER (`Frontier._checked_first`). A FAIL

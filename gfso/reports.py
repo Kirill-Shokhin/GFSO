@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from gfso import store
 from gfso.adapters import worktrees as W
-from gfso.adapters.llm.stats import _stat_line
+from gfso.adapters.llm.stats import stat_line
 from gfso.core.protocol.invariants import verdict_word
 from gfso.core.graph.model import generation_of_task
 from gfso.core.types import TaskId, Signal, Verdict
@@ -147,7 +147,7 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
     protocol is actually enforced on a machine executor, and it read as a tail of the first."""
     if started_on is not None and (now := engine.graph.get_task(task_id)) is not None             and tuple(generation_of_task(now)) != tuple(started_on):
         _cb(f"{task_id}: the report answers a contract revised while the session worked - nothing signalled; the "
-            f"node waits under its new version · {_stat_line(llm)}")
+            f"node waits under its new version · {stat_line(llm)}")
         # …what it wrote is the old version's, on the record as such — never in a later delivery
         if why := committed_place(engine, executor_id, workspace, f"gfso: {task_id} work under a superseded version")[1]:
             _cb(f"{task_id}: its work under the superseded version is not on the record — {why}")
@@ -175,7 +175,7 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
             # ISSUER as a step of their own — the party who can actually change a contract.
             engine.parking.contest(task_id, report.get("reason", ""))
         else:
-            _cb(f"{task_id}: executor CHALLENGED the spec — issuer resolves · {_stat_line(llm)}")
+            _cb(f"{task_id}: executor CHALLENGED the spec — issuer resolves · {stat_line(llm)}")
     elif status == "blocked":
         if task.state.name == "OFFERED":  # consent happened (it worked far enough to find the block)
             _signal(engine, task_id, Signal.ACCEPT, executor_id)
@@ -184,7 +184,7 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
         _signal(engine, task_id, Signal.BLOCK, executor_id, reason=report.get("reason", ""),
                 blocker_task_id=TaskId(blocker) if blocker else None,
                 blocker_task_ids=blockers)
-        _cb(f"{task_id}: executor BLOCKED ({report.get('reason', '')[:80]}) · {_stat_line(llm)}")
+        _cb(f"{task_id}: executor BLOCKED ({report.get('reason', '')[:80]}) · {stat_line(llm)}")
     elif status != "delivered":
         # THE GUARD SITS WITH THE DISPATCH IT GUARDS. This was `else:` — every word that is neither
         # `challenge` nor `blocked` was read as a delivery — and the first repair put the check in
@@ -192,7 +192,7 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
         # a caller can step around is the shape this repository has already paid for twice.
         _cb(f"{task_id}: executor reported status {status!r}, which is none of delivered / blocked "
             f"/ challenge (§11.2) — no signal sent, the node stays where it is; issuer attention "
-            f"needed · {_stat_line(llm)}")
+            f"needed · {stat_line(llm)}")
         engine.emit_info("delegate", f"{task_id}: undecided status {status!r} — no signal forged")
     else:  # delivered — the DISPATCHER picks the VALIDATING node up and auto-validates (one path
         # for every delivery, delegated or self-executed; natural node×iteration dedup)
@@ -214,20 +214,20 @@ def _report_into_signals(engine, task_id, executor_id, task, report: dict, statu
         # tree then contained the part's branch, so the hold below let it through (finder over 190f4db)
         if workspace is not None and W.merging(workspace[0], workspace[1], execution=execution_of(engine)):
             _cb(f"{task_id}: NOT delivered — a merge is left unfinished in its tree (conflicts unresolved): resolve "
-                f"each conflicted file and commit the merge · {_stat_line(llm)}")
+                f"each conflicted file and commit the merge · {stat_line(llm)}")
             engine.emit_info("delegate", f"{task_id}: {HELD}a merge left unfinished in its tree")
             return
         artifact, unstaged = committed_place(engine, executor_id, workspace, f"gfso: {task_id} delivery")
         carried = W.head(workspace[1], execution=execution_of(engine)) if artifact else None
         if why := unstaged or _not_handed_in(engine, task_id, workspace, artifact, unjoined):
-            _cb(f"{task_id}: NOT delivered — {why} · {_stat_line(llm)}")
+            _cb(f"{task_id}: NOT delivered — {why} · {stat_line(llm)}")
             engine.emit_info("delegate", f"{task_id}: {HELD}{why}")
             return
         if _signal(engine, task_id, Signal.DELIVER, executor_id, result=report["summary"],
                    self_validation=_self, artifact=artifact, commit=carried,
                    build=build if isinstance(build := report.get("build"), str) else None) and carried:
             store.keep(engine, ex := execution_of(engine), carried, workspace[1], workspace[1], ex)
-        _cb(f"{task_id}: {DELIVERED} · {_stat_line(llm)}")
+        _cb(f"{task_id}: {DELIVERED} · {stat_line(llm)}")
         _settle_internal(engine, task_id, _self, _cb, observed)
 
 

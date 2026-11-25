@@ -11,6 +11,7 @@ from gfso import workspaces as WS
 from gfso.adapters import worktrees as W
 from gfso.core.types import PLACES, nodes_root
 from gfso.runtime import ProjectRegistry
+import gfso.validate as VAL
 
 
 def _lay(at) -> None:
@@ -26,7 +27,7 @@ def test_a_deleted_projects_places_and_refused_reports_go_and_anothers_stand(tmp
         reg.engine(name)
         for base in ("a1b2c3d4e5/.gfso-nodes-repo", "f6a7b8c9d0/.gfso-nodes-other"):
             _lay(tmp_path / PLACES / base / name / "node")
-        assert TL._keep_rejected_report(name, "root", "not a verdict", "text")
+        assert VAL._keep_rejected_report(name, "root", "not a verdict", "text")
         _lay(tmp_path / "probe_inputs" / name / "root_1")
     reg.delete("doomed")
     left = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file() and "doomed" in p.as_posix())
@@ -54,7 +55,7 @@ def test_a_file_a_process_holds_keeps_only_its_directory_and_the_deletion_whole(
     reg.engine("doomed")
     for base in ("a1b2c3d4e5/.gfso-nodes-repo", "f6a7b8c9d0/.gfso-nodes-other"):
         _lay(tmp_path / PLACES / base / "doomed" / "node")
-    assert TL._keep_rejected_report("doomed", "root", "not a verdict", "text")
+    assert VAL._keep_rejected_report("doomed", "root", "not a verdict", "text")
     reg.delete("doomed")
     left = sorted({p.relative_to(tmp_path).parts[:4] for p in tmp_path.rglob("*") if p.is_file() and "doomed" in p.as_posix()})
     assert left == [(PLACES, "a1b2c3d4e5", ".gfso-nodes-repo", "doomed")], left

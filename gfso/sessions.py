@@ -7,9 +7,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 from gfso.config import MODEL_DEFAULT, default_deadline_s
-from gfso.inflight import _inflight
+from gfso.inflight import flight
 from gfso.llm import session_calls
-from gfso.adapters.llm.stats import _stat_line, calls_of, refused_by_limit, the_call_was_cut
+from gfso.adapters.llm.stats import stat_line, calls_of, refused_by_limit, the_call_was_cut
 from gfso.adapters.llm.structured import schema_instruction, parse_structured, why_unread
 from gfso.core.graph.model import generation_of_task, project_now
 from gfso.core.types import THIS_HOST, PlaceUnavailable, TaskId, Signal, Stage, State, Verdict
@@ -106,7 +106,7 @@ def _not_there(engine, agents, node_id, members, cwd, cap, _cb) -> tuple[list, i
     """The joined parts whose own change is no longer all in the session's tree (`parts_not_there`), said once per
     set — and the session's cap less the time it took, in flight while it runs, as the observation's (`_observed`)."""
     t0 = datetime.now()
-    with _inflight("parts' work", engine, node_id):
+    with flight("parts' work", engine, node_id):
         lost = parts_not_there(engine, agents, members, cwd)
     if lost and engine.say_once(f"not-there:{node_id}:" + ";".join(f"{x}={','.join(f)}" for x, f, *_ in lost)):
         _cb(f"{node_id}: before the session, {len(lost)} joined part(s) whose delivered change is no longer all in its "
@@ -119,7 +119,7 @@ def _observed(engine, node_id, tasks, cwd, cap, _cb) -> tuple[dict, int | None]:
     flight while it runs (a server read as idle was restarted under a spawn, see `run_executor`) — and the session's
     cap less the time it took: the session must still end inside its deadline (`_session_cap`)."""
     t0 = datetime.now()
-    with _inflight("observation", engine, node_id):
+    with flight("observation", engine, node_id):
         seen = observe_place(engine, tasks, cwd, cap)
     if rows := [r for rs in seen.values() for r in rs]:
         _cb(f"{node_id}: observed its place before the session — {sum(bool(r.get('matched')) for r in rows)} of "
@@ -195,7 +195,7 @@ def _spawn(engine, node_id, executor_id: str, cfg: dict, _llm, role: str, prompt
     llm.stage_hint = f"{node_id} {role}({executor_id})"
     system, user = (_PROMPTS / prompt).read_text(encoding="utf-8"), packet + schema_instruction(schema)
     stage = Stage.CONSENT if role == "consent" else Stage.EXECUTOR      # a consent reads; it is not the work
-    with _inflight(verb, engine, node_id):
+    with flight(verb, engine, node_id):
         try:
             text = (_run_session(llm, system, user, cfg, cap, cwd, conversation_of(engine, node_id, executor_id, role))
                     if work else
@@ -281,7 +281,7 @@ def run_executor(engine, task_id: TaskId, executor_id: str, agents: AgentRegistr
         # …quoted as JSON quotes it: quoted by `repr`, an apostrophe read as the `\'` the model wrote (s17c)
         _cb(f"{task_id}: " + _unread(llm, "executor report DID NOT PARSE — no signals sent; issuer attention needed",
                                      text, EXECUTOR_SCHEMA)
-            + f" · executor {_stat_line(llm)}" + (f" · ended by the disk's watch: {ended}" if ended else "")
+            + f" · executor {stat_line(llm)}" + (f" · ended by the disk's watch: {ended}" if ended else "")
             + (f" · its text ends: {json.dumps(text[-400:], ensure_ascii=False)}" if (text or "").strip()
                else " · it wrote no text"))
         return {"task_id": str(task_id), "status": "unparsed", "report_text": text, "stats": stats,
@@ -340,7 +340,7 @@ def run_consent(engine, task_id: TaskId, executor_id: str, agents: "AgentRegistr
     if answer is None:
         past, ended = _past_disk(engine, agents, here)    # …a revised parent's place still past its bound (critic)
         _cb(f"{task_id}: " + _unread(_l, f"{executor_id}'s consent DID NOT PARSE — nothing signalled", _t, CONSENT_SCHEMA)
-            + f" · {_stat_line(_l)}" + (f" · ended by the disk's watch: {ended}" if ended else ""))
+            + f" · {stat_line(_l)}" + (f" · ended by the disk's watch: {ended}" if ended else ""))
         return {"task_id": str(task_id), "status": "unparsed", "limit": refused_by_limit(calls_of(_l)),
                 "past_disk": past}
     decision = str(answer.get("decision", "")).strip().lower()
@@ -411,7 +411,7 @@ def run_scope_executor(engine, top_id: TaskId, executor_id: str, agents: AgentRe
     if report is None:
         past, ended = _past_disk(engine, agents, cwd)
         _cb(f"{top_id}: " + _unread(llm, "the scope session's report DID NOT PARSE — no signals sent", text, SCOPE_SCHEMA)
-            + f" · {_stat_line(llm)}" + (f" · ended by the disk's watch: {ended}" if ended else ""))
+            + f" · {stat_line(llm)}" + (f" · ended by the disk's watch: {ended}" if ended else ""))
         return {"task_id": str(top_id), "status": "unparsed", "report_text": text, "stats": stats,
                 "cut": the_call_was_cut(llm, text or ""), "limit": refused_by_limit(calls_of(llm)), "past_disk": past,
                 "disk_ended": ended}

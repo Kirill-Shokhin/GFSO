@@ -255,7 +255,7 @@ IN_THE_WORKS_PATH = (f'if [ -n "${WORK_PATH}" ]; then o=$IFS IFS=: w= h=; for p 
 class PlaceUnavailable(OSError):
     """The execution place cannot start anything now (its container daemon does not answer): a state of the
     environment that stops the whole project, not a call that was cut nor a report that did not parse
-    (`Engine.stop_for_the_place`). An OSError, so a door that already falls back on a place it cannot use does."""
+    (`Stops.stop_for_the_place`). An OSError, so a door that already falls back on a place it cannot use does."""
 
     def __init__(self, place: str, why: str):
         super().__init__(f"the execution place {place} is unavailable: {why}")

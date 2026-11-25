@@ -27,6 +27,7 @@ import json
 import gfso.tools as T
 import gfso.tools_llm as TL
 from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fenced
+import gfso.validate as VAL
 
 
 def _claimed_pass_over_an_unobserved_behaviour() -> str:
@@ -72,7 +73,7 @@ def test_a_claimed_pass_over_an_unobserved_behaviour_never_reaches_the_signal():
     """
     e = _eng()
     _delivered_node(e)
-    out = TL.validate_result(e, "n1", _llm=_ValidatorLLM(_claimed_pass_over_an_unobserved_behaviour()))
+    out = VAL.validate_result(e, "n1", _llm=_ValidatorLLM(_claimed_pass_over_an_unobserved_behaviour()))
 
     assert out["verdict"] is None, "an under-probed report decided something"
     assert "holds" in out["verdict_defects"] and "unobserved" in out["verdict_defects"]
@@ -88,7 +89,7 @@ def test_a_real_refutation_still_demotes_and_still_reaches_the_signal():
     executor is told to fix."""
     e = _eng()
     _delivered_node(e)
-    out = TL.validate_result(e, "n1", _llm=_ValidatorLLM(_refuted_and_underprobed()))
+    out = VAL.validate_result(e, "n1", _llm=_ValidatorLLM(_refuted_and_underprobed()))
 
     assert out["verdict"] == "FAIL"
     assert out["failed_criteria"] == ["flush"], (
@@ -112,7 +113,7 @@ def test_an_honest_pass_is_still_a_pass():
              "behaviours": ["it holds a 2kg frame"],
              "probe": [{"command": "check holds", "expect": "it holds"}]}],
         "failed_criteria": []})
-    out = TL.validate_result(e, "n1", _llm=_ValidatorLLM(honest))
+    out = VAL.validate_result(e, "n1", _llm=_ValidatorLLM(honest))
     assert out["verdict"] == "PASS" and "verdict_demoted_from" not in out
     assert "'PASS'" in out["next"]
     e.stop()

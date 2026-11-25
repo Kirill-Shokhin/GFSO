@@ -499,8 +499,8 @@ def test_busy_counts_concurrent_calls_of_one_verb():
     since every tool now runs in its own thread, concurrent calls of one verb are ordinary."""
     verb = "a_verb_only_this_test_runs"  # the registry is the process's: another test's thread may be in it
     verbs = lambda: [w["verb"] for w in in_flight() if w["verb"] == verb]
-    with TL._inflight(verb):
-        with TL._inflight(verb):
+    with TL.flight(verb):
+        with TL.flight(verb):
             assert verbs() == [verb] * 2
         assert verbs() == [verb], "the inner exit cleared the outer's flag"
     assert verbs() == []
@@ -516,7 +516,7 @@ def test_work_in_flight_is_registered_under_its_project_and_node():
     TL._tracked("validate_result", lambda engine, task_id, model="m": seen.extend(in_flight()))(e, "root.a")
     assert [(w["verb"], w["project"], w["task_id"]) for w in seen] == [("validate_result", "p1", "root.a")]
     assert in_flight() == []
-    with TL._inflight("delegated_execution", e, "root.b"):
+    with TL.flight("delegated_execution", e, "root.b"):
         rt = TestClient(create_app(e)).get("/api/runtime").json()
     assert rt["busy"] == ["delegated_execution"]
     assert [(w["project"], w["task_id"]) for w in rt["in_flight"]] == [("p1", "root.b")]

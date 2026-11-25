@@ -16,7 +16,8 @@ from gfso.adapters import worktrees as W
 from gfso.adapters.execution import ContainerExecution, PlaceContainer
 from gfso.core.graph.model import grounds_key
 from gfso.core.types import State, TaskId
-from gfso.delegate import Dispatcher, _auto_validate
+from gfso.delegate import Dispatcher
+from gfso.validate import auto_validate
 from gfso.sessions import run_executor
 from tests.test_a_node_works_in_its_own_place import _Executor, _Validator, _plan, _until
 from tests.test_a_session_holds_only_its_own_place import IMAGE, project  # noqa: F401 — a fixture
@@ -36,7 +37,7 @@ def _dispatched(e, agents, sessions, until, held=(), rounds=1200):
         return run_executor(en, t, ex, ag, _llm=sessions[str(t)])
 
     validated: dict = {}
-    d = Dispatcher(e, agents, poll=30, runner=runner, validator_runner=lambda en, t, ag, **k: _auto_validate(
+    d = Dispatcher(e, agents, poll=30, runner=runner, validator_runner=lambda en, t, ag, **k: auto_validate(
         en, t, ag, _llm=_Validator(en, t, validated), **k))
     for _ in range(rounds):
         d.dispatch_once()

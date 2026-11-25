@@ -21,6 +21,7 @@ from __future__ import annotations
 from gfso import tools as T
 from gfso.core.types import TaskId
 from tests.support import criterion, make_engine, REGISTER
+from gfso.engine.closures import closures_by_hand, hand_overruled_closures
 
 
 def _closed_by_hand(e, tid="leaf"):
@@ -89,7 +90,7 @@ def test_the_two_kinds_are_told_apart():
     e.start()
     _closed_by_hand(e, "leaf")
 
-    assert e.closures_by_hand() == ["leaf"]
-    assert e.hand_overruled_closures() == [], (
+    assert closures_by_hand(e) == ["leaf"]
+    assert hand_overruled_closures(e) == [], (
         "nothing was displaced here — that name is for the case where an instrument said otherwise")
     e.stop()

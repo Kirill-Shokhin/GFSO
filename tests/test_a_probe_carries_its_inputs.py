@@ -16,8 +16,9 @@ from gfso import packets, tools as T
 from gfso.core.handlers.structural import check_procedure
 import pytest
 
-from gfso.core.protocol.procedure import (coverage, materialize_inputs, probe_id, procedure_digest, unrun_pinned,
-                                          reads_an_unpinned_set, unread_inputs, unsafe_input_paths)
+from gfso.core.protocol.procedure import (materialize_inputs, probe_id, procedure_digest, reads_an_unpinned_set,
+                                          unread_inputs, unsafe_input_paths)
+from gfso.core.protocol.accounting import coverage, unrun_pinned
 from gfso.engine.verdicts import criterion_version
 from gfso.core.types import Criteria, Probe, Spec, TaskId, Task, State
 from gfso.adapters.storage.sqlite import SqliteStorage

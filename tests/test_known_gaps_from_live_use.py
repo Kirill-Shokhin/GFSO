@@ -39,6 +39,7 @@ from gfso.runtime import ProjectRegistry
 from tests.support import REGISTER, criterion, make_engine, parts_held, round_over, workdir, DENIAL_ENTRY, instrument_passes
 from gfso.engine.verdicts import observations
 from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fenced
+import gfso.validate as VAL
 
 
 def _engine(storage=None):
@@ -295,11 +296,11 @@ def test_the_verdict_directive_is_read_against_the_current_state():
              "behaviours": ["it holds a 2kg frame"],
              "probe": [{"command": "check holds", "expect": "it holds"}]}],
         "failed_criteria": []})
-    TL.validate_result(e, "n1", _llm=_ValidatorLLM(honest))
+    VAL.validate_result(e, "n1", _llm=_ValidatorLLM(honest))
     T.signal(e, "n1", "PASS", "alice")                       # the ISSUER settles it
     assert e.graph.get_task(T.TaskId("n1")).state.name == "DONE"
 
-    again = TL.validate_result(e, "n1", _llm=_ValidatorLLM(honest))
+    again = VAL.validate_result(e, "n1", _llm=_ValidatorLLM(honest))
     e.stop()
     assert "Nothing to sign" in again["next"] and "DONE" in again["next"], (
         f"the directive still instructs against a settled node: {again['next']}")
@@ -1121,7 +1122,7 @@ def test_a_parent_with_an_escalated_child_does_not_buy_a_validator_run():
 
     T.signal(e, "root", "ACCEPT", "user")
     T.signal(e, "root", "DELIVER", "user", result="aggregated")
-    out = TL.validate_result(e, "root")
+    out = VAL.validate_result(e, "root")
     assert out["waiting_on"] == ["kid"]                  # refused BEFORE any model is spawned
     assert "would be refused at the gate" in out["error"]
     e.stop()

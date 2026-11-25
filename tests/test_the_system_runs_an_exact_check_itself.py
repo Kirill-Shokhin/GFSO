@@ -23,7 +23,8 @@ from tests.support import committed
 from gfso import tools as T
 from gfso import observe, tools_llm as TL
 from gfso.adapters.storage.sqlite import SqliteStorage
-from gfso.core.protocol.procedure import part_credit, probe_id, procedure_digest, with_engine_observations
+from gfso.core.protocol.procedure import probe_id, procedure_digest
+from gfso.core.protocol.accounting import part_credit, with_engine_observations
 from gfso.core.types import Criteria, Probe, Spec
 from gfso.engine.verdicts import criterion_version
 from gfso.observe import observe_place
@@ -32,6 +33,7 @@ from gfso.adapters.execution import LocalExecution
 from gfso.workspaces import execution_of
 from tests.test_the_executor_starts_from_what_its_checks_print import _node
 from tests.test_validate_result import _eng, _fenced
+import gfso.validate as VAL
 
 CMD = "cat out.txt"
 #: creates the state it reads: a second run in the same tree prints otherwise
@@ -76,7 +78,7 @@ def _validated(tmp_path, printed: str, exact: bool = True, cmd: str = CMD, expec
     T.signal(e, "n", "DELIVER", "alice", result="out.txt", _recorded=committed(place))
     before(e)
     try:
-        return TL.validate_result(e, "n", _llm=_Says(cmd, expect if cite is None else cite, runs, edit),
+        return VAL.validate_result(e, "n", _llm=_Says(cmd, expect if cite is None else cite, runs, edit),
                                   workdir=str(place))
     finally:
         e.stop()
@@ -116,13 +118,13 @@ def test_a_probe_the_system_could_not_run_is_recorded_as_the_validator_s_word(tm
 
     def _no_shell(e):
         # …no shell for the system's own run alone: the judge's copy is made with one (`snapshots._checkout`)
-        real, kind = TL._observe_pins, type(execution_of(e))
+        real, kind = VAL._observe_pins, type(execution_of(e))
 
         def _shell_less(*a, **k):
             with monkeypatch.context() as m:
                 m.setattr(kind, "shell", lambda self: None)
                 return real(*a, **k)
-        monkeypatch.setattr(TL, "_observe_pins", _shell_less)
+        monkeypatch.setattr(VAL, "_observe_pins", _shell_less)
         seen["e"] = e
     assert _validated(tmp_path, "goodbye", before=_no_shell)["verdict"] == "PASS"
     evidence = json.dumps(T.get_verdict(seen["e"], "n", _trim=False))
@@ -220,8 +222,8 @@ def test_a_pin_not_exact_past_its_bound_is_no_verdict(tmp_path, monkeypatch):
 
 
 def test_a_pin_not_exact_the_observations_budget_left_unrun_is_no_verdict(tmp_path, monkeypatch):
-    monkeypatch.setattr(TL, "OBSERVE_S", 0)
-    monkeypatch.setattr(TL, "FRESH_S", 0)
+    monkeypatch.setattr(VAL, "OBSERVE_S", 0)
+    monkeypatch.setattr(VAL, "FRESH_S", 0)
     assert _validated(tmp_path, "hello", exact=False)["verdict"] is None
 
 

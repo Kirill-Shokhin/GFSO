@@ -49,10 +49,11 @@ from gfso.core.graph.model import on_the_wall, project_max_iterations, project_n
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.graph.review import UNDECIDED, finding_reasons, is_undecided
 from gfso.core.handlers.structural import risks_naming_own_criteria
-from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, as_read, inputs_token, laid as over_dirs,
-                                          materialize_inputs, same_probe, shows, PROBE_S, pinned_files, probe_id, probe_key,
-                                          probes_from as _checks_of, unrerunnable, with_named_files, criterionless)
-from gfso.core.types import (AgentId, Criteria, IN_THE_WORKS_PATH, PlaceUnavailable, Register, RevisionReason,
+from gfso.core.protocol.procedure import (EXACT_TEXT, as_read, inputs_token, laid as over_dirs, materialize_inputs,
+                                          same_probe, shows, PROBE_S, pinned_files, probe_id, probe_key,
+                                          probes_from as _checks_of, with_named_files, criterionless)
+from gfso.core.protocol.accounting import unrerunnable
+from gfso.core.types import (AgentId, Criteria, IN_THE_WORKS_PATH, INPUTS_TOKEN, PlaceUnavailable, Register, RevisionReason,
                              Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of,
                              system_decides)
 from gfso.decompose.extract import extract_spec
@@ -65,6 +66,7 @@ from gfso.engine.validation import is_auto_root, party_kind, users_criteria, use
 from gfso.packets import SHOWN_FINDINGS, must_show, answered_challenges, answers_given, as_shown, capped, list_key, outside_text
 from gfso.engine.events import emit_cb
 from gfso.packets import TECH_REPORT, checkout_note, file_tech_reports
+from gfso.engine.closures import refuted_passes
 
 log = logging.getLogger("gfso.issuer")
 
@@ -192,7 +194,7 @@ def signal_ok(engine, task_id: TaskId, sig: Signal, source: str, _why: "list | N
     collects the refusal, when a caller intends to SAY it rather than only log it — the reason existed and reached the
     log alone. A PASS over a refuted part whose reopen is open is refused here, by the rule the frontier withholds it by
     (`frontier.withheld_over`): it settles the whole the part would be reopened under (§12.8, §12.14); a FAIL is not."""
-    if sig == Signal.PASS and (over := withheld_over(refuted_reading(engine, engine.refuted_passes()), task_id)):
+    if sig == Signal.PASS and (over := withheld_over(refuted_reading(engine, refuted_passes(engine)), task_id)):
         why = (f"no PASS on {task_id}: {', '.join(r.node for r in over)} below it stand(s) at PASS while the current "
                f"recorded verdict for it is FAIL, and can still be reopened — a PASS here settles the whole it would be "
                f"reopened under; its FAIL signs over nothing (§12.8, §12.14)")
@@ -564,7 +566,7 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
                    + ("\n\nUnder AUTO this node's criteria are the user's goal: only the user rules a finding of the "
                       "validator outside them — answer without `retire_findings`."
                       + (" Except a check of the plan, not of the goal:" + lifts if lifts else "")
-                      if is_auto_root(engine.graph, task) or engine.users_plan() else
+                      if is_auto_root(engine.graph, task) or users_plan(engine.graph) else
                       "\n\nA finding stays demanded until you rule it outside its criterion as written: accept, naming "
                       "in `retire_findings` a finding the dispute named — its full id retires it under that criterion, "
                       "its bare hash under every criterion it stands on. Nothing else retires one — not a reworded "
@@ -596,7 +598,7 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
                   "\n\nThis node is part of the plan the user handed in: `cancel` does not close it here — it STOPS the "
                   "whole run and tells the user this plan cannot be carried. Choose it only for that; a part that ran "
                   "out of time while it waited on its producer is continued by a new contract."
-                  if "cancel" in moves and engine.users_plan() and users_criteria(engine.graph, task) else "")
+                  if "cancel" in moves and users_plan(engine.graph) and users_criteria(engine.graph, task) else "")
                + "\n\nAdmissible moves: " + ", ".join(f"`{m}`" for m in moves)
                + f"\n\nWrite every text you return in the same language as this sentence the user wrote: "
                  f"«{_users_sentence(engine, task)}» — even where other text in this packet is in another "
@@ -1009,7 +1011,7 @@ def _offer_lapsed(engine, task) -> bool:
     on this plan, would stop it on a clock: parts' offers lapsed while their producer worked and one was cancelled
     (GB_c_compiler_tnj930660). Read off how the node ENTERED its decision, not off its producers now: one that passed
     while the issuer's turn waited turned the same lapse into "cannot be carried" (critic over 2d7a0e5)."""
-    return engine.users_plan() and _lapsed_from(engine, task) == State.OFFERED
+    return users_plan(engine.graph) and _lapsed_from(engine, task) == State.OFFERED
 
 
 def _validation_lapsed(engine, task) -> bool:
@@ -1035,14 +1037,14 @@ def _cancel(engine, task, actor, answer, why, verbs):
     user's to cut (the author, 2026-10-25: «остановка с сигналом … что внутри системы считают что план нерабочий»). A
     part cancelled while its offer lapsed behind a working producer read as a refuted plan (GB_c_compiler_tnj930660);
     without the move at all, a part that really cannot be carried churned to its deadlines (critic over f96e6f8)."""
-    if engine.users_plan() and users_criteria(engine.graph, task):
+    if users_plan(engine.graph) and users_criteria(engine.graph, task):
         reason = (f"the system's issuer finds {task.id} cannot be carried as the plan the user gave writes it: "
                   f"{why or 'no reason given'} — only the user re-plans it: hand a corrected plan as a new goal "
                   f"(`refine_plan` on its file, then `auto_decompose(plan=path)` on a new project; or `auto_decompose` with `spec`), or `set_mode` (with `user_said`) to hold the plan "
                   f"yourself; `start_project` alone asks its issuer again")
         # …ALWAYS asked: `pause` keeps a person's stop and takes over one the system lifts by itself (the account's
         # limit, a place down), which would otherwise lift with this verdict lost (critic over bc5fca4)
-        engine.pause("system", reason)
+        engine.stops.pause("system", reason)
         engine.emit_info("issuer", f"{task.id}: {reason}")
         return True, reason
     return _signalled(engine, task.id, Signal.CANCEL, actor, reason=why or "the issuer closes it")
@@ -2045,7 +2047,7 @@ def answer_the_challenge(engine, task_id: TaskId, issuer_id: str, _llm=None, _cb
         return {"task_id": str(task_id), "status": "rejected" if ok else "refused", "why": why}
     # …AND A PLAN HANDED IN IS CLOSED AT EVERY DEPTH: ruled below its root the finding went and the check stayed, a loop;
     # the run stops with the signal instead (`settle`)
-    if retire and engine.users_plan():
+    if retire and users_plan(engine.graph):
         return _turned_back(engine, task_id, _A, issuer_id, {"task_id": str(task_id), "status": "users",
                                                            "why": _USERS_DISPUTE.format(task_id, ", ".join(retire))})
     if retire and (asked := engine.users_dispute(task_id)):
@@ -2213,7 +2215,7 @@ def report_stuck(engine, questions, ledger: dict, owed: dict, now: float, open_n
     for task_id, question in questions:
         task = engine.graph.get_task(task_id)
         since, done, move = owed.setdefault((task_id, question), (now, frozenset(), None))
-        if task is None or engine.paused():
+        if task is None or engine.stops.paused():
             continue
         gen = f"{task_id}#{task.iteration}#{task.reopens}#{question}"
         waits, _, answers = ledger.get(gen, (0, 0.0, 0))
@@ -2342,7 +2344,7 @@ def open_questions(engine) -> list[tuple[TaskId, str]]:
             # issuer — once, holding nothing: shown only in a context, it was readable and never delivered: a validator
             # wrote the very hole the held-out suite then failed, the node passed and the root closed DONE (5cad9c4).
             # Not in a plan the user handed in: only its author writes into it
-            if not engine.users_plan() and engine.outside_the_criteria(t.id, own=False):
+            if not users_plan(engine.graph) and engine.outside_the_criteria(t.id, own=False):
                 qs.append("outside")
         if qs:
             found[t.id] = min(qs, key=PRIORITY.index)
@@ -2375,6 +2377,11 @@ def _machine_issuer(engine, agents, task_id: TaskId) -> Optional[str]:
     """The node's ISSUER when the system makes its moves — a registered participant, or the standing
     agent under AUTO (the customer, who does not intervene) — else None."""
     return str(engine.graph.issuer_of(task_id)) if engine.issuer_kind(task_id, agents) == "machine" else None
+
+
+def system_issues(engine, agents, task_id) -> bool:
+    """Does the SYSTEM make this node's issuer moves (a machine issuer, or the AUTO root's customer)?"""
+    return system_mover(engine, agents, TaskId(task_id), "escalation") is not None
 
 
 def system_mover(engine, agents, task_id: TaskId, question: str) -> Optional[str]:
@@ -2469,7 +2476,7 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
         return _review(engine, task_id, verbs)
     # …A SPLIT OF THE USER'S PLAN IS NOT THE SYSTEM'S TO REMAKE: owed where contact refuted it or a leaf proved larger
     # than a session, and only its author re-plans it — the run stops, its sessions finishing, its record whole
-    if question in SPLIT_QUESTIONS and engine.users_plan():
+    if question in SPLIT_QUESTIONS and users_plan(engine.graph):
         # …"refuted" only where contact refuted it: a part closed without a verdict (its bound, a person) leaves the
         # plan unable to go on, which is not the same news (critic over f96e6f8, E)
         said = ("is refuted" if engine.decomposition_refuted(task_id) or engine.dep_order_refuted(task_id)
@@ -2478,19 +2485,19 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
                f"{what_contact_refuted(engine, task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans "
                f"it: hand a corrected plan as a new goal (`auto_decompose` with `spec`, closed as this one; or `refine_plan` on its file, then `auto_decompose(plan=path)` on a new project, which contact may then repair),or `set_mode` "
                f"(with `user_said`) to hold the plan yourself; `start_project` alone stops it here again")
-        engine.pause("system", why)
+        engine.stops.pause("system", why)
         return {"status": "users", "why": why}
     if question == "parked" and not moves_for(engine, (t := engine.graph.get_task(task_id)), question):
         # …no move of the system's lifts it (an AUTO root past its disk bound: cancelling is the user's): the user told
         why = f"{task_id}: {engine.parking.execution_park_said(t)}; {USERS_WAY}"
-        engine.pause("system", why)
+        engine.stops.pause("system", why)
         return {"status": "users", "why": why}
     if question == "unrun" and not moves_for(engine, engine.graph.get_task(task_id), question):
         why = (f"{task_id}'s validator could not run " + "; ".join(
             f"{r['id']} ({r['why']})" for r in engine.unrun_findings(task_id)) + ", so its PASS waits on them; only the "
             f"user rules a finding out of the user's goal or plan: `rule_unrun_finding(task_id, findings, ruling, why)`, then "
             f"`start_project` — the node waits in VALIDATING")
-        engine.pause("system", why)
+        engine.stops.pause("system", why)
         return {"status": "users", "why": why}
     if question == "split":
         # ONE admissible move, and it is not a judgement: the refine round authors the split (SEARCH + the
@@ -2518,11 +2525,11 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
                           refusal=str(out.get("why") or out["status"]))
     # …A DISPUTE A CLOSED PLAN CANNOT ANSWER IS THE USER'S: asked of a model again it was thrown away again, no line said,
     # 29 calls in 27 min (tracker, 2026-11-03); and so is one its issuer twice asked to rule out, which he may not there
-    if question == "dispute" and out["status"] in ("unparsed", "users") and engine.users_plan():
+    if question == "dispute" and out["status"] in ("unparsed", "users") and users_plan(engine.graph):
         why = (f"the plan the user gave cannot go on at {task_id}: its executor disputes a check, and only the user "
                f"changes a check of that plan, by handing a corrected plan as a new goal (`auto_decompose` with `spec`): "
                f"{str(engine.challenge_reason(task_id) or '')[:300]}")
-        engine.pause("system", why)
+        engine.stops.pause("system", why)
         return {"status": "users", "why": why}
     return out
 
@@ -2577,7 +2584,7 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
             with cap:
                 try:
                     # …stopped while it waited for its slot: nothing starts, the question asked again after the start
-                    out = {"status": "gone"} if engine.paused() else settle(engine, agents, t, q, a, verbs)
+                    out = {"status": "gone"} if engine.stops.paused() else settle(engine, agents, t, q, a, verbs)
                 except Unavailable as e:
                     out = {"status": "unavailable", "why": str(e), "limit": e.limit}
                 except Exception as e:                  # noqa: BLE001 — a failed turn is not a signal
@@ -2603,7 +2610,7 @@ def answer_open_questions(engine, agents, claim, release, cap, verbs: Verbs, led
                                 else paced if review else 0)
                         ledger[g] = (0, now_ + wait, n)
                     elif st in UNANSWERED:
-                        wait = (engine.stop_wait_s() or min(backoff(w), LIMIT_RETRY_S)) if out.get("limit") else backoff(w)
+                        wait = (engine.stops.stop_wait_s() or min(backoff(w), LIMIT_RETRY_S)) if out.get("limit") else backoff(w)
                         ledger[g] = (w + 1, now_ + wait, n)
                         # …SAID (a failed turn is, above): a parked leaf's issuer met a dead Docker daemon at every ask,
                         # and 40 min passed with not one line in the log (GB_sql_database_tnij0m952)

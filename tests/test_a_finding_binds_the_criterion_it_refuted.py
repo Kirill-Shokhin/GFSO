@@ -30,7 +30,7 @@ import pytest
 import gfso.tools as T
 from gfso import issuer as I
 from gfso.adapters.execution import LocalExecution, scratch_of
-from gfso.core.protocol.procedure import unrerunnable
+from gfso.core.protocol.accounting import unrerunnable
 from gfso.packets import _executor_packet, _validator_packet
 from gfso.core.types import AgentId, TaskId
 from tests.support import a_place, REGISTER, UNMODELLED_FAULT, DENIAL_ENTRY, criterion, make_engine
@@ -38,6 +38,7 @@ from tests.test_the_issuer_answers_a_dispute import _ContactLLM, _IssuerLLM
 
 from gfso.engine import findings as F
 from gfso.engine.findings import record_round
+from gfso.engine.closures import closure_of
 
 #: every round stands: these findings name none the system removed
 _STANDS = lambda r: True
@@ -439,7 +440,7 @@ def test_a_retirement_reads_as_narrowed_wherever_the_pass_is_read():
     _pass(e)
     T.signal(e, "kid", "PASS", "me")
     e.wait_idle()
-    assert e.closure_of(TaskId("kid"))["checked_by"]["retired_after_refutation"] == ["conf"]
+    assert closure_of(e, TaskId("kid"))["checked_by"]["retired_after_refutation"] == ["conf"]
     e.stop()
 
 

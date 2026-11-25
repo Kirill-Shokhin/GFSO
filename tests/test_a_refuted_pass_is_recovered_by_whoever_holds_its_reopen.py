@@ -18,6 +18,7 @@ from gfso import tools_llm as TL
 from gfso.core.types import AgentId, Signal, State, TaskId
 from tests.support import REGISTER, carried_by_the_system, make_engine, reviewer_passes
 from tests.test_a_refuted_pass_withholds_only_what_rests_on_it import _a_root, _child, _on, _passed, _refuted
+from gfso.engine.closures import refuted_passes
 
 
 @pytest.fixture(autouse=True)
@@ -50,7 +51,7 @@ def test_the_refuted_node_reopened_and_passed_again_is_no_refuted_pass(e):
     e.wait_idle()
     _passed(e, "root.c1", "boss")
 
-    assert not e.refuted_passes(), "a PASS re-earned on a new delivery after its reopen still read as refuted"
+    assert not refuted_passes(e), "a PASS re-earned on a new delivery after its reopen still read as refuted"
     assert _on(e.next_steps(), "root", "deliver")
     _root_passes(e)
     assert e.next_steps()["complete"] is True
@@ -69,7 +70,7 @@ def test_the_goal_reopened_and_passed_again_over_a_fresh_delivery_answers_comple
     T.signal(e, "root", "ACCEPT", "boss")
     e.wait_idle()
     _root_passes(e)
-    assert e.refuted_passes() == ["root.c1"], "the record stays on the log"
+    assert refuted_passes(e) == ["root.c1"], "the record stays on the log"
     out = e.next_steps()
     assert out["complete"] is True, "the goal's PASS re-earned after its reopen held COMPLETE back for good"
     assert e.nothing_left(), "the goal's end was not read where the mode's hold lapses"

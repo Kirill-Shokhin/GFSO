@@ -26,7 +26,8 @@ from gfso import config as _config
 from gfso.config import (data_dir as _config_data_dir, active_project,
                          remember_active_project, DEFAULT_PROJECT)
 from gfso.llm import llm_factory
-from gfso.roster import AgentRegistry
+from gfso.roster import AgentRegistry, default_agents, publish_the_workforce
+from gfso.delegate import _DISPATCHERS, ensure_dispatcher
 from gfso.decompose import kept as _kept_plans
 from gfso.tools import is_refusal
 from gfso.workspaces import drop_execution, drop_host_files, drop_node_branches
@@ -51,13 +52,6 @@ def data_dir():
     the user's graphs went missing rather than erroring.
     """
     return _config_data_dir()
-
-
-def _delegate():
-    """The dispatcher's module, reached at call time only — LEFT: the import cycle gfso.runtime ↔ gfso.delegate
-    (delegate → gfso.tools_llm → gfso.runtime)."""
-    from gfso import delegate
-    return delegate
 
 
 def build_engine_from_env(*, validate_signals: bool = True, default_storage: str = "sqlite",
@@ -91,7 +85,7 @@ def build_engine_from_env(*, validate_signals: bool = True, default_storage: str
     engine.project_name = project    # per-project instruments key off it
     try:  # …who is a machine, read before the start and the stop's question: unpublished, a node a registered executor
         # held read as a person's — its paid session started unattended (critic over 880df12), its server-down gap lost
-        _delegate().publish_the_workforce(engine, _delegate().default_agents().list())
+        publish_the_workforce(engine, default_agents().list())
     except Exception as ex:
         print(f"gfso: the roster could not be read for project {project!r} ({ex})", file=sys.stderr, flush=True)
     engine.start()
@@ -174,16 +168,16 @@ class ProjectRegistry:
                         # their deadlines still, which the canon never suspends (§12.2), and there is no run to stop
                         # (the author, 2026-11-15: «там очевидно и часы вести не для кого»)
                         if self._engines[name].system_starts_sessions():
-                            self._engines[name].pause("system", HELD_AT_START)
+                            self._engines[name].stops.pause("system", HELD_AT_START)
                     except Exception as ex:
                         print(f"gfso: project {name!r} could not be stopped at the server's start ({ex}) — it runs",
                               file=sys.stderr, flush=True)
                 # …and the same stop an earlier start left on a graph people hold comes off: nobody made it, and it
                 # stands their deadlines still (critic: the author's graphs kept it)
-                if _config.serves() and _held_at_start(self._engines[name].paused())                         and not self._engines[name].system_starts_sessions():
-                    self._engines[name].resume("system")
+                if _config.serves() and _held_at_start(self._engines[name].stops.paused())                         and not self._engines[name].system_starts_sessions():
+                    self._engines[name].stops.resume("system")
                 try:  # delegation autostart rides with the engine (works under every entry point)
-                    _delegate().ensure_dispatcher(self._engines[name])
+                    ensure_dispatcher(self._engines[name])
                 except Exception as ex:
                     # Swallowed, this left a project that never auto-executes and never auto-validates
                     # anything for the life of the process — indistinguishable, from outside, from an
@@ -262,8 +256,6 @@ class ProjectRegistry:
             eng = self._engines.pop(name, None)
         if eng is not None:
             try:
-                # LEFT: import cycle gfso.runtime ↔ gfso.delegate (see `engine` above).
-                from gfso.delegate import _DISPATCHERS
                 d = _DISPATCHERS.pop(id(eng), None)
                 if d:
                     d.stop()
@@ -411,7 +403,7 @@ class ProjectRegistry:
                 p = {**p, "stopped": None}     # …as its opening will lift it, unless a machine's node holds it there
             eng = self._engines.get(name)
             if p is not None and eng is not None:     # …its stop as it stands: two writes in one tick of the file's stamp left a peek stale
-                p = {**p, "stopped": eng.paused()}
+                p = {**p, "stopped": eng.stops.paused()}
             if p is None or eng is None or p["goal"] is None:
                 return p
             r = root_of(eng.all_tasks())

@@ -12,6 +12,7 @@ from typing import Optional
 from gfso.engine import AdmissionRefused, Engine
 from gfso.config import ROOT_ID
 from gfso.core.graph.model import signs_as
+from gfso.engine.validation import depth_of, mode_kind
 from gfso.core.protocol.procedure import probes_from as _checks_of
 from gfso.core.types import (
     Spec, Criteria, AcceptedRiskItem, CriterionMapping, TaskId, AgentId,
@@ -238,14 +239,14 @@ def _whose_the_children_are(engine, d: dict, rid: TaskId, parent_del, C):
     boundary between the user's agent and the system stays a seam by what the user chose. Otherwise, under a
     mode, the mode's executor for that depth (a refine round used to hand new children the parent's own Del,
     internal by accident); with no mode, the caller's choice as before."""
-    held = engine.held_by_the_user_agent(engine.depth_of(rid))
+    held = engine.held_by_the_user_agent(depth_of(engine.graph, rid))
     if held is None:
         return C
     if not held and _fits_whole(d):
         return AgentId(parent_del)
     if str(C) != str(parent_del):
         return C
-    return engine.del_at(engine.depth_of(rid) + 1, AgentId(parent_del)) or C
+    return engine.del_at(depth_of(engine.graph, rid) + 1, AgentId(parent_del)) or C
 
 
 def _record_the_session_fit(engine, d: dict, rid: TaskId, ns) -> None:
@@ -397,7 +398,7 @@ def _build_graph_live(d: dict, request: str, engine: Engine, rid: TaskId,
     drops = _the_children_this_split_drops(engine, rid, children)
     # under AUTO a plan the model authored is the system's, though the customer's call runs it: the root's first ASSIGN
     # above is his go, and a closed plan is his too. Elsewhere a system's split comes by `settle`, a party's call is his
-    with system_decides(engine.mode_kind() == Mode.AUTO and not closed):
+    with system_decides(mode_kind(engine.graph) == Mode.AUTO and not closed):
         stands = _this_round(engine, rid, changed, mappings, max_iterations, _register_of(d), drops, dropped, contract,
                              deps)
     if not stands:

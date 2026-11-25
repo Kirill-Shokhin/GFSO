@@ -15,6 +15,7 @@ from tests.support import UNMODELLED_FAULT
 from tests.test_a_solo_chat_writes_its_own_plan_and_the_person_gives_the_go import ASKED, _filled, _gone, no_model  # noqa: F401
 from tests.test_the_go_only_adds_to_the_plan import GOAL, _plan
 from tests.test_the_mode_decides_who_holds_what import _engine
+import gfso.in_chat as IC
 
 
 def test_the_page_shows_the_agreed_checks_before_the_go(no_model):
@@ -68,8 +69,8 @@ def test_a_delivery_off_the_works_branch_is_said(tmp_path):
     git("branch", "gfso/p/work")
     git("worktree", "add", "-q", str(tmp_path / "wt"), "gfso/p/work")
     subprocess.run(["git", "-C", str(tmp_path / "wt"), *ident, "commit", "-q", "--allow-empty", "-m", "work"], check=True)
-    said = TL.not_the_work(_engine(Mode.SOLO), str(tmp_path), start)
+    said = IC.not_the_work(_engine(Mode.SOLO), str(tmp_path), start)
     assert "`main`" in said and "gfso/p/work" in said and "deliver again" in said, said
     git("worktree", "remove", "--force", str(tmp_path / "wt"))
     git("switch", "-q", "gfso/p/work")
-    assert TL.not_the_work(_engine(Mode.SOLO), str(tmp_path), git("rev-parse", "HEAD").strip()) == ""
+    assert IC.not_the_work(_engine(Mode.SOLO), str(tmp_path), git("rev-parse", "HEAD").strip()) == ""

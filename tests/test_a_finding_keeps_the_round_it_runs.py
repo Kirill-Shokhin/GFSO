@@ -10,6 +10,7 @@ import time
 
 import gfso.tools_llm as TL
 from gfso.adapters.execution import LocalExecution, scratch_of
+import gfso.validate as VAL
 
 
 def _rounds(tmp_path, n: int):
@@ -25,7 +26,7 @@ def _rounds(tmp_path, n: int):
 def test_the_round_a_finding_runs_survives_the_pruning(tmp_path):
     work, root = _rounds(tmp_path, 25)
     named = (f"./cc {root}/kid_1000/t.c; echo exit=$?",)
-    TL._validation_place("kid", str(work), LocalExecution(), named)
+    VAL._validation_place("kid", str(work), LocalExecution(), named)
     assert (root / "kid_1000" / "t.c").is_file()
     assert not (root / "kid_1001").exists(), "control: a round no finding runs is pruned as before"
 
@@ -36,7 +37,7 @@ def test_a_round_a_validation_may_still_be_running_in_survives_the_pruning(tmp_p
     work, root = _rounds(tmp_path, 25)
     young = root / f"aaa_{int(time.time()) - 5}"                     # sorts first by name, made seconds ago
     young.mkdir()
-    TL._validation_place("kid", str(work), LocalExecution())
+    VAL._validation_place("kid", str(work), LocalExecution())
     assert young.is_dir()
     assert not (root / "kid_1000").exists(), "control: an old round no finding runs is pruned as before"
 
@@ -45,7 +46,7 @@ def test_the_old_rounds_go_oldest_first_whatever_their_names(tmp_path):
     work, root = _rounds(tmp_path, 25)
     later = root / "aaa_5000"                                         # first by name, newest of the old by epoch
     later.mkdir()
-    TL._validation_place("kid", str(work), LocalExecution())
+    VAL._validation_place("kid", str(work), LocalExecution())
     assert later.is_dir() and not (root / "kid_1005").exists()
 
 
@@ -55,11 +56,11 @@ def test_with_no_bound_a_round_still_running_survives_and_goes_once_it_ended(tmp
     monkeypatch.setenv("GFSO_BOUND_VALIDATING", "0")
     work, root = _rounds(tmp_path, 25)
     running = str(root / "kid_1000")
-    TL._LIVE_ROUNDS.add(running)
+    VAL._LIVE_ROUNDS.add(running)
     try:
-        TL._validation_place("kid", str(work), LocalExecution())
+        VAL._validation_place("kid", str(work), LocalExecution())
         assert (root / "kid_1000").is_dir() and not (root / "kid_1001").exists()
     finally:
-        TL._LIVE_ROUNDS.discard(running)
-    TL._validation_place("kid", str(work), LocalExecution())
+        VAL._LIVE_ROUNDS.discard(running)
+    VAL._validation_place("kid", str(work), LocalExecution())
     assert not (root / "kid_1000").exists(), "ended, it is an old round like any other"

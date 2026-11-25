@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 from gfso.adapters.llm.stub import StubLLM
 from gfso.core.graph import DIAGNOSTIC_MEANS, Q_MEANS
 from gfso.core.graph.mutations import InvariantViolation
-from gfso.delegate import _replay_a_standing_verdict, _standing_instrument_verdict
+from gfso.validate import _replay_a_standing_verdict, _standing_instrument_verdict
 from gfso.core.types import (AgentId, CriterionMapping, RevisionReason, Signal, SignalData, TaskId,
                              Verdict, passed)
 from gfso.mcp.connect import USAGE, _argv_answer, main as connect_main
@@ -43,9 +43,10 @@ from gfso.api.server import create_app
 from gfso.engine import Engine
 from gfso.engine.validation import l2_gate_on
 from gfso.runtime import ProjectRegistry
-from gfso.tools_llm import validate_internal_on
+from gfso.validate import validate_internal_on
 from tests.support import REGISTER_SPLIT, make_engine, spec, criterion, DENIAL_ENTRY
 from tests.test_integration import _engine
+from gfso.engine.closures import nodes_with_a_refused_report, verdict_provenance
 
 
 @pytest.fixture()
@@ -463,14 +464,14 @@ def test_a_self_report_is_not_reported_as_an_instruments_work():
     try:
         e.assign_task(TaskId("root"), spec("goal", "c1"), AgentId("worker"))
         e.wait_idle()
-        assert e.verdict_provenance(TaskId("root")) == "none", "a node with no verdict is not validated"
+        assert verdict_provenance(e, TaskId("root")) == "none", "a node with no verdict is not validated"
 
         e.record_exec_verdict(TaskId("root"), verdict=Verdict.PASS, failed_criteria=[],
                               validator_id=AgentId("worker"),
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
                                               "evidence": "SELF-REPORTED by worker",
                                               "probe": [{"command": "check c1", "expect": "it holds"}]}])
-        assert e.verdict_provenance(TaskId("root")) == "self", (
+        assert verdict_provenance(e, TaskId("root")) == "self", (
             "a verdict signed by the node's own executor is a self-report, not an instrument's work")
         assert "SELF-REPORTED" in _INDEPENDENCE["self"], "the words do not say what the kind is"
 
@@ -479,7 +480,7 @@ def test_a_self_report_is_not_reported_as_an_instruments_work():
                               per_criterion=[{"criterion": "c1", "verdict": "pass",
                                               "evidence": "ran it",
                                               "probe": [{"command": "check c1", "expect": "it holds"}]}])
-        assert e.verdict_provenance(TaskId("root")) == "instrument", (
+        assert verdict_provenance(e, TaskId("root")) == "instrument", (
             "a verdict signed by somebody other than the executor is an independent one")
 
         # …and every kind the engine can answer has a word for it, or the read renders a KeyError.
@@ -779,7 +780,7 @@ def test_a_refused_report_is_said_at_completion_without_withholding_it():
                                       source=AgentId("user")))
         e.wait_idle()
         assert e.frontier._frontier().get("complete") is True, "the node closed; this should read complete"
-        assert not e.nodes_with_a_refused_report(), "nothing has been refused yet"
+        assert not nodes_with_a_refused_report(e), "nothing has been refused yet"
 
         # …now a validator reports and the engine refuses it as ⊥, AFTER the node is terminal.
         e.record_rejected_report(TaskId("a"), {"defects": ["decided no criterion"],
@@ -883,14 +884,17 @@ def test_a_hand_asserted_verdict_is_not_replayed_under_an_instruments_name():
         rec = {"verdict": Verdict.PASS, "validator": "bob-who-does-not-exist", "failed_criteria": []}
         e.current_exec_verdict = lambda tid: rec                    # a verdict stands on this delivery…
 
-        for prov in ("by_hand", "self"):                            # …and who produced it decides its reuse
-            e.verdict_provenance = lambda tid, p=prov: p
+        # …and who produced it decides its reuse (`closures.verdict_provenance` reads the record standing)
+        for prov, r in (("by_hand", {**rec, "by_hand": True}), ("self", {**rec, "validator": "worker"})):
+            e.get_exec_verdict = lambda tid, r=r: r
+            assert verdict_provenance(e, TaskId("n")) == prov
             assert _standing_instrument_verdict(e, TaskId("n")) is None, (
                 f"a {prov} verdict was replayed as though an instrument had ruled")
 
         # …and an instrument's ruling IS reused, or this stops being an optimisation and becomes a
         # wall that pays for every verdict twice.
-        e.verdict_provenance = lambda tid: "instrument"
+        e.get_exec_verdict = lambda tid: rec
+        assert verdict_provenance(e, TaskId("n")) == "instrument"
         standing = _standing_instrument_verdict(e, TaskId("n"))
         assert standing == {"verdict": Verdict.PASS, "failed_criteria": []}
         assert _replay_a_standing_verdict(e, None, TaskId("n"), standing, AgentId("the-instrument"), False) == "recorded"
@@ -1203,7 +1207,7 @@ def test_the_page_draws_how_a_node_closed(client):
     """Every DONE node was drawn identically — the one an instrument proved and the one signed for.
 
     Wave 26 (2026-09-06), left open because `/api/graph` carried no provenance at all. It does now
-    (`Engine.closure_of`), and the picture reads it: contested closures ringed in the accent, hand
+    (`closures.closure_of`), and the picture reads it: contested closures ringed in the accent, hand
     ones dashed, and the counts beside the state tally say how many of each.
     """
     page = _ui(client)

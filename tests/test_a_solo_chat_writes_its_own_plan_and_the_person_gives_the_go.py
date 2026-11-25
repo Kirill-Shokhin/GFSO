@@ -21,6 +21,7 @@ from gfso.core.types import AgentId, Mode, Signal, SignalData, TaskId
 from gfso.decompose import artifact as A
 from gfso.engine import PERSONS_WORDS
 from tests.test_the_mode_decides_who_holds_what import _engine
+import gfso.in_chat as IC
 
 ASKED = "Build ./wc2: it prints the number of lines it reads."
 FILLED = {'name = ""\n\n#': 'name = "wc2"\n\n#', 'name = ""\ndescription = ""': 'name = "counts"\ndescription = "prints the line count"',
@@ -88,10 +89,10 @@ def test_a_chat_on_their_branch_hears_the_systems_branch(tmp_path):
     git("init", "-q", "-b", "main")
     git("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "start")
     e = _engine(Mode.SOLO)
-    said = TL.on_their_branch(e, str(tmp_path))
+    said = IC.on_their_branch(e, str(tmp_path))
     assert "`main`" in said and "git switch -c gfso/p/work" in said and "switch it back" in said, said
     git("switch", "-q", "-c", "gfso/p/work")
-    assert TL.on_their_branch(e, str(tmp_path)) == ""
+    assert IC.on_their_branch(e, str(tmp_path)) == ""
 
 
 def _gone(e, text):
@@ -144,7 +145,7 @@ def test_the_accepted_branch_is_not_the_works(tmp_path):
     git = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True, check=True)
     git("init", "-q", "-b", "gfso/p/accepted")
     git("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "start")
-    assert "switch it back" in TL.on_their_branch(_engine(Mode.SOLO), str(tmp_path))
+    assert "switch it back" in IC.on_their_branch(_engine(Mode.SOLO), str(tmp_path))
 
 
 def test_an_accepted_challenge_on_the_root_is_the_persons_too(no_model):

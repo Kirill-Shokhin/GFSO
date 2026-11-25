@@ -295,7 +295,7 @@ def test_a_stopped_run_a_settled_root_or_no_graph_reminds_nothing(tmp_path):
     """CONTROL: `run`, `complete` or an empty frontier unread — red."""
     e = _held(tmp_path)
     assert H.decide({}, "p", _asked(e, complete=True)) == {}
-    e.pause("user", "enough for today")
+    e.stops.pause("user", "enough for today")
     assert _stop(e) == {}
     empty = make_engine(validate_signals=True, state_timeout=0)
     empty.start()

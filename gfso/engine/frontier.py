@@ -16,7 +16,10 @@ from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_S
                              Verdict, Wait, settled_positive)
 from .moves import Move, door_holder
 from .parking import USERS_WAY
-from .validation import users_criteria, _l0_holes, _l2_undischarged, hole_kind, l2_gate_on, observation_blocker
+from .validation import depth_of, mode_kind, users_criteria, _l0_holes, _l2_undischarged, hole_kind, l2_gate_on, observation_blocker
+from .closures import (auto_accepted_closures, closed_over_an_open_plan_review, closure_of, closures_by_hand,
+                       hand_overruled_closures, nodes_with_a_refused_report, open_nodes, passes_over_open_parts,
+                       questions_left_standing, refuted_passes)
 
 #: Actions whose signal is the ISSUER's to give (§11.2) — everything else is the executor's.
 
@@ -241,7 +244,7 @@ class NodeSteps:
 
     def _held_step_verb(self, t, kids) -> str:
         """What the mode's refusal on a node the user-agent names asks for: cover the split, split, or hand over."""
-        if not self.engine.held_by_the_user_agent(self.engine.depth_of(t.id)):
+        if not self.engine.held_by_the_user_agent(depth_of(self.engine.graph, t.id)):
             return "HAND OVER"                  # below the boundary, whatever it has under it (critic round 19)
         return "COVER THE PLAN of" if kids else "SPLIT"
 
@@ -249,8 +252,8 @@ class NodeSteps:
         """IN SEMI THE HOLDER DOES NOT FIX THE WORK BY HAND. A held node in rework whose children passed (else the
         mode's rule gave no step) answers its FAIL through the split — a repair child — and re-aggregates;
         "Fix exactly that" told it to write the fix itself (critic round 17). None outside that case."""
-        if not (self.engine.mode_kind() == Mode.SEMI and str(t.assignee) == str(_config_agent_id())
-                and self.engine.held_by_the_user_agent(self.engine.depth_of(t.id))):
+        if not (mode_kind(self.engine.graph) == Mode.SEMI and str(t.assignee) == str(_config_agent_id())
+                and self.engine.held_by_the_user_agent(depth_of(self.engine.graph, t.id))):
             return None
         return (2, t, Action.DELIVER,
                 f"RE-AGGREGATE '{t.id}' ({nm}): the validator FAILED it on "
@@ -453,7 +456,7 @@ class NodeSteps:
                           f"answer: ACCEPT_CHALLENGE with `retire_findings` naming what they rule out, or REJECT_CHALLENGE "
                           f"with why the goal asks for it."
                           if (_theirs := [i for i in _asked if i not in self.engine.plans_own_findings(t.id)]) else "")
-                       if (_asked := self.engine.users_dispute(t.id)) and not self.engine.paused() else
+                       if (_asked := self.engine.users_dispute(t.id)) and not self.engine.stops.paused() else
                        # …AND WHERE THE ISSUER IS THE PERSON, THE ANSWER IS THEIRS: told "This is YOURS", their agent
                        # answered the question it had put to them by its own CHALLENGE, in their name (critic, in-process)
                        (f"{theirs}; nothing moves until it is closed: ACCEPT_CHALLENGE with the new spec if they find "
@@ -791,7 +794,7 @@ def re_earned_over(engine, n) -> Optional[str]:
     if audit is None or "log_at" not in rec:
         return None
     a = g.get_parent(TaskId(n))
-    while a is not None and not (settled_positive(a) and not (engine.closure_of(a.id) or {}).get("refuted")
+    while a is not None and not (settled_positive(a) and not (closure_of(engine, a.id) or {}).get("refuted")
                                  and audit.last_at(a.id, signal=Signal.DELIVER) > int(rec["log_at"])):
         a = g.get_parent(a.id)
     return str(a.id) if a is not None else None
@@ -819,7 +822,7 @@ def uncovered(engine, root_id=None) -> list[str]:
     (`re_earned_over`): what COMPLETE is never answered over. A re-admission covering around one, or a version mapping
     it to nothing, has left it out of what the goal rests on; a whole reopened and passed again over a fresh delivery
     has re-earned what rested on it. Its record stays on the log for good, but no answer waits on it any more."""
-    return [n for n in engine.refuted_passes(root_id)
+    return [n for n in refuted_passes(engine, root_id)
             if not engine.graph.is_consumed(engine.graph.get_task(TaskId(n)), resting=False)
             and not re_earned_over(engine, n)]
 
@@ -867,7 +870,7 @@ def refuted_said(engine, root_id=None) -> dict:
     reopen the goal still rests on (`uncovered`), whose re-decomposition around them — at a root, a new goal — nothing
     in the system makes and the mode locks at the door: no party in the graph can make either, so they are the run's
     customer's to hear (`tools_llm.needs_its_customer`); unsaid, COMPLETE never came and the run stood silent."""
-    if not (ids := engine.refuted_passes(root_id)):
+    if not (ids := refuted_passes(engine, root_id)):
         return {}
     rs, held = refuted_reading(engine, ids), set(uncovered(engine, root_id)) if engine.mode() is not None else set()
     unmade = [f"'{r.at.id}' for '{r.node}'" for r in rs if r.open and not reopen_is_the_systems(engine, r)
@@ -934,7 +937,7 @@ def over_refuted_passes(engine, cands: list, tasks, held: list) -> list:
     reopen is open, the steps that carry it upward or build on it wait and a PASS over it is turned into the FAIL that
     signs over nothing; past it, nothing waits — the parent's own check reads its delivered result (§12.8) — and the
     steps over it carry the record as data. Every other node's steps stay."""
-    rs = [r for r in refuted_reading(engine, engine.refuted_passes()) if not r.over]
+    rs = [r for r in refuted_reading(engine, refuted_passes(engine)) if not r.over]
     live, kept, waits = [r for r in rs if r.open], [], {}
     for c in cands:
         tid = str(c[1].id)
@@ -959,7 +962,7 @@ def parts_said(engine, kids, _passed) -> str:
     """How a taken whole's split stands, for its TAKE: a part whose pass its own later FAIL refutes is not passed."""
     if not all(_passed(k) for k in kids):
         return "; its parts are taken as their work starts."
-    if bad := [str(k.id) for k in kids if (engine.closure_of(k.id) or {}).get("refuted")]:
+    if bad := [str(k.id) for k in kids if (closure_of(engine, k.id) or {}).get("refuted")]:
         return (f", but {', '.join(bad)} stand(s) at PASS over a later FAIL: take it to recover "
                 f"{'that part' if len(bad) == 1 else 'those parts'} before the whole is handed in.")
     return ", every part passed: take it to hand the whole in."
@@ -1215,8 +1218,8 @@ class Frontier:
         check can establish that a self-named reviewer is independent (§15.7) — so a correct override
         must stay finishable. What must not happen is that it finishes SILENTLY.
         """
-        extra: dict = _left_standing(self.engine.questions_left_standing(root_id))
-        if _open_plan := self.engine.closed_over_an_open_plan_review(root_id):
+        extra: dict = _left_standing(questions_left_standing(self.engine, root_id))
+        if _open_plan := closed_over_an_open_plan_review(self.engine, root_id):
             extra |= {"closed_over_an_open_plan_review": _open_plan,
                       "closed_over_an_open_plan_review_note":
                           (f"{', '.join(_open_plan)} passed while its own Level-2 review still "
@@ -1225,7 +1228,7 @@ class Frontier:
                            f"nothing to hold, so the review is advice and this is the only place "
                            f"it is said. The checker is an approximation (\u00a79.9) and contact is "
                            f"the real verdict \u2014 read both.")}
-        if _auto := self.engine.auto_accepted_closures(root_id):
+        if _auto := auto_accepted_closures(self.engine, root_id):
             extra |= {"auto_accepted_closures": _auto,
                       "auto_accepted_note":
                           (f"{', '.join(_auto)} reached DONE on the CLOCK — the issuer did not "
@@ -1234,14 +1237,14 @@ class Frontier:
                            f"The conjunction above stands on it as on any accepted child (§16.14), "
                            f"which is exactly why it is named here: the one thing to weigh about "
                            f"this result is that a part of it was never checked.")}
-        if _over := self.engine.passes_over_open_parts(root_id):
+        if _over := passes_over_open_parts(self.engine, root_id):
             extra |= {"passes_over_open_parts": _over,
                       "passes_over_open_parts_note":
                           (f"{', '.join(_over)} passed while a part of it was not accepted: its issuer's check "
                            f"read the delivered result, not its children (§12.8), so the departure from AND is "
                            f"on the record, not refused. If the PASS is untrue it is FM-4's; if the check showed "
                            f"the part unneeded, the split's denial goes to its decomposer.")}
-        if _byhand := self.engine.closures_by_hand(root_id):
+        if _byhand := closures_by_hand(self.engine, root_id):
             extra |= {"closures_by_hand": _byhand,
                       "closures_by_hand_note":
                           (f"{', '.join(_byhand)} closed on a verdict ASSERTED BY HAND. That is a "
@@ -1250,7 +1253,7 @@ class Frontier:
                            f"here no check can establish (\u00a715.7): the engine cannot tell whether "
                            f"the reviewer was independent or whether the observations happened. "
                            f"`get_verdict` carries who asserted it and what they said they saw.")}
-        if _hand := self.engine.hand_overruled_closures(root_id):
+        if _hand := hand_overruled_closures(self.engine, root_id):
             extra |= {"hand_overruled_closures": _hand,
                       "hand_overruled_note":
                           (f"{', '.join(_hand)} closed on a verdict ASSERTED BY HAND that "
@@ -1294,7 +1297,7 @@ class Frontier:
                     "directive": first + ("No graph yet — `plan(request)` with the user's request writes the plan, you "
                                           "read it whole, and `auto_decompose(plan=path)` is the go: the system does "
                                           "the work and validates it, and you read its status."
-                                          if self.engine.mode_kind() == Mode.AUTO else
+                                          if mode_kind(self.engine.graph) == Mode.AUTO else
                                           "No graph yet — `plan(request)` writes the plan and `auto_decompose(plan=path)` "
                                           "builds it; `create_task` + `decompose` is the manual path when you want "
                                           "to build the structure yourself.")}, None)
@@ -1310,7 +1313,7 @@ class Frontier:
                 # predicate, both ways of asking it — a rule that holds at one door and not at the
                 # next is the class this product keeps finding in itself.
                 if not_yet := (self._not_complete_because_refuted(r) if (r := uncovered(self.engine, root_id)) else
-                               _not_complete_while_open(self.engine, o) if (o := self.engine.open_nodes(root_id)) else None):
+                               _not_complete_while_open(self.engine, o) if (o := open_nodes(self.engine, root_id)) else None):
                     return (not_yet, None)
                 if not self.engine.joins.root_landed(root):
                     return (self._not_complete_while_joining(root), None)
@@ -1342,12 +1345,12 @@ class Frontier:
             # it (HTTP door, 2026-09-02: "5 Done · 1 Not started · root DONE — the goal is met" on
             # one line). V(parent) is the AND over its children (Thm 1), so a passed parent with an
             # unsettled child is a claim that no longer holds; the honest answer is what is open.
-            if open_now := self.engine.open_nodes():
+            if open_now := open_nodes(self.engine):
                 return (_not_complete_while_open(self.engine, open_now), None)
             # …and a ⊥ that landed anyway is SAID, never used to withhold the answer. A validator that
             # could not decide is not a validator that decided against: withholding COMPLETE over one
             # would be reading ⊥ as fail, which §2.3 forbids in those words.
-            unresolved = self.engine.nodes_with_a_refused_report()
+            unresolved = nodes_with_a_refused_report(self.engine)
             extra = ({"unresolved_reports": unresolved,
                       # …AND THE MACHINE-READABLE HALF OF THE SAME SENTENCE. The note below says
                       # this does not make the graph unfinished; a dashboard keying on the LIST

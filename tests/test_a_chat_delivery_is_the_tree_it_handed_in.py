@@ -21,6 +21,7 @@ from gfso.adapters import snapshots as S
 from gfso.core.types import AgentId, Mode, TaskId
 import gfso.tools as T
 from tests.support import criterion, make_engine, REGISTER
+import gfso.validate as VAL
 
 
 @pytest.fixture(autouse=True)
@@ -124,7 +125,7 @@ def test_the_validator_of_a_chat_delivery_runs_in_its_checkout_not_in_the_users_
     repo, e, _, _ = _delivered_v1(tmp_path)
     (repo / "f.txt").write_text("v2 — written after DELIVER\n")
     llm = _Reads()
-    TL.validate_result(e, "root", _llm=llm)
+    VAL.validate_result(e, "root", _llm=llm)
     assert llm.cwd and Path(llm.cwd).resolve() != repo.resolve(), f"the validator ran in the user's tree: {llm.cwd}"
     assert llm.read == "v1", llm.read
 

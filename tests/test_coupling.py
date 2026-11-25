@@ -73,7 +73,7 @@ ALLOWED_DUCK_PRIVATE: set[tuple[str, str]] = {
     ("gfso.delegate", "_dispatch_quiesce"),
     ("gfso.roster", "_owner_live"), ("gfso.runtime", "_on_create"),
     ("gfso.critic.runner", "_model"), ("gfso.critic.runner", "_critique_log_path"),
-    ("gfso.tools_llm", "_model"),
+    ("gfso.validate", "_model"),
     ("gfso.adapters.llm.headless", "_est_chars"),
 }
 
@@ -90,7 +90,7 @@ DECLARED_TASK_FIELDS = {"iteration", "reopens", "revisions", "state_entered_at",
 
 # ── Kind II: a module may only build paths inside its OWN area ──────────────────────────────────
 ALLOWED_PATH: set[tuple[str, str]] = {
-    ("gfso.sessions", "mcp"), ("gfso.tools_llm", "mcp"),      # block 4 moves the prompts
+    ("gfso.sessions", "mcp"), ("gfso.validate", "mcp"),      # block 4 moves the prompts
     ("gfso.api.server", "web"), # doctor is binding: allowed by design
 }
 
@@ -135,7 +135,7 @@ BASE_COUNT = {"private_reach": 1,   # ← `issuer_of` published (2026-08-22); �
               # a private NAME imported from another module (`from gfso.x import _y`): the layering gate reads it as an
               # ordinary import, and nothing counted it (sync audit, D-F17, 2026-10-05) — measured, to fall from here;
               # 39 read as written, 53 resolved (relative imports: a package's own re-exports, gfso.engine's siblings)
-              "private_import": 49,   # ← delegate reads the standing agent from config; ← stats.tag_stage published (D-F18); doctor's floor reads the execution's own
+              "private_import": 41,   # ← `inflight.flight`, `stats.stat_line` published (the validation's own module reads both); ← delegate reads the standing agent from config; ← stats.tag_stage published (D-F18); doctor's floor reads the execution's own
               "monkey_patch": 0, "foreign_path": 0,
               "duck_private": 0,
               # 2 (2026-09-03, S7): a `getattr` with a default over a DECLARED field says the

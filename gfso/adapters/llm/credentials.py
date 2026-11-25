@@ -51,7 +51,7 @@ def where() -> Path:
 
 def stamp() -> str:
     """The store's state as one string, changed by every write — a stop an account's refusal made lifts once a person
-    set a credential (`Engine.probe_the_account_with`); no value is in it."""
+    set a credential (`Stops.probe_the_account_with`); no value is in it."""
     try:
         return str(where().stat().st_mtime_ns)
     except OSError:

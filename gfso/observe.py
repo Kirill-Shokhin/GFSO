@@ -27,12 +27,12 @@ from typing import Optional
 from dataclasses import replace
 
 from gfso.config import host_env
-from gfso.core.types import IN_THE_WORKS_PATH, PlaceUnavailable
+from gfso.core.types import IN_THE_WORKS_PATH, INPUTS_TOKEN, PlaceUnavailable
 from gfso.adapters.execution import ended_by_watch, past_disk
 from gfso import store
 from gfso.adapters.snapshots import WATCHED, NotTheDelivery, Uncopied, changed_or_unknown, judged_at, on_disk, snapshot, swap
 
-from gfso.core.protocol.procedure import (INPUTS_TOKEN, PROBE_S, contains, materialize_inputs, probe_id, shows,
+from gfso.core.protocol.procedure import (PROBE_S, contains, materialize_inputs, probe_id, shows,
                                          unsafe_input_paths)
 from gfso.workspaces import execution_of, standing
 
@@ -89,7 +89,7 @@ def run_checks(ex, probes, place: str, tree: Optional[str], budget: float, touch
     probe)` of `probes` run in `tree`, a copy of `place`, with its inputs laid from the contract: each distinct
     command once, PROBE_S at most and `budget` in all, matched by `printed`. [] where nothing can run: no copy, no shell,
     inputs that cannot be laid as pinned (refused at admission). The one runner of the system's own checks: before a
-    session (`observe_place`) and over a fresh copy of a delivery at its validation (`tools_llm._observe_pins`).
+    session (`observe_place`) and over a fresh copy of a delivery at its validation (`validate._observe_pins`).
     `touched`: gets the delivered files each check changed in its own copy — what a judge running it changes too."""
     if not (tree and probes and (bash := ex.shell())):
         return []

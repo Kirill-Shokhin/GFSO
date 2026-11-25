@@ -67,6 +67,6 @@ def test_a_stopped_project_still_knows_its_validator(tmp_path):
     e = make_engine()
     registry = AgentRegistry(tmp_path / "agents.json")
     registry.register("v", "llm-validator", workdir=str(tmp_path))
-    e.pause("system", "the server started")
+    e.stops.pause("system", "the server started")
     Dispatcher(e, registry).dispatch_once()
     assert "v" in e.graph.authorized_validators

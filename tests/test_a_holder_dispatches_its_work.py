@@ -24,11 +24,13 @@ from gfso.core.graph.model import generation_of_task
 from gfso.core.types import AgentId, Mode, Signal, State, TaskId
 from gfso.decompose.build import build_graph_live
 from gfso.delegate import Dispatcher
+from gfso.engine.validation import hands_of
 from tests.test_one_session_carries_a_scope import _drive
 from gfso.roster import AgentRegistry
 from gfso.config import VALIDATION_CLAIM_TTL
 from gfso.core.types.ports import SystemClock
 from tests.support import REGISTER, a_repository, criterion, make_engine
+from gfso.roster import publish_the_workforce
 
 
 class _LLM:
@@ -57,7 +59,7 @@ def _project(tmp_path, hands="exec-1"):
     a_repository(tmp_path)                # …a repository, as every directory a role is named in
     for aid, kind in (("exec-1", "llm-executor"), ("val-1", "llm-validator")):
         agents.register(aid, kind, workdir=str(tmp_path), project="p")
-    D.publish_the_workforce(e, agents.list())
+    publish_the_workforce(e, agents.list())
     e.set_mode(Mode.SOLO, None, AgentId("user"), hands=hands)
     T.create_task(e, "root", {"description": "the goal", "accepted_risks": REGISTER,
                               "criteria": [criterion("g", "G holds")]})
@@ -136,9 +138,9 @@ def test_in_chat_the_holder_is_told_to_execute(tmp_path):
 def test_the_mode_records_how_the_holder_performs(tmp_path):
     e, _ = _project(tmp_path)
     assert (e.mode()["perform"], e.mode()["hands"]) == ("dispatch", "exec-1")
-    assert e.hands_of("user") == "exec-1" and e.hands_of("exec-1") is None and e.hands_of("someone") is None
+    assert hands_of(e.graph, "user") == "exec-1" and hands_of(e.graph, "exec-1") is None and hands_of(e.graph, "someone") is None
     e.set_mode(Mode.SOLO, None, AgentId("user"), hands=None)
-    assert e.mode()["perform"] == "in_chat" and e.hands_of("user") is None
+    assert e.mode()["perform"] == "in_chat" and hands_of(e.graph, "user") is None
     # …into AUTO only once he holds nothing live: here his root is (`test_the_auto_roots_issuer_is_the_system_party`)
     bare = make_engine()
     bare.set_mode(Mode.AUTO, None, AgentId("user"), hands=None)

@@ -25,6 +25,7 @@ from gfso.adapters import worktrees as W
 from gfso.adapters.execution import ContainerExecution, LocalExecution, scratch_of
 from tests.support import criterion, a_repository
 from tests.test_validate_result import _eng, _fenced
+import gfso.validate as VAL
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="a node's place is a git worktree")
 
@@ -115,7 +116,7 @@ def _validate(monkeypatch, at, n: int = 2, cmd: str = "rm -f app; echo ok", **ru
     _task(e, n, cmd, at)
     meet, seen = threading.Barrier(n), []
 
-    out = TL.validate_result(e, "big", workdir=str(at), _llm=_Run(meet, seen, **run),
+    out = VAL.validate_result(e, "big", workdir=str(at), _llm=_Run(meet, seen, **run),
                              _spawn=lambda: _Run(meet, seen, **run))
     return e, out, seen
 
@@ -226,7 +227,7 @@ def test_the_copy_is_made_and_removed_where_the_work_runs(monkeypatch, place):
             super().remove_tree(path)
     ex = _Seen()
     made, real = [], S._checkout
-    monkeypatch.setattr(TL, "execution_of", lambda *_: ex)
+    monkeypatch.setattr(VAL, "execution_of", lambda *_: ex)
     monkeypatch.setattr(S, "_checkout", lambda src, at_, *a: (made.append((str(at_), a[-1])), real(src, at_, *a))[1])
     _, at = place
     e, out, _ = _validate(monkeypatch, at)
@@ -369,11 +370,11 @@ class _Copies(LocalExecution):
 
 
 def _timed(monkeypatch, at, ex):
-    monkeypatch.setattr(TL, "execution_of", lambda *_: ex)
+    monkeypatch.setattr(VAL, "execution_of", lambda *_: ex)
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "1")
     e = _eng()
     _task(e, 2)
-    out = TL.validate_result(e, "big", workdir=str(at), _llm=_Timed(ex.log), _spawn=lambda: _Timed(ex.log))
+    out = VAL.validate_result(e, "big", workdir=str(at), _llm=_Timed(ex.log), _spawn=lambda: _Timed(ex.log))
     return e, out
 
 
@@ -391,11 +392,11 @@ def test_where_places_stand_apart_a_root_judged_in_one_run_is_judged_in_a_copy(m
     find no copy and judge nothing (critic over this slice)."""
     base, _ = place
     ex = _Apart([], fail=())
-    monkeypatch.setattr(TL, "execution_of", lambda *_: ex)
+    monkeypatch.setattr(VAL, "execution_of", lambda *_: ex)
     monkeypatch.setenv("GFSO_VALIDATION_BATCH", "0")
     e = _eng()
     _task(e, 1, at=base)
-    out = TL.validate_result(e, "big", workdir=str(base), _llm=_Timed(ex.log), _spawn=lambda: _Timed(ex.log))
+    out = VAL.validate_result(e, "big", workdir=str(base), _llm=_Timed(ex.log), _spawn=lambda: _Timed(ex.log))
     runs = [x for x in ex.log if x[0] == "run"]
     assert len(runs) == 1 and runs[0][1] != str(base) and runs[0][1].endswith("delivery")
     assert out["verdict"] == "PASS"
@@ -409,8 +410,8 @@ def test_the_runs_cap_is_read_once_its_copy_stands(monkeypatch, place):
     copied = S._checkout
     monkeypatch.setattr(S, "_checkout", lambda *a: (order.setdefault(threading.get_ident(), []).append("copy"),
                                                      copied(*a))[1])
-    real = TL._validation_cap
-    monkeypatch.setattr(TL, "_validation_cap",
+    real = VAL._validation_cap
+    monkeypatch.setattr(VAL, "_validation_cap",
                         lambda t, g: order.setdefault(threading.get_ident(), []).append("cap") or real(t, g))
 
     e, out, _ = _validate(monkeypatch, at)

@@ -115,7 +115,7 @@ def torn_among(calls) -> "bool | None":
     return any(bool(c["transport_torn"]) for c in typed) if typed else None
 
 
-def _stat_line(llm) -> str:
+def stat_line(llm) -> str:
     """One-line cost readout of the llm's LAST call + the running total. Duck-typed on `calls`
     holding stat DICTS (the headless adapter); anything else (fakes, API adapter) → plain 'done'."""
     calls = calls_of(llm)

@@ -6,6 +6,7 @@ guessed 1, so under SEMI it counted a depth-1 node the user holds as the system'
 CONTROL: serve `engine.mode()` bare in `graph_read` and the first test goes red."""
 from gfso import tools as T
 from gfso.core.types import AgentId, Mode
+from gfso.engine.validation import holder_boundary
 from tests.support import REGISTER, criterion, make_engine
 
 
@@ -26,7 +27,7 @@ def _two_levels(mode, boundary=None):
 def test_semi_by_default_says_the_engines_middle_not_the_records_none():
     e = _two_levels(Mode.SEMI)
     m = T.graph_read(e)["mode"]
-    assert m["boundary"] is None and m["holds_above"] == e.holder_boundary() == 1.5, m
+    assert m["boundary"] is None and m["holds_above"] == holder_boundary(e.graph) == 1.5, m
     assert e.held_by_the_user_agent(1) is True
 
 

@@ -11,6 +11,7 @@ import pytest
 from gfso import tools_llm as TL
 from gfso.core.types import Mode, TaskId
 from gfso.decompose import artifact as A, extract_spec
+from gfso.engine.validation import users_plan
 from tests.support import UNMODELLED_FAULT
 from tests.test_the_mode_decides_who_holds_what import _engine
 
@@ -88,7 +89,7 @@ def test_the_plan_read_back_off_the_built_project_renders_to_the_file(go):
 
 def test_what_the_go_adds_is_not_in_the_file(go):
     e = go(_file())
-    assert e.users_plan() is False                      # the system wrote it: contact may repair it
+    assert users_plan(e.graph) is False                      # the system wrote it: contact may repair it
     assert all(str(t.assignee) for t in e.graph.get_active_children(TaskId("root")))   # Del enters here, at the go
     assert set(tomllib.loads(_file())) == {"format", "goal", "plan", "fit", "review", "notes", "inputs"}   # …not in the file
 

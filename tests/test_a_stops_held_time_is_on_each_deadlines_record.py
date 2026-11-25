@@ -28,9 +28,9 @@ def test_a_stop_lifted_on_a_system_carried_project_records_each_live_deadlines_s
     e.set_mode(Mode.AUTO, None, AgentId("user"))      # the system carries the work: the stop holds the project's time
     assert e.system_carries_work()
     was = T.get_task(e, "n")["deadline"]
-    e.pause("the-user", "look at a bug")
+    e.stops.pause("the-user", "look at a bug")
     keep_off(e.graph, 3600)                     # an hour the stop held, left off as the monitor's ticks leave it
-    e.resume("the-user")
+    e.stops.resume("the-user")
     got = T.get_task(e, "n")
     held = (datetime.fromisoformat(got["deadline"]) - datetime.fromisoformat(was)).total_seconds()
     assert abs(held - 3600) < 5, held
@@ -51,14 +51,14 @@ def test_the_systems_own_stop_lifting_by_itself_records_it_too_and_a_stop_that_h
     T.create_task(e, "n", {"description": "x", "criteria": [criterion("a", "A")]}, "w")
     e.wait_idle()
     e.set_mode(Mode.AUTO, None, AgentId("user"))
-    e.pause("the-user", "")
-    e.resume("the-user")
-    assert e.deadline_moves("n") == [], "a stop that held no time moves no deadline"
-    e.stop_for_the_limit("executor", time.time() - 60)
+    e.stops.pause("the-user", "")
+    e.stops.resume("the-user")
+    assert e.stops.deadline_moves("n") == [], "a stop that held no time moves no deadline"
+    e.stops.stop_for_the_limit("executor", time.time() - 60)
     keep_off(e.graph, 600)
-    e.lift_the_system_stop(time.time())
-    assert not e.paused()
-    [m] = e.deadline_moves("n")
+    e.stops.lift_the_system_stop(time.time())
+    assert not e.stops.paused()
+    [m] = e.stops.deadline_moves("n")
     assert m["stopped_by"] == m["started_by"] == "system" and "limit" in m["why"] and abs(m["held_s"] - 600) < 5, m
     e.stop()
 
@@ -80,15 +80,15 @@ def test_a_server_down_left_off_at_the_engines_start_is_on_each_deadlines_record
         kept = MemoryStorage()
         e = _consented(kept)
         if stopped:
-            e.pause("the-user", "")
+            e.stops.pause("the-user", "")
         e.stop()
         kept.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
         again = make_engine(storage=kept, validate_signals=True, state_timeout=0)
         again.start()
         if stopped:
-            assert again.deadline_moves("n") == [], "the gap under a stop is the stop's, recorded at its lift"
-            again.resume("the-user")
-        [m] = again.deadline_moves("n")
+            assert again.stops.deadline_moves("n") == [], "the gap under a stop is the stop's, recorded at its lift"
+            again.stops.resume("the-user")
+        [m] = again.stops.deadline_moves("n")
         assert abs(m["held_s"] - 3600) < 5, m
         assert m["stopped_by"] == ("the-user" if stopped else "the server was down"), m
         assert stopped or any("the server was down" in x["message"] for x in again.pipeline_log(about="n: "))
@@ -111,15 +111,15 @@ def test_a_graph_people_hold_runs_on_absolute_time_through_a_server_down_and_a_s
     assert not again.system_carries_work()
     again.start()
     was = T.get_task(again, "n")["deadline"]
-    again.pause("the-user", "")
+    again.stops.pause("the-user", "")
     shift["s"] = 1800.0                                  # half an hour under the stop, between two of its ticks
     time.sleep(0.3)
-    again.resume("the-user")
+    again.stops.resume("the-user")
     time.sleep(0.2)
     got = T.get_task(again, "n")
     again.stop()
     assert clock_off_s(again.graph) < 1 and got["deadline"] == was, (clock_off_s(again.graph), was, got["deadline"])
-    assert again.deadline_moves("n") == [], again.deadline_moves("n")
+    assert again.stops.deadline_moves("n") == [], again.stops.deadline_moves("n")
 
 
 def test_two_engines_on_one_store_leave_each_held_second_off_once_and_record_it_once(tmp_path, monkeypatch):
@@ -132,14 +132,14 @@ def test_two_engines_on_one_store_leave_each_held_second_off_once_and_record_it_
     b = make_engine(storage=SqliteStorage(db), validate_signals=True, state_timeout=0, check_interval=0.05)
     b.start()
     time.sleep(0.2)
-    a.pause("the-user", "")
+    a.stops.pause("the-user", "")
     shift["s"] = 1800.0                                  # half an hour under the stop, between two ticks of each
     time.sleep(0.4)
-    a.resume("the-user")
+    a.stops.resume("the-user")
     time.sleep(0.2)
     shift["s"] = 1800.0 + 3600.0                         # …then the host sleeps an hour
     time.sleep(0.4)
-    moves = a.deadline_moves("n")
+    moves = a.stops.deadline_moves("n")
     a.stop(), b.stop()
     assert [m["stopped_by"] for m in moves] == ["the-user", "the host slept"], moves
     assert abs(moves[0]["held_s"] - 1800) < 5 and abs(moves[1]["held_s"] - 3600) < 5, moves
@@ -163,7 +163,7 @@ def test_the_cli_path_keeps_the_server_down_gap_of_a_project_a_registered_execut
     monkeypatch.setattr(D, "build_engine_from_env", lambda **k: opened.append(real(**k)) or opened[-1])
     D._locally(T.TOOLS["get_task"], None, ["n"], {})
     [cli] = opened
-    moves, off = cli.deadline_moves("n"), clock_off_s(cli.graph)
+    moves, off = cli.stops.deadline_moves("n"), clock_off_s(cli.graph)
     cli.stop()
     assert cli.system_carries_work() and abs(off - 3600) < 5, off
     assert [m["stopped_by"] for m in moves] == ["the server was down"], moves
@@ -178,11 +178,11 @@ def test_a_persons_stop_on_a_graph_people_hold_does_not_suspend_a_deadline(monke
     T.create_task(e, "n", {"description": "x", "criteria": [criterion("a", "A")]}, "w", deadline=due)
     e.wait_idle()
     assert not e.system_carries_work()
-    e.pause("the-user", "")
+    e.stops.pause("the-user", "")
     deadline = time.time() + 5
     while e.graph.get_state(TaskId("n")).name == "OFFERED" and time.time() < deadline:
         time.sleep(0.05)
-    st, stopped = e.graph.get_state(TaskId("n")).name, e.paused()
+    st, stopped = e.graph.get_state(TaskId("n")).name, e.stops.paused()
     e.stop()
     assert stopped and st != "OFFERED", st
 
@@ -194,14 +194,14 @@ def test_a_start_or_a_stop_right_after_a_wake_records_the_sleep_once():
         gate = _Gate()
         e = _consented(clock=gate)
         if stopped:
-            e.pause("the-user", "")
+            e.stops.pause("the-user", "")
         e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))   # the host slept an hour, no tick since
-        e.resume("the-user") if stopped else e.pause("the-user", "")
+        e.stops.resume("the-user") if stopped else e.stops.pause("the-user", "")
         if not stopped:
-            e.resume("the-user")
+            e.stops.resume("the-user")
         gate.ev.release()                                                   # …the monitor's next tick
         time.sleep(0.3)
-        moves = e.deadline_moves("n")
+        moves = e.stops.deadline_moves("n")
         off = clock_off_s(e.graph)
         e.stop()
         gate.ev.release()
@@ -231,9 +231,9 @@ def test_a_store_locked_at_a_tick_leaves_the_monitor_ticking():
     time.sleep(0.3)
     e.graph.store_setting(CLOCK_BEAT_KEY, str(time.time() - 3600))
     deadline = time.time() + 3
-    while not e.deadline_moves("n") and time.time() < deadline:
+    while not e.stops.deadline_moves("n") and time.time() < deadline:
         time.sleep(0.05)
-    moves = e.deadline_moves("n")
+    moves = e.stops.deadline_moves("n")
     e.stop()
     assert not kept.armed and [m["stopped_by"] for m in moves] == ["the host slept"], "the monitor died at the lock"
 
@@ -246,8 +246,8 @@ def test_a_host_asleep_between_two_ticks_is_on_each_deadlines_record(monkeypatch
     time.sleep(0.2)
     shift["s"] = 3600.0                                  # the wall jumps an hour between two ticks
     deadline = time.time() + 3
-    while not e.deadline_moves("n") and time.time() < deadline:
+    while not e.stops.deadline_moves("n") and time.time() < deadline:
         time.sleep(0.05)
-    moves = e.deadline_moves("n")
+    moves = e.stops.deadline_moves("n")
     e.stop()
     assert len(moves) == 1 and moves[0]["stopped_by"] == "the host slept" and abs(moves[0]["held_s"] - 3600) < 5, moves

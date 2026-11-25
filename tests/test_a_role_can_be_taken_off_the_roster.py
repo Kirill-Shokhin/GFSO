@@ -9,6 +9,7 @@ import gfso.tools as T
 import gfso.tools_llm as TL
 from gfso.config import DEFAULT_PROJECT
 from tests.support import criterion, make_engine
+from gfso.roster import default_agents
 
 
 def test_a_role_comes_off_and_the_answer_names_the_live_work_it_leaves():
@@ -32,7 +33,7 @@ def test_another_projects_role_is_not_removed_without_its_workdir():
     roster = TL.TOOLS["list_agents"](e, limit=0)["agents"]
     if not roster.get("their-exec", {}).get("project"):
         # a bare engine registers roles unscoped; scope it the way a project's door does
-        TL._roster().register("their-exec", "external", project="someone-else")
+        default_agents().register("their-exec", "external", project="someone-else")
     out = TL.TOOLS["unregister_agent"](e, "their-exec")
     assert out.get("unregistered") is None and "someone-else" in out.get("error", "")
     assert "their-exec" in TL.TOOLS["list_agents"](e, limit=0)["agents"]
@@ -40,6 +41,6 @@ def test_another_projects_role_is_not_removed_without_its_workdir():
 
 def test_this_projects_own_role_comes_off_without_its_workdir():
     e = make_engine()
-    TL._roster().register("my-exec", "external", project=e.project_name or DEFAULT_PROJECT)
+    default_agents().register("my-exec", "external", project=e.project_name or DEFAULT_PROJECT)
     out = TL.TOOLS["unregister_agent"](e, "my-exec")
     assert out.get("unregistered"), f"the caller's own scoped role was refused: {out}"

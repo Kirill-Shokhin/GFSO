@@ -19,6 +19,7 @@ from gfso.core.types import AgentId, State, TaskId
 from gfso.driver import _frontier_line
 from gfso.hold import own_moves
 from tests.support import criterion, make_engine, REGISTER, reviewer_passes
+from gfso.engine.closures import refuted_passes
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +67,7 @@ def _refuted(e, tid):
                           per_criterion=[{"criterion": c, "verdict": "fail", "evidence": f"ran `check {c}`: it failed",
                                           "behaviours": [f"{c} holds"]}])
     e.wait_idle()
-    assert tid in e.refuted_passes()
+    assert tid in refuted_passes(e)
 
 
 def _on(out, tid, *actions):
@@ -264,7 +265,7 @@ def test_complete_is_never_answered_over_an_uncovered_refuted_pass_and_is_over_o
     T.decompose(e, "root", [_child("root.c0", "a"), _child("root.c1", "b"), _child("root.c2", "b")],
                 accepted_risks=REGISTER)
     e.wait_idle()
-    assert e.refuted_passes() == ["root.c1"], "the record stays on the log"
+    assert refuted_passes(e) == ["root.c1"], "the record stays on the log"
     _passed(e, "root.c2", "boss")
     T.signal(e, "root", "DELIVER", "boss", result="integrated around root.c1")
     e.wait_idle()

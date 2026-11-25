@@ -154,7 +154,7 @@ def test_a_scope_whose_validation_twice_left_no_verdict_is_asked_again(monkeypat
     wait and changed only the node's caller left the scope's raising a TypeError on its second verdict-less run, the
     thread dying with its slot held (critic over session a597fc08)."""
     timers = []
-    monkeypatch.setattr(D, "_system_issues", lambda *a: True)
+    monkeypatch.setattr(D, "system_issues", lambda *a: True)
     monkeypatch.setattr(D.threading, "Timer", lambda wait, *a: timers.append(wait) or types.SimpleNamespace(
         daemon=True, start=lambda: None, cancel=lambda: None))
     e = make_engine()

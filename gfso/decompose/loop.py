@@ -23,7 +23,7 @@ import logging
 import sys
 from pathlib import Path
 
-from gfso.adapters.llm.stats import _hint, _stat_line, calls_of, refused_by_limit, tag_stage
+from gfso.adapters.llm.stats import _hint, stat_line, calls_of, refused_by_limit, tag_stage
 from gfso.inflight import staged
 from gfso.core.protocol.procedure import EXACT_TEXT, PROBE_S, pinned_files, with_named_files
 from gfso.core.types import LLMProviderPort, Stage
@@ -607,7 +607,7 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
     if owed:
         tag_stage(llm, Stage.AUTHORING_OBLIGATIONS)
     holes = "\n\n".join(x for x in (found, owed) if x)
-    _progress(f"{label} searcher {_stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
+    _progress(f"{label} searcher {stat_line(llm)} · +{len(holes) / 1000:.1f}k chars findings", progress)
     if refused_by_limit(calls_of(llm)):
         return {}                   # …what stops the project stops the round: no fold is asked of refused calls
     _progress(f"{label} auditor (fold, first round)…", progress)
@@ -616,11 +616,11 @@ def decompose_spec(request: str, model: str = MODEL_DEFAULT,
     tag_stage(llm, Stage.AUDIT_FOLD)
     spec, ops = _fold_merge({}, patch)
     if not ops:
-        _progress(f"{label} auditor {_stat_line(llm)} · empty fold — no basis emitted (failed first round)",
+        _progress(f"{label} auditor {stat_line(llm)} · empty fold — no basis emitted (failed first round)",
                   progress)
         return {}
     d, dep, v = shape(spec)
-    _progress(f"{label} auditor {_stat_line(llm)} · |D|={d} |Dep|={dep} |V|={v}", progress)
+    _progress(f"{label} auditor {stat_line(llm)} · |D|={d} |Dep|={dep} |V|={v}", progress)
     _progress(_spec_line(spec), progress)
     return spec
 

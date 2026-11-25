@@ -545,3 +545,73 @@ class AgentRegistry:
             if a.get("kind") in ("llm-validator", "unittest-checker"):
                 return aid
         return None
+
+
+_DEFAULT_AGENTS: AgentRegistry | None = None
+
+
+def default_agents() -> AgentRegistry:
+    """The server-wide roster singleton (one json file, shared by every project engine).
+
+    Keyed by the PATH it was built for, so a process that moves its state home — every test that
+    does, and every embedding that runs two homes in one process — gets the roster of the home it is
+    in now. As a plain singleton it kept the first path forever: the suite registered its probe roles
+    into the REAL roster of this installation, beside live runs' roles (found 2026-08-21)."""
+    global _DEFAULT_AGENTS
+    path = str(agents_path())
+    if _DEFAULT_AGENTS is None or _DEFAULT_AGENTS.path != path:
+        _DEFAULT_AGENTS = AgentRegistry(path)
+    return _DEFAULT_AGENTS
+
+
+#: What attaches an engine's dispatcher — INSTALLED by the dispatcher's module (`on_staffed`), not imported: the
+#: dispatcher reads the verbs, and the verbs reaching back for it was the knot `delegate ⇄ tools_llm`. The pattern of
+#: `AgentRegistry.set_owner_liveness`: whoever owns the thing installs a function, and with none installed nothing runs.
+_ATTACH: list = []
+
+
+def on_staffed(attach) -> None:
+    """Install `attach(engine, agents)`, run by `staffed` for every engine a verb staffs."""
+    _ATTACH[:] = [attach]
+
+
+def staffed(engine=None) -> AgentRegistry:
+    """The server-wide roster — with this engine's dispatcher attached when an engine is named, so a verb that changes
+    or reads the workforce of an engine built by hand (a test, the CLI with no server) finds it dispatched as one the
+    registry opened (`runtime.ProjectRegistry.engine`) is."""
+    agents = default_agents()
+    if engine is not None:
+        for attach in _ATTACH:
+            attach(engine, agents)
+    return agents
+
+
+def publish_the_instruments(engine, roster: dict) -> None:
+    """Hand the engine the roster's instruments and whose each is (`Workforce.has_an_instrument`): published with the
+    executors, so a server's start decides a project's stop knowing whether a validator of its own would run there."""
+    kinds = ("llm-validator", "unittest-checker")
+    engine.graph.authorized_validators ={aid for aid, cfg in roster.items() if cfg.get("kind") in kinds}
+    engine.workforce.publish_validator_projects({aid: cfg.get("project") for aid, cfg in roster.items()
+                                                 if cfg.get("kind") in kinds})
+
+
+def publish_the_workforce(engine, roster: dict) -> None:
+    """Hand the engine the roster's executors and whose each is — what a mode issues nodes to — and what KIND every
+    registered id is. Called by every round of the dispatcher and by the verbs that change the roster or read the pool
+    before a round has run (registering, setting a mode): published only by the round, a root created right after its
+    executor was registered kept or lost its creator as issuer by which thread ran first."""
+    kinds = {aid: cfg.get("kind") for aid, cfg in roster.items()}
+    publish_the_instruments(engine, roster)
+    if engine.workforce.publish_roster(kinds):
+        # …a role on or off the roster is news to an open page (its goal form's mode readiness), told where every roster
+        # change is published — the roster lives in its own file, beside the store the plan's watch sees (`PlanWatch`)
+        engine.emit_info("graph", "the roster changed")
+    engine.workforce.publish_executor_pool({aid: cfg.get("project") for aid, cfg in roster.items()
+                                  if cfg.get("kind") == "llm-executor"},
+                                 {aid: (cfg.get("model") or MODEL_DEFAULT)
+                                       + (f", up to {cfg['max_turns']} turns" if cfg.get("max_turns") else "")
+                                       + (f", context budget {cfg['context_budget']} tokens"
+                                          if cfg.get("context_budget") else "")
+                                  for aid, cfg in roster.items() if cfg.get("kind") == "llm-executor"},
+                                 {aid for aid, cfg in roster.items()
+                                  if cfg.get("kind") == "llm-executor" and not cfg.get("execution")})

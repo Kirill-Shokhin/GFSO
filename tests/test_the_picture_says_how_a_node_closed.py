@@ -7,7 +7,7 @@ The engine has known it by name since 2026-09-04 (`closures_by_hand`, `hand_over
 `refuted_passes`), but only as lists over a whole graph, which is a fact about a project and not
 about the node under the cursor.
 
-So: one per-node owner (`Engine.closure_of`), the three lists derived from it, and both node reads
+So: one per-node owner (`closures.closure_of`), the three lists derived from it, and both node reads
 carrying it. The negative controls are the point — a node an instrument validated must not acquire a
 qualifier it did not earn, and a node that has not settled has no closure at all.
 """
@@ -19,6 +19,7 @@ from gfso import tools as T
 from gfso.api.server import create_app
 from gfso.core.types import TaskId
 from tests.support import criterion, make_engine, REGISTER
+from gfso.engine.closures import closure_of, hand_overruled_closures, refuted_passes
 
 _CRIT = [criterion("c", "C")]
 _RISKS = REGISTER
@@ -112,7 +113,7 @@ def test_a_hand_verdict_cannot_displace_an_instruments_fail():
 
     assert "Inv-2" in str(out), out
     assert _client(e).get("/api/tasks/over").json()["state"] != "DONE"
-    assert e.hand_overruled_closures() == []
+    assert hand_overruled_closures(e) == []
     e.stop()
 
 
@@ -126,8 +127,8 @@ def test_a_pass_its_own_record_contradicts_is_marked_on_the_node():
     e.wait_idle()
     _instrument_verdict(e, "green", "FAIL", failed=["c"])   # the instrument returns after the close
 
-    cl = e.closure_of(TaskId("green"))
+    cl = closure_of(e, TaskId("green"))
 
     assert cl["refuted"] is True, cl
-    assert e.refuted_passes() == ["green"], "one predicate, both ways of asking it"
+    assert refuted_passes(e) == ["green"], "one predicate, both ways of asking it"
     e.stop()

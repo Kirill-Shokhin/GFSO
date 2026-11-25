@@ -20,6 +20,7 @@ from gfso import decompose as D
 from gfso.core.types import AgentId, Criteria, Mode, Signal, SignalData, Spec, TaskId
 from gfso.core.handlers.structural import check_procedure
 from gfso.decompose.extract import extract_spec
+from gfso.engine.validation import session_fit
 from tests.support import REGISTER, criterion, emptied, instrument_passes, make_engine, pinned
 from tests.test_an_edge_is_not_deleted_by_omission import _a_producer_and_a_consumer
 
@@ -202,7 +203,7 @@ def test_a_one_part_split_of_a_node_judged_over_a_session_leaves_no_split_owed(m
              "whole_volume": "a compiler", "whole_fits_one_session": False}
     e, out = _auto(monkeypatch, _Model(plans={1: patch}))
     assert not e.graph.get_active_children(TaskId("root"))
-    assert e.split_owed(TaskId("root")) is None, e.session_fit(TaskId("root"))
+    assert e.split_owed(TaskId("root")) is None, session_fit(e.graph, TaskId("root"))
     e.stop()
 
 

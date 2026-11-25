@@ -12,7 +12,7 @@ report ran ALL of it and it held, a behaviour named without a label of its own i
 separately observed. Nothing else moves: a procedure run short, an owed part probe, a standing finding, an observed
 divergence decide exactly as before (Inv-2, Inv-3).
 
-CONTROL: make `procedure.named_beyond_procedure` return `{}` and the acceptance tests go red; drop its `not in unrun`
+CONTROL: make `accounting.named_beyond_procedure` return `{}` and the acceptance tests go red; drop its `not in unrun`
 clause and the short-procedure control goes red.
 """
 from __future__ import annotations
@@ -22,10 +22,11 @@ import pytest
 import gfso.tools as T
 from gfso.adapters.llm.structured import parse_structured
 from gfso.core.protocol.invariants import verdict_report_defects
-from gfso.core.protocol.procedure import coverage, probe_id, unaccounted_for
+from gfso.core.protocol.procedure import probe_id
+from gfso.core.protocol.accounting import coverage, unaccounted_for
 from gfso.core.types import TaskId
 from gfso.packets import _validator_packet
-from gfso.tools_llm import _VALIDATOR_SCHEMA, _listed_failed, _report_contradicts_itself
+from gfso.validate import _VALIDATOR_SCHEMA, _listed_failed, _report_contradicts_itself
 from tests.support import DENIAL_ENTRY, UNMODELLED_FAULT, criterion, make_engine, REGISTER
 
 #: every round stands: these findings name none the system removed
