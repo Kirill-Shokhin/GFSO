@@ -4,7 +4,7 @@ import {$} from './dom.js';
 import {PROJECT, FOCUS, TOP, topOf, openFocus} from './api.js';
 import {childrenOf, depths, ancestorsIn, rootOf} from './tree.js';
 import {cancelled, statusLabel, delivered, contested, closedByFail} from './vocab.js';
-import {runNow, heldByPerson, inWork} from './run.js';
+import {runNow, heldByPerson, inWork, owedTo} from './run.js';
 import {bare} from './fmt.js';
 
 // THE WHOLE SURFACE, written by its owners and read by the views:
@@ -61,7 +61,9 @@ export const handAsks = t => !personHolds(t);
 // says is the person's (critic 4).
 // a delivery no process validates whose issuer is a person waits on that person's verdict (§12.1: one wait on the issuer):
 // it is on the issuer, not in work — one rule for the strip and the list of what is in work
-export const owedVerdict = (t, at = nowOf()) => t.state === 'VALIDATING' && !at.lit(t.id) && !at.carrier(t.id).length && issuerIsPerson(t);
+// …the engine's word first (run.js `owedTo`, get_graph `awaiting`), the page's own reading only where it sent none
+export const owedVerdict = (t, at = nowOf()) => t.state === 'VALIDATING' && !at.lit(t.id) && !at.carrier(t.id).length
+    && (owedTo((S.graph.nodes || []).find(n => n.id === t.id) || {}) ?? issuerIsPerson(t));
 // IN WORK, the page's one reading: what the log holds in work (run.js `inWork`), less a delivery
 // owed to a person, which is on the issuer — the deck's line, its IN WORK tab and the fold tags read this and nothing else
 export const inWorkOf = (tasks = S.tasks) => { const at = nowOf(); return inWork(tasks, S.run?.audit, at, t => owedVerdict(taskOf(t.id), at)); };
@@ -88,7 +90,12 @@ export const asGiven = root => { const g = String(atTheGo(root).goal_as_given ||
     return g && root && !String(root.description || '').startsWith(g) ? g : ''; };
 // WHO HOLDS the role a node waits on, by the same rule as `issuerIsPerson`: the executor is its Del, the issuer its
 // parent's (§10.1); the goal's issuer is outside the graph and under AUTO the system's, so neither is named
+// ON THE ISSUER, the strip's list: a decision of the issuer's, or a delivery owed to a person's or a named party's verdict
+export const isOnTheIssuer = (t, w, at = nowOf()) => w?.decides === 'issuer' || owedVerdict(t, at);
+// …and the one who owes it: the appointed checker where the delivery waits on one
+export const onTheIssuer = (t, w) => whoOwes(t, w?.owes === 'checker' ? 'checker' : 'issuer');
 export const whoOwes = (t, role) => role === 'executor' ? t.assignee || ''
+    : role === 'checker' ? (S.graph.nodes || []).find(n => n.id === t.id)?.awaiting || ''
     : role === 'issuer' && t.parent_id && S.graph.mode?.mode !== 'auto' ? taskOf(t.parent_id).assignee || '' : '';
 // IN THIS VIEW: the whole graph, or in a view of one part (`?focus=`) that part and what lies under it — one rule for every
 // count the header and the deck give, so a view of a part counts the part (the header said 105/434 over Engineering's view)

@@ -4,7 +4,7 @@ import {FOCUS} from './api.js';
 // cost, its events. It replaces the observation console: the same feed, read as the run it describes.
 import {$, esc, tally, since, lasting, phone} from './dom.js';
 import {frame, frameText, TAB, STRIP, doing} from './hints.js';
-import {S, nowOf, kept, keep, owedVerdict, whoOwes, inWorkOf, viewTasks, inView, stateWord, viewNodes, viewTree, viewProcs} from './state.js';
+import {S, nowOf, kept, keep, owedVerdict, isOnTheIssuer, onTheIssuer, inWorkOf, viewTasks, inView, stateWord, viewNodes, viewTree, viewProcs} from './state.js';
 import {nameOf, label, working} from './vocab.js';
 import {point, release, forgetBrought} from './store.js';
 import {firstTap} from './tip.js';
@@ -50,7 +50,7 @@ function strip() {
     const held = Object.fromEntries((run ? inWorkOf(viewTasks()) : []).map(h => [h.t.id, h]));
     const busy = viewTasks().filter(t => (run ? held[t.id] : work.has(t.id)) && !owed(t))
         .sort((a, b) => run ? (held[b.id]?.since ?? 0) - (held[a.id]?.since ?? 0) : runs(b) - runs(a));   // by the log alone (JOINT W2)
-    const issuer = viewTasks().filter(t => (run?.waits[t.id]?.decides === 'issuer' || owed(t)) && !runs(t));
+    const issuer = viewTasks().filter(t => isOnTheIssuer(t, run?.waits[t.id], at) && !runs(t));
     const live = busy.map(t => {
         const w = at.on(t.id), tk = [...ticks.values()].find(k => k.node === t.id), [top, by] = w ? [] : at.carrier(t.id);
         // the chip says the log's — who holds it, since when — whoever works it; what this server runs is its tip (JOINT W3);
@@ -88,7 +88,7 @@ function strip() {
     return red + now_
         // …its tip names each whole under its state's word, never cut to a chip's width nor a raw state by a dash (audit B9)
         + (issuer.length ? `<span class="dk-wait"${STRIP.issuer(issuer.length, [...new Set(issuer.map(t => label(t.state)))]
-            .flatMap(word => [`${word}:`, ...issuer.filter(t => label(t.state) === word).map(t => `– ${nameOf(t)}${whoOwes(t, 'issuer') ? ` (${whoOwes(t, 'issuer')})` : ''}`)]))}>${tally(issuer.length, 'on the issuer')}</span>` : '')
+            .flatMap(word => [`${word}:`, ...issuer.filter(t => label(t.state) === word).map(t => { const who = onTheIssuer(t, run?.waits[t.id]); return `– ${nameOf(t)}${who ? ` (${who})` : ''}`; })]))}>${tally(issuer.length, 'on the issuer')}</span>` : '')
         // what holds the most back: the producer most nodes wait on, the count beside it
         + (run ? blockers(run.waits).map(([id, held]) => [id, held.filter(inView)]).filter(([, held]) => held.length).slice(0, 2).map(([id, held]) => { const part = run.waits[id]?.parts.find(p => work.has(p));
             // the count is every node held, so the tip lists every one: the direct users first, the rest through them

@@ -15,7 +15,18 @@ export const failingNow = (rounds, state) => rounds?.at(-1)?.verdict === 'FAIL' 
 // 2026-10-26 — a node whose executor stopped twice without a report is its issuer's to revise in any state); until it is
 // served, the state's owner (§12.13). Not the step's signer: in solo and with no mode the issuer and the executor are one
 // name, and every issuer move read as the executor's (critic).
-const owes = (n, step) => ({executor: 'executor', issuer: 'issuer', validator: 'validator'})[step?.role] || OWES[n.state] || null;
+const owes = (n, step) => awaits(n) || ({executor: 'executor', issuer: 'issuer', validator: 'validator'})[step?.role] || OWES[n.state] || null;
+// …ON A DELIVERED NODE, the engine's `awaiting` (get_graph) before the step's role — next_steps names the issuer's role on
+// every delivered node it lists, whoever checks it (a critic): a check in course is the validator's, a verdict standing or
+// the issuer checking is the issuer's, any other word names the party appointed to check it. «verdict» — delivered, no
+// check running — names no one: whether a dispatcher will start one or the person must is not in it (no validator
+// registered reads the same, critic 2), so the step's role and the page's reading of the issuer stand, as with an older
+// engine that sends nothing
+const AWAITS = {validator: 'validator', issuer: 'issuer', executor: 'executor', verdict: null};
+const says = n => n.state === 'VALIDATING' && !!n.awaiting && n.awaiting !== 'verdict';
+const awaits = n => says(n) ? AWAITS[n.awaiting] || 'checker' : null;
+// a delivery owed to a person's or a named party's verdict: on them, not in work; null = the engine did not say who
+export const owedTo = n => says(n) ? n.awaiting === 'issuer' || !(n.awaiting in AWAITS) : null;
 const OWES = {OFFERED: 'executor', EXECUTING: 'executor', REWORKING: 'executor', CANCELLING: 'executor',
               CHALLENGED: 'issuer', BLOCKED: 'issuer', VALIDATING: 'issuer', ESCALATED: 'issuer'};
 // …and where the move owed is work in course, not a wait on the owner's decision: a verdict being validated (`decides`)
@@ -146,7 +157,10 @@ export function waitsOf(nodes, edges, engine = null, steps = null) {
             : edges.filter(e => e.type !== 'parent-child' && e.target === n.id && !delivered(by[e.source])).map(e => e.source);
         const parts = consented(n.state) ? childrenOf(nodes, n.id).filter(k => !terminal(k.state)).map(k => k.id) : [];
         const o = deps.length || parts.length ? null : owes(n, steps?.get(n.id));
-        return [n.id, {owes: o, decides: o === 'issuer' && !OWES_IN_COURSE.has(n.state) ? o : null, deps, parts}];
+        // …a decision: the issuer's where the engine says so (or, where it is silent, any state but a verdict in course), a
+        // named checker's always; a check in course or one nobody runs yet is no one's decision
+        const decides = o === 'checker' || (o === 'issuer' && (awaits(n) || !OWES_IN_COURSE.has(n.state))) ? o : null;
+        return [n.id, {owes: o, decides, who: o === 'checker' ? n.awaiting : '', deps, parts}];
     }));
 }
 // WHAT RUNS NOW, one reading for the strip, the graph and the timeline: the processes this server has in flight here, the
