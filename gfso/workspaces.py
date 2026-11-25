@@ -791,10 +791,10 @@ def _name_the_delivery(engine, root):
         repo = engine.graph.setting(REPOSITORY) or repo
     if not cheap_to_ask(repo) or (why := _given(engine, sha, repo, None)):
         return why or f"its accepted result {sha[:12]} cannot be read into {repo}"
-    if W.checked_out(repo, f"refs/heads/{(ref := accepted_branch(engine))}"):
-        return f"`{ref}` is checked out there (in a worktree of it), and the system lands only on a branch nobody works on: check out another branch"
     try:
-        kept = W.move_result(repo, f"refs/heads/{ref}", sha)
+        kept = W.move_result(repo, f"refs/heads/{(ref := accepted_branch(engine))}", sha)
+    except W.CheckedOut as ex:
+        return str(ex)
     except OSError as ex:
         return f"its accepted result {sha[:12]} could not be named `{ref}` in {repo}: {ex}"
     return _landed(engine, root, ref, sha, repo,

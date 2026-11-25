@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from gfso.adapters import worktrees as W
+from gfso.adapters import git as G, worktrees as W
 from gfso.adapters.execution import ended_by_watch, past_disk
 from gfso.config import subprocess_env
 from gfso.core.types import IN_THE_WORKS_PATH, LAID, PlaceUnavailable
@@ -234,7 +234,7 @@ how, at, commit, apart = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[5
 _listed = at.parent.with_name(at.parent.name + ".laid") / "smudged"
 SMUDGED = {bytes.fromhex(h) for h in _listed.read_text().split()} if how == "kept" and _listed.is_file() else set()
 algo = "sha256" if len(commit) == 64 else "sha1"
-env = {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"}
+env = None              # …the system's git environment (`G.env`), as every caller runs this under
 BAD = 6 if how == "kept" else 4
 # …an object not there to read when the copy is taken: the store's loss, no verdict (exit 7); in the copy after its build,
 # the build's doing (6)
@@ -453,10 +453,9 @@ def _checkout(src: Source, at: Path, tree: str, commit: str, execution) -> set[s
     recorded, or lays past what its place held at DELIVER (`W.tree_past_place`); `Uncopied` where an object of it is
     missing — the system's loss, never the delivery's FAIL —; `OSError` where the copy could not be made."""
     ex, end = execution.session(str(at)), [execution.python, "-I", "-c", _CHECKOUT]
-    there, env = execution.session(src.repo), subprocess_env(extra=W.NO_CONFIG)
-    rc, err, r = there.pipe([there.shell() or "bash", "-c", _PACK, "sh", commit, *W.APART], cwd=src.repo,
-                            env=subprocess_env(extra={**W.NO_CONFIG, "GIT_NO_REPLACE_OBJECTS": "1"}), into=ex,
-                            into_args=[*end, "take", str(at), commit, tree, *W.APART], into_cwd=str(at.parent),
+    there, env = execution.session(src.repo), G.env()
+    rc, err, r = there.pipe([there.shell() or "bash", "-c", _PACK, "sh", commit, *G.APART], cwd=src.repo, env=env, into=ex,
+                            into_args=[*end, "take", str(at), commit, tree, *G.APART], into_cwd=str(at.parent),
                             into_env={**env, "GFSO_USERS_LINKS": json.dumps(list(src.links))}, timeout=1800)
     said = (r.stdout or "").split()
     if r.returncode == 3:
@@ -494,7 +493,7 @@ def _checkout(src: Source, at: Path, tree: str, commit: str, execution) -> set[s
         raise OSError(f"the copy {at} could not check out its delivery {commit[:12]}: {(r.stderr or '').strip()[-300:]}")
     # …the paths it wrote as their LFS content, read now, before any build: by the attributes it checked out under,
     # not by what a blob looks like — a pointer-shaped file outside the filter stays its text (critic over the LFS check)
-    r = ex.run([*end, "smudged", str(at), commit, tree, *W.APART], cwd=str(at.parent), timeout=1800, env=env)
+    r = ex.run([*end, "smudged", str(at), commit, tree, *G.APART], cwd=str(at.parent), timeout=1800, env=env)
     if r.returncode:
         raise OSError(f"the copy {at} could not say which of its files hold LFS content: {r.stderr.strip()[-300:]}")
     return set(r.stdout.split())
@@ -519,8 +518,8 @@ def _after_build(at: Path, tree: str, commit: str, execution, smudged: set = fro
     finally:
         execution.release(laid)
     ex = execution.session(str(at))
-    r = ex.run([execution.python, "-I", "-c", _CHECKOUT, "kept", str(at), commit, tree, *W.APART], cwd=str(at.parent),
-               timeout=BUILD_S, env=subprocess_env(extra=W.NO_CONFIG))
+    r = ex.run([execution.python, "-I", "-c", _CHECKOUT, "kept", str(at), commit, tree, *G.APART], cwd=str(at.parent),
+               timeout=BUILD_S, env=G.env())
     if r.returncode == 137 and ended_by_watch(ex):
         raise Uncopied(WATCHED)
     if r.returncode == 137 and (past := past_disk(ex)):

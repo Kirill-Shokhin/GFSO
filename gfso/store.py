@@ -21,12 +21,12 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from gfso.adapters import children, lfs
+from gfso.adapters import git as G, lfs
 from gfso.adapters import worktrees as W
-from gfso.adapters.execution import (IMPORTED, NO_LAZY_FETCH, STORE_DIR, ContainerExecution, LocalExecution, component,
+from gfso.adapters.execution import (IMPORTED, STORE_DIR, ContainerExecution, LocalExecution, component,
                                      lfs_held)
 from gfso.adapters.snapshots import Source, Uncopied
-from gfso.config import DEFAULT_PROJECT, data_dir, subprocess_env
+from gfso.config import DEFAULT_PROJECT, data_dir
 from gfso.core.types import PROJECT_ID, VOLUME, Signal
 
 #: the ref a kept commit is named by in the store: set once, never moved — a second keep of one id is the first
@@ -134,9 +134,7 @@ def admit(engine, ex, commit: str, src) -> Optional[str]:
         raise Unreadable(why)
     store, ex = _where(engine, ex, make=False)
     tips = _tips(store, ex) if store else []
-    env = subprocess_env(extra={**W.NO_CONFIG, **NO_LAZY_FETCH, "GIT_NO_REPLACE_OBJECTS": "1"})
-    git = lambda *a, rows=(): children.run(["git", *W.APART, *a], timeout=TAKE_S, env=env,
-                                           input="".join(f"{r}\n" for r in rows).encode())
+    git = lambda *a, rows=(): G.run(None, *a, timeout=TAKE_S, text=False, input="".join(f"{r}\n" for r in rows).encode())
     got = git("-C", str(src), "rev-list", "--objects", "--missing=error", "--ignore-missing", "--stdin",
               rows=[commit, *(f"^{t}" for t in tips)])
     if got.returncode:
@@ -163,8 +161,7 @@ def admit(engine, ex, commit: str, src) -> Optional[str]:
         pack, idx = at / f"sent-{sent.stdout.decode().strip()}.pack", at / "objects" / "pack" / "verified.idx"
         if (v := git("-C", str(at), "index-pack", "--strict", "-o", str(idx), str(pack))).returncode:
             raise broken(_err(v))
-        shown = children.run(["git", "-C", str(at), "show-index"], timeout=TAKE_S, env=env,
-                             input=host.files.read_bytes(str(idx)))
+        shown = G.run(at, "show-index", timeout=TAKE_S, text=False, input=host.files.read_bytes(str(idx)))
         if lost := ids - {ln.split()[1] for ln in shown.stdout.decode().splitlines() if ln.strip()}:
             raise broken(f"its object {min(lost)} does not hold what its id names")
         return str(pack)
@@ -177,8 +174,7 @@ def shallow(src) -> Optional[str]:
     """Why the git at `src` delivers nothing — a shallow clone: the store keeps a delivery with its history, which
     joins and landing read, and its boundary failed `index-pack --strict` as a corruption, the sender told to repair a
     whole repository (critic over ac9dcaa) —, or None. Its root is the boundary, so it shares no history either."""
-    got = children.run(["git", *W.APART, "-C", str(src), "rev-parse", "--is-shallow-repository"], timeout=TAKE_S,
-                       env=subprocess_env(extra=W.NO_CONFIG))
+    got = G.run(src, "rev-parse", "--is-shallow-repository", timeout=TAKE_S, text=False)
     if got.stdout.decode().strip() != "true":
         return None
     return (f"{src} is a shallow clone, and the project keeps a delivery with its history: fetch it whole "
@@ -217,8 +213,8 @@ def _take(engine, ex, commit: str, src, at, pack: Optional[str] = None) -> None:
         with W.one_at_a_time(store):
             host = LocalExecution()
             host.pipe([host.shell() or "bash", "-c", 'cat "$1"', "sh", Path(pack).as_posix()], cwd=str(Path(pack).parent), into=into,
-                      into_cwd=store, into_args=["git", *W.APART, "index-pack", "--stdin", "--fix-thin", "--strict"],
-                      timeout=TAKE_S, into_env=subprocess_env(extra=W.NO_CONFIG))
+                      into_cwd=store, into_args=G.argv("index-pack", "--stdin", "--fix-thin", "--strict"),
+                      timeout=TAKE_S, into_env=G.env())
     if _whole(store, ex, commit):
         return
     with W.one_at_a_time(store):
@@ -240,11 +236,10 @@ def _stream(here, src, commit: str, into, dst, tips: list[str]):
         try:
             here.files.write_bytes(str(listed), "".join(f"{t}\n" for t in tips).encode())
             return src_ex.pipe(
-                [src_ex.shell() or "bash", "-c", _PACK, "sh", str(len(W.APART)), *W.APART, commit, str(listed)],
+                [src_ex.shell() or "bash", "-c", _PACK, "sh", str(len(G.APART)), *G.APART, commit, str(listed)],
                 cwd=str(src), into=into,
-                into_cwd=str(dst), into_args=["git", *W.APART, "index-pack", "--stdin", "--fix-thin", "--strict"],
-                timeout=TAKE_S, env=subprocess_env(extra={**W.NO_CONFIG, **NO_LAZY_FETCH, "GIT_NO_REPLACE_OBJECTS": "1"}),
-                into_env=subprocess_env(extra=W.NO_CONFIG))
+                into_cwd=str(dst), into_args=G.argv("index-pack", "--stdin", "--fix-thin", "--strict"),
+                timeout=TAKE_S, env=G.env(), into_env=G.env())
         finally:
             here.files.remove_matching(str(listed.parent), [listed.name])
 
@@ -369,9 +364,8 @@ def roots(engine, ex) -> set:
     if not store or ex is not None:
         return set()
     tips = _tips(store, None)
-    return set(children.run(["git", *W.APART, "-C", store, "rev-list", "--max-parents=0", "--stdin"], timeout=TAKE_S,
-                            input="".join(f"{t}\n" for t in tips).encode(), env=subprocess_env(extra=W.NO_CONFIG)
-                            ).stdout.decode().split()) if tips else set()
+    return set(G.run(store, "rev-list", "--max-parents=0", "--stdin", timeout=TAKE_S, text=False,
+                     input="".join(f"{t}\n" for t in tips).encode()).stdout.decode().split()) if tips else set()
 
 
 def _links(engine, store: str, ex, commit: str, rec: dict) -> list[str]:

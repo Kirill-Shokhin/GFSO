@@ -16,7 +16,7 @@ GFSO = Path(__file__).resolve().parents[1] / "gfso"
 RADIUS = ("workspaces.py", "adapters/worktrees.py", "adapters/snapshots.py", "tools_llm.py", "delegate.py",
           "issuer/__init__.py", "packets.py", "core/protocol/procedure.py", "adapters/execution.py",
           "adapters/llm/toolloop.py", "adapters/llm/headless.py", "adapters/llm/chat.py", "adapters/llm/conformance.py",
-          "roster.py", "observe.py", "sessions.py", "store.py")
+          "roster.py", "observe.py", "sessions.py", "store.py", "adapters/git.py")
 #: a path's own methods that touch the file system, and how many positional arguments the path's form takes — the
 #: port's methods of the same name take the path first (`ex.is_dir(p)`), which is what tells the two apart
 PATH_CALLS = {**dict.fromkeys(("is_dir", "is_file", "exists", "iterdir", "read_text", "read_bytes", "mkdir", "unlink",
@@ -37,8 +37,8 @@ HOSTS_OWN = {
     ("workspaces.py", "_place_of", "HOST.is_dir(str(old))"): "a host place laid out beside its base before the places moved into the installation (2026-11-15)",
     ("core/protocol/procedure.py", "_gone", "HOST.exists(path)"): "a path in no round: the base or outside the places",
     ("core/protocol/procedure.py", "_gone", "HOST.exists(str(Path(path).parent))"): "a path in no round, as above",
-    ("adapters/worktrees.py", "is_repo_top", "shutil.which('git')"): "this host's git",
-    ("adapters/worktrees.py", "is_repo_top", "Path(base).is_dir()"): "the base",
+    ("adapters/git.py", "is_top", "shutil.which('git')"): "this host's git",
+    ("adapters/git.py", "is_top", "Path(base).is_dir()"): "a base: the user's repository, or a workdir asked of",
     ("adapters/execution.py", "Volume._import_base", "open(carried, 'rb')"): "the user's repository, carried in",
     ("adapters/execution.py", "Volume._import_base", "tempfile.TemporaryDirectory(prefix='gfso-import-')"):
         "the user's repository, carried in",
@@ -48,8 +48,6 @@ HOSTS_OWN = {
     ("adapters/execution.py", "_carried_in",
      "(p := (base / git('rev-parse', '--git-path', f'info/{n}').stdout.strip())).is_file()"):
         "the user's repository, carried in",
-    ("adapters/execution.py", "_is_top", "base.is_dir()"): "the user's repository, carried in",
-    ("adapters/execution.py", "_is_top", "shutil.which('git')"): "this host's git",
     ("adapters/execution.py", "_lfs_of", "(f := Path(lfs.path_in(str(store), oid))).is_file()"):
         "the user's repository, carried in",
     ("adapters/execution.py", "_lfs_of", "f.stat()"): "the user's repository, carried in",

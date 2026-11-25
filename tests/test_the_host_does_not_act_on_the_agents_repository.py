@@ -10,7 +10,7 @@ from pathlib import Path
 
 from gfso import reports as R
 from gfso import workspaces as WS
-from gfso.adapters import worktrees as W
+from gfso.adapters import git as G, worktrees as W
 from gfso.adapters.execution import LocalExecution
 from gfso.adapters.snapshots import snapshot
 from gfso.core.types import State
@@ -58,8 +58,8 @@ def test_every_system_git_call_on_a_place_goes_through_the_projects_execution(tm
     W.contains(base, base, "gfso/p/a", execution=ex)
     W.remove(base, place, "gfso/p/a", execution=ex, onto="refs/heads/gfso/p/a")   # …settled where it landed
     gits = [c for c in ex.calls if "git" in str(c[0]) and "python" not in str(c[0])]
-    assert gits and all(c[1:1 + len(W.APART)] == list(W.APART) for c in gits), "no hook, no fsmonitor, the repo's config alone"
-    assert {c[1 + len(W.APART)] for c in gits} >= {"init", "checkout", "bundle", "update-ref", "rev-parse",
+    assert gits and all(c[1:1 + len(G.APART)] == list(G.APART) for c in gits), "no hook, no fsmonitor, the repo's config alone"
+    assert {c[1 + len(G.APART)] for c in gits} >= {"init", "checkout", "bundle", "update-ref", "rev-parse",
                                                       "merge-base", "branch", "ls-files"}
     assert not [a for a in host if a[:1] == ["git"]]
 

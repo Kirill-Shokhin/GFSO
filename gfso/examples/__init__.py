@@ -14,7 +14,7 @@ import shutil
 import sys
 import tempfile
 
-from gfso.adapters.children import run
+from gfso.adapters import git as G
 from gfso.adapters.execution import LocalExecution
 from gfso import config as _config_module
 from gfso.config import DEFAULT_EXECUTION, executions, use_agents_path
@@ -52,7 +52,7 @@ def delegation(prefix: str) -> tuple:
     if execution:
         for args in (["init", "-q"], ["-c", "user.name=gfso-demo", "-c", "user.email=demo@gfso.local", "commit", "-q",
                                       "--allow-empty", "-m", "start"]):
-            run(["git", "-C", work, *args], timeout=60).check_returncode()
+            G.run(work, *args, plain=True, timeout=60).check_returncode()
     use_agents_path(scratch("agents.json"))
     return work, execution
 

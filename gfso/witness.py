@@ -22,7 +22,7 @@ import urllib.request
 from pathlib import Path
 
 from gfso import serverctl, signin
-from gfso.adapters import children
+from gfso.adapters import git as G
 from gfso.config import data_dir
 
 #: the system's own door: a move through it is in the log already, and what it writes is the system's
@@ -43,10 +43,10 @@ def git(cwd, *args) -> str | None:
     """What git prints for `args` in `cwd`, or None wherever it fails — taking no optional lock: a status beside the
     console's own `git commit` would hold the index's lock it needs, and write the index."""
     try:
-        r = children.run(["git", "--no-optional-locks", "-C", str(cwd), *args], timeout=10)
+        r = G.run(None, "--no-optional-locks", "-C", str(cwd), *args, plain=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
-    return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
+    return r.stdout if r.returncode == 0 else None
 
 
 def tree(top: Path) -> dict:

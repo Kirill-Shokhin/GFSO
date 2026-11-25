@@ -20,7 +20,6 @@ import inspect
 import os
 import posixpath
 import re
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -28,8 +27,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from gfso.adapters import children, lfs
-from gfso.config import subprocess_env
+from gfso.adapters import children, git as G, lfs
 from gfso.adapters.execution import (NODES, READ_REF, ContainerExecution, LocalExecution, fetched_on_host,
                                      stored_on_host)
 from gfso.core.types import base_of_nodes
@@ -49,7 +47,7 @@ def base_of(place: str | None) -> str | None:
 _LOCKS: dict[str, threading.RLock] = {}
 _GUARD = threading.Lock()
 _TOPS: dict[str, bool] = {}
-_SLOW = 600          # a checkout of a large tree takes minutes; a wait past this is a hung git, not a slow one
+_SLOW = G.SLOW
 
 
 def _key(path) -> str:
@@ -61,19 +59,15 @@ def _lock(base) -> threading.RLock:
         return _LOCKS.setdefault(_key(base), threading.RLock())
 
 
-#: every system git call's own settings, after the caller's: no config but the repository's (the system's and the
-#: user's are not the agent's to read, and an image's `safe.directory` goes with them), no hook, no fsmonitor. Depth,
-#: not the bound — a repository's config still names filters, drivers, commands, and a denylist leaks by class. Long
-#: paths taken where the platform bounds them (Git for Windows): a judge's copy deep in a project's places wrote no pack
-#: ("Filename too long") and read as the delivery's own fault
-APART = ("-c", "safe.directory=*", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.longpaths=true")
-NO_CONFIG = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
-
-
 def apart(execution) -> tuple:
-    """`APART` where `execution` runs — in a container, with the system's own LFS filter (`lfs`): a checkout there
-    writes an LFS file's content, a staging its pointer. This host's places are the user's repository's worktrees."""
-    return APART + (lfs.filter_args(execution.python) if _lfs_in(execution) else ())
+    """`G.APART` where `execution` runs (`_lfs`)."""
+    return G.APART + _lfs(execution)
+
+
+def _lfs(execution) -> tuple:
+    """The system's own LFS filter (`lfs`) where `execution` runs it, after `G.APART`: in a container a checkout writes
+    an LFS file's content, a staging its pointer. This host's places are the user's repository's worktrees."""
+    return lfs.filter_args(execution.python) if _lfs_in(execution) else ()
 
 
 def _lfs_in(execution) -> bool:
@@ -81,10 +75,13 @@ def _lfs_in(execution) -> bool:
     return isinstance(execution, ContainerExecution)
 
 
-def _env(who: str = "gfso", env: dict | None = None) -> dict:
+def _who(who: str = "gfso") -> dict:
     mail = f"{who}@gfso.local"
-    return subprocess_env(extra={"GIT_AUTHOR_NAME": who, "GIT_AUTHOR_EMAIL": mail, "GIT_COMMITTER_NAME": who,
-                                 "GIT_COMMITTER_EMAIL": mail, "GIT_TERMINAL_PROMPT": "0", **(env or {}), **NO_CONFIG})
+    return {"GIT_AUTHOR_NAME": who, "GIT_AUTHOR_EMAIL": mail, "GIT_COMMITTER_NAME": who, "GIT_COMMITTER_EMAIL": mail}
+
+
+def _env() -> dict:
+    return G.env(_who())
 
 
 def git(cwd, *args, who: str = "gfso", execution=None, env: dict | None = None):
@@ -96,12 +93,11 @@ def git(cwd, *args, who: str = "gfso", execution=None, env: dict | None = None):
     nothing it does not hold already; in the project's container, which mounts every place, it read and wrote the
     others' and forged a clone (critics, three times). Asking the config before use was a race."""
     repo = (env or {}).get("GIT_DIR") or (args[1] if args[:1] == ("-C",) else cwd)
-    env = _env(who, env)
+    env = {**_who(who), **(env or {})}
     if execution is not None:
-        return execution.session(str(repo)).run(["git", *apart(execution), *args], cwd=str(cwd), timeout=_SLOW,
-                                                env=env)
-    return children.run(["git", *APART, *args], timeout=_SLOW, cwd=str(cwd), text=True, encoding="utf-8",
-                        errors="replace", env=env)
+        return execution.session(str(repo)).run(G.argv(*_lfs(execution), *args), cwd=str(cwd), timeout=_SLOW,
+                                                env=G.env(env))
+    return G.run(cwd, *args, extra=env)
 
 
 def _fs(execution):
@@ -136,15 +132,9 @@ def _writes_into(arg: str):
 
 
 def is_repo_top(base) -> bool:
-    """Is `base` the top of a git work tree with a commit to branch from? Asked once per directory per process."""
-    k = _key(base)
-    if k not in _TOPS:
-        ok = False
-        if shutil.which("git") and Path(base).is_dir():
-            r = git(base, "rev-parse", "--show-toplevel", "--verify", "HEAD")
-            top = r.stdout.splitlines()[0] if r.returncode == 0 and r.stdout else ""
-            ok = bool(top) and _key(top) == k
-        _TOPS[k] = ok
+    """`G.is_top` under the system's profile, asked once per directory per process."""
+    if (k := _key(base)) not in _TOPS:
+        _TOPS[k] = G.is_top(base)
     return _TOPS[k]
 
 
@@ -256,7 +246,7 @@ LAY_MARGIN_KIB = 2 ** 20
 def _laid_kib(ex, at, commit: str, limit: int, stores) -> int | None:
     """What `commit`'s tree lays by `_LAID`, up to `limit` and a little past it; None unread."""
     try:
-        r = ex.run([ex.python, "-I", "-c", _LAID, str(limit), "\n".join(map(str, stores)), commit, *APART], cwd=str(at), timeout=600, env=_env())
+        r = ex.run([ex.python, "-I", "-c", _LAID, str(limit), "\n".join(map(str, stores)), commit, *G.APART], cwd=str(at), timeout=600, env=_env())
     except OSError:
         return None
     laid = (r.stdout or "").strip()
@@ -414,9 +404,8 @@ def read_head(place, rev: str = "HEAD") -> tuple[str, str, list]:
     commit = git(place, "rev-parse", "--verify", "-q", f"{rev}^{{commit}}").stdout.strip()
     if not commit:
         raise OSError(f"{place} has no commit to deliver")
-    # …read by their own git: under the system's flags (`APART`) their CRLF checkout read as changed (README, live)
-    seen = children.run(["git", "-C", str(place), "status", "--porcelain", "-z"], timeout=_SLOW, text=True,
-                        encoding="utf-8", errors="replace").stdout
+    # …read by their own git: under the system's flags (`G.APART`) their CRLF checkout read as changed (README, live)
+    seen = G.run(place, "status", "--porcelain", "-z", plain=True).stdout
     left = [line[3:] for line in seen.split("\0") if line[3:]]
     return git(place, "rev-parse", f"{commit}^{{tree}}").stdout.strip(), commit, left
 
@@ -678,15 +667,22 @@ def to_host(src, ref: str, to, execution) -> str:
     return fetched_on_host(Path(to), _bundled(src, ref, [], execution), ref)
 
 
+class CheckedOut(OSError):
+    """A result branch checked out in a worktree of the person's repository: nothing lands under a live tree."""
+
+
 def move_result(base, ref: str, sha: str) -> str | None:
     """THE one move of a result branch of the person's repository to `sha` — every landing's (`land`, a chat-performed
     root's `_name_the_delivery`). The result it holds, where `sha` does not contain it, is kept first under
     `<ref>-<UTC time>`, that name returned: a project made again under a deleted one's name, or a root whose earlier result
     was never merged, landed over it and left it only in the reflog — and the result is the person's. The move itself is
     from the value read, so a write between the two is refused, never overwritten unkept; either step failing raises
-    OSError, nothing moved."""
-    git_ = lambda *a: children.run(["git", "-C", str(base), *a], timeout=_SLOW, text=True, encoding="utf-8",
-                                   errors="replace", env=subprocess_env(extra={"GIT_NO_REPLACE_OBJECTS": "1"}))
+    OSError, nothing moved. A `ref` checked out in any worktree there is refused (`CheckedOut`) — here, at the move,
+    for every landing: asked by each caller, the two copies drifted apart once already."""
+    if checked_out(base, ref):
+        raise CheckedOut(f"`{ref.removeprefix('refs/heads/')}` is checked out there (in a worktree of it), and the "
+                         f"system lands only on a branch nobody works on: check out another branch")
+    git_ = lambda *a: G.run(base, *a, plain=True)
     old = git_("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").stdout.strip()
     kept = None
     if old and old != sha and git_("merge-base", "--is-ancestor", old, sha).returncode:
@@ -723,14 +719,9 @@ def land(base, ref: str, execution, since: str | None, tree: str | None = None, 
     refused. `ref` standing is moved to the new commit (`move_result`: a result it would no longer contain kept
     first as `<ref>-<UTC time>`)."""
     sha = git(base, "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}", execution=execution).stdout.strip()
-    # …no replace refs: an object they stand in for is not the one a checkout without them reads (critic, run)
-    host = lambda *a: children.run(["git", "-C", str(base), *a], timeout=_SLOW, text=True, encoding="utf-8",
-                                   errors="replace", env=subprocess_env(extra={"GIT_NO_REPLACE_OBJECTS": "1"}))
+    host = lambda *a: G.run(base, *a, plain=True)
     if not sha:
         raise OSError("the base names no commit")
-    if checked_out(base, ref):
-        raise OSError(f"`{ref}` is checked out there (in a worktree of it), and the system lands only on a branch "
-                      f"nobody works on: check out another branch")
     # …WHOLE, not merely there: a fetch that failed leaves the commit and its tree behind without their blobs, and a
     # landing retried on them set the branch to a commit no checkout reads (critic over e59b9d5, run)
     # …and none taken on trust from the system's own refs: the old landing left one naming such a commit (critic, run)

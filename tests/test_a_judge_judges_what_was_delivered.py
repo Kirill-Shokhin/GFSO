@@ -22,6 +22,7 @@ import pytest
 
 import gfso.adapters.snapshots as S
 import gfso.issuer as I
+import gfso.adapters.git as G
 import gfso.adapters.worktrees as W
 from gfso.adapters import lfs
 from gfso import packets as P
@@ -584,7 +585,7 @@ def _lfs_delivery(x, content: bytes) -> tuple:
     _sh(x, a, "printf '*.bin filter=lfs diff=lfs merge=lfs -text\\n' > .gitattributes")
     x.files.write_bytes(str(a / "big.bin"), content)
     tree = W.commit_all(x.base, a, "gfso: an lfs delivery", "exec-a", execution=x, branch="gfso/p/a")
-    blob = x.session(str(a)).run(["git", *W.APART, "cat-file", "blob", "HEAD:big.bin"], cwd=str(a), timeout=60).stdout
+    blob = x.session(str(a)).run(["git", *G.APART, "cat-file", "blob", "HEAD:big.bin"], cwd=str(a), timeout=60).stdout
     assert lfs.parse(blob.encode()) == (hashlib.sha256(content).hexdigest(), len(content)), "committed as a pointer"
     return tree, W.head(a, execution=x), hashlib.sha256(content).hexdigest()
 
@@ -648,7 +649,7 @@ def test_live_a_pointer_shaped_file_outside_the_lfs_filter_stays_its_text(projec
     x, a = project, project.own / "a"
     content = b"\x00lfs content\r\n" * 4096
     _lfs_delivery(x, content)
-    pointer = x.session(str(a)).run(["git", *W.APART, "cat-file", "blob", "HEAD:big.bin"], cwd=str(a), timeout=60).stdout
+    pointer = x.session(str(a)).run(["git", *G.APART, "cat-file", "blob", "HEAD:big.bin"], cwd=str(a), timeout=60).stdout
     x.files.write_bytes(str(a / "fixture.txt"), pointer.encode())
     tree = W.commit_all(x.base, a, "gfso: a fixture", "exec-a", execution=x, branch="gfso/p/a")
     x.files.mkdir(str(round_ := x.own / ".gfso-scratch-a" / "a_1"))

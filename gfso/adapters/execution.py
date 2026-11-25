@@ -32,9 +32,9 @@ from gfso.core.types import (BATCH, HOST, IN_THE_WORKS_PATH, THIS_HOST, LAID, MA
                              FilesPort, PlaceUnavailable, base_named, base_of_nodes, nodes_dir, nodes_root, place_name)
 from gfso import config as _config_module
 from gfso.config import (for_the_hands, CONTAINER_LOG, DEFAULT_PROJECT, ROOT_ID, SECRET_ENV, data_dir, claude_config_dir, container_limits,
-                         memory_ceiling, network_record_off, new_flows, HELD_FLOWS, node_disk, executions, executions_path, host_env, subprocess_env,
+                         memory_ceiling, network_record_off, new_flows, HELD_FLOWS, node_disk, executions, executions_path, host_env,
                          write_atomic)
-from gfso.adapters import door, egress, lfs, shell
+from gfso.adapters import door, egress, git as G, lfs, shell
 from gfso.adapters.records import append, said_of
 from gfso.places import same_place
 from gfso.adapters.children import at_exit, end, popen, run, run_printing
@@ -1051,15 +1051,14 @@ for g; do
   find "$g" -mindepth 1 -maxdepth 1 \( -iname config -o -iname config.worktree -o -iname commondir -o -iname hooks \) -exec rm -rf -- {} +
   for k in core.repositoryformatversion:0:1 core.bare:true:false extensions.objectformat:sha1:sha256 extensions.refstorage:files:reftable; do
     n=${k%%:*}; o=${k#*:}
-    v=$(git config --file /tmp/theirs --get "$n" </dev/null 2>/dev/null)
-    case "$v" in "${o%:*}"|"${o#*:}") git config --file "$g/config" "$n" "$v" </dev/null ;; esac
+    v=$(''' + G.sh() + r''' config --file /tmp/theirs --get "$n" </dev/null 2>/dev/null)
+    case "$v" in "${o%:*}"|"${o#*:}") ''' + G.sh() + r''' config --file "$g/config" "$n" "$v" </dev/null ;; esac
   done
   a=$g/objects/info/alternates
   [ -f "$a" ] || continue
   cp "$a" /tmp/alternates
   printf '%s\n' "$b/.git/objects" > "$a"
-  if GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c core.fsmonitor=false -c core.hooksPath=/dev/null \
-      --git-dir="$g" repack -a -d -q </dev/null; then
+  if ''' + G.sh() + r''' --git-dir="$g" repack -a -d -q </dev/null; then
     rm -f "$a"
   else
     cp /tmp/alternates "$a" && note "${g#/tmp/x/}: not repacked — exported as it stands, its objects still the base's"
@@ -1069,7 +1068,7 @@ exit 0
 ONE
 find /tmp/x -type d -exec sh /tmp/one "$b" {} +
 if [ -d /tmp/x/.gfso-base/.git ]; then
-  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C /tmp/x/.gfso-base bundle create -q /tmp/x/gfso-refs.bundle \
+  ''' + G.sh() + r''' -C /tmp/x/.gfso-base bundle create -q /tmp/x/gfso-refs.bundle \
     HEAD --branches='gfso/*' </dev/null || note "the base's branches could not be bundled"
 fi
 [ -n "$(ls -A /tmp/x)" ] || { note "nothing to export"; exit 1; }
@@ -1080,8 +1079,7 @@ tar -c -C /tmp/x .'''
 #: a new root's import brings it to the commit imported by what that reaches alone (its LFS objects laid there by the import
 #: itself), and names what it holds in the base (`READ_REF`). Nothing moves it between imports: a root's next one starts from
 #: the user's repository again.
-_READ_COPY = r'''g() { GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c safe.directory='*' -c core.hooksPath=/dev/null \
-  -c core.fsmonitor=false -c "$fc" -c "$fs" -C "$d" "$@" </dev/null; }
+_READ_COPY = "g() { " + G.sh() + r''' -c "$fc" -c "$fs" -C "$d" "$@" </dev/null; }
 read_copy() {
   b=$d r=${d%/*}/''' + BASE_READ + r'''
   if [ ! -d "$r" ] || { [ -d "$b/.git" ] && [ ! -d "$r/.git" ]; }; then
@@ -1138,9 +1136,8 @@ done
 for kv in "$fc" "$fs"; do g config "${kv%%=*}" "${kv#*=}" || exit 1; done
 g checkout -q -f -B "$(cat /tmp/in/branch)" "$c" && g clean -q -ffdx && read_copy || exit 1
 s=/to/''' + STORE_DIR + r'''
-gs() { GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c safe.directory='*' -c core.hooksPath=/dev/null \
-  -c core.fsmonitor=false -c fetch.fsckObjects=true -C "$s" "$@" </dev/null; }
-{ [ -d "$s/.git" ] || git init -q "$s"; } && gs config gc.auto 0 && gs fetch -q --no-tags /tmp/in/bundle "HEAD:refs/gfso/keep/$c"'''
+gs() { ''' + G.sh(*G.FSCK) + r''' -C "$s" "$@" </dev/null; }
+{ [ -d "$s/.git" ] || ''' + G.sh() + r''' init -q "$s"; } && gs config gc.auto 0 && gs fetch -q --no-tags /tmp/in/bundle "HEAD:refs/gfso/keep/$c"'''
 #: what the docker client says where the daemon does not answer — the place down (`PlaceUnavailable`)
 _DOWN = re.compile(r"failed to connect to the docker API|Cannot connect to the Docker daemon|error during connect", re.I)
 #: …and where the container is gone or stopped under a live server — started again, once
@@ -2181,39 +2178,27 @@ def _left_inert(to: Path) -> list:
     return notes
 
 
-#: the environment of the user's git the system runs: an object a partial clone lacks is never fetched — its promisor
-#: is the user's network, reached with their credentials, from no thread of the system's
-NO_LAZY_FETCH = {"GIT_NO_LAZY_FETCH": "1"}
-
-
 def _image_user(image: str) -> str:
     """The user `image` names to run as; '' for none."""
     return run(["docker", "image", "inspect", "-f", "{{.Config.User}}", image], timeout=60, text=True).stdout.strip()
 
 
 def _host_git(base: Path, **env):
-    """git over the user's repository at `base`, run on the host by their own git: text out, or bytes fed `input`."""
-    def git(*a, input=None):
-        """One git call over `base`."""
-        return run(["git", "-c", "safe.directory=*", "-C", str(base), *a], timeout=600, input=input,
-                   env=subprocess_env(extra={**NO_LAZY_FETCH, **env}),
-                   **({} if input is not None else {"text": True, "encoding": "utf-8", "errors": "replace"}))
-    return git
+    """git over the user's repository at `base`, run on the host by their own git (`G.run` plain): text out, or bytes
+    fed `input`."""
+    return lambda *a, input=None: G.run(base, *a, plain=True, extra=env, input=input, text=input is None)
 
 
-def _is_top(base: Path, git) -> bool:
-    """The question `worktrees.is_repo_top` asks: is `base` the top of a work tree with a commit?"""
-    got = git("rev-parse", "--show-toplevel", "--verify", "HEAD") if shutil.which("git") and base.is_dir() else None
-    top = got.stdout.splitlines()[:1] if got and got.returncode == 0 else []
-    return bool(top) and same_place(top[0], base)          # …as places: git names a junction's or 8.3 name's target
+def _is_top(base: Path) -> bool:
+    """`G.is_top` of the user's own repository, read by their own git as its import is."""
+    return G.is_top(base, plain=True)
 
 
 def _no_places(base: Path) -> str | None:
     """Why a container runs no dispatched work over `base`: one that is no repository's top with a commit has no
     places — every session of the project would work in it, sharing one tree and one model client's state, no node's
     work its own and each reading the others'. Asked of the user's own repository on the host, as its import is."""
-    git = _host_git(base)
-    if _is_top(base, git):
+    if _is_top(base):
         return None
     why = (f"{base} is not the top of a git repository with a commit, so its nodes have no places of their "
            f"own: every session would share one tree and read the others' conversations. ")
@@ -2221,6 +2206,14 @@ def _no_places(base: Path) -> str | None:
     # naming it told the user's agent to import the home (critic)
     git = _host_git(base, GIT_CEILING_DIRECTORIES=str(Path.home()))
     top = git("rev-parse", "--show-toplevel") if shutil.which("git") and base.is_dir() else None
+    # …a repository another account owns, which the user's own git refuses to trust: told to `git init` there, he was
+    # sent to make a repository that exists; the trust is his decision, git's own words beside it (critic)
+    if top is not None and top.returncode != 0 and "dubious ownership" in (top.stderr or ""):
+        return (f"{base} is a git repository another account owns, and your own git does not trust it, so it is not "
+                f"imported: git says «{top.stderr.strip().splitlines()[0]}». Trusting it runs that owner's hooks and "
+                f"settings as you — your decision: "
+                f"{for_the_hands(f'git config --global --add safe.directory {base.as_posix()}')}, then start the "
+                f"project again")
     if top is not None and top.returncode != 0 and git("rev-parse", "--is-inside-git-dir").stdout.strip() == "true":
         return why + "It lies inside a repository's own `.git` directory: register that repository's top as the workdir"
     if top is not None and top.returncode == 0 and (at := top.stdout.strip()):
@@ -2274,7 +2267,7 @@ def _lfs_store(base: Path, git) -> Path:
 
 def _missing(git) -> list:
     """The objects HEAD's history names that the user's repository does not hold — a partial clone's, never fetched
-    (`NO_LAZY_FETCH`)."""
+    (`G.EVERY`)."""
     if not git("config", "--get-regexp", r"^(extensions\.partialclone|remote\..*\.promisor)$").stdout.strip():
         return []
     return [x[1:] for x in git("rev-list", "--objects", "--missing=print", "HEAD").stdout.splitlines()
@@ -2285,7 +2278,7 @@ def left_out(base: Path) -> list[str]:
     """What of the user's repository at `base` the import of its HEAD does not bring into the agents' copy, each said
     with what brings it — asked by their own git on the host, before any import as at one (`_carried_in`)."""
     git = _host_git(base)
-    return _left_out(base, git, _lfs_of(base, git)[1]) if _is_top(base, git) else []
+    return _left_out(base, git, _lfs_of(base, git)[1]) if _is_top(base) else []
 
 
 def _left_out(base: Path, git, no_object: list) -> list[str]:
@@ -2353,9 +2346,9 @@ def committed(base: Path, rel: str) -> bytes | None:
     holds no such file. What a new root imports, never what a volume's earlier root left nor an uncommitted edit; and
     only of a top with a commit, as only one is imported (`_carried_in`): git walks up from any other, and a home kept as
     a repository of its dotfiles gave the contract its committed token for a project's own file (critic, ran)."""
-    if not _is_top(base, git := _host_git(base)):
+    if not _is_top(base):
         return None
-    got = git("cat-file", "blob", f"HEAD:{rel}", input=b"")
+    got = _host_git(base)("cat-file", "blob", f"HEAD:{rel}", input=b"")
     return got.stdout if got.returncode == 0 else None
 
 
@@ -2367,7 +2360,7 @@ def _carried_in(base: Path, project: str, d: Path) -> tuple:
     by the cause every session over it is (`_no_places`): carried in as its live tree, its ignored files and `.env` went
     into the volume and the plan's reader carried them to the provider (critic, ran)."""
     out, git = d / "in.tar", _host_git(base)
-    if not _is_top(base, git):
+    if not _is_top(base):
         raise PlaceUnavailable(str(base), _no_places(base) or f"{base} is not the top of a git repository with a commit")
     with tarfile.open(out, "w") as t:
         commit = git("rev-parse", "--verify", "HEAD^{commit}").stdout.strip()
@@ -2397,11 +2390,10 @@ def fetched_on_host(base: Path, bundle: bytes, ref: str = "HEAD") -> str:
         return "what came out is no git bundle"
     with tempfile.TemporaryDirectory(prefix="gfso-land-") as d:
         (f := Path(d) / "accepted.bundle").write_bytes(bundle)
-        # …every object it carries checked as git takes it (`fsckObjects`): the pack is made where an agent writes, and
-        # the user's git parses it on the host (critic over the stream in use)
-        got = run(["git", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "-C", str(base), "fetch",
-                   "-q", "--no-recurse-submodules", "--no-write-fetch-head", str(f), ref], timeout=600,
-                  text=True, encoding="utf-8", errors="replace")
+        # …every object it carries checked as git takes it (`G.FSCK`): the user's git parses it on the host (critic over
+        # the stream in use)
+        got = G.run(base, *G.FSCK, "fetch", "-q", "--no-recurse-submodules", "--no-write-fetch-head", str(f), ref,
+                    plain=True)
     return "" if got.returncode == 0 else (got.stderr or "").strip()[-300:] or f"git fetch exited {got.returncode}"
 
 

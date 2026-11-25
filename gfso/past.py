@@ -49,7 +49,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
-from gfso.adapters import children
+from gfso.adapters import git as G
 from gfso.adapters import worktrees as W
 from gfso.adapters.storage.sqlite import peek_work
 from gfso.config import CALLER, DEFAULT_PROJECT, agent_id, agents_path, caller_id, db_path, unsigned
@@ -105,8 +105,7 @@ class Span(NamedTuple):
 
 
 def _git(repo, *args, input: str | None = None) -> str:
-    r = children.run(["git", *W.APART, *args], timeout=120, cwd=str(repo), input=input, text=True, encoding="utf-8",
-                     errors="replace")
+    r = G.run(repo, *args, timeout=120, input=input)
     if r.returncode:
         raise OSError(f"`git {args[0]}` could not read {repo}: {r.stderr.strip()[-300:]}")
     return r.stdout

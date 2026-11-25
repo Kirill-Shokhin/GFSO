@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from gfso import sessions as S, tools as T
-from gfso.adapters import worktrees as W
+from gfso.adapters import git as G, worktrees as W
 from gfso.core.types import Mode, State, TaskId
 from gfso.delegate import AgentRegistry
 from gfso.packets import _executor_packet
@@ -211,7 +211,7 @@ class _ShHere:
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="the container path is one sh pipeline")
 def test_the_container_path_answers_as_the_host_one(tmp_path, monkeypatch):
-    monkeypatch.setattr(W, "apart", lambda execution: W.APART)
+    monkeypatch.setattr(W, "apart", lambda execution: G.APART)
     d, base, sha = _repo(tmp_path)
     ex = _ShHere()
     assert W.change_not_there(d, base, sha, execution=ex) == []

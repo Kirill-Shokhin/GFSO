@@ -374,7 +374,7 @@ def test_the_host_takes_only_a_bundle(tmp_path, monkeypatch):
     """The bytes come out of a temp the base's sessions write; handed anything else, the host's git opened a repository
     named inside it, a network path too (critic over a99ea34). No git runs on what is no bundle."""
     ran = []
-    monkeypatch.setattr(E, "run", lambda *a, **kw: ran.append(a) or subprocess.CompletedProcess(a, 0, "", ""))
+    monkeypatch.setattr(E.G, "run", lambda *a, **kw: ran.append(a) or subprocess.CompletedProcess(a, 0, "", ""))
     assert "no git bundle" in E.fetched_on_host(tmp_path, b"//attacker/share/repo\n")
     assert ran == []
     assert E.fetched_on_host(tmp_path, b"# v2 git bundle\nabc HEAD\n\nPACK") == "" and ran
@@ -386,7 +386,7 @@ def test_a_commit_left_without_its_blobs_is_fetched_again_never_landed(tmp_path,
     env = {"GIT_AUTHOR_NAME": "a", "GIT_AUTHOR_EMAIL": "a@a", "GIT_COMMITTER_NAME": "a", "GIT_COMMITTER_EMAIL": "a@a",
            "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"}
     g = lambda repo, *a, **kw: subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True,
-                                              env={**W.subprocess_env(), **env}, **kw)
+                                              env=E.G.env(env, plain=True), **kw)
     full, user = tmp_path / "full", tmp_path / "user"
     for r in (full, user):
         g(tmp_path, "init", "-q", "-b", "main", str(r))

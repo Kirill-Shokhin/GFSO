@@ -17,6 +17,7 @@ import pytest
 import gfso.adapters.execution as E
 import gfso.adapters.lfs as L
 import gfso.adapters.snapshots as S
+import gfso.adapters.git as G
 import gfso.adapters.worktrees as W
 import gfso.tools_llm as TL
 from gfso.adapters.execution import ContainerExecution
@@ -86,9 +87,9 @@ _PY = '"' + sys.executable.replace("\\", "/") + '"'
 
 
 def _g(cwd, *args, lfs=True, **kw):
-    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *W.APART,
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *G.APART,
                            *(L.filter_args(_PY) if lfs else ()), *args], cwd=cwd, capture_output=True, check=True,
-                          env={**W.subprocess_env(), **W.NO_CONFIG}, **kw).stdout
+                          env=G.env(), **kw).stdout
 
 
 #: a git with no LFS filter at all: the host's git-lfs, or the system's, taken off
@@ -133,8 +134,8 @@ def test_a_staging_under_the_systems_filter_commits_pointers_and_without_it_cont
     base = _repo(tmp_path)
     assert _is_pointer(base, "HEAD", "big.bin") and (base / "big.bin").read_bytes() == CONTENT
     (base / "big.bin").write_bytes(b"changed by the agent")
-    assert W.stage(lambda *a: subprocess.run(["git", *W.APART, *L.filter_args(_PY), *a], cwd=base, text=True,
-                                             capture_output=True, env={**W.subprocess_env(), **W.NO_CONFIG})
+    assert W.stage(lambda *a: subprocess.run(["git", *G.APART, *L.filter_args(_PY), *a], cwd=base, text=True,
+                                             capture_output=True, env=G.env())
                    ).returncode == 0, "DELIVER's own staging"
     staged = _g(base, "cat-file", "blob", ":big.bin")
     assert L.parse(staged) == (hashlib.sha256(b"changed by the agent").hexdigest(), 20)
@@ -244,7 +245,7 @@ def test_one_filter_process_serves_a_git_call_and_the_repositorys_own_does_not_r
 def test_the_judges_command_line_rides_argv_on_windows(tmp_path):
     at = "C:/" + "x" * 120
     line = subprocess.list2cmdline(["python3", "-I", "-c", S._CHECKOUT, "checkout", at, "a" * 40, "b" * 40,
-                                    *W.APART, *L.filter_args("python3")])
+                                    *G.APART, *L.filter_args("python3")])
     assert len(line) < 16_000, len(line)                    # …CreateProcess's bound is 32767
 
 
@@ -313,7 +314,7 @@ def test_live_lfs_files_come_in_as_content_and_a_delivery_commits_their_pointers
         assert x.files.read_bytes(str(a / "big.bin")) == CONTENT, "a node's clone reads the base's store"
         x.session(str(a)).run(["sh", "-c", "printf new > big.bin"], cwd=str(a), timeout=120).check_returncode()
         W.commit_all(x.base, a, "work", "user", x, branch="gfso/p/a")
-        blob = lambda path, *lfs: x.session(str(a)).run(["git", *W.APART, *lfs, "cat-file", "blob", f"HEAD:{path}"],
+        blob = lambda path, *lfs: x.session(str(a)).run(["git", *G.APART, *lfs, "cat-file", "blob", f"HEAD:{path}"],
                                                         cwd=str(a), timeout=120).stdout
         assert L.parse(blob("big.bin").encode()) == (hashlib.sha256(b"new").hexdigest(), 3), "a pointer committed"
         assert L.parse(blob("gone.bin").encode()) is not None
@@ -332,8 +333,8 @@ def test_live_lfs_files_come_in_as_content_and_a_delivery_commits_their_pointers
         env = {"GIT_INDEX_FILE": str(a / ".git" / "control-index")}
         off = ("-c", "filter.lfs.process=", "-c", "filter.lfs.required=false")
         for args in (("read-tree", "HEAD"), ("add", "big.bin")):
-            x.session(str(a)).run(["git", *W.APART, *off, *args], cwd=str(a), timeout=120, env=env).check_returncode()
-        assert x.session(str(a)).run(["git", *W.APART, "cat-file", "blob", ":big.bin"], cwd=str(a), timeout=120,
+            x.session(str(a)).run(["git", *G.APART, *off, *args], cwd=str(a), timeout=120, env=env).check_returncode()
+        assert x.session(str(a)).run(["git", *G.APART, "cat-file", "blob", ":big.bin"], cwd=str(a), timeout=120,
                                      env=env).stdout == "mine"
     finally:
         x.stop()
