@@ -170,6 +170,9 @@ def frame(src: Path, T: str, shot: dict, png: Path) -> None:
         sent = {k: v for k, v in r.request.headers.items() if k.lower() != "host"}
         sent.update({k: v.replace("http://gfso.media", "http://127.0.0.1") for k, v in sent.items()
                      if k.lower() in ("origin", "referer")})          # …its own page, as the door checks a move's origin
+        # …and the fetch metadata a browser adds below the interception: on loopback the door sets no cookie and knows the
+        # person's page by it (`signin.principal_of`), so without it every read came back «read only»
+        sent.setdefault("sec-fetch-site", "same-origin")
         res = app.request(r.request.method, path, content=r.request.post_data_buffer, headers=sent, follow_redirects=False)
         body, kind = res.content, res.headers.get("content-type", "")
         if path.startswith("/api/") and res.status_code >= 400 and "/tasks/" not in path:   # a node's own read may 404
