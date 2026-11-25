@@ -1154,9 +1154,10 @@ def _gated_out(engine: Engine, t, task_id: str, who: str, acts: list) -> tuple[l
             acts.remove(a)
             notes.append(f"{a} is refused here: {r.why}")
             withheld[a] = notes[-1]
-    if Signal.PASS.name in withheld and engine.claims.validation_in_flight(TaskId(task_id)):
+    if Signal.PASS.name in withheld and "delivery" in engine.checks_running(TaskId(task_id)):
         # not a rule — the timing a signer needs: a signature landing before the instrument's verdict meets that verdict
-        # at a node already closed, the graph then showing the two contradicting (`refuted_passes`)
+        # at a node already closed, the graph then showing the two contradicting (`refuted_passes`); only where the
+        # instrument is the check — beside a party's or his own, its run is evidence and no wait (`checks_running`)
         asides.append(f"NOTE: an instrument is validating {task_id}'s delivery RIGHT NOW — wait for its verdict "
                       f"before signing: signed first, its verdict arrives at a node already closed and the graph "
                       f"shows them contradicting (`next_steps` reports it as `refuted_passes`). Waiting costs a "
@@ -1306,13 +1307,16 @@ def available_actions(engine: Engine, task_id: str, agent: Optional[str] = None)
 def _awaiting(engine: Engine, t) -> Optional[str]:
     """Who the graph is waiting for on this node, when the state name alone does not say.
 
-    `validator` — an independent validation of this delivery is running · `issuer` — a verdict is on
-    the record and the signal is owed · `verdict` — delivered, nobody validating yet · `executor` — a
-    registered machine holds it. None where the state speaks for itself."""
+    `validator` — the instrument is the check and runs on this delivery (`checks_running`) · `issuer` — a
+    verdict is on the record and the signal is owed, or he checks it himself · `<party>` — the party its
+    issuer appointed to check it, whose record is owed · `verdict` — delivered, nobody validating yet ·
+    `executor` — a registered machine holds it. None where the state speaks for itself — as `in_flight_nodes`."""
     if t.state.name == "VALIDATING":
-        if engine.claims.validation_in_flight(t.id):
+        if "delivery" in engine.checks_running(t.id):
             return "validator"
-        return "issuer" if engine.current_exec_verdict(t.id) is not None else "verdict"
+        if engine.current_exec_verdict(t.id) is not None or (who := engine.appointee(t.id)) == "self":
+            return "issuer"
+        return "verdict" if engine.instrument_checks(t.id) else who
     if t.state.name in ("EXECUTING", "REWORKING") and engine.workforce.kind_of(t.assignee) == "llm-executor":
         return "executor"
     return None
@@ -2728,7 +2732,7 @@ def _what_an_ACCEPTED_signal_owes_its_sender(engine: Engine, task_id: str, sig, 
             # the same observation twice (e2e5 G_3)
             (f"the project's validator observes this delivery by itself, from this DELIVER — no call of yours starts "
              f"it; {how_it_is_waited(engine.project_name, 'its verdict is on the record').rstrip('.')}"
-             if engine.claims.validation_in_flight(TaskId(task_id)) or observed_by_itself(
+             if "delivery" in engine.checks_running(TaskId(task_id)) or observed_by_itself(
                 engine, engine.graph.get_task(TaskId(task_id)))
              else f"`validate_result {task_id}` observes it" if engine.workforce.has_an_instrument()
              else f"no validator is registered in this project, so `validate_result {task_id}` observes it (pass "
@@ -2740,7 +2744,7 @@ def _what_an_ACCEPTED_signal_owes_its_sender(engine: Engine, task_id: str, sig, 
             if engine.holder_signs(TaskId(task_id)) else
             "an INDEPENDENT validation of this delivery is already running — its verdict arrives by "
             "itself; do not start a second one"
-            if engine.claims.validation_in_flight(TaskId(task_id)) else
+            if "delivery" in engine.checks_running(TaskId(task_id)) else
             "a verdict is on the record for this delivery — `get_verdict` reads it; the signal is the "
             "issuer's to give"
             if engine.current_exec_verdict(TaskId(task_id)) is not None else

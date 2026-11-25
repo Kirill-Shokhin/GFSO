@@ -36,7 +36,8 @@ from gfso.roster import AgentRegistry
 from gfso.driver import _as_list, _wants_list, run, run as _cli_run
 from gfso.config import state_bound
 from gfso.runtime import ProjectRegistry
-from tests.support import REGISTER, criterion, make_engine, parts_held, round_over, workdir, DENIAL_ENTRY
+from tests.support import REGISTER, criterion, make_engine, parts_held, round_over, workdir, DENIAL_ENTRY, instrument_passes
+from gfso.engine.verdicts import observations
 from tests.test_validate_result import _ValidatorLLM, _delivered_node, _eng, _fenced
 
 
@@ -163,7 +164,9 @@ def test_a_human_verdict_must_carry_evidence_like_a_machine_one():
     # guarantee; refusing the solo user outright would be a different claim than the canon makes).
     ok = T.record_verdict(e, "leaf", "PASS", reviewer="a-colleague",
                           observed={"k": {"note": "ran it on the sample and read the output", "ran": ["check k"]}})
-    rec = e.get_exec_verdict(T.TaskId("leaf"))
+    # …on the ledger: at a seam the person issues his default checker is the validator (`his_check`), so a
+    # colleague's record stands beside the verdict of record, not on its place
+    rec = observations(e._storage, TaskId("leaf"))[-1]
     e.stop()
     assert ok.get("recorded"), ok
     assert any("read the output" in str(x.get("evidence")) for x in rec["per_criterion"]), rec
@@ -2302,7 +2305,10 @@ def test_the_graph_says_who_it_waits_for_on_a_validating_node():
     _key = e.claims.begin_validation(TaskId("kid"))          # …the key is what releases it
     assert {n["id"]: n for n in T.get_graph(e)["nodes"]}["kid"]["awaiting"] == "validator"
     e.claims.end_validation(_key)
+    # …a hand PASS is no check of the validator his seam defaults to (`his_check`): the gate and the graph wait on
     T.record_verdict(e, "kid", "PASS", reviewer="user", observed={"k": {"note": "ran it", "ran": ["check k"]}})
+    assert {n["id"]: n for n in T.get_graph(e)["nodes"]}["kid"]["awaiting"] == "verdict"
+    instrument_passes(e, TaskId("kid"))
     assert {n["id"]: n for n in T.get_graph(e)["nodes"]}["kid"]["awaiting"] == "issuer"
     e.stop()
 

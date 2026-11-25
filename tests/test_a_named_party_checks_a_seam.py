@@ -567,3 +567,64 @@ def test_who_checks_a_settled_node_is_not_appointed_anew(tmp_path):
     assert _his_pass(e)["state"] == "DONE"
     out = _call(PAGE, "set_checker", e, SEAM, OTHER, agent="user")
     assert out.get("refused") and "settled" in out["error"], out
+
+
+# ── who the graph waits on and what a withheld PASS notes are read off the one owner of running checks ─────────────
+
+def _running(tmp_path, checker):
+    e = _issued(tmp_path, checker=checker)
+    assert T.signal(e, SEAM, "DELIVER", HOLDER, result="it holds", self_validation="PASS").get("accepted")
+    e.wait_idle()
+    assert e.claims.begin_validation(TaskId(SEAM)) is not None
+    return e
+
+
+@pytest.mark.parametrize("checker, awaited", [(CHECKER, CHECKER), ("self", "issuer"), ("validator", "validator")])
+def test_the_graph_awaits_the_appointed_check_not_an_instrument_run_beside_it(tmp_path, checker, awaited):
+    e = _running(tmp_path, checker)
+    node = {n["id"]: n for n in T.get_graph(e)["nodes"]}[SEAM]
+    assert node["awaiting"] == awaited, node
+    if checker == CHECKER:
+        _record(e, CHECKER)
+        assert {n["id"]: n for n in T.get_graph(e)["nodes"]}[SEAM]["awaiting"] == "issuer"
+
+
+@pytest.mark.parametrize("checker, noted", [(CHECKER, False), ("validator", True)])
+def test_a_withheld_pass_waits_on_an_instrument_only_where_it_is_the_check(tmp_path, checker, noted):
+    e = _running(tmp_path, checker)
+    gate = T.available_actions(e, SEAM, agent="user").get("gate") or ""
+    assert ("instrument is validating" in gate) == noted, gate
+
+
+def test_with_none_appointed_his_seams_verdict_is_the_gates_default_checker(tmp_path):
+    """No appointment at a seam he issues: the gate reads the default by who executes it (`his_check`) — the validator
+    over an agent of the system —, and so does the verdict shown: a passer-by's hand PASS is evidence beside it."""
+    e = _issued(tmp_path, checker=None)
+    assert T.signal(e, SEAM, "DELIVER", HOLDER, result="it holds", self_validation="PASS").get("accepted")
+    e.wait_idle()
+    assert _record(e, CHECKER)["recorded"]
+    v = T.get_verdict(e, SEAM)
+    assert v["verdict"] != "PASS" and [o["validator"] for o in v["others"]] == [CHECKER], v
+    assert not _his_pass(e).get("accepted")
+    assert e.appointee(TaskId(SEAM)) == V.his_check(e.graph, e.graph.get_task(TaskId(SEAM))) == "validator"
+
+
+def test_an_agents_seam_with_none_appointed_reads_every_record(tmp_path):
+    """Below him, a seam his executor issues with no appointment has no default checker: every record reads as before
+    the modes (`appointee` None)."""
+    e = _issued(tmp_path, checker=None)
+    covers = [c.name for c in e.graph.get_task(TaskId(SEAM)).spec.criteria]
+    kid = SEAM + ".k"
+    assert "error" not in T.decompose(e, SEAM, [{"task_id": kid, "assignee": ROLE, "covers": covers,
+                                                 "spec": {"description": "a part", "criteria": [criterion("k")]}}],
+                                      accepted_risks=REGISTER, agent=HOLDER)
+    e.wait_idle()
+    T.signal(e, kid, "ACCEPT", ROLE)
+    assert T.signal(e, kid, "DELIVER", ROLE, result="done", self_validation="PASS").get("accepted")
+    e.wait_idle()
+    assert e.appointee(TaskId(kid)) is None and V.his_check(e.graph, e.graph.get_task(TaskId(kid))) is None
+    crits = e.graph.get_task(TaskId(kid)).spec.criteria
+    assert T.record_verdict(e, kid, "PASS", reviewer=OTHER, observed={
+        c.name: {"note": f"ran `{c.name}`: OK", "ran": [p.command for p in c.check]} for c in crits})["recorded"]
+    v = T.get_verdict(e, kid)
+    assert (v["verdict"], v["validator"]) == ("PASS", OTHER), v

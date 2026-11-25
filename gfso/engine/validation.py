@@ -683,13 +683,11 @@ def named_checker(graph: Graph, task) -> Optional[str]:
 def appointee(graph: Graph, task) -> Optional[str]:
     """Who its issuer appointed to check this node, known before any check (§10.2: the check is whoever he appoints, the
     signature his): the party he named (`named_checker`), "validator" — the instrument —, or "self" — himself —, his
-    appointment, or its default under a mode, at a node the person issues (`his_check`). None where no one is: no mode
-    and no choice of his (every record reads as before the modes), an internal node self-verifying, a node the canon
-    owes the instrument, a node the system's holder issues."""
-    if task is None or (who := named_checker(graph, task)) is not None:
-        return who
-    chosen = chosen_checker(graph._storage, task.id) is not None or mode_at(graph, task) is not None
-    return his_check(graph, task) if chosen else None
+    appointment, or its default by who executes it, at a node the person issues (`his_check`) — the one default his PASS
+    gate reads too, with or without a mode. None where no one is: a node he does not issue, with no choice of his (every
+    record reads as before the modes) — an internal node self-verifying, a node the canon owes the instrument, a node
+    the system's holder issues."""
+    return None if task is None else named_checker(graph, task) or his_check(graph, task)
 
 
 def by_the_appointee(graph: Graph, task, rec: dict) -> bool:
