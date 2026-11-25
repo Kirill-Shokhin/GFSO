@@ -26,7 +26,8 @@ except ImportError:  # pragma: no cover
 
 from gfso import updates
 from gfso.config import (CALLER, CLIENT, CLIENT_HEADER, CLIENT_KINDS, DEFAULT_PROJECT, LEASE_HEADER, FOR_THE_PERSON,
-                         STANDING, agent_id, caller_id, client_kind, how_it_is_waited, ONE_CALL, ROOT_ID, project_by_env)
+                         STANDING, agent_id, caller_id, client_kind, how_it_is_waited, ONE_CALL, ROOT_ID, project_by_env,
+                         refuse_unsigned, unsigned)
 from gfso.core.types import Action
 from gfso.engine import Engine
 from gfso.engine.moves import SIGNERS
@@ -291,12 +292,10 @@ def _the_call(engine_or_registry, resolve, fn, project, ctx, args, kwargs) -> tu
     made only by a verb that may make it, as on the HTTP door (a read made the project it read, one per typo), and a
     refusal, the door's or the verb's, leaves none it made: a refused `set_mode` made one."""
     try:
-        engine, made = resolve(project, ctx, create=False), False
+        engine, made = _T.opened_for(fn.__name__, lambda create: resolve(project, ctx, create=create))
     except KeyError as unknown:
-        if not _T.may_make_a_project(fn.__name__):
-            return {"error": f"no such project {unknown.args[0]!r} — `list_projects` names them; `use_project` makes "
-                             f"a new one", "refused": True}, None
-        engine, made = resolve(project, ctx), True
+        return {"error": f"no such project {unknown.args[0]!r} — `list_projects` names them; `use_project` makes "
+                         f"a new one", "refused": True}, None
     except ValueError as e:              # whose graph this call is about is not settled: said, not raised
         return {"error": str(e)}, None
     no = _unread_go(fn.__name__, engine, kwargs) or _named_under_a_mode(fn.__name__, engine, kwargs)
@@ -415,7 +414,7 @@ def _with_news(ctx, name: str, out, engine):
     was last told: no call of a chat client is held and nothing wakes it, so it learns at its next call, whatever it is."""
     if client_kind() != "chat" or not isinstance(out, dict) or (key := _session_key(ctx)) is None:
         return out
-    if (p := CALLER.get()) is not None and not p.signs_as:
+    if unsigned() is not None:
         return out                 # …a reader is no customer: its read marks no plan told (critic over open reading)
     seen = out if name == "next_steps" else T.next_steps(engine)
     why = T.needs_its_customer(seen)
@@ -491,14 +490,6 @@ async def _awaited_with_a_heartbeat(loop, ctx, label: str, step: dict, call):
                 pass          # progress is presentation — never break the pipeline
 
 
-def _a_move_here(what: str) -> None:
-    """A project verb mounted beside the tools (`_mount_project_*`) is outside the signing every tool passes
-    (`tools_llm._signed`): what it changes is refused here to a call no credential signs — a reader through a front
-    or the LAN reads, and deletes or makes nothing (critic over the open-read change: a reader deleted a project)."""
-    if (p := CALLER.get()) is not None and not p.signs_as:
-        raise ValueError(f"{what} is a move, and this call is signed by no one: {p.lift}")
-
-
 def _mount_project_delete(server, reg) -> None:
     """The one DESTRUCTIVE project verb, mounted apart from the reads.
 
@@ -520,7 +511,7 @@ def _mount_project_delete(server, reg) -> None:
         name = name or project
         if not name:
             return {"error": "delete_project needs the project: delete_project(project='…')"}
-        _a_move_here("deleting a project")
+        refuse_unsigned("deleting a project")
         key = _session_key(ctx)
         if key is not None and _SESSION_PROJECTS.get(key) == name:
             raise ValueError(f"{name!r} is your session's current project — use_project away first")
@@ -542,15 +533,6 @@ def _protocol(section: str = "") -> dict:
     heading names it."""
     return _PROTOCOL.reference(section)
 
-
-def _issued_by_the_person(engine, name: str) -> bool:
-    """Whether a node of `engine`'s graph is held by `name` and its Del was the person's to set (§10.1): issued by him,
-    or a root self-assigned to it — made at a door, every caller of which is the person locally; the system's roles
-    split, they make no root."""
-    g = engine.graph
-    return any(str(t.assignee) == name and (str(i := g.issuer_of(t.id)) in FOR_THE_PERSON
-                                            or (g.get_parent(t.id) is None and str(i) == name))
-               for t in g.all_tasks())
 
 
 def _act_as(where, _Ctx):
@@ -578,7 +560,7 @@ def _act_as(where, _Ctx):
             p = CALLER.get()
             # …its own holding, refused since (lost, or a claim under `--protected`), logs in again or out: that call
             # reaches `take`; and a connection that signs nothing yet asks `take`, which says what it wants
-            if p is not None and not p.signs_as and not (p.via == signin.BARE.via or signin.holds(lease) is not None):
+            if unsigned() is not None and not (p.via == signin.BARE.via or signin.holds(lease) is not None):
                 return {"refused": True, "error": f"this connection signs as no one: {p.lift}"}
             if p is not None and p.signs_as and p.via != STANDING.via and not p.via.startswith("as:"):
                 return {"refused": True, "error": f"this connection signs as `{p.name}` by its {p.how}: a console "
@@ -598,7 +580,7 @@ def _act_as(where, _Ctx):
             else:
                 try:
                     CALLER.set(signin.take(lease, name, token,
-                                           engine is not None and _issued_by_the_person(engine, name)))
+                                           engine is not None and T.issued_by_the_person(engine, name)))
                 except ValueError as ex:
                     return {"refused": True, "error": str(ex)}
             return {**signin.whoami(), **_left_owing(held, *owed)}
@@ -690,7 +672,7 @@ def _mount_project_verbs(server, reg) -> None:
             return {"error": "use_project needs the project's name: use_project(project='…') "
                              "(or `name=`, the older spelling — both work)"}
         if (key := _session_key(ctx)) is None or not reg.exists(name):   # the server's active one, or a new one
-            _a_move_here("making a project or switching the server's active one")
+            refuse_unsigned("making a project or switching the server's active one")
         reg.engine(name)                              # validates the name + creates lazily
         _entered(reg, name, ctx)
         # Switching projects answers "which one am I in now", so it returns that and a short

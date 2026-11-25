@@ -1003,7 +1003,12 @@ class Dispatcher:
         return True
 
     def _say_it_self_verifies(self, s: dict, task) -> None:
-        """Say, once per delivery, that no validator is coming and why (§10.3)."""
+        """Say, once per delivery, that no validator is coming and why (§10.3) — or who checks it instead."""
+        if (who := self._engine.named_checker(task.id)) is not None:
+            self._say_once(f"internal:{self._round_key(task, 'v:')}",
+                           f"{s['task_id']}: delivered, and checked by {who}, whom its issuer appointed — not the "
+                           f"validator: its PASS waits on {who}'s `record_verdict`")
+            return
         self._say_once(
                 f"internal:{self._round_key(task, 'v:')}",
                 f"{s['task_id']}: delivered and checked by its holder, not the validator — below the "

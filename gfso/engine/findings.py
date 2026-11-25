@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
-from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, round_inputs, round_of, round_words,
+from gfso.core.protocol.procedure import (forget_round, pinned_run, probe_id, probe_key, round_inputs, round_of, round_words,
                                           without_past_builds, without_pinned_runs, without_retired)
 from gfso.core.types import BATCH, HOST, LAID, VOLUME, Signal, TaskId, files_at, laid_beside
 from .audit import VERSION_INSTALLING
@@ -220,7 +220,7 @@ def released(p: dict, criterion: str, gone: dict, seen: frozenset = frozenset())
     path and no id; hidden then, an executor got a bare criterion name and re-delivered blind — critic r4). A finding
     over laid inputs is stored with its directory as a token, so its own run is known by the command as run (`seen`: {(criterion, command)})."""
     pid = probe_id(criterion, p)
-    return (bool(pinned_run(p, gone, criterion)) or pid in gone or (criterion, " ".join(str(p.get("command") or "").split())) in seen
+    return (bool(pinned_run(p, gone, criterion)) or pid in gone or (criterion, probe_key(p.get("command"))) in seen
             or f"{pid.rsplit('#', 1)[0]}#{p.get('id')}" in gone)
 
 

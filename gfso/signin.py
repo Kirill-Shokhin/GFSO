@@ -39,7 +39,7 @@ NOBODYS = frozenset({SYSTEM, "person"})
 #: `ck-val-1`, `<project>-val`), a flag taken for a name (`--assignee`): a role the roster no longer holds is still one
 SYSTEM_SHAPE = re.compile(r"^-|(^|-)exec(-?\d+)?$|(^|-)val([-\d].*)?$")
 
-_SIGN_IN = "sign in: run `gfso ui`"
+SIGN_IN = "sign in: run `gfso ui`"
 _FRONT = ("this call came through a front (a name of its own, a bind past loopback, or a forwarding header), where "
           "every client arrives from this machine: a browser signs in with `gfso ui --host <front>`, a client sends "
           "its token (`gfso agent <name>`, then GFSO_TOKEN=<token>)")
@@ -368,7 +368,7 @@ def principal_of(conn) -> Principal:
     if p:
         return p                  # …a credential that names no one, from the person's own process: its refusal said
     if h.get("origin") or h.get("sec-fetch-site"):
-        return _refused(_SIGN_IN) if page_auth() == "key" else PAGE
+        return _refused(SIGN_IN) if page_auth() == "key" else PAGE
     lease = h.get(LEASE_HEADER)
     at_mcp = any(str(conn.scope.get(k) or "").startswith(MCP_PATH) for k in ("root_path", "path"))
     return held(lease) or (UNTAKEN if lease and at_mcp else BARE)
@@ -599,7 +599,7 @@ def whoami(project: str | None = None) -> dict:
     person signed in or an agent acting for him, `how` its credential, `signs_as` every name it may sign as. Asked about
     a project, the way to sign in opens that project's page (`gfso ui <project>`)."""
     p = CALLER.get() or STANDING
-    lift = f"sign in: run `gfso ui {project}`" if project and p.lift == _SIGN_IN else p.lift
+    lift = f"sign in: run `gfso ui {project}`" if project and p.lift == SIGN_IN else p.lift
     # …`agent` the kind: the standing agent, or a console acting for the person under a name of his
     return {"name": caller_id(), "kind": "person" if p.a_page else AGENT if p.signs_as else "none",
             "how": p.how, "signs_as": list(p.signs_as), **({"lift": lift} if lift else {})}

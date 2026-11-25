@@ -31,13 +31,20 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Optional, Sequence
 
 from gfso.core.types import HOST, Criteria, Probe, files_at, unprojected
+from gfso.core.graph.model import is_its_executor
 from gfso.core.protocol.shell import commands, substitution_end
 from gfso.core.protocol.invariants import (ON_NO_DELIVERY, OVER_A_PASS, PAST_BOUND, emits_a_constant, probe_held,
                                           probes_of, spoken_verdict, underprobed)
 
 
-def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", str(s or "")).strip()
+def probe_key(command) -> str:
+    """A command as a probe's identity reads it: whitespace runs as one, the ends stripped. THE one key — the
+    regression store, a report matched to its pin, a corpus carried to a re-written probe all look a probe up by it,
+    and one spelling apart would lose the match silently."""
+    return " ".join(str(command or "").split())
+
+
+_norm = probe_key
 
 
 def probe_id(criterion_name: str, probe: Probe | Mapping) -> str:
@@ -328,7 +335,7 @@ def pinned_files(criteria: Iterable) -> dict[tuple, str]:
     for c in criteria or ():
         name, check = (c.get("name"), c.get("check")) if isinstance(c, dict) else (c.name, c.check)
         for p in check or ():
-            cmd = " ".join(str(p.get("command") if isinstance(p, dict) else p.command).split())
+            cmd = probe_key(p.get("command") if isinstance(p, dict) else p.command)
             for path, body in _input_items(p.get("inputs") if isinstance(p, dict) else p.inputs):
                 if body:
                     by_cmd.setdefault((str(name), cmd, input_name(path)), body)
@@ -348,7 +355,7 @@ def with_named_files(criterion: dict, files: dict[tuple[str, str], str]) -> dict
     def _probe(p):
         if not isinstance(p, dict) or not p.get("inputs"):
             return p
-        name, cmd = str(criterion.get("name")), " ".join(str(p.get("command", "")).split())
+        name, cmd = str(criterion.get("name")), probe_key(p.get("command"))
         return {**p, "inputs": {input_name(path): body or files.get((name, cmd, input_name(path)))
                                 or files.get((name, input_name(path)), "") for path, body in _input_items(p["inputs"])}}
     return {**criterion, "check": [_probe(p) for p in criterion["check"]]}
@@ -2127,7 +2134,7 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # self-verify; at a seam independence is owed and a self-validation is not a verdict at all. The
     # caller guarantees that upstream today, and the repo's own recurring class is a rule that
     # holds at one door and not at the next — so it is checked here, where the rule lives.
-    if task is None or (bool(by_hand) and internal and str(validator_id) == str(task.assignee)):
+    if task is None or (bool(by_hand) and internal and is_its_executor(task, validator_id)):
         return {c: b for c, b in gaps.items() if b != stood.get(c)}
     for name, ids in unrun_pinned(task.spec.criteria, per_criterion, dirs).items():
         gaps.setdefault(name, []).append(

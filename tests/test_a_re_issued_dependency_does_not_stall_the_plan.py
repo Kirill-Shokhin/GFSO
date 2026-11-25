@@ -18,6 +18,7 @@ import gfso.tools as T
 from gfso import issuer as I
 from gfso.core.graph import q_Del, q_T
 from gfso.core.types import AgentId, Criteria, DoneReason, Signal, SignalData, State, TaskId
+from gfso.decompose.seams import RUNS, SeamFinding
 from gfso.engine.validation import _l0_holes
 from tests.support import REGISTER, criterion, make_engine, declare
 
@@ -307,8 +308,9 @@ def test_no_producer_is_promoted_for_a_siblings_code_its_own_checks_run(monkeypa
     for sig in ("ACCEPT", "BLOCK"):
         T.signal(e, "root.x", sig, "w", reason="myre has no compile")
     e.wait_idle()
-    monkeypatch.setattr(I, "seam_findings", lambda eng, tid: [
-        "x's probes run the code of api, which x does not wait on: it is checked in a place holding only its own work"])
+    monkeypatch.setattr(I, "seam_findings", lambda eng, tid: [SeamFinding(
+        "x's probes run the code of api, which x does not wait on: it is checked in a place holding only its own work",
+        RUNS, "x")])
     lexer = {"name": "api", "description": "the package", "criteria": [criterion("l1", "it compiles")]}
     ok, why = I._promote(e, e.graph.get_task(TaskId("root.x")), "lead", {"child": lexer}, "x needs myre", None)
     assert not ok and "x's probes run the code of api" in why and "not `promote`" in why

@@ -12,7 +12,9 @@ these from memory, and the CLI door already needs `criterion=@file` for keys con
 """
 from __future__ import annotations
 
-from gfso.core.graph.review import finding_keys
+from pathlib import Path
+
+from gfso.core.graph.review import finding_keys, finding_reasons, is_undecided, undecided_key, undecided_line
 
 _TWO_CONFLICTS_ONE_PAIR = {
     "semantic_covered": False,
@@ -51,3 +53,16 @@ def test_answering_one_leaves_the_other_open():
 
     assert len(still_open) == 1, still_open
     assert "file handle" in still_open[0]
+
+
+def test_an_undecided_obligation_is_keyed_and_said_by_one_owner():
+    """The key the gate holds, the reason the issuer reads beside it and the review's line are built in `review` alone:
+    rebuilt by hand elsewhere, a rewording there left a reader matching a key nobody wrote any more."""
+    g = {"obligation": "the goal requires X", "admits": "Y"}
+    rec = {**_TWO_CONFLICTS_ONE_PAIR, "conflicts": [], "undecided_obligations": [g]}
+    [key] = finding_keys(rec)
+    assert key == undecided_key(g) and is_undecided(key)
+    assert finding_reasons(rec) == {key: "admits: Y"}
+    assert undecided_line(g) == "[undecided] the goal requires X — admits: Y"
+    src = "".join(p.read_text(encoding="utf-8") for p in Path(__file__).parents[1].joinpath("gfso").rglob("*.py"))
+    assert src.count('"undecided: "') == 1 and src.count("[undecided{") == 1, "an obligation's key or line spelled twice"

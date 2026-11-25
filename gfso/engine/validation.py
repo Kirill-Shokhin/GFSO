@@ -6,7 +6,8 @@ import re
 from datetime import datetime
 from typing import Optional
 
-from gfso.config import FOR_THE_PERSON, PERSON, PERSONS_NAMES, agent_id as _config_agent_id, flag, reserved_refusal
+from gfso.config import (FOR_THE_PERSON, PERSON, PERSONS_NAMES, SYSTEMS_OWN, agent_id as _config_agent_id, flag,
+                         reserved_refusal)
 from gfso.config import validate_internal as _validate_internal
 from gfso.engine.verdicts import criterion_version, observations, refuted_versions
 from gfso.engine.findings import regression, ruling_defect, standing_rulings
@@ -25,7 +26,7 @@ from gfso.core.handlers.constraint import _parse_numeric_bound
 from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import SESSION_FIT, finding_keys
-from gfso.core.graph.model import (chosen_checker, PAUSE_KEY, hands_of, party_kind, signs_as, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
+from gfso.core.graph.model import (chosen_checker, PAUSE_KEY, hands_of, is_its_executor, party_kind, signs_as, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
                                    recorded_by_an_appointed_observer, logged_criteria, parent_waits)
 from gfso.engine.audit import VERSION_INSTALLING, on_current_version
 
@@ -518,7 +519,8 @@ def chat_seam(graph: Graph, task) -> bool:
 
 
 def his_check(graph: Graph, task) -> Optional[str]:
-    """Who checks a node the person issues — "validator" or "self", himself — or None at a node he does not issue.
+    """Who checks a node the person issues — "validator", "self", himself, or the party he named (`named_checker`) — or
+    None at a node he does not issue.
     His appointment (`set_checker`), at a seam too: the check is the issuer's to make or to appoint, the signature his
     either way (§10.2), and a seam asks only that it is not the executor's (§10.3). Where he appointed none, by who
     executes it: the system's validator over any agent of the system — his own in his chat (`chat_seam`), a registered
@@ -531,8 +533,10 @@ def his_check(graph: Graph, task) -> Optional[str]:
         return None
     if party_kind(graph, str(graph.issuer_of(task.id)), graph.roster or {}) == "machine":
         return None
-    if (made := chosen_checker(graph._storage, task.id)) is not None:
+    if (made := chosen_checker(graph._storage, task.id)) in CHECKERS:
         return made
+    if (who := named_checker(graph, task)) is not None:
+        return who
     return "validator" if validator_chosen(graph, task) or not executed_by_a_human(graph, task) else "self"
 
 
@@ -542,9 +546,10 @@ def persons_seam(graph: Graph, task) -> bool:
     appointment or its default, or under AUTO the mode's? There the validator observes every delivery, its FAIL binds
     his signature and its observation is owed before it (`owed_observer`, `observation_blocker`), «перед тем как
     принести результат мне». Where he checks it himself his PASS is the check and the signature, and no validator's
-    record is owed. A node the system's holder issues below him is the mode's."""
+    record is owed; where he named a party to check it, that party's record is (`named_checker`). A node the system's
+    holder issues below him is the mode's."""
     return (task is not None and his_seam(graph.issuer_of(task.id), task.assignee)
-            and his_check(graph, task) != "self")
+            and his_check(graph, task) in ("validator", None))
 
 
 def a_human(graph: Graph, name) -> bool:
@@ -645,10 +650,11 @@ def standing_check(graph: Graph, audit, task, tree: Optional[str]) -> Optional[d
 
 def owed_observer(graph: Graph, task) -> Optional[str]:
     """Why the instrument observes this node — None where it is not owed there. At a node the person issues, by his
-    appointment or its default (`his_check`)."""
+    appointment or its default (`his_check`). Not where its issuer named a party to check it: that party's record is the
+    check (`named_checker`)."""
     if persons_seam(graph, task):
         return f"it is {HIS_WORD_ON_THE_SEAM}"
-    if his_check(graph, task) == "self":
+    if his_check(graph, task) == "self" or named_checker(graph, task) is not None:
         return None
     if graph.is_public(task):
         return "it is a seam: its result crosses into another scope (§10.3)"
@@ -661,8 +667,119 @@ def owed_observer(graph: Graph, task) -> Optional[str]:
 
 #: the nodes whose issuer chose the validator to check them (`Engine.set_checker`)
 VALIDATOR_CHOSEN = "validator_chosen"
-#: who may check a node: its holder, or the instrument
+#: who may check a node without being named: its issuer himself, or the instrument
 CHECKERS = ("self", "validator")
+
+
+def named_checker(graph: Graph, task) -> Optional[str]:
+    """The party its issuer named to check this node (`set_checker`) — none of `CHECKERS` — or None. Its record is the
+    check his PASS reads (`observation_standing`); the validator does not observe the node by itself (`owed_observer`).
+    An appointment lapses where the name became the node's executor (a reassign): its own check is none (§10.3), and the
+    default applies."""
+    made = chosen_checker(graph._storage, task.id) if task is not None else None
+    return made if made is not None and made not in CHECKERS and not _one_party(made, task.assignee) else None
+
+
+def appointee(graph: Graph, task) -> Optional[str]:
+    """Who its issuer appointed to check this node, known before any check (§10.2: the check is whoever he appoints, the
+    signature his): the party he named (`named_checker`), "validator" — the instrument —, or "self" — himself —, his
+    appointment, or its default under a mode, at a node the person issues (`his_check`). None where no one is: no mode
+    and no choice of his (every record reads as before the modes), an internal node self-verifying, a node the canon
+    owes the instrument, a node the system's holder issues."""
+    if task is None or (who := named_checker(graph, task)) is not None:
+        return who
+    chosen = chosen_checker(graph._storage, task.id) is not None or mode_at(graph, task) is not None
+    return his_check(graph, task) if chosen else None
+
+
+def by_the_appointee(graph: Graph, task, rec: dict) -> bool:
+    """Is `rec` — {validator, by_hand, verdict} — a record of the appointed check (`appointee`): the one the verdict of
+    record and the PASS gate both read? The named party's; for "validator" an instrument's run, or the issuer's own FAIL
+    (his FAIL needs no check behind it, `standing_check`); for "self" the issuer's own. Anyone else's — an instrument's
+    own check where he checks it himself (§10.2: an implementation may run one, at any node), a passer-by's, a named
+    party's hand once the validator is appointed — is evidence beside it. With no appointment, every record."""
+    if (who := appointee(graph, task)) is None:
+        return True
+    issuer, by = graph.issuer_of(task.id), str(rec.get("validator"))
+    if who == "validator":
+        return recorded_by_an_appointed_observer(rec, task, issuer) and (
+            not rec.get("by_hand") or str(rec.get("verdict")) == Verdict.FAIL)
+    if who == "self":
+        return signs_as(issuer, by)
+    return by == who
+
+
+def of_record(graph: Graph, audit, task, rec: dict) -> bool:
+    """Is `rec` — {validator, by_hand, verdict, log_at} — THE verdict of record on this node: the stored verdict every
+    reader of «the verdict» reads (the PASS gate, the frontier, `get_verdict`, closure and refutation, the closing
+    record, q_V)? Where a checker is appointed, the appointee's (`by_the_appointee`), or anyone's whose check began after
+    the node settled (a post-hoc check: §15.4's later fail is a check over a COMPLETED node, so a run begun before the
+    close and landing after it is not one); anyone else's stands on the ledger beside it (`others_records`). `log_at`:
+    where in the log the run's claim began (`ValidationClaim.log_at`); a hand record, now (None). The one carrier every
+    write of the stored verdict goes through."""
+    if task is None or by_the_appointee(graph, task, rec):
+        return True
+    began = rec.get("log_at")
+    return task.state in TERMINAL_STATES and (began is None or began > audit.last_at(task.id, new_state=task.state))
+
+
+def of_record_now(graph: Graph, audit, task) -> Optional[dict]:
+    """The record `of_record` seats as the verdict on the current delivery as the node stands now — the newest standing
+    record of it whose party `of_record` admits —, or None. Read where who checks changes (`Engine.set_checker`): a
+    record's place is decided as it lands, so an appointment re-decides it, else the appointee's record kept beside
+    stayed off the verdict's place and another's stayed on it. Where the gate those records decide holds a FAIL
+    (`observation_standing`: at his seam under the validator any FAIL on the tree decides, whatever came after), the
+    newest such FAIL — so the verdict shown and the gate read one record."""
+    seated = [r for r in observations(graph._storage, task.id)
+              if record_stands(graph, audit, task, r) and of_record(graph, audit, task, r)]
+    if observation_standing(graph, task, audit)["fails"]:
+        seated = [r for r in seated if str(r.get("verdict")) == Verdict.FAIL] or seated
+    return seated[-1] if seated else None
+
+
+def others_records(graph: Graph, audit, task) -> list:
+    """The records standing on the current delivery beside the verdict of record at a node with an appointed checker —
+    those `of_record` does not seat — or [] elsewhere."""
+    if appointee(graph, task) is None:
+        return []
+    return [r for r in observations(graph._storage, task.id)
+            if record_stands(graph, audit, task, r) and not of_record(graph, audit, task, r)]
+
+
+def _one_party(a, b) -> bool:
+    """Do two names sign as one party — the same name, the person over the system party, or two names of the person?"""
+    return signs_as(a, b) or signs_as(b, a) or {str(a), str(b)} <= PERSONS_NAMES
+
+
+def checker_refused(graph: Graph, task, checker: str) -> Optional[str]:
+    """Why its issuer may not appoint `checker` to check `task`, or None — the one rule `set_checker` and the choices
+    offered (`checker_choices`) read. `CHECKERS` always; else a party that makes its own moves — the person, a human
+    outside the system (`a_human`), a registered `external` agent, a name working in a chat —: never its executor
+    (§10.3: at a seam the check is not the executor's), never its issuer under another name ("self" is his), never a
+    name the system keeps for its own (`SYSTEMS_OWN`), never a role of the system, which nothing drives to check."""
+    if checker in CHECKERS:
+        return None
+    if checker in SYSTEMS_OWN:
+        return f"'{checker}' names {SYSTEMS_OWN[checker]}, no party that checks"
+    if _one_party(checker, task.assignee):
+        return (f"'{checker}' is {task.id}'s executor: its own check is no check at a seam — verifier ≠ executor "
+                f"(§10.3)")
+    if _one_party(checker, graph.issuer_of(task.id)):
+        return f"'{checker}' is {task.id}'s issuer: his own check is 'self'"
+    if (checker in PERSONS_NAMES or a_human(graph, checker) or (graph.roster or {}).get(checker) == "external"
+            or checker in in_chat_names(graph)):
+        return None
+    if checker in (graph.roster or {}):
+        return (f"'{checker}' is a role of the system that no one drives to check — appoint `validator` for the "
+                f"instrument")
+    return f"'{checker}' is no party of this project: the person, a human, an `external` agent or a name in a chat"
+
+
+def checker_choices(graph: Graph, task) -> list[str]:
+    """Who its issuer may appoint to check `task` now: the validator, himself, and every party `checker_refused` admits
+    among the names known here — a human outside the system is admitted by name, never listed."""
+    return [c for c in ("validator", "self", *sorted({*(graph.roster or {}), *in_chat_names(graph), PERSON}))
+            if checker_refused(graph, task, c) is None]
 
 
 def validator_chosen(graph: Graph, task) -> bool:
@@ -733,7 +850,15 @@ def observation_standing(graph: Graph, task, audit, tree: Optional[str] = None) 
     the ledger existed. Appointed = the instrument, or the node's issuer where he is not its executor
     (`recorded_by_an_appointed_observer`). At a seam the person issues (`persons_seam`) it is the check standing for
     the delivered tree (`standing_check`) — `tree`, else the one the last DELIVER recorded — and nothing else: his hand
-    adds a FAIL and never stands for the validator's PASS."""
+    adds a FAIL and never stands for the validator's PASS. Where its issuer named a party to check it (`named_checker`)
+    it is that party's records alone: anyone else's stand beside them. Wherever a checker is appointed, only its records
+    (`by_the_appointee`): the records the verdict of record is taken from, so the gate and the verdict read one answer."""
+    if named_checker(graph, task) is not None:
+        recs = [r for r in observations(graph._storage, task.id)
+                if by_the_appointee(graph, task, r) and record_stands(graph, audit, task, r)]
+        fails = sorted({str(c) for r in recs if str(r.get("verdict")) == Verdict.FAIL
+                        for c in (r.get("failed_criteria") or ())})
+        return {"pass": not fails and any(str(r.get("verdict")) == Verdict.PASS for r in recs), "fails": fails}
     if persons_seam(graph, task):
         rec = standing_check(graph, audit, task, tree or delivered_tree(audit, task))
         failed = rec is not None and str(rec.get("verdict")) == Verdict.FAIL
@@ -743,7 +868,7 @@ def observation_standing(graph: Graph, task, audit, tree: Optional[str] = None) 
     cur = graph.exec_verdict_record(task.id)
     if record_stands(graph, audit, task, cur):
         recs.append(cur)
-    appointed = [r for r in recs if recorded_by_an_appointed_observer(r, task, issuer)]
+    appointed = [r for r in recs if recorded_by_an_appointed_observer(r, task, issuer) and by_the_appointee(graph, task, r)]
     # at a seam the issuer's own latest record is his check, and what came before it is a logged disagreement
     mine = [i for i, r in enumerate(appointed) if displaces_a_refutation(graph, task, r.get("validator"), r.get("by_hand"))]
     if mine:
@@ -764,8 +889,28 @@ def observation_blocker(graph: Graph, task, audit) -> Optional[dict]:
     mode a seam keeps the older rule below it (a current PASS on the record, whoever recorded it) —
     the appointed requirement is C-12's, and it came with the modes. A seam the person issues whose check is the
     validator's owes it in any mode, and its FAIL binds him (`persons_seam`): his lift is the FAIL, and its holder's a
-    repair (§12.16 (ii)); where he checks it himself (`his_check`), nothing is owed but his own record."""
+    repair (§12.16 (ii)); where he checks it himself (`his_check`), nothing is owed but his own record. Where its issuer
+    named a party to check it, its PASS waits on that party's PASS record, in any mode, and that party's FAIL binds
+    (Inv-2) as the validator's does at his seam."""
     if task is None:
+        return None
+    if (who := named_checker(graph, task)) is not None:
+        st = observation_standing(graph, task, audit)
+        if st["fails"]:
+            return {"kind": "observed_fail", "fails": st["fails"],
+                    "why": (f"{who}, appointed by its issuer to check {task.id}, recorded this delivery FAIL on "
+                            f"{', '.join(st['fails'])} — an observed divergence is that criterion's value (Inv-2, "
+                            f"§12.8): no later record turns it into a pass"),
+                    "opens_with": (f"signal FAIL with those criteria — its holder repairs and re-delivers (§12.16 "
+                                   f"(ii)) — or, where the criterion itself is what is wrong, revise it "
+                                   f"(`edit_criteria('{task.id}', …)`)")}
+        if not st["pass"]:
+            return {"kind": "unobserved", "fails": [],
+                    "why": (f"its issuer appointed {who} to check {task.id} (§10.2: the check is whoever he appoints, "
+                            f"the signature his), and {who} has recorded no PASS on this delivery; another's record "
+                            f"stands beside it and does not stand for {who}'s"),
+                    "opens_with": (f"{who} records its verdict, by its own credential — `record_verdict('{task.id}', "
+                                   f"'PASS' or 'FAIL', …)` —; or its issuer appoints another (`set_checker`)")}
         return None
     st, his = observation_standing(graph, task, audit), persons_seam(graph, task)
     if st["fails"] and his:
@@ -1103,7 +1248,7 @@ def _pass_rules(signal_data: SignalData, graph: Graph, audit) -> None:
         if (task is not None and signal_data.source
                 and not graph.is_public(task)
                 and not stands_as_pass(graph, audit, task, _rec)):
-            _own = signal_data.source == task.assignee
+            _own = is_its_executor(task, signal_data.source)
             raise ValidationError(
                 f"PASS on {signal_data.task_id} by "
                 + (f"its own executor ({signal_data.source})" if _own
@@ -1191,7 +1336,7 @@ def _pass_rules(signal_data: SignalData, graph: Graph, audit) -> None:
                        else "the recorded PASS is on a result that no longer stands — something this node is "
                             "built from (a part below it, a producer it consumes) was delivered again or "
                             "FAILed since it was recorded, re-validate")
-                _self = bool(signal_data.source) and signal_data.source == task.assignee
+                _self = is_its_executor(task, signal_data.source)
                 _who = (f"by its own executor ({signal_data.source})" if _self
                         else f"by {signal_data.source}" if signal_data.source else "")
                 raise ValidationError(

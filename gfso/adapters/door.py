@@ -71,20 +71,24 @@ BODIES = 3 * MAX_BODY
 #: the provider's requests a door opens a second, a burst of `BURST`: each is a port of the host for 120 s and a lookup's for 83, and a
 #: session's seal sees only its connections to the door, so 28 a second from one session passed every bound, under every switch (critic, ran)
 RATE, BURST = 20, 300
-_lock = threading.Lock()
+#: what the log writes past its cap (`_say`)
+KEPT = "passed requests"
+_log_lock = threading.Lock()
 _full: list = []
 
 
-def _say(log: str, line: str, *, passed: bool = False) -> None:
-    """One line of the log. Past its cap only refusals are dropped: a passed request is spend, and always written —
-    and a write that fails is dropped, never raised into the request: a log's full disk let a flood of refusals turn
-    every keyed request after it into a 502 (critic over 71b49ad, measured)."""
+def _say(log: str, line: str, *, kept: bool = False) -> None:
+    """One line of the log. Past its cap only refusals are dropped: what it keeps (`KEPT`) is always written — a passed
+    request is spend, an opened connection is what a flood of refusals must not leave unrecorded — and a write that
+    fails is dropped, never raised into the request: a log's full disk let a flood of refusals turn every request after
+    it into a failure (critic over 71b49ad, measured). The door and the gateway each ship alone, so each holds this
+    function, and a test holds the two copies equal."""
     try:
-        with _lock, open(log, "a", encoding="utf-8") as f:
-            if passed or f.tell() < LOG_CAP:
+        with _log_lock, open(log, "a", encoding="utf-8") as f:
+            if kept or f.tell() < LOG_CAP:
                 f.write(line + "\n")
             elif not _full:
-                _full.append(f.write("the log is full: refusals are no longer written, passed requests still are\n"))
+                _full.append(f.write(f"the log is full: refusals are no longer written, {KEPT} still are\n"))
     except OSError:          # …a log line the disk refuses is dropped: the request is served all the same
         pass
 
@@ -307,7 +311,7 @@ def handler(upstream: str, cred: dict, log: str, closed: bool):
                 body = room.free()      # …the room and the memory back as it is sent on, not at the answer's end (critic, ran)
                 r = up.getresponse()
                 # …written as the answer starts: a door ended mid-stream still leaves the passed request on record
-                _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {r.status}", passed=True)
+                _say(log, f"{self.client_address[0]} {self.command} {path[:200]} {r.status}", kept=True)
                 status = "said"
                 _relay(self, r)
             except OSError as e:

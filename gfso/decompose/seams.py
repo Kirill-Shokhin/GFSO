@@ -12,6 +12,25 @@ from __future__ import annotations
 import re
 
 
+class SeamFinding(str):
+    """A seam finding: its text, with its kind (`RUNS`, `SEAM`, `SHARED`) and the part it is about held beside it — a
+    reader acting on one reads these, never its prose, which a rewording would silently take out of its reach."""
+
+    def __new__(cls, text: str, kind: str, part: str) -> "SeamFinding":
+        s = super().__new__(cls, text)
+        s.kind, s.part = kind, part
+        return s
+
+    def __reduce__(self):
+        """Copied or pickled with its kind and part (a bare str's reduce called `__new__` without them)."""
+        return (SeamFinding, (str(self), self.kind, self.part))
+
+
+#: a part's probes run another part's code it does not wait on · a seam naming nothing its producer writes · two parts
+#: writing one file unordered
+RUNS, SEAM, SHARED = "runs", "seam", "shared"
+
+
 def _ids(spec: dict) -> list[str]:
     return [str(k.get("id")) for k in spec.get("subtasks") or []]
 
@@ -65,7 +84,7 @@ def _owns(writes: set[str], path: str) -> bool:
     return any(p == w or p.startswith(w + "/") for w in writes)
 
 
-def seam_problems(spec: dict) -> list[str]:
+def seam_problems(spec: dict) -> list[SeamFinding]:
     """What the seams claim that the plan's own declarations contradict — read part by part, over what each part said: a
     part that declared nothing (a plan written before the field, a child an issuer's repair added by hand) is not judged,
     and leaves every other part judged as before. The declarations ride the graph (`Engine.record_seam_claim`), so a
@@ -92,11 +111,12 @@ def seam_problems(spec: dict) -> list[str]:
         reads = [r for r in d.get("reads") or [] if str(r).strip()]
         foreign = [r for r in reads if not _owns(writes[f], r)]
         if not reads or foreign:
-            out.append(f"seam {f} → {t}: {'names nothing' if not reads else 'names ' + ', '.join(map(str, foreign))} "
-                       f"as what {t}'s work reads of {f}, and {f} writes {sorted(writes[f]) or 'no file'}. A seam is "
-                       f"{t}'s WORK reading {f}'s output; one that orders the two only so {t}'s CHECK can run makes "
-                       f"independent work wait — give {t}'s probes inputs that exercise its own code over what its real "
-                       f"producers provide, or move that criterion to the parent; else name the file {t} reads")
+            out.append(SeamFinding(
+                f"seam {f} → {t}: {'names nothing' if not reads else 'names ' + ', '.join(map(str, foreign))} as what "
+                f"{t}'s work reads of {f}, and {f} writes {sorted(writes[f]) or 'no file'}. A seam is {t}'s WORK reading "
+                f"{f}'s output; one that orders the two only so {t}'s CHECK can run makes independent work wait — give "
+                f"{t}'s probes inputs that exercise its own code over what its real producers provide, or move that "
+                f"criterion to the parent; else name the file {t} reads", SEAM, t))
     ids = list(writes)
     for a_i, a in enumerate(ids):
         for b in ids[a_i + 1:]:
@@ -104,9 +124,9 @@ def seam_problems(spec: dict) -> list[str]:
             # would push toward the seam that orders them — the opposite of what it is for
             shared = sorted((writes[a] & writes[b]) - dirs)
             if shared and a not in upstream(b) and b not in upstream(a):
-                out.append(f"{a} and {b} both write {', '.join(shared)} with no seam ordering them: run at the same "
-                           f"time, the later write takes the earlier one's work — give each its own file, or the seam "
-                           f"that orders them")
+                out.append(SeamFinding(f"{a} and {b} both write {', '.join(shared)} with no seam ordering them: run at "
+                                       f"the same time, the later write takes the earlier one's work — give each its "
+                                       f"own file, or the seam that orders them", SHARED, a))
     return out
 
 
@@ -234,16 +254,17 @@ def _runs_of(kids: dict, upstream) -> dict[str, set[str]]:
     return out
 
 
-def _runs_problems(kids: dict, upstream) -> list[str]:
+def _runs_problems(kids: dict, upstream) -> list[SeamFinding]:
     """§2.7: a criterion whose check runs another part's code references that part's result — a Dep, declared or not.
     Undeclared, the part is checked in a place holding only its own work and what it waits on, and cannot pass (the sql
     lexer, in wave 1 beside the base, probed through `./sql_database` before any parser existed)."""
     out = []
     for i, runs in _runs_of(kids, upstream).items():
         if foreign := sorted(runs - upstream(i)):
-            out.append(f"{i}'s probes run the code of {', '.join(foreign)}, which {i} does not wait on: it is checked "
-                       f"in a place holding only its own work and what it waits on, so those probes cannot pass. Give "
-                       f"{i} probes over its own code (a driver over the interfaces the base declares, or inputs only "
-                       f"its code decides) and put the behaviour only the whole shows in the parent's criteria — or, "
-                       f"where {i}'s WORK really builds on {', '.join(foreign)}, the seam, at a wave's cost")
+            out.append(SeamFinding(
+                f"{i}'s probes run the code of {', '.join(foreign)}, which {i} does not wait on: it is checked in a place "
+                f"holding only its own work and what it waits on, so those probes cannot pass. Give {i} probes over its "
+                f"own code (a driver over the interfaces the base declares, or inputs only its code decides) and put the "
+                f"behaviour only the whole shows in the parent's criteria — or, where {i}'s WORK really builds on "
+                f"{', '.join(foreign)}, the seam, at a wave's cost", RUNS, i))
     return out

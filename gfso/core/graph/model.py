@@ -297,6 +297,12 @@ def signs_as(issuer, party) -> bool:
     return str(party or "") == str(issuer or "") or str(issuer) == SYSTEM and str(party) in PERSONS_NAMES
 
 
+def is_its_executor(task, who) -> bool:
+    """Is `who` the node's own executor — the one a verdict on a seam may not come from (verifier ≠ executor, §10.3)?
+    Compared as names, so an id and its string read as one party; no one is nobody's executor."""
+    return bool(who) and bool(task.assignee) and str(who) == str(task.assignee)
+
+
 def persons_over(party):
     """The party a door takes `party`'s move from: the person over the system party acting for him, else `party` — a
     door's caller is a person or an agent, never the system, whose own moves are made in process."""

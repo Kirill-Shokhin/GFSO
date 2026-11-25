@@ -2,6 +2,7 @@
 inside holds the door's key; the door answers that key alone, and under a closed switch passes the model and nothing
 the provider would reach elsewhere for it."""
 import gzip
+import inspect
 import http.client
 import json
 import subprocess
@@ -11,7 +12,7 @@ import pytest
 
 from gfso.adapters.llm import stats
 
-from gfso.adapters import door as D
+from gfso.adapters import door as D, egress
 from gfso.adapters import execution as E
 from gfso.adapters.execution import PLACEHOLDER, LocalExecution
 from gfso.adapters.llm.credentials import Credential
@@ -86,12 +87,17 @@ def test_a_flood_of_refusals_neither_erases_nor_crowds_out_what_was_passed(tmp_p
     monkeypatch.setattr(D, "LOG_CAP", 100)
     monkeypatch.setattr(D, "_full", [])
     log = tmp_path / "door.log"
-    D._say(str(log), "passed first", passed=True)
+    D._say(str(log), "passed first", kept=True)
     for i in range(30):
         D._say(str(log), f"refused {i}")
-    D._say(str(log), "passed last", passed=True)
+    D._say(str(log), "passed last", kept=True)
     text = log.read_text(encoding="utf-8")
     assert "passed first" in text and "passed last" in text and "refused 29" not in text and "log is full" in text
+
+
+def test_the_door_and_the_gateway_log_by_one_rule():
+    """Each ships alone into its container, stdlib only, so each holds the capped log: the two copies are one text."""
+    assert inspect.getsource(D._say) == inspect.getsource(egress._say) and D.LOG_CAP == egress.LOG_CAP
 
 
 def test_the_client_holds_the_doors_key_and_never_the_credential():

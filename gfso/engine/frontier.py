@@ -10,7 +10,8 @@ from typing import NamedTuple, Optional
 
 from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.config import ONE_CALL, agent_id as _config_agent_id, how_it_is_waited
-from gfso.core.graph.model import party_kind, root_of
+from gfso.core.graph.model import is_its_executor, party_kind, root_of
+from gfso.core.graph.review import is_undecided
 from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, WORK_STATES, Task, TaskId,
                              Verdict, Wait, settled_positive)
 from .moves import Move, door_holder
@@ -183,7 +184,7 @@ class NodeSteps:
                     f"SIGN THE VERDICT on '{t.id}' ({nm}): "
                     + ("the executor's own self-check for THIS delivery is on the record "
                        "(§10.3 lets an internal node self-verify)"
-                       if str(_rec.get("validator") or "") == str(t.assignee or "")
+                       if is_its_executor(t, _rec.get("validator"))
                        else "an independent verdict for THIS delivery is already on the record")
                     + (f" by {_rec['validator']}" if _rec.get("validator") else "")
                     + " — " + (f"{Verdict.FAIL} on {', '.join(map(str, _f))}" if _f
@@ -192,9 +193,10 @@ class NodeSteps:
                        f". Read it with `get_verdict {t.id}`, then signal "
                        + (f"{Verdict.FAIL} with those criteria." if _f else f"{Verdict.PASS}."))
                     + (" `validate_result` checks it first if you want it checked."
-                       if str(_rec.get("validator") or "") == str(t.assignee or "") and self.engine.held_in_chat(t.id)
-                       else "" if str(_rec.get("validator") or "") == str(t.assignee or "") else
-                       " Validating it again would validate the same artifact twice."))
+                       if is_its_executor(t, _rec.get("validator")) and self.engine.held_in_chat(t.id)
+                       else "" if is_its_executor(t, _rec.get("validator")) else
+                       " Validating it again would validate the same artifact twice.")
+                    + (f" NOTE: {_beside}." if (_beside := self.engine.fails_beside(t.id)) else ""))
             return cand
         # …and the ISSUER's own share of the same fact: a criterion that has failed round
         # after round is a criterion to re-read, not only a delivery to validate. The engine
@@ -229,6 +231,7 @@ class NodeSteps:
                 f"PASS if every criterion holds, else FAIL with the failed criteria."
                 + _bot_note
                 + _stuck_note
+                + (f" NOTE: {_beside}." if (_beside := self.engine.fails_beside(t.id)) else "")
                 + (f" This node is a SEAM, so its own executor ({t.assignee}) cannot sign a "
                    f"PASS until an INDEPENDENT verdict is on the record for this delivery — "
                    f"`validate_result` (a fresh read-only agent that RUNS the criteria) or "
@@ -517,18 +520,8 @@ class NodeSteps:
                           f"REPAIR THE PLAN of '{t.id}' ({nm}): its decomposition no longer passes the Syntactic "
                           f"level (§9.5) — " + "; ".join(f"{h.check_name}: {h.details}" for h in _holes)
                           + f". `list_holes` shows them across the graph."))
-        if _gating and l2_gate_on(self.engine.graph, t) and self.engine.claims.review_in_flight(t.id):
-            # A CHECK ALREADY RUNNING IS NOT A STEP. The frontier kept saying "call
-            # review_decomposition" while one was mid-flight — a duplicate paid round over a
-            # plan that had not changed, and the other in-flight surface (`validate_result`)
-            # already knew better.
-            held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
-                             kind="plan", waits_on=("the Level-2 check already running on this "
-                                                    "version of the plan",),
-                             why=("its causal check is in flight — a second one would validate the "
-                                  "same plan twice and cost twice"),
-                             opens_with="nothing: its verdict arrives by itself").as_dict())
-            return True
+        if _gating and l2_gate_on(self.engine.graph, t) and "plan" in self.engine.checks_running(t.id):
+            return _held_by_check(t, "plan", held)
         if _gating and l2_gate_on(self.engine.graph, t) and not _l0_holes(self.engine.graph, t):
             open_l2 = _l2_undischarged(self.engine.graph, t)
             if open_l2 is None:
@@ -539,7 +532,7 @@ class NodeSteps:
                               f"causally carry {crits}?)."))
                 return True
             if open_l2:
-                _own = [g for g in open_l2 if str(g).startswith("undecided: ")]
+                _own = [g for g in open_l2 if is_undecided(g)]
                 cands.append((2.5, t, Action.CHECK_PLAN,
                               # …AS A COUNT AND A LIST, not as a paragraph of interpolated
                               # findings. Eleven were pasted into one wall of text and a reader
@@ -970,6 +963,34 @@ def parts_said(engine, kids, _passed) -> str:
         return (f", but {', '.join(bad)} stand(s) at PASS over a later FAIL: take it to recover "
                 f"{'that part' if len(bad) == 1 else 'those parts'} before the whole is handed in.")
     return ", every part passed: take it to hand the whole in."
+
+
+#: a check the machine runs on a node, by what it checks: (what the node is doing, as `in_flight_nodes` says it after its
+#: name; the wait's kind and what it waits on; why no step is offered while it runs; what opens it) — one text per check
+#: for both projections, the graph at work and the step held (`Engine.checks_running` says which run)
+CHECKS_RUNNING = {
+    "tree": ("has its committed tree checked before its delivery — a validation is running", "validator",
+             "the check of its committed tree before its delivery", "a validation of the tree its holder will hand in "
+             "is running", "nothing: its verdict arrives by itself, `get_verdict('{task}')` reads it"),
+    "plan": ("has its plan being checked — a Level-2 review of this version is running", "plan",
+             "the Level-2 check already running on this version of the plan", "its causal check is in flight — a "
+             "second one would validate the same plan twice and cost twice", "nothing: its verdict arrives by itself"),
+    "delivery": ("is being validated — an independent validation of this delivery is running", "validator",
+                 "the validator already running on this delivery", "an independent validation of THIS generation is in "
+                 "flight — a second one would validate the same delivery twice and cost twice",
+                 "nothing: its verdict arrives by itself"),
+}
+
+
+def _held_by_check(t, check: str, held: list) -> bool:
+    """`t`'s step held on the check the machine runs on it (`CHECKS_RUNNING`): a check already running is not a step —
+    the frontier kept saying "call review_decomposition", or "VALIDATE this", while one was mid-flight, and a caller
+    who obeyed paid a second round over what had not changed or waited minutes not knowing whether silence meant work
+    or nobody (measured 2026-08-21)."""
+    _, kind, waits_on, why, opens_with = CHECKS_RUNNING[check]
+    held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee, kind=kind, waits_on=(waits_on,),
+                     why=why, opens_with=opens_with.format(task=t.id)).as_dict())
+    return True
 
 
 def _at_work(engine, running: list, held: list) -> dict:
@@ -1481,29 +1502,11 @@ class Frontier:
             # parent surfaces the children — and if they cannot move either, the stuck branch
             # below names them.
             return True
-        if t.state == State.VALIDATING and self.engine.claims.validation_in_flight(t.id):
-            held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee,
-                             kind="validator",
-                             waits_on=("the validator already running on this delivery",),
-                             why=("an independent validation of THIS generation is in flight — a "
-                                  "second one would validate the same delivery twice and cost twice"),
-                             opens_with="nothing: its verdict arrives by itself").as_dict())
-            # A VALIDATOR IS ALREADY RUNNING on this delivery. The step said "VALIDATE this" to
-            # whoever asked, so a caller who obeyed either spent a second instrument on the same
-            # generation or waited four minutes not knowing whether silence meant work or
-            # nobody (measured 2026-08-21). It is not an actionable step while the instrument
-            # holds it; the frontier says so and moves on.
-            return True
-        if self.engine.judges_before_delivery(t.id):
-            # …and a check of the holder's committed tree before its delivery: its DELIVER is refused while it runs, so
-            # the step is no move, and the server's wait waits on the verdict rather than answering this step again
-            held.append(Wait(task_id=str(t.id), state=t.state.name, assignee=t.assignee, kind="validator",
-                             waits_on=("the check of its committed tree before its delivery",),
-                             why="a validation of the tree its holder will hand in is running",
-                             opens_with=f"nothing: its verdict arrives by itself, `get_verdict('{t.id}')` reads "
-                                        f"it").as_dict())
-            return True
-        return False
+        # …and a check of the holder's committed tree before its delivery: its DELIVER is refused while it runs, so the
+        # step is no move, and the server's wait waits on the verdict rather than answering this step again
+        # (a plan's review holds a step only where the Level-2 gate offers one — `NodeSteps` holds it there)
+        running = [c for c in self.engine.checks_running(t.id) if c != "plan"]
+        return bool(running) and _held_by_check(t, running[0], held)
 
     def next_step(self, root_id: Optional[TaskId] = None) -> dict:
         """The execution forcing-point (v1, single-agent form). From the graph's CURRENT state, return the

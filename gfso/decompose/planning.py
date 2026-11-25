@@ -25,6 +25,7 @@ from gfso.config import ROOT_ID, agent_id, data_dir
 from gfso.core.types import Stage, TaskId
 from gfso.critic import runner
 from gfso.decompose import artifact
+from gfso.core.graph.review import undecided_line
 from gfso.decompose.build import build_graph_live
 from gfso.decompose.extract import extract_spec
 from gfso.engine import Engine
@@ -74,8 +75,7 @@ def refine(text: str, note: str, model: str, review_model: str = "", progress=No
     gaps = {v["criterion"]: v for v in p["review"].get("criteria_verdicts") or ()
             if v.get("verdict") in ("insufficient", "uncertain")}
     split = [f"[{v['verdict']}] {c} — {v.get('why', '')}" for c, v in gaps.items()]
-    open_ = [f"[undecided] {g.get('obligation')} — admits: {g.get('admits')}"
-             for g in p["review"].get("undecided_obligations") or ()]
+    open_ = [undecided_line(g) for g in p["review"].get("undecided_obligations") or ()]
     # …AND WHAT THE NOTES REQUIRE, read as obligations by the gate's own question: handed only the note's prose, a round
     # carried seven of the eight operations it named, and no review read the eighth (`sub`): the reviews read the goal
     # alone, the AUTO run delivered an engine without it (FM-1.f, regex, haiku, 2026-11-13). Every note, since a later

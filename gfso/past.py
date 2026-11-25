@@ -52,7 +52,7 @@ from typing import NamedTuple
 from gfso.adapters import children
 from gfso.adapters import worktrees as W
 from gfso.adapters.storage.sqlite import peek_work
-from gfso.config import CALLER, DEFAULT_PROJECT, agent_id, agents_path, caller_id, db_path
+from gfso.config import CALLER, DEFAULT_PROJECT, agent_id, agents_path, caller_id, db_path, unsigned
 from gfso.core.graph.model import LANDED, root_of
 from gfso.core.types import TERMINAL_STATES, WORK_STATES, Signal, TaskId
 from gfso.places import cheap_to_ask
@@ -449,5 +449,5 @@ def witness(engine, repository_path: str, tool: str = "", paths=(), key: str = "
         paths = [str(p) for p in paths or ()]
         engine.witnessed(f"{repository_path} changed in {tool or 'a tool call'} with no node of its signer at work "
                          f"there: {len(paths)} path(s): " + ", ".join(paths[:10]) + (" …" if len(paths) > 10 else ""),
-                         caller_id() if p is None or p.signs_as else UNSIGNED, key)
+                         caller_id() if unsigned() is None else UNSIGNED, key)
     return {"say": SAY.format(repo=repository_path, tool=tool or "a tool call", project=engine.project_name)}

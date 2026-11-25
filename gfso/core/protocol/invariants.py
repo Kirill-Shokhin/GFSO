@@ -2,7 +2,7 @@
 
 NB Invariant 1 (criteria immutability) has NO named function here BY DESIGN: it is enforced
 structurally — every in-place criteria change on a SET_STATE raises InvariantViolation at the
-mutation chokepoint (core/graph/mutations.py::_set_state), and the only sanctioned change paths
+mutation chokepoint (core/graph/mutations.py::refuse_criteria_change), and the only sanctioned change paths
 are revision (re-ASSIGN, §12.3 Inv-1) and the pre-acceptance CHALLENGE channel (APPLY_SPEC).
 A `validate_criteria_immutable` helper used to live here, defined but never called — dead code
 that read as protection; removed (visibility ≠ enforcement)."""

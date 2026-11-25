@@ -4,7 +4,7 @@ Measured: the sql_database plan chained 12 parts into 8 waves because each part'
 glue: "SELECT checks need working CREATE/INSERT"); its three rows spent 9 h each. `seams` makes the chain's length
 visible and the claim checkable against the files each part declares it writes — a finding, never a refusal."""
 from gfso.decompose.loop import _spec_line
-from gfso.decompose.seams import critical_path, seam_problems, waves
+from gfso.decompose.seams import RUNS, critical_path, seam_problems, waves
 
 
 def _plan(deps, writes=None):
@@ -81,6 +81,8 @@ def test_a_probe_running_a_part_it_does_not_wait_on_is_a_finding():
     found = seam_problems(_runs({"base": [], "lexer": ["base", "parser"], "parser": ["base"]},
                                 [("base", "lexer"), ("base", "parser")]))
     assert len(found) == 1 and found[0].startswith("lexer's probes run the code of parser")
+    # …its kind and part are read beside its prose: the promote refusal reads these, so a rewording cannot disable it
+    assert (found[0].kind, found[0].part) == (RUNS, "lexer")
 
 
 def test_a_probe_running_what_it_waits_on_through_a_chain_is_none():

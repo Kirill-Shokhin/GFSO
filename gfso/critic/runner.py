@@ -28,7 +28,8 @@ from typing import Optional
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.config import CHECKER_READINGS, ROOT_ID, SUFFICIENCY_READINGS
 from gfso.core.graph.projection import input_files, pinned_lines, probe_view
-from gfso.core.graph.review import carried_disputes, goal_key, progress_baseline, read_stamp, review_read, side_id
+from gfso.core.graph.review import (carried_disputes, goal_key, progress_baseline, read_stamp, review_read, side_id,
+                                    undecided_line)
 from gfso.core.types import CriticVerdict, Stage, State, TaskId
 from gfso.engine.validation import _EXEC_GATING_CHECKS
 from gfso.adapters.llm.stats import calls_of, fan, readings, refused_by_limit, tag_stage
@@ -276,8 +277,7 @@ def _critique_leaf(engine, node_id: TaskId, llm=None) -> NodeCritique:
     if parsed["verdict"] == "atomic":
         return NodeCritique(
             nid, gate_passed=True, semantic_covered=False, undecided_obligations=short, goal_read=True,
-            semantic_findings="\n".join(
-                f"[undecided] {g.get('obligation')} — admits: {g.get('admits')}" for g in short),
+            semantic_findings="\n".join(map(undecided_line, short)),
             criteria_verdicts=({"criterion": "atomicity", "verdict": CriticVerdict.SUFFICIENT,
                                 "why": parsed.get("why", "")},))
     concerns = parsed.get("concerns") or ()
@@ -285,8 +285,7 @@ def _critique_leaf(engine, node_id: TaskId, llm=None) -> NodeCritique:
     return NodeCritique(
         nid, gate_passed=True, semantic_covered=False, undecided_obligations=short, goal_read=True,
         semantic_findings=f"[separable] {parsed.get('why', '')}" + (f" — concerns: {named}" if named else "")
-        + "".join(f"\n[undecided] {g.get('obligation')} — admits: {g.get('admits')}"
-                   for g in short),
+        + "".join("\n" + undecided_line(g) for g in short),
         criteria_verdicts=({"criterion": "atomicity", "verdict": "insufficient",
                             "why": f"{parsed.get('why', '')}" + (f" Concerns: {named}" if named else "")},))
 
@@ -370,8 +369,7 @@ def critique_node(engine, node_id: TaskId, llm=None) -> NodeCritique:
         ([] if covered else
          [f"[{v.get('verdict')}] {v.get('criterion')} — {v.get('why')}" for v in gaps]
          + [f"[conflict] {', '.join(c.get('between', ()))} — {c.get('why')}" for c in conflicts]
-         + [f"[undecided by {nid}'s criteria or its split's pinned checks] {g.get('obligation')} — "
-            f"admits: {g.get('admits')}" for g in short])
+         + [undecided_line(g, by=f"{nid}'s criteria or its split's pinned checks") for g in short])
         + [f"[reported, not gating — one side is settled] {', '.join(c.get('between', ()))} — {c.get('why')}"
            for c in reported]
         # …a deferral whose producers' results cannot change the part's split is the plan's defect, for its customer to

@@ -48,12 +48,13 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
                   model: Optional[str] = None, workdir: Optional[str] = None,
                   by_hand: bool = False, validated: Optional[dict] = None,
                   parts_not_shown_holding: Optional[dict] = None, inputs_dirs: tuple = (), outside=(),
-                  tree: Optional[str] = None) -> None:
+                  tree: Optional[str] = None, of_record: bool = True) -> None:
     """Write the record for THIS delivery — `storage` is the port, handed in by the caller that owns it. `generation` = (iteration, reopens, revisions) as it stood
     when the verdict was earned — a rework, a reopen or a revision under it makes the record stale,
     which is what every reader checks before trusting it. `log_at` = the length of the signal log when it was
     recorded: whether anything it is built from moved since is a question about the log's order, never the
-    clock's (`validation.record_stands`)."""
+    clock's (`validation.record_stands`). Not `of_record` (`validation.of_record`): kept on the ledger alone, beside the
+    verdict of record."""
     # EVERY OBSERVATION OF A DELIVERY IS KEPT, not only the latest record. What binds is an appointed
     # observer's record of THIS delivery (C-12, Inv-2), and reading the latest record alone let a later
     # hand record of anyone's — a FAIL by a passer-by, then a PASS — launder the instrument's refutation
@@ -61,15 +62,7 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
     # …each with its place in the log: a record's currency is read against the log (`validation.record_stands`), and a
     # ledger row with no place stood for a signature after a part below it was delivered again
     ts = datetime.now().isoformat(sep=" ", timespec="microseconds")
-    _ledger = observations(storage, task_id)
-    # …with what each criterion read: the current record is overwritten by the next round, so a past FAIL's passing
-    # criteria could not be told from unchecked ones (the ui stream's verdict history, 2026-10-27)
-    _ledger.append({"verdict": str(verdict), "failed_criteria": list(failed_criteria or ()),
-                    "per_criterion": list(per_criterion or ()), **_outside(outside), "validator": str(validator_id),
-                    "validator_model": model, "by_hand": bool(by_hand), "ts": ts, "log_at": int(log_at),
-                    **stamp(generation), **({"tree": tree} if tree else {})})
-    ledger_write(storage, task_id, OBSERVATIONS, _ledger)
-    storage.store_exec_verdict(task_id, json.dumps({
+    rec = {
         "verdict": verdict, "failed_criteria": list(failed_criteria or ()),
         "validator": validator_id,
         # …and WHICH MODEL it was. The record named the instrument's role and not its tier, so a
@@ -119,9 +112,18 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
         # …counted by the gate's own reader, over the same inputs directories: a probe reported by its laid-down
         # command and no id was ACCEPTED by the gate and recorded "never run" here (GB_c_compiler_tmokgz344, root.vec)
         **(procedure_coverage(task.spec.criteria, per_criterion or (), inputs_dirs) if task is not None else {}),
-        "ts": ts, "log_at": int(log_at)}))
+        "ts": ts, "log_at": int(log_at)}
+    # …with what each criterion read, the record whole: the current record is overwritten by the next round, so a past
+    # FAIL's passing criteria could not be told from unchecked ones (the ui stream's verdict history, 2026-10-27), and a
+    # record kept beside the verdict of record takes its place whole when its party is appointed (`Engine.set_checker`)
+    _ledger = observations(storage, task_id)
+    _ledger.append(rec)
+    ledger_write(storage, task_id, OBSERVATIONS, _ledger)
+    # …and what a FAIL refuted, whoever's: one beside the verdict of record refuted that version too (`claim_drift`)
     if verdict_word(verdict) == Verdict.FAIL and task is not None:
         _remember_refuted_versions(storage, task_id, task, failed_criteria, validated)
+    if of_record:
+        storage.store_exec_verdict(task_id, json.dumps(rec, default=str))
 
 
 def observations(storage, task_id: TaskId) -> list:

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from gfso.core.protocol.invariants import INTENT, QUOTE_WORDS
-from gfso.core.protocol.procedure import EXACT_READ, INPUTS_TOKEN, laid, materialize_inputs, probe_id, same_probe, unrerunnable
+from gfso.core.protocol.procedure import EXACT_READ, INPUTS_TOKEN, laid, materialize_inputs, probe_id, probe_key, same_probe, unrerunnable
 from gfso.core.types import Signal, TaskId, files_at, set_aside_of
 from gfso.engine import Engine
 from gfso.engine.audit import rejected_on_current_version
@@ -333,7 +333,7 @@ def _why_it_failed(engine, task, failed: list) -> str:
     # …EACH BY THE ID IT IS DISPUTED AND RULED ON, and each settled id by what it ran: told "name the finding by its id",
     # an executor met this round's probes bare and the settled ones as ids alone, and disputed a retired finding again
     # because "the packet gives no [id] for it" (GB_sql_database_tngo2o700 root.joins, audit 52)
-    ran = {(c, " ".join(str(x).split())): str(p["id"]) for c, ps in standing.items() for p in ps if p.get("id")
+    ran = {(c, probe_key(x)): str(p["id"]) for c, ps in standing.items() for p in ps if p.get("id")
            for x in (p.get("seen"), p.get("as_run"), p.get("command")) if x}
     said = {str(r["id"]): str(r.get("seen") or r.get("command") or "") for r in engine.retired_findings(task.id)}
     said.update({str(p["id"]): str(p.get("seen") or p.get("as_run") or p.get("command") or "")
@@ -346,7 +346,7 @@ def _why_it_failed(engine, task, failed: list) -> str:
                       + capped([f"[{i}]" + (f": `{said[i].replace(chr(10), ' ⏎ ')}`" if said.get(i) else "")
                                 for i in settled[f]], "settled findings", list_key(engine, task.id, f, "settled"))
                       if settled.get(f) else "")
-                   + capped([f"probe{f' [{i}]' if (i := ran.get((f, ' '.join(cmd.split())))) else ''}: "
+                   + capped([f"probe{f' [{i}]' if (i := ran.get((f, probe_key(cmd)))) else ''}: "
                              f"`{cmd.replace(chr(10), ' ⏎ ')}`" for cmd in cmds], "refuting probes",
                             list_key(engine, task.id, f, "probes"))
                    + capped([f"standing finding [{p.get('id')}]: `{p.get('seen') or p.get('as_run')}`"

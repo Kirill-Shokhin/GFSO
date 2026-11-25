@@ -47,7 +47,7 @@ def test_past_its_cap_the_log_drops_refusals_and_keeps_openings(tmp_path, monkey
     log = str(tmp_path / "egress.log")
     for _ in range(20):
         egress._say(log, "10.0.0.2 refused example.com:443")
-    egress._say(log, "10.0.0.2 opened api.anthropic.com 160.79.104.10", opened=True)
+    egress._say(log, "10.0.0.2 opened api.anthropic.com 160.79.104.10", kept=True)
     lines = (tmp_path / "egress.log").read_text(encoding="utf-8").splitlines()
     assert len(lines) < 8 and lines.count("the log is full: refusals are no longer written, openings still are") == 1
     assert lines[-1] == "10.0.0.2 opened api.anthropic.com 160.79.104.10"

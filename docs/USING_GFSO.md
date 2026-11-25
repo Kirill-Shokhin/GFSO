@@ -410,7 +410,11 @@ the person issues to another name is always the validator's, and its check comes
 Its holder runs `validate_result` on the node while at work to have its committed tree checked, and a DELIVER of a
 tree whose latest check failed, or that has not been checked, is refused with the failed criteria named. His PASS
 stands on that check, and a record by his own hand does not stand in for it. `set_checker(…, "self")` is refused
-there, and with no validator registered the delivery names how to register one.
+there, and with no validator registered the delivery names how to register one. The issuer may instead name a party
+of the project to check a node — `set_checker(node, "<name>")`, never its executor; `get_task` says who checks before
+any check and, to its issuer, lists whom he may name (`checker_choices`). His PASS then waits on that party's
+`record_verdict` PASS on the delivery, its FAIL binds, anyone else's record stands beside it, and the validator does
+not observe the node by itself.
 
 **A green that is not green does not stay quiet.** A signature can land before the instrument's
 verdict does — you sign, and the validator that was already running reports `FAIL` a few seconds later at

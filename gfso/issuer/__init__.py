@@ -47,15 +47,16 @@ from gfso.inflight import being_rewritten
 from gfso.config import LIMIT_RETRY_S, WATCH, agent_id as _config_agent_id
 from gfso.core.graph.model import on_the_wall, project_max_iterations, project_now
 from gfso.core.graph.mutations import Schedule, producers_of
+from gfso.core.graph.review import UNDECIDED, finding_reasons, is_undecided
 from gfso.core.handlers.structural import risks_naming_own_criteria
 from gfso.core.protocol.procedure import (EXACT_TEXT, INPUTS_TOKEN, as_read, inputs_token, laid as over_dirs,
-                                          materialize_inputs, same_probe, shows, PROBE_S, pinned_files, probe_id,
+                                          materialize_inputs, same_probe, shows, PROBE_S, pinned_files, probe_id, probe_key,
                                           probes_from as _checks_of, unrerunnable, with_named_files, criterionless)
 from gfso.core.types import (AgentId, Criteria, IN_THE_WORKS_PATH, PlaceUnavailable, Register, RevisionReason,
                              Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of,
                              system_decides)
 from gfso.decompose.extract import extract_spec
-from gfso.decompose.seams import seam_problems
+from gfso.decompose.seams import RUNS, SeamFinding, seam_problems
 from gfso.engine import findings, loose_finding_key
 from gfso.engine.audit import on_current_version
 from gfso.engine.frontier import refuted_reading, withheld_over
@@ -427,7 +428,7 @@ def _own_split(engine, task) -> str:
                      for k in engine.graph.get_active_children(task.id)) or "- none"
 
 
-def seam_findings(engine, task_id) -> list[str]:
+def seam_findings(engine, task_id) -> list[SeamFinding]:
     """What the split's own claims of its seams contradict (`decompose.seams`) — the check its authoring ran, read again
     wherever the split is repaired: the plan was checked when written, and a repair fed by contact was not."""
     return seam_problems(extract_spec(engine, str(task_id))) if engine.graph.get_active_children(task_id) else []
@@ -452,14 +453,12 @@ def _gate_findings(engine, task_id) -> str:
         return (f"Syntactic holes:\n{holes}\n\nLevel-2: no current review of this version of the plan — "
                 f"nothing is a Level-2 finding until one runs (the holes come first)")
     rec = engine.get_critique(task_id) or {}
-    why = {str(v.get("criterion")): v.get("why", "") for v in rec.get("criteria_verdicts") or ()}
-    why.update({"undecided: " + str(g.get("obligation", "")): "admits: " + str(g.get("admits", ""))
-                for g in rec.get("undecided_obligations") or ()})
+    why = finding_reasons(rec)
     conflicts = [str(c.get("why") or "") for c in rec.get("conflicts") or ()]
     lines = [f"- `{k}` — " + (why.get(k) or next((w for w in conflicts if k.startswith("conflict:")
                                                    and " ".join(w.split())[:60] in k), ""))
              for k in open_]
-    own = sum(str(k).startswith("undecided: ") for k in open_)
+    own = sum(map(is_undecided, open_))
     # …and what the review reported without gating — a conflict with a settled child — to the party whose move lifts it:
     # kept only in the stored record, no issuer saw it (critic over 2f8ddcc)
     if told := [l for l in str(rec.get("semantic_findings") or "").splitlines() if l.startswith("[reported, not gating")]:
@@ -927,14 +926,14 @@ def underived_at_the_root(engine, task, new_spec: Spec, answer: dict, where: Opt
     if not is_auto_root(engine.graph, task):
         return None
     old = {c.name: c for c in task.spec.criteria}
-    given = {(str(d.get("criterion", "")), " ".join(str(d.get("probe", "")).split())): str(d.get("derived_by", ""))
+    given = {(str(d.get("criterion", "")), probe_key(d.get("probe"))): str(d.get("derived_by", ""))
              for d in answer.get("derivations") or () if isinstance(d, dict)}
     pair = lambda p: (p.command, p.expect)
     wrong = []
 
     def derive(c, p, owed: str) -> Optional[str]:
         """The probe's expected output computed without the work, or None with why said into `wrong`."""
-        how = given.get((c.name, " ".join(p.command.split())), "")
+        how = given.get((c.name, probe_key(p.command)), "")
         if not how.strip():
             wrong.append(f"«{c.name}» `{p.command[:120]}`: no `derived_by` for this probe — {owed} (named by its "
                          f"command exactly as pinned)")
@@ -1284,7 +1283,7 @@ def _corpora(engine, task) -> dict:
     """{(criterion, command): its files} of every probe this node or a child of its split pinned over a corpus — the
     issuer side's own; a child carrying one of the node's own criteria re-writes its probe (critic r5) — and
     {(None, command): …} where every such pin of the command reads one corpus."""
-    pins = [(c.name, " ".join(p.command.split()), p.to_dict()["inputs"])
+    pins = [(c.name, probe_key(p.command), p.to_dict()["inputs"])
             for k in [task, *engine.graph.get_children(task.id)] for c in k.spec.criteria for p in (c.check or ())
             if p.inputs]
     by_cmd, by_file = {}, {}
@@ -1315,7 +1314,7 @@ def _with_corpora(criterion, corpora: dict):
 
     def carried(p) -> dict:
         """The probe with the corpus its split pinned under this criterion and command, where it reads one and has none."""
-        cmd = " ".join(str(p.get("command", "")).split()) if isinstance(p, dict) else ""
+        cmd = probe_key(p.get("command")) if isinstance(p, dict) else ""
         files = corpora.get((criterion.get("name"), cmd), corpora.get((None, cmd)))
         if not files and INPUTS_TOKEN in cmd:
             # every file the command names under `{inputs}`, each pinned in the split with one content — under this
@@ -1485,7 +1484,7 @@ def _promote(engine, task, actor, answer, why, verbs):
         return False, (f"{task.id} carries none of {parent.id}'s criteria (no mapping names it), so a producer beside "
                        f"it would carry nothing of the split: resolve_block, reassign or cancel")
     short = str(task.id).removeprefix(f"{parent.id}.")
-    if ring := [f for f in seam_findings(engine, parent.id) if f.startswith(f"{short}'s probes run the code of ")]:
+    if ring := [f for f in seam_findings(engine, parent.id) if f.kind == RUNS and f.part == short]:
         # …WHAT IT WAITS FOR IS A SIBLING'S CODE ITS OWN CHECKS RUN: a producer promoted beside it makes again what that
         # sibling writes and orders nothing — a tester's regex run went promote → BLOCK → cancel around the parser's
         # pins importing the api part's package, which waited on the parser (2026-11-13)
@@ -1582,14 +1581,15 @@ def _names_a_check(engine, task, why) -> bool:
 
 
 def _dispute(engine, task, actor, answer, why, verbs):
-    if is_auto_root(engine.graph, task) and loose_finding_key(str(answer.get("criterion") or "")
-                                                                ).replace(" ", "").startswith("undecided:"):
+    key = str(answer.get("criterion") or "")
+    # …the key as the issuer typed it, read loosely: a console mangles it, spaces around the colon included
+    undecided = loose_finding_key(key).replace(" ", "").startswith(UNDECIDED.replace(" ", ""))
+    if is_auto_root(engine.graph, task) and undecided:
         return False, ("under AUTO an obligation of the user's goal that no criterion decides is closed by "
                        "ADDING the criterion (`add_criterion`) — the user's goal is not argued away")
-    key = str(answer.get("criterion") or "")
     # …and below the root it stands on a check: a reason naming none was read as a discharge, an unprobed requirement
     # closing on a model's word (critic over the residue's move)
-    if loose_finding_key(key).replace(" ", "").startswith("undecided:") and not _names_a_check(engine, task, why):
+    if undecided and not _names_a_check(engine, task, why):
         return False, ("an obligation no criterion decides is disputed by naming the pinned check that decides it, by "
                        "its id (shown after `decided by`); with none, `add_criterion` with one")
     # the engine resolves the key — one rule for every caller: exact, else one unambiguous near-match; a finding

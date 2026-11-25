@@ -284,13 +284,11 @@ def _mount_acts(app, _e, _req_project, _scope_name) -> None:
         # Only a verb that makes a project makes one, and only for a call some name signs: a read — a roster
         # verb or `canon` included, whoever calls it — names an existing project or is answered 404, and a
         # reader's refused move made and unmade a project first (critic)
-        create = _tools.may_make_a_project(tool)
-        made = bool(reg) and create and not reg.exists(_req_project.get())
         try:
-            e: Engine = _e(create=create)
+            e, made = _tools.opened_for(tool, lambda create: reg.engine(_req_project.get(), create=create)
+                                        if reg else app.state.engine)
         except KeyError as ex:
-            raise HTTPException(404, f"no such project {ex.args[0]!r} — `gfso projects` lists them; "
-                                     f"`create_task` or `auto_decompose` starts a new one") from None
+            raise _no_such_project(ex.args[0]) from None
         # WHOSE GRAPH THIS ANSWER IS ABOUT. `project` is optional here and falls back to the
         # server-wide ACTIVE project — deliberate for single-project use, and silent: measured on the
         # human door, a `next_step` with no project handed back a node from another session's graph
@@ -1297,9 +1295,11 @@ def _a_move(conn: HTTPConnection) -> None:
         return
     if path in _CONSOLES_OWN and (p := _config.CALLER.get()) is not None and p.via == signin.BARE.via:
         return
-    if not (p := _config.CALLER.get()) or not p.signs_as:
+    # …and a call that reached a route with no principal is refused too: every HTTP call is served by the door that
+    # sets one (`_DoorGuard`), so none here is a route the guard missed, never the system's own call
+    if (p := _config.CALLER.get()) is None or _config.unsigned() is not None:
         what = "the person's own setup" if path in _OWN_READS else "a move"
-        raise HTTPException(403, f"{what}, and this call is signed by no one: {p.lift if p else 'sign in: run `gfso ui`'}")
+        raise HTTPException(403, f"{what}, and this call is signed by no one: {p.lift if p else signin.SIGN_IN}")
 
 
 def _mount_sign_in(app) -> None:

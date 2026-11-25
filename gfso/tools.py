@@ -22,16 +22,16 @@ from gfso.core.types import (HOST,
     RevisionReason, Register, register_of, settled_positive, passed, TERMINAL_STATES,
 )
 from gfso.core.graph.metrics import DIAGNOSTIC_MEANS, Q_GRADES, Q_MEANS, alarm, q_T_numerator, q_V_reversed
-from gfso.core.graph.model import door_off_s, on_the_wall, root_of
+from gfso.core.graph.model import door_off_s, on_the_wall, root_of, signs_as
 from gfso.core.graph.mutations import producers_of, readers_index
 from gfso.core.protocol.invariants import PURE_ASSENT, content_words, is_pure_assent, verdict_word
 from gfso.core.protocol.procedure import (admission_defects, INPUTS_TOKEN, materialize_inputs, probe_id,
                                           probes_from as _checks_of)
 from gfso.core.protocol.validation import P2P_SIGNALS, Role
-from gfso.config import (CALLER, DEFAULT_PROJECT, data_dir as _data_dir, for_the_hands, how_it_is_waited,
-                         VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE,
+from gfso.config import (DEFAULT_PROJECT, data_dir as _data_dir, for_the_hands, how_it_is_waited,
+                         VERDICT_FIELD_CHARS, VERDICT_RESPONSE_MULTIPLE, unsigned,
                          caller_id as _config_caller_id)
-from gfso.engine import Engine
+from gfso.engine import Engine, second_root_refusal
 from gfso.engine.frontier import OBSERVE, WITHHOLDS, recovery_said, refuted_reading, step_role
 from gfso.engine.moves import CHECKS, DOOR_KEYS, READS, Move, door_holder, role_holder, signal_role, signer_due
 from gfso.engine.verdicts import OUTSIDE_NOTE
@@ -54,11 +54,17 @@ PROJECTLESS_VERBS = frozenset({"register_agent", "unregister_agent", "list_agent
 MAKES_A_PROJECT = PROJECT_CREATING_VERBS | (PROJECTLESS_VERBS - READS)
 
 
-def may_make_a_project(verb: str) -> bool:
-    """Whether a call of `verb` that names no existing project makes it: a verb that may, called by some name — a
-    reader's refused move made and unmade a project first (critic, 2026-11-16). Both doors read it."""
-    p = CALLER.get()
-    return verb in MAKES_A_PROJECT and (p is None or bool(p.signs_as))
+def opened_for(verb: str, resolve) -> tuple:
+    """(the engine a call of `verb` runs on, whether this call made its project): `resolve(create)` opens it. A project
+    that does not exist is made only by a verb that may make one, called by some name — a reader's refused move made
+    and unmade a project first (critic, 2026-11-16) —; else its KeyError stands, each door answering it in its own
+    terms. Every door opens a project so, and hands a made one to `kept_if_done`."""
+    try:
+        return resolve(False), False
+    except KeyError:
+        if verb not in MAKES_A_PROJECT or unsigned() is not None:
+            raise
+        return resolve(True), True
 
 
 # ── serialization helpers ────────────────────────────────────────────────────
@@ -279,6 +285,8 @@ def get_task(engine: Engine, task_id: str) -> Optional[dict]:
     out = {**task_out(t, engine), "checker": engine.checker(t.id)}   # …who checks its deliveries (`set_checker`)
     if made := engine.checker_choices(t.id):                         # …and who chose it, when, on what words
         out["checker_chosen"] = made
+    if signs_as(engine.graph.issuer_of(t.id), _agent_id()) and engine.checker_choosable(t.id):
+        out["checker_choices"] = engine.checker_choices_now(t.id)    # …and whom the caller may appoint now
     if (blocked := _blocked_by(engine, t)):
         out["blocked_by"] = blocked
     # …the validator's findings standing on it — what a ruling (ACCEPT_CHALLENGE `retire_findings`) names by id
@@ -714,6 +722,19 @@ def _outside_seen(engine: Engine, task_id: str) -> list:
     return engine.outside_of_this_delivery(TaskId(task_id))
 
 
+def _beside_the_record(engine: Engine, task_id: str) -> dict:
+    """At a node whose issuer appointed its checker: who it is, and the records standing beside its verdict of record —
+    others', never read as the verdict (`validation.of_record`). {} elsewhere."""
+    if not (who := engine.appointee(TaskId(task_id))):
+        return {}
+    others = [{k: r.get(k) for k in ("validator", "verdict", "failed_criteria", "by_hand", "ts")}
+              for r in engine.others_records(TaskId(task_id))]
+    whom = {"validator": "the instrument", "self": "its issuer himself"}.get(who, who)
+    return {"checker": who, **({"others": others, "others_note": (
+        f"records by others than {whom}, whom its issuer appointed to check it: they stand beside its record and do not "
+        f"stand for it")} if others else {})}
+
+
 def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool = True) -> dict:
     """The stored EXECUTION verdict on a node — the validator's LAST report, read back in full:
     PASS/FAIL, `failed_criteria`, and per criterion the probe that was run, what it printed and the
@@ -784,17 +805,14 @@ def get_verdict(engine: Engine, task_id: str, criterion: str = "", _trim: bool =
            # than mysterious (a rename after the verdict made every stored command unreplayable).
            "workdir": (rec or {}).get("workdir") or "",
            "outside": _outside_seen(engine, task_id),
-           "ts": (rec or {}).get("ts")}
+           "ts": (rec or {}).get("ts"), **_beside_the_record(engine, task_id)}
     # …AND WHAT IT NO LONGER RE-RAN BY ITS ISSUER'S RULING: a PASS read without it reads as wide as one that re-ran all
-    if _ret := engine.retired_findings(TaskId(task_id)):
-        out["retired_after_refutation"] = [{**{k: r.get(k) for k in ("criterion", "id", "by", "why", "command", "expect", "at")},
-                                            "decided_by": "system" if r.get("by_system") else "person"} for r in _ret]
-    # …AND WHAT A VALIDATOR RE-RAN AND DID NOT REPRODUCE: no later PASS re-runs it
-    if _unrep := engine.findings_not_reproduced(TaskId(task_id)):
-        out["findings_not_reproduced"] = _unrep
-    # …AND WHICH PARTS' CHECKS NO LONGER RUN, here or below: a finding retired leaves the check running, this does not
-    if _gone := engine.checks_no_longer_run(TaskId(task_id)):
-        out["checks_no_longer_run"] = _gone
+    # …AND WHAT A VALIDATOR RE-RAN AND DID NOT REPRODUCE, AND WHICH PARTS' CHECKS NO LONGER RUN (`Engine.lifted`)
+    _lift = engine.lifted(TaskId(task_id))
+    _lift["retired_after_refutation"] = [{**{k: r.get(k) for k in ("criterion", "id", "by", "why", "command", "expect", "at")},
+                                          "decided_by": "system" if r.get("by_system") else "person"}
+                                         for r in _lift["retired_after_refutation"]]
+    out.update({k: v for k, v in _lift.items() if v})
     if criterion:
         out.update(_criterion_in_full(engine, task_id, rec, criterion))
     # …AND SAY IT WHEN THE STATE AND THE RECORD DISAGREE. A node can stand at PASS while this very
@@ -1633,21 +1651,9 @@ def create_task(engine: Engine, task_id: str = "", spec: Optional[dict] = None,
                          f"scope}}. A node is defined by its CRITERIA — what would show it done — "
                          f"and a bare sentence names none. What you passed reads as the "
                          f"`description`; write the criteria that would settle it."}
-    # ONE ROOT PER PROJECT, refused in the verb's own terms rather than as an internal breach. A
-    # parentless node is not a free-standing task — it is THE goal, and V(root) is the project's
-    # verdict, so a second one is a second verdict with no rule composing them. The refusal names
-    # the two acts that were meant, because a caller told only "no" invents a third.
-    if not parent_id:
-        _root = root_of(engine.all_tasks())
-        if _root is not None and str(_root.id) != str(tid):
-            return {"error": (
-                f"this project already has its root, '{_root.id}' "
-                f"({_root.label(60)}), and a project has exactly one. "
-                f"If '{tid}' is part of that goal, it enters the root's split: `decompose('{_root.id}', "
-                f"children=[…], accepted_risks=[…])` admits the split whole, each child's `covers` naming the "
-                f"criteria it is responsible for; once that split stands, `create_task(parent_id='{_root.id}', "
-                f"covers=[…], …)` adds one child to it. If it is a different goal, it belongs in a different project: "
-                f"`use_project('<name>')`.")}
+    # …refused in the verb's own terms rather than as an internal breach
+    if not parent_id and (no := second_root_refusal(engine.all_tasks(), tid)):
+        return {"error": no}
     dl = _deadline(deadline, engine.graph)
     # The SPEC is parsed outside the guard below: a malformed packet is the caller's own shape
     # error, and its message (which word was not a predictability, say) is the answer — the guard is
@@ -2371,8 +2377,16 @@ def reassign(engine: Engine, task_id: str, assignee: str,
     if (t := engine.graph.get_task(TaskId(task_id))) is not None and (
             engine.mode_at(t.id) is not None or engine.would_be_a_top(t.parent_id, assignee)):
         del_by_mode(engine, str(t.parent_id) if t.parent_id else None, assignee, str(t.id))
+    named = engine.named_checker(TaskId(task_id))
     out = task_out(engine.reassign(TaskId(task_id), AgentId(assignee),
                                     reason=_reason_from(reason)), engine, plan=False)
+    # …AND WHO CHECKS IT, WHERE THE NEW DEL MOVED IT: a named checker made its executor checks nothing of its own (§10.3),
+    # and its issuer's appointment stands again once it no longer executes it — said, never silent either way
+    if isinstance(out, dict) and (now := engine.named_checker(TaskId(task_id))) != named:
+        out["checker"] = (f"{named}'s appointment to check {task_id} lapses while it executes it — its own check is no "
+                          f"check (§10.3); {engine.checker(TaskId(task_id))} checks it meanwhile" if now is None else
+                          f"{now}'s appointment to check {task_id} stands again: it no longer executes it — its "
+                          f"issuer's appointment, changed by `set_checker`")
     # Say what the untyped act COSTS, at the moment of the act. The verb's help has said this since
     # 2026-08-21 and the caller still has to be reading help to see it; measured 2026-09-02 on a live
     # delegated run, whose DEL read 25% in red because three ordinary hand-offs to the run's own
@@ -2668,6 +2682,9 @@ def _what_an_ACCEPTED_signal_owes_its_sender(engine: Engine, task_id: str, sig, 
         _lost = _coverage_lost_by(engine, task_id)
         if _lost:
             out["coverage_lost"] = _lost
+    # …and a PASS signed over a FAIL standing beside the appointed check: an overrule, said to the one who signed it
+    if sig == Signal.PASS and (_beside := engine.fails_beside(TaskId(task_id))):
+        out["signed_beside"] = _beside
     if sig == Signal.BLOCK and (_red := _cycle_closed_by(engine, task_id)):
         out["plan_order_refuted"] = _red
     # …and a delivery at a seam the person issued with no validator to check it: his PASS waits for one
@@ -2777,6 +2794,7 @@ def observed_by_itself(engine: Engine, t) -> bool:
     has an instrument, and it has not given up on the node (`parking`): the dispatcher takes such a delivery from its
     transition and records its verdict for the holder to sign (`Dispatcher._dispatch_validation`)."""
     return (t is not None and t.state == State.VALIDATING and engine.holder_signs(t.id)
+            and engine.instrument_checks(t.id)
             and engine.workforce.has_an_instrument() and engine.current_exec_verdict(t.id) is None
             and str(t.id) not in engine.parking.parked_validations()
             and (engine.pass_blocked_by(t.id) or {}).get("kind") == "unobserved")
@@ -2886,6 +2904,23 @@ def persons_move(engine: Engine, tid, sig: str) -> bool:
         sig == Signal.ASSIGN.name and engine.graph.get_state(TaskId(str(tid))) != State.ESCALATED)
 
 
+def _named_checkers_wait(engine: Engine, s: dict, t, me: str) -> bool:
+    """Is step `s` the wait on the record of the party its issuer named to check `t` — rewritten for `me`: that party's
+    move, its check (`record_verdict`), to it; to anyone else, the issuer included, a wait and no move until the record
+    lands (Inv-8: the state stays his; this is the wait he is in)? A binding FAIL of its is no wait: his move."""
+    if t is None or not str(s.get("directive", "")).startswith(OBSERVE) or not (who := engine.named_checker(t.id)):
+        return False
+    s.pop("persons", None)
+    s.update(parallel_ok=False, **({"performed_by": who, "mine": True, "directive": (
+        f"CHECK '{t.id}' ({s.get('name', '')}): its issuer appointed you to check this delivery — run each criterion "
+        f"and record what you observed, `record_verdict('{t.id}', 'PASS', observed={{'<criterion>': 'what you ran and "
+        f"what it showed'}})`, or 'FAIL' with `failed_criteria`; his PASS waits on it")} if who == me else {
+        "optional": True, "directive": (
+            f"{OBSERVE} of '{t.id}' waits on {who}'s record — {who} checks it, appointed by its issuer, and no move here "
+            f"is anyone else's until it lands (`record_verdict` by {who}); the verdict is signed on it")}))
+    return True
+
+
 def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
     """Del is LOAD-BEARING on the frontier, not a label: every step carries `mine` (the calling agent is
     the node's executor), and a FOREIGN executor-step's directive is rewritten to hands-off — the FSM
@@ -2926,6 +2961,8 @@ def _mark_mine(engine: Engine, out: dict, me: Optional[str] = None) -> dict:
         # …AND A RULING THE USER MAY MAKE IS NOT A MOVE THE GRAPH WAITS ON: the system answers that dispute itself
         if s["mine"] and s.get("action") == Action.RESOLVE and _t is not None and engine.users_dispute(_t.id)                 and not engine.paused():
             s["optional"] = True
+        if _named_checkers_wait(engine, s, _t, me):
+            continue
         # …AND AN OBSERVATION THE PROJECT'S INSTRUMENT MAKES BY ITSELF IS NOT THE HOLDER'S MOVE until it gave up: the
         # dispatcher takes it off the engine's frontier, and said "`validate_result` observes it now" here, a client paid
         # it twice and its `gfso wait` woke with nothing to sign (e2e5 G_3)
@@ -3097,8 +3134,10 @@ def record_verdict(engine: Engine, task_id: str, verdict: str,
     # race ran: a hand stamp closed a node 35 seconds before the instrument reported, the instrument's
     # signal was then refused for arriving at a terminal node, and its record landed on top of the
     # one that had done the closing (CLI door, 2026-09-02). Advice with nothing behind it is not a
-    # rule; the claim it needs already exists, and this asks it without taking it.
-    if _t is not None and engine.claims.validation_in_flight(TaskId(task_id)):
+    # rule; the claim it needs already exists, and this asks it without taking it. Only where the instrument IS the check:
+    # where a party or the issuer is appointed, the instrument's record lands beside the verdict and races nothing, and a
+    # wait here let anyone re-running the instrument hold the appointed check off (`instrument_checks`).
+    if _t is not None and engine.claims.validation_in_flight(TaskId(task_id)) and engine.instrument_checks(TaskId(task_id)):
         return {"recorded": False,
                 "error": f"an instrument is validating {task_id} right now — recording a verdict here "
                          f"would race it, and the loser of that race is whichever arrives second: "

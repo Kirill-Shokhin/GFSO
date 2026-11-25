@@ -22,7 +22,7 @@ from gfso.core.types import (
 )
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, GENERATION, cycle_children, cycle_stands_without, dep_order_refutations, dep_scope, generation_of_task,
-                                   start_waits, signs_as, persons_over, issuer_moves_key,
+                                   start_waits, signs_as, is_its_executor, persons_over, issuer_moves_key,
                                    non_leaf_ids, PAUSE_KEY, TECH_KEY, DEADLINE_MOVES, on_the_wall, WITNESS_KEY, witnessed_count, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, replaces_key, checker_choices_key, root_of, root_issuer_key,
                                    register_log_key, stamp, stamped_with, keep_the_beat, project_now, clock_off_s,
                                    logged_criteria, goal_deps_key)
@@ -36,7 +36,7 @@ from gfso.core.protocol.validation import required_role, Role
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, probes_of, probes_that_expected_nothing,
                                           verdict_report_defects, probe_labels, unrun_probes, INTENT)
 from gfso.core.protocol.procedure import (findings_not_reproduced as _findings_not_reproduced, plan_pins, runs_pin, same_expectation, BOUND_SPENT,PAST_BOUND, PAST_WHOLE, admission_defects, canonical_citations, criterionless, parts_not_shown_holding, reads_an_unpinned_set,
-                                          refuting_probes, merge_regression, probe_id, layable_over, unrerunnable,
+                                          refuting_probes, merge_regression, probe_id, probe_key, layable_over, unrerunnable,
                                           unaccounted_for, orphaned_regression,
                                           claim_digest)
 
@@ -52,7 +52,7 @@ from .verdicts import (store_verdict, criterion_version, refuted_versions, ledge
 from .findings import (disputed_findings, ever_pinned, finding_rulings, keep_files, keep_unrun, lay_files, not_reproduced, record_not_reproduced,
                        released, return_finding as _return_finding, ruled, unrun,
                        regression as standing_regression, round_stands, standing_rulings)
-from .frontier import Frontier, uncovered
+from .frontier import CHECKS_RUNNING, Frontier, uncovered
 from .authoring import Authorings
 from .claims import Claims
 from .joins import Joins
@@ -68,7 +68,9 @@ from .validation import (AdmissionRefused, pause_record, users_plan as _users_pl
                          parts_outside_the_delivery as _parts_outside_the_delivery, mode_kind, party_kind, is_auto_root,
                          displaces_a_refutation, observation_blocker,
                          fits_one_session as _fits_one_session, checked_by_contact as _checked_by_contact, observed_here as _observed_here, held_in_chat as _held_in_chat,
-                         owed_observer as _owed_observer, VALIDATOR_CHOSEN, CHECKERS,
+                         owed_observer as _owed_observer, VALIDATOR_CHOSEN, named_checker as _named_checker,
+                         checker_refused as _checker_refused, checker_choices as _checker_choices,
+                         others_records as _others_records, of_record as _of_record_by, of_record_now as _of_record_now, appointee as _appointee,
                          session_fit as _session_fit, scope_top as _scope_top,
                          scope_members as _scope_members, split_owed as _split_owed,
                          deferral_refused as _deferral_refused, split_waits_on as _split_waits_on,
@@ -151,6 +153,25 @@ def _via() -> dict:
 def _via_said() -> str:
     """…and as an event line says it: a page's stop told from a console's."""
     return f" via {v}" if (v := caller_via()) else ""
+
+
+def second_root_refusal(tasks, task_id) -> Optional[str]:
+    """Why a parentless node `task_id` may not be made where the project already has its root — None where it may.
+    ONE ROOT PER PROJECT: a parentless node is not a free-standing task, it is THE goal, V(root) the project's verdict,
+    and the canon's one composition rule (V(parent)=AND(children)) needs a parent, so a second one is a second verdict
+    with nothing to combine them. Nothing forbade it, and an agent whose escalated root admitted no act built `root2`,
+    then `root3`, and closed the goal green on a childless leaf while the work hung under the dead one — so the refusal
+    names the two acts that were meant, a caller told only "no" inventing a third. The engine raises it, the verb
+    answers it."""
+    r = root_of(tasks)
+    if r is None or str(r.id) == str(task_id):
+        return None
+    return (f"this project already has its root, '{r.id}' ({r.label(60)}), and a project has exactly one: the root "
+            f"carries the goal's criteria, so a second one is a second verdict with no rule composing them. If "
+            f"'{task_id}' is part of that goal, it enters the root's split: `decompose('{r.id}', children=[…], "
+            f"accepted_risks=[…])` admits the split whole, each child's `covers` naming the criteria it is responsible "
+            f"for; once that split stands, `create_task(parent_id='{r.id}', covers=[…], …)` adds one child to it. If it "
+            f"is a different goal, it belongs in a different project: `use_project('<name>')`.")
 
 
 class CheckRunning(RuntimeError):
@@ -342,24 +363,8 @@ class Engine:
             max_iterations = project_max_iterations(self._graph)
         spec = self._read_live(spec)
         spec, seams = self._wire_seams(spec, task_id)       # the wire's bare `depends_on` entries: declared edges
-        # ONE ROOT PER PROJECT. A parentless node is not a free-standing task, it is THE goal: V(root)
-        # is the project's verdict, and the canon's one composition rule (V(parent)=AND(children))
-        # needs a parent, so a second parentless node is a second verdict with nothing to combine
-        # them. Nothing forbade it, and what filled the gap was an agent whose escalated root admitted
-        # no act: it built `root2`, then `root3`, and closed the goal green on a childless leaf while
-        # the work hung under the dead one. The refusal names the two acts that were actually meant.
-        existing_root = root_of(self.all_tasks()) if parent_id is None else None
-        if existing_root is not None and str(existing_root.id) != str(task_id):
-            raise InvariantViolation(
-                f"this project already has its root, '{existing_root.id}' "
-                f"({existing_root.label(60)}), and a project "
-                f"has exactly one: the root carries the goal's criteria, so a second one is a second "
-                f"verdict with no rule composing them. If '{task_id}' is part of that goal, it enters the "
-                f"root's split: `decompose` admits a split whole (the children with their `covers`, the "
-                f"register), and `create_task(parent_id=…, covers=[…])` adds one child to a split that "
-                f"already stands. If it "
-                f"is a different goal, it belongs in a different project (`use_project`)."
-            )
+        if parent_id is None and (no := second_root_refusal(self.all_tasks(), task_id)):
+            raise InvariantViolation(no)
         refuse_a_d_cycle(self._graph, task_id, parent_id)
         # Creation is the ASSIGN effect (CREATE_TASK), logged — no unlogged pre-save. ASSIGN is an
         # issuer signal: source = parent's assignee or self. send_signal_sync so the node exists on return.
@@ -1101,7 +1106,8 @@ class Engine:
         more = lambda n, cap: f"; and {n - cap} more — `get_verdict {t.id}` reads them all" if n > cap else ""
         if not lines:      # …where the read carries the lines itself (`get_verdict`): the ask alone, not them twice
             seen, beyond = [], []
-        return (f"The verdict on '{t.id}' is the person's: show them the validator's verdict on each criterion"
+        return (f"The verdict on '{t.id}' is the person's: show them {self.named_checker(t.id) or 'the validator'}'s "
+                f"verdict on each criterion"
                 + (f" — {'; '.join(seen[:12])}{more(len(seen), 12)}" if seen else
                    " (`per_criterion` and `outside` here)" if not lines else " (the step that asks for it names each)")
                 + (f" — and what it saw outside the criteria, none of it a failed criterion: {'; '.join(beyond[:4])}"
@@ -1652,6 +1658,9 @@ class Engine:
         # was written anyway, so every surface then said the node had been validated by an instrument
         # and the record that actually closed it was reachable from nowhere. The two surfaces this
         # product offers as its guarantee are "the record" and "in writing"; that was both of them.
+        # …the one carrier deciding whether this record takes the verdict's place (`of_record`)
+        seat = _of_record_by(self._graph, self._audit, task, {"validator": validator_id, "by_hand": by_hand,
+                                                              "verdict": verdict, "log_at": log_at})
         if task is not None and task.state in TERMINAL_STATES:
             if not ledger_read(self._storage, task_id, CLOSING) and (prior := self.get_exec_verdict(task_id)):
                 ledger_write(self._storage, task_id, CLOSING, prior)
@@ -1667,10 +1676,10 @@ class Engine:
         # A person MAY overrule an instrument: §10.2 keeps the verdict the issuer's act, and §15.7
         # says the engine cannot check a self-named party's independence. What it must not be is
         # SILENT, which is this product's whole position on the degenerate case.
-        elif (prior := self.get_exec_verdict(task_id)) and prior.get("verdict") != verdict:
-            _gen = tuple(generation or self._graph.generation_of(task_id))
-            if stamped_with(prior, _gen):
-                ledger_write(self._storage, task_id, OVERRULED, prior)
+        # …and a record is THE verdict of record only where `of_record` says so: else it stands on the ledger beside it
+        elif (seat and (prior := self.get_exec_verdict(task_id)) and prior.get("verdict") != verdict
+              and stamped_with(prior, tuple(generation or self._graph.generation_of(task_id)))):
+            ledger_write(self._storage, task_id, OVERRULED, prior)
         # THE REGRESSION SET GROWS, AND ONLY GROWS. Kept beside the node rather than folded into
         # the criterion: the pinned procedure is the issuer's pre-registered claim, and rewriting
         # it at validation time would move the contract under the executor (Inv-1). Promotion into
@@ -1688,6 +1697,7 @@ class Engine:
                       per_criterion=per_criterion, tools_used=tools_used, model=model,
                       workdir=workdir, by_hand=by_hand, validated=self._validated_versions(task_id),
                       inputs_dirs=inputs_dirs, outside=outside, tree=tree,
+                      of_record=seat,
                       # …which parts this FAIL did not show holding on the delivered result, read now, while this
                       # round's inputs directories still name what the report ran (`_refuted_coverage_refusal`)
                       parts_not_shown_holding=parts_not_shown_holding(self.parts_procedure(task_id), per_criterion or (),
@@ -1719,7 +1729,7 @@ class Engine:
         if task is None:
             return
         plan = {"": task.spec.criteria, **self.parts_procedure(task_id)}
-        marks = ([] if ends_none or str(validator_id) == str(task.assignee) else
+        marks = ([] if ends_none or is_its_executor(task, validator_id) else
                  _findings_not_reproduced(per_criterion, self._stored_regression(task_id), plan, dirs))
         self._ruled(task_id, record_not_reproduced(self._storage, task, marks, str(validator_id),
                                                    datetime.now().isoformat(timespec="seconds"), found))
@@ -1908,8 +1918,7 @@ class Engine:
         # person's node reached DONE with no evidence anywhere, and the honest path was the closed
         # one. On a seam this still refuses; on an internal node the self-verdict is recorded, with
         # what was observed, which is exactly what §10.3 asks a self-verifying node to carry.
-        if (task.assignee and str(reviewer) == str(task.assignee)
-                and self._graph.is_public(task)):
+        if is_its_executor(task, reviewer) and self._graph.is_public(task):
             raise ValueError(f"reviewer {reviewer!r} is the node's own executor and {task_id} is a "
                              f"SEAM (a root, or its Del differs from its parent's) — an independent "
                              f"verdict cannot come from the executor there (verifier ≠ executor, "
@@ -2492,6 +2501,7 @@ class Engine:
         # and this report said `narrowed: false`. Such a criterion makes the answer ⊥, not a green.
         _moved_after = self._rewritten_after_refutation(task_id, _log, now, _crit, _version)
         _structural = bool((_risksN - _risks0) or (_scopeN - _scope0) or (set(first) - set(now)))
+        _lift = self.lifted(task_id)
         return {
             "task_id": str(task_id),
             "versions": len(entries),
@@ -2501,11 +2511,11 @@ class Engine:
             "reworded_after_refutation": _moved_after,
             # …AND THE CRITERIA WHOSE REFUTATIONS ITS ISSUER RULED OUT: a PASS over them no longer re-runs what once
             # failed them — the claim moved after a refutation as surely as by a rewording, so `narrowed` reads ⊥ too
-            "retired_after_refutation": (_retired := sorted({r["criterion"] for r in self.retired_findings(task_id)})),
+            "retired_after_refutation": sorted({r["criterion"] for r in _lift["retired_after_refutation"]}),
             # …at any depth: a check lifted below this node is one its PASS, and every PASS above it, no longer runs
-            "checks_no_longer_run": (_lifted := self.checks_no_longer_run(task_id)),
-            "findings_not_reproduced": (_gone := self.findings_not_reproduced(task_id)),
-            "narrowed": True if _structural else (None if _moved_after or _retired or _lifted or _gone else False),
+            "checks_no_longer_run": _lift["checks_no_longer_run"],
+            "findings_not_reproduced": _lift["findings_not_reproduced"],
+            "narrowed": True if _structural else (None if _moved_after or any(_lift.values()) else False),
             "risks_dropped": sorted(_risks0 - _risksN),
             "authored": {"at": entries[0].timestamp.isoformat(sep=" ", timespec="seconds"),
                          "criteria": sorted(first)},
@@ -2698,6 +2708,16 @@ class Engine:
         """Each part's check a ruling took off a criterion here or below (`validation.checks_no_longer_run`)."""
         t = self._graph.get_task(task_id)
         return _checks_no_longer_run(self._graph, self._audit, t) if t is not None else []
+
+    def lifted(self, task_id: TaskId, *kinds: str) -> dict[str, list[dict]]:
+        """{record: its rows} of what a PASS here no longer re-runs of what once failed it — `kinds` of them, all three
+        by default: findings its issuer ruled out, findings a later validator did not reproduce, checks a ruling took
+        off. Three records, each saying its own thing (a finding ruled out leaves its check running, a check taken off
+        does not), named by these keys wherever they are served: a PASS read without them reads as wide as one still
+        held to all that once failed it (Thm 11)."""
+        read = {"retired_after_refutation": self.retired_findings, "findings_not_reproduced": self.findings_not_reproduced,
+                "checks_no_longer_run": self.checks_no_longer_run}
+        return {k: read[k](task_id) for k in kinds or read}
 
     def challenge_reason(self, task_id: TaskId) -> Optional[str]:
         """The reason the standing CHALLENGE carried — the issuer cannot answer what he cannot read."""
@@ -3176,7 +3196,8 @@ class Engine:
                 } or None) if _auth and _auth != _now else None,
                 # …AND A REFUTATION ITS ISSUER RULED OUT, which moves no digest: the claim reads the same and the PASS
                 # re-ran less than what once failed it (`findings`)
-                "retired_after_refutation": sorted({r["criterion"] for r in self.retired_findings(task_id)}) or None,
+                "retired_after_refutation": sorted({r["criterion"] for r in self.lifted(
+                    task_id, "retired_after_refutation")["retired_after_refutation"]}) or None,
                 "pinned_probes": rec.get("pinned_probes"),
                 "pinned_probes_run": rec.get("pinned_probes_run"),
                 # …AND WHICH OF THEM READ A SET THE CONTRACT DOES NOT PIN. Such a probe's object can
@@ -3335,7 +3356,7 @@ class Engine:
         if rec.get("by_hand"):
             return "by_hand"
         task = self._graph.get_task(task_id)
-        if task is not None and str(rec.get("validator") or "") == str(task.assignee or ""):
+        if task is not None and is_its_executor(task, rec.get("validator")):
             return "self"
         return "instrument"
 
@@ -3528,15 +3549,19 @@ class Engine:
         asks there only that the check is not the executor's, and no executor appoints it, the author being its issuer;
         elsewhere where no seam owes the instrument. The signature his either way; on the person's words, heard over
         the goal. At a node the person issues his agent signs as his name too, and may be its executor: his check moves
-        away from the validator only `on_his_page`, his own act; to it from anywhere. The ids whose issuer chose the
-        validator."""
-        if checker not in CHECKERS:
-            raise ValueError(f"checker is one of {', '.join(CHECKERS)}, not '{checker}'")
+        away from the validator only `on_his_page`, his own act; to it from anywhere. Or a party by name
+        (`checker_refused`: never its executor), whose record his PASS then waits on (`named_checker`). The ids whose
+        issuer chose the validator."""
         if (t := self._graph.get_task(task_id)) is None:
             raise ValueError(f"task {task_id} not found")
         if not signs_as(self._graph.issuer_of(task_id), author):
             raise ValueError(f"'{author}' is not the issuer of {task_id}: who checks it is its issuer's choice — "
                              f"'{self._graph.issuer_of(task_id)}' (§10.2)")
+        if t.state in TERMINAL_STATES:
+            raise ValueError(f"{task_id} is settled ({t.state.name}): its verdict stands (§12.14), and who checks it is "
+                             f"appointed for a delivery still to be checked — reopen it to have it checked anew")
+        if (why := _checker_refused(self._graph, t, checker)) is not None:
+            raise ValueError(f"not a checker of {task_id}: {why} — one of {', '.join(_checker_choices(self._graph, t))}")
         if checker != "validator" and not on_his_page and _his_check(self._graph, t) is not None:
             raise ValueError(f"{task_id} is a seam the person issues: the validator stops checking it only on his page — "
                              f"his own act; his name on a connection is his agent's too, and may be the executor's (§10.3)")
@@ -3547,7 +3572,21 @@ class Engine:
                                  f"validator's record (`set_mode`)")
             if (why := _owed_observer(self._graph, t)) is not None:
                 raise ValueError(f"the validator checks every delivery of {task_id}, not its issuer's to choose: {why}")
+        # …and no checker appointed past a binding FAIL its appointed checker recorded on this delivery — the appointee's
+        # (`by_the_appointee`), read by the PASS gate itself: it is that criterion's value (Inv-2), and a new checker
+        # would sign over it; a record beside the appointee's binds neither
+        if (_appointee(self._graph, t) is not None
+                and (bound := observation_blocker(self._graph, t, self._audit) or {}).get("kind") == "observed_fail"):
+            raise ValueError(f"who checks {task_id} does not change over a FAIL standing on its delivery: "
+                             f"{bound['why']}. Its lift: {bound['opens_with']} (§12.16 (ii))")
         self._record_checker(task_id, checker, author, said)
+        # …and on a delivery awaiting its verdict the verdict's place is re-decided under the new appointment, as each
+        # record's was when it landed (`of_record`): the appointee's standing record takes it, another's leaves it for
+        # the ledger beside; a record of an earlier round, which a rework still reads, is left
+        if t.state == State.VALIDATING:
+            seated, prior = _of_record_now(self._graph, self._audit, t), self.get_exec_verdict(task_id)
+            if seated != prior and (seated is not None or stamped_with(prior, generation_of_task(t))):
+                self._storage.store_exec_verdict(task_id, json.dumps(seated, default=str) if seated else "")
         held = self.validators_chosen()
         # …heard over the top of the mode it lies under — its scope's, in a shared graph — where his words are read
         if at is not None:
@@ -3604,8 +3643,42 @@ class Engine:
         return t is not None and (_his_check(self._graph, t) is not None or _mode_at(self._graph, t) is not None
                                   and _owed_observer(self._graph, t) is None)
 
+    def checker_choices_now(self, task_id: TaskId) -> list:
+        """Who its issuer may appoint to check this node now (`validation.checker_choices`)."""
+        t = self._graph.get_task(task_id)
+        return _checker_choices(self._graph, t) if t is not None else []
+
+    def named_checker(self, task_id: TaskId) -> Optional[str]:
+        """The party its issuer named to check this node, or None (`validation.named_checker`)."""
+        return _named_checker(self._graph, self._graph.get_task(TaskId(str(task_id))))
+
+    def appointee(self, task_id: TaskId) -> Optional[str]:
+        """Who its issuer appointed to check this node — a party by name, "validator" or "self" —, or None
+        (`validation.appointee`)."""
+        return _appointee(self._graph, self._graph.get_task(TaskId(str(task_id))))
+
+    def instrument_checks(self, task_id: TaskId) -> bool:
+        """Is the instrument the check here — appointed, or no one is (`appointee`)? Where a party or its issuer himself
+        is, the move is theirs, and an instrument run there is evidence beside it: no wait, nothing to dispatch."""
+        return self.appointee(task_id) in (None, "validator")
+
+    def fails_beside(self, task_id: TaskId) -> str:
+        """The FAILs standing beside the verdict of record (`others_records`), said for the one who signs — "" where none:
+        a PASS over them overrules them, and an overrule is never silent."""
+        fails = [r for r in self.others_records(task_id) if str(r.get("verdict")) == Verdict.FAIL]
+        return "" if not fails else (
+            "beside the check its issuer appointed, " + "; ".join(
+                f"{r.get('validator')} recorded FAIL on {', '.join(map(str, r.get('failed_criteria') or ['its verdict']))}"
+                for r in fails) + f" — evidence, not that check: a PASS here is signed over it, and "
+            f"`get_verdict('{task_id}')` shows it under `others`")
+
+    def others_records(self, task_id: TaskId) -> list:
+        """The standing records beside the verdict of record where a checker is appointed (`validation.others_records`)."""
+        return _others_records(self._graph, self._audit, self._graph.get_task(TaskId(str(task_id))))
+
     def checker(self, task_id: TaskId, staffed: Optional[bool] = None) -> str:
-        """Who checks this node's deliveries, read off the gates its PASS meets: "validator" where a staffed one observes
+        """Who checks this node's deliveries, read off the gates its PASS meets: the party its issuer named, its PASS
+        waiting for that party's record (`named_checker`); "validator" where a staffed one observes
         each by itself, and at a seam the person issues whose check he gave it, its PASS waiting for it staffed or not
         (`persons_seam`);
         "independent" at a seam none observes — the PASS needs a verdict not the executor's (`validate_result`, or the
@@ -3613,6 +3686,8 @@ class Engine:
         t = self._graph.get_task(task_id)
         if t is None:
             return "self"
+        if (who := _named_checker(self._graph, t)) is not None:
+            return who
         return ("validator" if _persons_seam(self._graph, t) or (
             self.validator_staffed() if staffed is None else staffed) and self.observes_by_itself(task_id)
                 else "independent" if self._graph.is_public(t) else "self")
@@ -4049,6 +4124,18 @@ class Engine:
                     if e.signal == Signal.DELIVER), key=lambda e: e.timestamp, default=None)
         return (last.artifact, last.commit, last.build) if last is not None and last.commit else None
 
+    def checks_running(self, task_id) -> list[str]:
+        """The checks the machine runs on `task_id` now, of `CHECKS_RUNNING` in its order — its committed tree before
+        its delivery, its plan's Level-2 review, its delivery's validation —: the one answer the graph at work and the
+        held step read. A validation of the delivery counts only where the instrument is the check (`instrument_checks`):
+        where a party or the issuer himself is appointed, its run is evidence beside, and the move stays theirs."""
+        t = self._graph.get_task(task_id)
+        return [c for c, on in (("tree", self.judges_before_delivery(task_id)),
+                                ("plan", self.claims.review_in_flight(task_id)),
+                                ("delivery", t is not None and t.state == State.VALIDATING
+                                 and self.claims.validation_in_flight(task_id) and self.instrument_checks(task_id)))
+                if on]
+
     def judges_before_delivery(self, task_id) -> bool:
         """Is a check of `task_id`'s committed tree before its delivery running now (`judging_before_delivery`)?"""
         return str(task_id) in self._judging
@@ -4139,7 +4226,7 @@ class Engine:
                 **{str(p.get("id")): str(p.get("command") or "") for _, p in dead}}
         # …each under ITS criterion: one probe refutes two criteria as two findings, and retiring one left the other
         # standing while its run read as settled (critic r6)
-        seen = frozenset((str(c), " ".join(str(x).split()))
+        seen = frozenset((str(c), probe_key(x))
                          for c, x in [(r["criterion"], r.get("seen")) for r in retired]
                          + [(c, p.get("seen") or p.get("as_run")) for c, p in dead] if x)
         # …AS WRITTEN: the regression store keeps each command whitespace-normalized (its identity), which turns a
@@ -4181,26 +4268,21 @@ class Engine:
         empty frontier read as a dead graph."""
         out = self.authorings.in_flight()
         for t in self.all_tasks():
-            if self.judges_before_delivery(t.id):
-                out.append({"task_id": str(t.id), "state": t.state.name,
-                            "why": "has its committed tree checked before its delivery — a validation is running",
+            if running := self.checks_running(t.id):
+                out.append({"task_id": str(t.id), "state": t.state.name, "why": CHECKS_RUNNING[running[0]][0],
                             "opens_with": "nothing: its verdict arrives by itself"})
-                continue
-            if self.claims.review_in_flight(t.id):
+            elif t.state == State.VALIDATING:
                 out.append({"task_id": str(t.id), "state": t.state.name,
-                            "why": "has its plan being checked — a Level-2 review of this version "
-                                   "is running",
-                            "opens_with": "nothing: its verdict arrives by itself"})
-                continue
-            if t.state == State.VALIDATING:
-                out.append({"task_id": str(t.id), "state": t.state.name,
-                            "why": ("is being validated — an independent validation of this delivery "
-                                    "is running" if self.claims.validation_in_flight(t.id) else
-                                    "is delivered and waits for its issuer's verdict"),
-                            "opens_with": ("nothing: its verdict arrives by itself"
-                                           if self.claims.validation_in_flight(t.id) else
-                                           f"the issuer validates it (`validate_result('{t.id}')` runs "
-                                           f"the instrument)")})
+                            # …where a party or he himself is the check, the move is theirs (`instrument_checks`)
+                            **dict(zip(("why", "opens_with"), (
+                                ("is delivered and waits on its issuer, who checks it himself",
+                                 f"its issuer checks it and signs (`signal('{t.id}', 'PASS' or 'FAIL')`)")
+                                if (who := self.appointee(t.id)) == "self" else
+                                ("is delivered and waits on the record of the party its issuer appointed to check it",
+                                 f"{who} records its check (`record_verdict('{t.id}', …)`), whom its issuer appointed; "
+                                 f"then he signs") if not self.instrument_checks(t.id) else
+                                ("is delivered and waits for its issuer's verdict",
+                                 f"the issuer validates it (`validate_result('{t.id}')` runs the instrument)"))))})
             elif (t.state in (State.EXECUTING, State.REWORKING)
                   and self.workforce.kind_of(t.assignee) == "llm-executor"
                   and not self.parking.is_execution_parked(t)):
@@ -4306,19 +4388,15 @@ class Engine:
         done_event = threading.Event()
         result: list[AuditEntry] = []
 
-        def _capture(tid, old_state, new_state, signal):
+        def _take(tid, signal):
+            """The signal's own entry, landed or refused — whichever of the two callbacks heard it."""
             if tid == signal_data.task_id and signal == signal_data.signal:
-                entries = self._audit.get_entries(tid)
-                if entries:
+                if entries := self._audit.get_entries(tid):
                     result.append(entries[-1])
                 done_event.set()
 
-        def _capture_reject(tid, signal, state):
-            if tid == signal_data.task_id and signal == signal_data.signal:
-                entries = self._audit.get_entries(tid)
-                if entries:
-                    result.append(entries[-1])
-                done_event.set()
+        _capture = lambda tid, _old, _new, signal: _take(tid, signal)
+        _capture_reject = lambda tid, signal, _state: _take(tid, signal)
 
         self._refuse_before_the_queue(signal_data)
         self._events.on_transition(_capture)

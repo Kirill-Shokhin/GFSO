@@ -62,8 +62,9 @@ from gfso.engine import PERSONS_WORDS, CheckRunning, Engine
 from gfso import signin, tools as _tools
 from gfso.serverctl import open_the_page
 from gfso.tools import _agent_id
-from gfso.config import CALLER, agent_id as _config_agent_id, caller_id, client_kind, how_it_is_waited, reserved_refusal
-from gfso.config import WRITTEN_IN_THE_CALL as _config_written_in_the_call
+from gfso.config import CALLER, agent_id as _config_agent_id, caller_id, client_kind, how_it_is_waited, refuse_unsigned, reserved_refusal
+from gfso.config import WRITTEN_IN_THE_CALL as _config_written_in_the_call, FOR_THE_PERSON, PERSONS_NAMES
+from gfso.engine.frontier import OBSERVE
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso import config as _config_module
 from gfso.config import (DEFAULT_EXECUTION, DEFAULT_PROJECT, ROOT_ID, MODEL_DEFAULT, executions,
@@ -3477,7 +3478,11 @@ def start_project(engine: Engine, by: Optional[str] = None) -> dict:
 def next_steps(engine: Engine, root_id: Optional[str] = None, actor: Optional[str] = None) -> dict:
     """The frontier with the run's state beside it — `run`: running, stopping or stopped (`stop_project` /
     `start_project`). What follows is the frontier's own text (`gfso.tools.next_steps`)."""
-    return {**_tools.next_steps(engine, root_id, actor), "run": run_state(engine), **plans_of(engine.project_name)}
+    out = _tools.next_steps(engine, root_id, actor)
+    for s in out.get("steps") or ():      # …a wait on a named checker that cannot sign yet says how it comes to
+        if str(s.get("directive", "")).startswith(OBSERVE) and (signs := how_the_checker_signs(engine, s["task_id"])):
+            s["directive"] += f" {signs}."
+    return {**out, "run": run_state(engine), **plans_of(engine.project_name)}
 
 
 next_steps.__doc__ += "\n\n    " + (_tools.next_steps.__doc__ or "").strip()
@@ -3988,13 +3993,33 @@ is_refusal = _tools.is_refusal
 PROJECT_CREATING_VERBS = _tools.PROJECT_CREATING_VERBS
 PROJECTLESS_VERBS = _tools.PROJECTLESS_VERBS
 MAKES_A_PROJECT = _tools.MAKES_A_PROJECT
-may_make_a_project = _tools.may_make_a_project
+opened_for = _tools.opened_for
+
+
+def issued_by_the_person(engine, name: str) -> bool:
+    """Whether a node of `engine`'s graph is held by `name` and its Del was the person's to set (§10.1): issued by him,
+    or a root self-assigned to it — made at a door, every caller of which is the person locally; the system's roles
+    split, they make no root."""
+    g = engine.graph
+    return any(str(t.assignee) == name and (str(i := g.issuer_of(t.id)) in FOR_THE_PERSON
+                                            or (g.get_parent(t.id) is None and str(i) == name))
+               for t in g.all_tasks())
+
+
+def how_the_checker_signs(engine: Engine, task_id) -> str:
+    """Where the party named to check `task_id` is no name anyone can sign as yet — not the person's, none of his names
+    (issued or registered), no Del he set —, how it comes to sign: else ""."""
+    who = engine.named_checker(TaskId(str(task_id)))
+    if not who or who in PERSONS_NAMES or who in signin.names_of(signin.LOCAL_PERSON) or issued_by_the_person(engine, who):
+        return ""
+    return f"{who} signs by `gfso agent {who}` (a credential issued once)"
 
 
 def set_checker(engine: Engine, task_id: str, checker: str = "validator", user_said: str = "", agent: str = "") -> dict:
-    """WHO CHECKS a node — `"self"`, its issuer himself (`validate_result` still checks it whenever called), or
-    `"validator"`, the project's validator observing each delivery by itself, its PASS standing on that record. Either
-    way the signature is the issuer's (§10.2). The person's choice: pass their words asking for it as `user_said`. At a
+    """WHO CHECKS a node — `"self"`, its issuer himself (`validate_result` still checks it whenever called),
+    `"validator"`, the project's validator observing each delivery by itself, its PASS standing on that record, or a
+    party BY NAME (`get_task`'s `checker_choices`: never its executor), its PASS waiting on that party's
+    `record_verdict`. Either way the signature is the issuer's (§10.2). The person's choice: pass their words asking for it as `user_said`. At a
     node he issues it is his at a seam too, §10.3 asking there only that the check is not the executor's: by default
     himself, and the validator between him and his own agent in his chat. Below a mode scope's top it is that top's
     holder's own choice, the inner node's issuer (§10.3): no words of the person's."""
@@ -4013,7 +4038,11 @@ def set_checker(engine: Engine, task_id: str, checker: str = "validator", user_s
                      f"no validator here observes {task_id} by itself: after each delivery call "
                      f"validate_result('{task_id}')") + ", and its PASS stands on that record; you sign it"
                     if checker == "validator" else
-                    f"{task_id} is checked by you, its issuer, and you sign it; `validate_result` checks it when called")}
+                    f"{task_id} is checked by you, its issuer, and you sign it; `validate_result` checks it when called"
+                    if checker == "self" else
+                    f"{checker} checks each delivery of {task_id} — `record_verdict` by its own credential — and your "
+                    f"PASS waits on its PASS record; its FAIL binds (Inv-2). You sign it"
+                    + (f". {signs}" if (signs := how_the_checker_signs(engine, task_id)) else ""))}
 
 
 def canon(engine: Engine, section: str = "") -> dict:
@@ -4272,8 +4301,7 @@ def _signed(name: str, fn):
         p = CALLER.get()
         if p is None:
             return fn(*a, **kw)
-        if not p.signs_as:
-            raise ValueError(f"`{name}` is a move, and this call is signed by no one: {p.lift}")
+        refuse_unsigned(f"`{name}`")
         try:
             ba = sig.bind_partial(*a, **kw)
         except TypeError:

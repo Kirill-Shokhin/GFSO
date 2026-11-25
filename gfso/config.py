@@ -312,6 +312,20 @@ STANDING = Principal(PERSON, (PERSON,), "default", "default", LOCAL_PERSON)
 
 #: the principal of the call being served, set by its door for that call only
 CALLER: contextvars.ContextVar = contextvars.ContextVar("gfso_caller", default=None)
+
+
+def unsigned() -> Principal | None:
+    """The principal of the call under way where no credential signs it — a door's caller with no name to sign as —,
+    else None: a call no door served (the system's own, in process) carries none and moves as the standing agent. THE
+    one test every door's refusal of a move reads, so a door or a thread added later inherits one answer."""
+    p = CALLER.get()
+    return p if p is not None and not p.signs_as else None
+
+
+def refuse_unsigned(what: str) -> None:
+    """`what` is a move: refused to a call no credential signs, with what lifts it (`Principal.lift`)."""
+    if (p := unsigned()) is not None:
+        raise ValueError(f"{what} is a move, and this call is signed by no one: {p.lift}")
 #: the header a bridge names its connection by — its lease (`/api/lease`), one per bridge process: what a name taken
 #: on the connection (`act_as`) is held under, so it outlives a `/clear` and a rebuilt leg, and ends with the bridge
 LEASE_HEADER = "X-GFSO-Lease"

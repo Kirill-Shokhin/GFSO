@@ -54,8 +54,16 @@ def door():
     e.stop()
 
 
+class _AtItsName(TestClient):
+    """Its socket asked at the name its calls ask: Starlette's resolves a path against `ws://testserver` whatever
+    `base_url` says, so a page's Origin met another Host and the door closed it 4403 for the person too."""
+
+    def websocket_connect(self, url, *a, **k):
+        return super().websocket_connect(str(self.base_url.join(url).copy_with(scheme="ws")), *a, **k)
+
+
 def _client(app, base=LOOPBACK, **headers) -> TestClient:
-    c = TestClient(app, base_url=base, headers=headers)
+    c = _AtItsName(app, base_url=base, headers=headers)
     c.cookies.clear()
     return c
 
@@ -233,7 +241,7 @@ def test_the_persons_page_moves_with_no_cookie_by_default(door, monkeypatch):
     e.wait_idle()
     assert [(str(a.source), a.via) for a in e.audit_log(TaskId("n")) if a.signal == Signal.ACCEPT] == [
         ("user", "local-peer")]
-    with c.websocket_connect("ws://127.0.0.1:8000/ws/events"):
+    with c.websocket_connect("/ws/events"):
         pass
 
 
@@ -393,9 +401,9 @@ def test_a_page_of_another_loopback_name_or_port_opens_no_socket_of_the_persons(
     pushed his live data. The page's origin is the very one the request asked."""
     c = _client(door[1], Origin=origin)
     with pytest.raises(WebSocketDisconnect):
-        with c.websocket_connect("ws://127.0.0.1:8000/ws/events?projects=1") as ws:
-            ws.receive_json()
-    with _client(door[1], Origin=LOOPBACK).websocket_connect("ws://127.0.0.1:8000/ws/events?projects=1"):
+        with c.websocket_connect("/ws/events?projects=1"):
+            pass
+    with _client(door[1], Origin=LOOPBACK).websocket_connect("/ws/events?projects=1"):
         pass                                                         # …its own origin, at its own name
 
 
@@ -579,5 +587,5 @@ def test_a_reader_is_served_every_read_the_page_makes(door, monkeypatch):
         assert c.get(path).status_code == 200, path
     for path, body in (("/api/run/tech_reports", {}), ("/api/run/next_steps", {}), ("/api/verdicts", [])):
         assert c.post(path, json=body).status_code == 200, path
-    # the events socket is served to a reader too; the test client's socket closes 4403 for the
-    # person's own process as well, so it is judged live, not here
+    with c.websocket_connect("/ws/events"):
+        pass

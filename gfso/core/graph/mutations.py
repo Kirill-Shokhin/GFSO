@@ -97,6 +97,15 @@ def _a_reopened_pass_meets_its_fresh_verdict(graph: Graph, task: Task, new_state
         task.reopened_from_pass = False
 
 
+def refuse_criteria_change(task: Optional[Task], effect: MutateGraph) -> None:
+    """Invariant 1, criteria immutability: a SET_STATE carrying a spec whose criteria differ from the node's is refused —
+    the only ways to change criteria are revision (re-ASSIGN, §12.3 Inv-1) and the CHALLENGE channel (APPLY_SPEC). The
+    one test: the loop runs it over a batch before any effect lands, `_set_state` again where the effect lands."""
+    if task is not None and effect.spec is not None and task.spec.criteria != effect.spec.criteria:
+        raise InvariantViolation(f"criteria immutability violated for {effect.task_id}: criteria change requires "
+                                 f"revision (re-ASSIGN, §12.3 Inv-1) or the CHALLENGE channel")
+
+
 def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[TaskId]:
     if task is None:
         log.error(f"task {effect.task_id} not found for SET_STATE")
@@ -107,13 +116,7 @@ def _set_state(graph: Graph, task: Optional[Task], effect: MutateGraph) -> list[
         log.error(f"SET_STATE without new_state for {effect.task_id}")
         return []
 
-    # Invariant 1: criteria immutability
-    # If spec is being changed (e.g. via ACCEPT_CHALLENGE), validate
-    if effect.spec is not None and task.spec.criteria != effect.spec.criteria:
-        raise InvariantViolation(
-            f"criteria immutability violated for {effect.task_id}: "
-            f"criteria change requires revision (re-ASSIGN, §12.3 Inv-1) or the CHALLENGE channel"
-        )
+    refuse_criteria_change(task, effect)
 
     # Track challenge for q_T metric
     if new_state == State.CHALLENGED:

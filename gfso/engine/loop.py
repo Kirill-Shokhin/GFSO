@@ -23,14 +23,14 @@ from gfso.core.protocol.validation import required_role, Role
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (clock_off_s, dep_scope, keep_the_beat, non_leaf_ids, project_now, time_holds,
                                    project_state_bound, standing_split)
-from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation, retire_if_moved
+from gfso.core.graph.mutations import apply as apply_mutation, InvariantViolation, refuse_criteria_change, retire_if_moved
 from gfso.core.handlers import run_all_checks, recommend
 
 from .findings import regression, ruled
 from .audit import AuditLog, AuditEntry, VERSION_INSTALLING, consented_on_current_version
 from .verdicts import store_verdict
 from .events import EventBus
-from .validation import classify_executor, pause_record, validate_signal, ValidationError
+from .validation import classify_executor, of_record, pause_record, validate_signal, ValidationError
 
 log = logging.getLogger(__name__)
 
@@ -216,10 +216,14 @@ def _keep_the_self_check(signal_data, graph, task_id, audit) -> None:
                      f"report, or have someone validate it.")
             return
         if task is not None and not graph.is_public(task):
+            _by = str(signal_data.source or task.assignee or "executor")
             try:
-                store_verdict(graph._storage, task_id, task, str(signal_data.self_validation), (),
-                              str(signal_data.source or task.assignee or "executor"),
+                store_verdict(graph._storage, task_id, task, str(signal_data.self_validation), (), _by,
                               graph.generation_of(task_id), len(audit),
+                              # …the verdict's place by the one carrier: where its issuer named a checker, that
+                              # party's record takes it, and this self-report stands beside it
+                              of_record=of_record(graph, audit, task, {"validator": _by,
+                                                                        "verdict": str(signal_data.self_validation)}),
                               # ONE self-report, recorded ONCE — not copied into a slot per
                               # criterion. Writing the delivery's whole prose into every criterion's
                               # `evidence` made the record READ like a per-criterion attestation
@@ -384,14 +388,8 @@ def _validate_effects(effects: list, graph: Graph) -> None:
     for effect in effects:
         # Guard only the DEFAULT path (SET_STATE carrying a spec). APPLY_SPEC is the sanctioned
         # CHALLENGE-channel revision (§12.4/§14.3) and is allowed to change criteria.
-        if (isinstance(effect, MutateGraph) and effect.mutation == MutationType.SET_STATE
-                and effect.spec is not None):
-            task = graph.get_task(effect.task_id)
-            if task and task.spec.criteria != effect.spec.criteria:
-                raise InvariantViolation(
-                    f"criteria immutability violated for {effect.task_id}: "
-                    f"criteria change requires CANCEL + re-ASSIGN or the CHALLENGE channel"
-                )
+        if isinstance(effect, MutateGraph) and effect.mutation == MutationType.SET_STATE and effect.spec is not None:
+            refuse_criteria_change(graph.get_task(effect.task_id), effect)
         # …AND THE CONTRACT A REVISION INSTALLS IS ADMITTED ON THE SAME TERMS AS THE FIRST ONE.
         # ACCEPT_CHALLENGE is the one act that rewrites criteria in place, and it reached the graph
         # past both admission rules: an outside reviewer drove a node admitted WITH pinned checks

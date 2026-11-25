@@ -21,6 +21,31 @@ from gfso.core.types import CriticVerdict, register_of
 #: the setting a node's session fit is kept under, its id appended (`Engine.record_session_fit`)
 SESSION_FIT = "session_fit:"
 
+#: what an undecided obligation's key opens with, its text after it
+UNDECIDED = "undecided: "
+
+
+def undecided_key(g: dict) -> str:
+    """The key an undecided obligation of the node's own goal is named by (`dispute_finding` takes it)."""
+    return UNDECIDED + str(g.get("obligation", ""))
+
+
+def is_undecided(key) -> bool:
+    """Is the finding keyed `key` an undecided obligation of the node's own goal?"""
+    return str(key).startswith(UNDECIDED)
+
+
+def undecided_line(g: dict, by: str = "") -> str:
+    """An undecided obligation as a review's line says it: what it is and what the criteria still admit — `by`, what
+    leaves it undecided where the line names it (a split's critique)."""
+    return f"[undecided{' by ' + by if by else ''}] {g.get('obligation')} — admits: {g.get('admits')}"
+
+
+def finding_reasons(rec: dict) -> dict[str, str]:
+    """Each criterion's and undecided obligation's finding of a stored review, by its key, with its reason."""
+    return {**{str(v.get("criterion")): v.get("why", "") for v in rec.get("criteria_verdicts") or ()},
+            **{undecided_key(g): "admits: " + str(g.get("admits", "")) for g in rec.get("undecided_obligations") or ()}}
+
 
 def _digest(x) -> str:
     return hashlib.sha256(json.dumps(x, sort_keys=True, default=str).encode()).hexdigest()[:24]
@@ -178,6 +203,5 @@ def _findings(rec: dict) -> list[tuple[str, str, "dict | None"]]:
                     about(sides={i: criteria_of(i) for i in sides} if read else None)))
     deciders = ({f"{i}/{n}": v for i in [read["node"], *mapped(None)] for n, v in (criteria_of(i) or {}).items()}
                 if read else None)
-    out += [(f"undecided: {g.get('obligation', '')}", f"undecided: {g.get('obligation', '')}", about(deciders=deciders))
-            for g in rec.get("undecided_obligations") or ()]
+    out += [(undecided_key(g), undecided_key(g), about(deciders=deciders)) for g in rec.get("undecided_obligations") or ()]
     return out

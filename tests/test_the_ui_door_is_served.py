@@ -40,6 +40,7 @@ from gfso.tools import (_INDEPENDENCE, PARAM_CHOICES, _is_pure_assent, _self_che
                         next_steps,
                         metrics as tool_metrics, reassign, record_verdict)
 from gfso.api.server import create_app
+from gfso.engine import Engine
 from gfso.engine.validation import l2_gate_on
 from gfso.runtime import ProjectRegistry
 from gfso.tools_llm import validate_internal_on
@@ -1270,11 +1271,11 @@ def test_no_read_a_move_starts_holds_the_later_moves(client):
 
 
 def test_the_panel_reads_what_a_verdict_did_not_re_run_under_the_names_the_verb_gives_it(client):
-    """A lifted check read as a plain PASS: the verb carried the records and the page showed none."""
-    verb = (Path(__file__).parent.parent / "gfso" / "tools.py").read_text(encoding="utf-8")
-    panel = client.get("/js/panel.js").text
+    """A lifted check read as a plain PASS: the verb carried the records and the page showed none. The verb serves
+    them under the keys their one owner names (`Engine.lifted`)."""
+    owner, panel = inspect.getsource(Engine.lifted), client.get("/js/panel.js").text
     for name in ("checks_no_longer_run", "findings_not_reproduced", "retired_after_refutation"):
-        assert f'out["{name}"]' in verb and f"'{name}'" in panel, name
+        assert f'"{name}":' in owner and f"'{name}'" in panel, name
 
 
 def test_the_page_reads_what_the_systems_records_say_of_a_run(client):
