@@ -684,10 +684,24 @@ def appointee(graph: Graph, task) -> Optional[str]:
     """Who its issuer appointed to check this node, known before any check (§10.2: the check is whoever he appoints, the
     signature his): the party he named (`named_checker`), "validator" — the instrument —, or "self" — himself —, his
     appointment, or its default by who executes it, at a node the person issues (`his_check`) — the one default his PASS
-    gate reads too, with or without a mode. None where no one is: a node he does not issue, with no choice of his (every
-    record reads as before the modes) — an internal node self-verifying, a node the canon owes the instrument, a node
-    the system's holder issues."""
-    return None if task is None else named_checker(graph, task) or his_check(graph, task)
+    gate reads too, with or without a mode. Elsewhere "validator" exactly where the PASS gate waits for it because its
+    issuer chose it (`by_his_choice`), its executor's self-report then no verdict of record. None where no one is: an
+    internal node self-verifying (a «self» choice there names the default, and an observed FAIL still binds its
+    executor, `observation_binds`), a node the canon owes the instrument, a node the system's holder issues — every
+    record reads as before the modes."""
+    if task is None:
+        return None
+    if (who := named_checker(graph, task) or his_check(graph, task)) is not None:
+        return who
+    return "validator" if by_his_choice(graph, task) else None
+
+
+def by_his_choice(graph: Graph, task) -> bool:
+    """Does the PASS gate wait for the validator at a node the person does not issue only because its issuer chose it
+    (`observation_blocker`'s third reason): under a mode, chosen, and owed nowhere else (`owed_observer`)?"""
+    return (not (chat_seam(graph, task) or his_seam(graph.issuer_of(task.id), task.assignee))
+            and mode_at(graph, task) is not None and owed_observer(graph, task) is None
+            and validator_chosen(graph, task))
 
 
 def by_the_appointee(graph: Graph, task, rec: dict) -> bool:
