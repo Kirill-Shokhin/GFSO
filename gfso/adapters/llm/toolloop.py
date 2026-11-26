@@ -22,7 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
-from gfso.config import agent_trace_dir, env_without_secrets
+from gfso.config import agent_trace_dir, work_env
 from gfso.core.types import PlaceUnavailable
 from gfso.adapters.worktrees import base_of
 from gfso.places import cheap_to_ask, names_a_device
@@ -178,7 +178,7 @@ class Place:
             return "Error: the run's time is up"
         cap = max(1, int(min(int(timeout or SHELL_TIMEOUT_S), SHELL_TIMEOUT_S * 3, left)))
         try:
-            r = self.exec.command(command, cwd=str(self.cwd), timeout=cap, env=env_without_secrets())
+            r = self.exec.command(command, cwd=str(self.cwd), timeout=cap, env=work_env())
         except subprocess.TimeoutExpired:
             return f"Error: the command ran past {cap}s and was ended"
         out = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")

@@ -231,8 +231,9 @@ def test_the_copy_is_made_and_removed_where_the_work_runs(monkeypatch, place):
     monkeypatch.setattr(S, "_checkout", lambda src, at_, *a: (made.append((str(at_), a[-1])), real(src, at_, *a))[1])
     _, at = place
     e, out, _ = _validate(monkeypatch, at)
-    judged = [d for d, x in made if "batch" in d]                         # …the judges', past the system's own checks
-    assert out["verdict"] == "PASS" and len(judged) == 2 and all(x is ex for d, x in made if "batch" in d), made
+    # …the judges', past the system's own checks: a batch's own copy, whatever directories the run lies below
+    judged = [d for d, x in made if Path(d).parent.name.startswith("batch")]
+    assert out["verdict"] == "PASS" and len(judged) == 2 and all(x is ex for d, x in made if d in judged), made
     assert all(("remove", d) in ex.ops and not Path(d).exists() for d in judged), ex.ops
     e.stop()
 

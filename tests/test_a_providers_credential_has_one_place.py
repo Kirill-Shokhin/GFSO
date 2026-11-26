@@ -19,7 +19,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gfso import cli, doctor
-from gfso.adapters.execution import ContainerExecution
+from gfso.adapters.execution import ContainerExecution, LocalExecution
+from gfso.adapters.llm.toolloop import Place
 from gfso.adapters.llm import credentials, registry
 from gfso.adapters.llm.headless import ClaudeCodeProvider, client_env
 from gfso.adapters.llm.conformance import AGENT_ROLES, ONE_SHOT_ROLES, assess
@@ -351,3 +352,12 @@ def test_every_git_a_model_child_runs_has_long_paths(monkeypatch):
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "x")
     env = subprocess_env()
     assert env["GIT_CONFIG_COUNT"] == "2" and env["GIT_CONFIG_KEY_0"] == "user.name" and env["GIT_CONFIG_KEY_1"] == "core.longpaths"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows' 260-character path limit")
+def test_the_chat_loops_commands_run_git_with_long_paths_too(tmp_path, monkeypatch):
+    """The chat API's agent loop runs the model's commands itself: its git is the same as the CLI child's (critic,
+    2026-11-26 — it ran with the bare environment, and a validator on such a provider broke at 260 again)."""
+    monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
+    assert Place(LocalExecution(), str(tmp_path)).Bash("git config --get core.longpaths").startswith("true"), \
+        "the loop's git has no long paths"

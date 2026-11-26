@@ -131,3 +131,19 @@ def test_a_deleted_projects_scratch_goes_with_it(tmp_path):
     (other := scratch_of(a, "kept", LocalExecution()) / "kid_1").mkdir(parents=True)
     WS.drop_host_files("gone")
     assert not r.parent.parent.exists() and other.is_dir()
+
+
+def test_a_round_holding_this_installation_is_none_of_its_rounds(tmp_path, monkeypatch):
+    """This repository judged: its tests' installations, their rounds and their temp lie below the judge's round. That
+    round holds their data directory, so it is none of theirs; a round of their own below it is."""
+    judge = tmp_path / "data" / "rounds" / "p0" / ".gfso-scratch-j" / "j_1700000000" / "batch1" / "delivery"
+    monkeypatch.setenv("GFSO_DATA_DIR", str(judge / ".tmp" / "h-1" / "data"))
+    assert round_of(judge / ".tmp" / "gfso-issuer-inputs-1" / "c.pp") is None, "the judge's round read as the test's"
+    s = scratch_of(tmp_path / "a", "p", LocalExecution())
+    own = s / "kid_1791646628"
+    assert round_of(own / "batch1" / "t.c") == (str(own), f"{s.name}/{own.name}")
+    inner = judge / ".tmp" / "h-1" / "data" / "rounds" / "ab" / ".gfso-scratch-y" / "kid_1791646628" / "batch1" / "t.c"
+    assert round_of(inner)[1] == ".gfso-scratch-y/kid_1791646628", "the test reads its own round below the judge's"
+    monkeypatch.setenv("GFSO_DATA_DIR", str(tmp_path / "data"))
+    assert round_of(judge / "t.c")[1] == ".gfso-scratch-j/j_1700000000", "the judge reads its own round"
+    assert round_of(inner)[1] == ".gfso-scratch-j/j_1700000000", "a round the delivery's run left is the judge's content"

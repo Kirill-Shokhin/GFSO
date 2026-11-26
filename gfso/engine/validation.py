@@ -430,7 +430,10 @@ def _rerun_says(r: dict) -> str:
     if r["rerun"] == RERUN_NEVER:
         return ", its check never re-run on the whole's delivery"
     if r["rerun"] == RERUN_UNKNOWN:
-        return ", its last re-run unknown (the record predates the reading)"
+        rec = r.get("rerun_record")
+        return (", its last re-run unknown (the record predates the reading)"
+                + (", on this delivery" if r["rerun_on_this_delivery"] else ", not re-run on this delivery")
+                + (f"; the whole's last record: {rec['verdict']} of {rec['ts']} (iteration {rec['iteration']})" if rec else ""))
     if r["rerun_on_this_delivery"]:
         return " — unmapped while failing on this delivery" if r["rerun"] == RERUN_FAILING else ", its check holding on this delivery"
     rec = r["rerun_record"]

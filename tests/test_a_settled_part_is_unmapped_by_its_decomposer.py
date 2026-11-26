@@ -349,6 +349,10 @@ def test_unmap_record_of_a_run_recorded_before_the_reading_existed_says_unknown(
     _split(e, _kid("root.b", ["g"]), unmap=UNMAP_A)
     (row,) = e.checks_no_longer_run(ROOT)
     assert row["rerun"] == "unknown" and "never re-run" not in row["says"] and "predates" in row["says"], row
+    # …and the signer reads where that record stands and what it was: the page repeats `says` verbatim
+    rec = row["rerun_record"]
+    where = "on this delivery" if row["rerun_on_this_delivery"] else "not re-run on this delivery"
+    assert where in row["says"] and f"last record: {rec['verdict']} of {rec['ts']}" in row["says"], row
     e.stop()
 
 

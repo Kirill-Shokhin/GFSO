@@ -789,6 +789,18 @@ SECRET_ENV = re.compile(r"(API_KEY|AUTH_TOKEN|_SECRET|_PASSWORD)$")
 SYSTEM_PREFIX = "GFSO_"
 
 
+def work_env() -> dict:
+    """What every command a model child runs on the work starts with, whichever route runs it — the CLI's own tools
+    (`subprocess_env`) or the chat API's loop (`toolloop`): `env_without_secrets`, and long paths for every git it runs,
+    as the system's own git has them (`worktrees.APART`): a validator's checks under its round's copy passed Windows'
+    260 and git alone broke there (2026-11-24); the chat loop's had none (critic, 2026-11-26)."""
+    env = env_without_secrets()
+    if os.name == "nt":
+        n = int(env.get("GIT_CONFIG_COUNT") or 0)
+        env.update({"GIT_CONFIG_COUNT": str(n + 1), f"GIT_CONFIG_KEY_{n}": "core.longpaths", f"GIT_CONFIG_VALUE_{n}": "true"})
+    return env
+
+
 def env_without_secrets() -> dict:
     """This process's environment less every key and token (`SECRET_ENV`) and the system's own switches (`SYSTEM_PREFIX`)
     — what an agent run's commands start with: the person's environment, never the server's.
@@ -1030,15 +1042,10 @@ def subprocess_env(*, credential: dict | None = None, extra: dict | None = None)
     """
     # …the server's mark among them: a gfso a model child runs (a probe running this product's own suite) must not treat
     # itself as the server and end its own children
-    env = {**env_without_secrets(), **(credential or {})}
+    env = {**work_env(), **(credential or {})}
     # …and room to answer: the CLI's default 32k output cap cut a plan of 14 parts, and the model's re-emission after
     # the cut is what was kept (AUTO haiku 4.5 sql_database, GB_sql_database_tmu9cb784)
     env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "64000")
-    # …and long paths for every git it runs, as the system's own git has them (`worktrees.APART`): a validator's checks
-    # under its round's copy passed Windows' 260 and git alone broke there (2026-11-24)
-    if os.name == "nt":
-        n = int(env.get("GIT_CONFIG_COUNT") or 0)
-        env.update({"GIT_CONFIG_COUNT": str(n + 1), f"GIT_CONFIG_KEY_{n}": "core.longpaths", f"GIT_CONFIG_VALUE_{n}": "true"})
     if extra:
         env.update({k: str(v) for k, v in extra.items() if v is not None})
     return env

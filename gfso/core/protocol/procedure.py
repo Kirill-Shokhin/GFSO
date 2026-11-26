@@ -18,6 +18,7 @@ the residue is stated rather than closed: behaviour outside P is unchecked — t
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import os
 import re
@@ -25,6 +26,7 @@ from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Optional
 
+from gfso import config as _config
 from gfso.core.types import INPUTS_TOKEN, Criteria, Probe, files_at
 from gfso.core.protocol.probe_runs import (OFF_THE_WORKDIR, UNITTEST_UNIMPORTABLE, probes_off_the_workdir,
                                            probes_unittest_cannot_import)
@@ -82,7 +84,7 @@ def finding_id(criterion_name: str, command: str) -> str:
     wide characters that its issuer had ruled outside it, and its FAIL was refused as that ruling's subject (critic over
     3982699): a refutation lost by a name."""
     cmd = _norm(command)
-    named = [w for w in _WORD.split(cmd) if _ROUND.search(w)]
+    named = [w for w in _WORD.split(cmd) if _ROUND.search(w) and round_of(w) is not None]   # …as `round_words` reads one
     if not named:
         return probe_id(criterion_name, {"command": command})
     digests = [_content(Path(w)) for w in named]
@@ -617,7 +619,7 @@ def round_words(command: str) -> list[str]:
     """The words of `command` naming a file in a validation round's scratch — its judge's own, not a pinned probe's
     inputs, which are laid again each round — once each, in order."""
     return [w for w in dict.fromkeys(_WORD.split(command or ""))
-            if _ROUND.search(w) and "/probe_inputs/" not in w.replace("\\", "/")]
+            if _ROUND.search(w) and round_of(w) is not None and "/probe_inputs/" not in w.replace("\\", "/")]
 
 
 def _binary(path: Path) -> bool:
@@ -736,11 +738,35 @@ EXACT_TEXT = ("true when `expect` is the COMPLETE output the command prints on c
               "names only part of it")
 
 
+#: a scratch directory and the round under it, anywhere in a path
+_SCRATCH_ROUND = re.compile(r"[\\/](\.gfso-scratch-[^\\/]+)[\\/]+([^\\/]+)")
+
+
 def round_of(path) -> Optional[tuple[str, str]]:
     """(the round's own path, its name in the record — `.gfso-scratch-<place>/<round>`, one spelling whatever separators
-    the path came in) of the validation or contact round `path` lies in; None for no round's."""
-    m = re.match(r"(.*?[\\/](\.gfso-scratch-[^\\/]+)[\\/]+([^\\/]+))", str(path))
-    return (m.group(1), f"{m.group(2)}/{m.group(3)}") if m else None
+    the path came in) of the validation or contact round `path` lies in; None for no round's. The outermost that does not
+    hold this installation's own data directory: a delivery that itself runs gfso — this repository, judged — lays its
+    tests' installations, their rounds and their temp below the judge's round, which is none of theirs; and to the judge,
+    a round its delivery's run left inside its own copy is content of that copy, never a round of its own."""
+    s, home = str(path), _home()
+    for m in _SCRATCH_ROUND.finditer(s):
+        rnd = _spelled(s[:m.end()])
+        if not any(h == rnd or h.startswith(rnd + "/") for h in home):
+            return s[:m.end()], f"{m.group(1)}/{m.group(2)}"
+    return None
+
+
+def _spelled(p: str) -> str:
+    return os.path.normcase(p).replace("\\", "/").rstrip("/")
+
+
+def _home() -> tuple[str, ...]:
+    return _spellings(str(_config.data_dir()))
+
+
+@functools.lru_cache(maxsize=8)
+def _spellings(data: str) -> tuple[str, ...]:
+    return tuple({_spelled(os.path.abspath(data)), _spelled(os.path.realpath(data))})
 
 
 def layable_pids(criteria: Iterable[Criteria]) -> set[str]:

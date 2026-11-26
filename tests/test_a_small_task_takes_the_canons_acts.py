@@ -15,6 +15,7 @@ import subprocess
 import pytest
 
 import gfso.delegate as D
+from gfso import config
 import gfso.tools_llm as TL
 from gfso.adapters.execution import LocalExecution
 from gfso.core.protocol.invariants import INTENT
@@ -41,8 +42,9 @@ class _Validator:
 
     def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
         self.calls.append({"duration_ms": 1, "output_tokens": 1})
+        # …in the environment a model child of the product runs its probes in (a real validator's git has long paths)
         ran = lambda cmd: subprocess.run([LocalExecution().shell(), "-c", cmd], cwd=cwd, capture_output=True,
-                                         text=True).stdout
+                                         text=True, env=config.subprocess_env()).stdout
         crits = self.e.graph.get_task(TaskId("root")).spec.criteria
         return "```json\n" + json.dumps({"verdict": "PASS", "failed_criteria": [], "per_criterion": [
             {"criterion": c.name, "verdict": "pass", "evidence": self.evidence.get(c.name, f"ran it: {c.name} holds"), "behaviours": [p.behaviour for p in c.check],
