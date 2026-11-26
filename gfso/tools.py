@@ -1915,11 +1915,30 @@ def _hand_over(engine: Engine, parent, replaced: dict, onto: dict) -> dict:
     return out
 
 
+def _coverage_after(engine: Engine, parent, parent_id: str, drops, new: list, unmap) -> Optional[list]:
+    """The split's coverage this `decompose` installs: the pairs onto the active children that stand, with the `new`
+    ones, less those `unmap` takes out — the whole set wherever a pair is taken out, an empty one too (`None` ADDS,
+    `decompose_task`). A pair to take out that does not stand is refused, never ignored."""
+    active = {str(k.id) for k in engine.graph.get_active_children(TaskId(parent_id))} - {str(d) for d in (drops or ())}
+    existing = [m for m in (parent.criterion_mappings if parent is not None else ()) if str(m.child_id) in active]
+    out = {(str(m.get("criterion_name")), str(m.get("child_id"))) for m in unmap or ()}
+    if absent := sorted(out - {(m.criterion_name, str(m.child_id)) for m in existing}):
+        raise ValueError(f"`unmap` names pairs that do not stand on {parent_id}: "
+                         f"{', '.join(f'{c} → {k}' for c, k in absent)} — it takes out a standing "
+                         f"{{criterion_name, child_id}} of an active child, as `get_task('{parent_id}')` lists them")
+    pairs, maps = set(out), []
+    for m in existing + new:
+        if (m.criterion_name, str(m.child_id)) not in pairs:
+            pairs.add((m.criterion_name, str(m.child_id)))
+            maps.append(m)
+    return maps if out else maps or None
+
+
 def decompose(engine: Engine, parent_id: str, children: list[dict],
               mappings: Optional[list[dict]] = None,
               max_iterations: Optional[int] = None,
               accepted_risks: Optional[list] = None, risk_components: Optional[list] = None,
-              drops: Optional[list] = None, agent: str = "") -> list[dict]:
+              drops: Optional[list] = None, unmap: Optional[list[dict]] = None, agent: str = "") -> list[dict]:
     """(Manual path — `auto_decompose` is the normal way to structure.) Break a node into children.
     `drops`: ids of live children this re-admission leaves out of the split — out of the plan at once, each cancelled
     with its subtree (§11.5, §12.6); how a split sheds a child its revised contract no longer needs. With `mappings`, `drops`
@@ -1949,8 +1968,14 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     the child, or the flat `mappings=[{criterion_name, child_id}, …]`. (This text described `covers`
     while the code read only `mappings`, so a decomposition that used it came back successful with
     the mapping silently dropped, and the refusal arrived later as an unexplained coverage failure.)
+    What is declared ADDS to the coverage that stands; `unmap=[{criterion_name, child_id}, …]` takes standing pairs
+    out. A live child left covering nothing is an orphan and the split is refused (CHECK-1b): drop it instead. A settled
+    child left covering nothing stays DONE, is consumed (§12.14), and its pinned checks leave this node's procedure — how
+    its decomposer re-decomposes around a settled part whose check resolves on no delivery. Each such unmap is recorded,
+    signed by you, read with the part's last re-run on this node's deliveries, and every PASS over the node carries it
+    (`get_verdict`'s `checks_no_longer_run`).
     """
-    if not children and not (drops or mappings or accepted_risks is not None or risk_components is not None):
+    if not children and not (drops or mappings or unmap or accepted_risks is not None or risk_components is not None):
         # AN EMPTY DECOMPOSITION IS NOT A MAPPING VERB. Called with `children=[]` and a `mappings=`
         # list, this returned `[]` and REPLACED the parent's whole mapping set — five criteria
         # uncovered and three children orphaned, from a call that looked like a no-op. It was the
@@ -2014,21 +2039,14 @@ def decompose(engine: Engine, parent_id: str, children: list[dict],
     # criterion: k1` immediately after a call that only added `k2` — and those orphaned children can
     # no longer start, because their parent's plan stops passing Level 0. The `children=[]` refusal
     # above was written for exactly this damage and guards only the empty spelling. Merging with what
-    # the parent already carries is what "adds children" means; removing a pair is `edit_criteria`
-    # (which re-authors the contract) or `map_criterion` (which binds one).
+    # the parent already carries is what "adds children" means; removing a pair is said, never implied by omission:
+    # `unmap` (the split's own act, §11.5) or `edit_criteria` (which re-authors the contract).
     # …of the ACTIVE children only: a settled cancellation took its child out of the plan (§12.6), and a mapping
     # carried onto it would be read by the admission as coverage by a node that is not there — the re-decomposition
     # covering around a dropped child was refused for the drop it repairs
-    _active = {str(k.id) for k in engine.graph.get_active_children(TaskId(parent_id))} - {str(d) for d in (drops or ())}
-    _existing = [m for m in (_parent.criterion_mappings if _parent is not None else ()) if str(m.child_id) in _active]
-    _new = ([CriterionMapping(m["criterion_name"], TaskId(m["child_id"])) for m in (mappings or [])]
-            + declared)
-    _pairs, maps = set(), []
-    for m in _existing + _new:
-        if (m.criterion_name, str(m.child_id)) not in _pairs:
-            _pairs.add((m.criterion_name, str(m.child_id)))
-            maps.append(m)
-    maps = maps or None
+    maps = _coverage_after(engine, _parent, parent_id, drops,
+                           [CriterionMapping(m["criterion_name"], TaskId(m["child_id"])) for m in (mappings or [])]
+                           + declared, unmap)
     # The rework bound rides the ASSIGN of every child: §12.4 bounds the DELIVER→FAIL loop and
     # §12.15 states no failure mode pins the number, so it is a term of the CONTRACT chosen per
     # decomposition — not a property of whichever process happens to be serving.

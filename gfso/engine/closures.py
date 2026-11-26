@@ -151,6 +151,8 @@ def closure_of(engine, task_id: TaskId) -> Optional[dict]:
             # re-ran less than what once failed it (`findings`)
             "retired_after_refutation": sorted({r["criterion"] for r in engine.lifted(
                 task_id, "retired_after_refutation")["retired_after_refutation"]}) or None,
+            # …and the parts' checks it no longer ran — a ruling's or an unmap's, each with its signer (`checks_no_longer_run`)
+            "checks_no_longer_run": engine.checks_no_longer_run(task_id) or None,
             "pinned_probes": rec.get("pinned_probes"),
             "pinned_probes_run": rec.get("pinned_probes_run"),
             # …AND WHICH OF THEM READ A SET THE CONTRACT DOES NOT PIN. Such a probe's object can

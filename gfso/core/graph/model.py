@@ -140,6 +140,14 @@ def drops_key(task_id) -> str:
     return f"dropped:{task_id}"
 
 
+def unmaps_key(task_id) -> str:
+    """Where the settled parts a re-admission of this node's split left mapped to nothing are recorded — each pair with
+    its decomposer, time, place in the log and the part's checks it took off this node's procedure — the act alone; their
+    last re-run is read off the verdict records when the row is read (Thm 11: no mechanical gate tells an honest lift from
+    an escape; the record does, for who signs)."""
+    return f"unmapped:{task_id}"
+
+
 def root_issuer_key(task_id) -> str:
     """The setting that records a root's issuer — the one spelling both writer and reader use."""
     return f"issuer:{task_id}"

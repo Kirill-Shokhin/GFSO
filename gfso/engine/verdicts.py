@@ -47,7 +47,8 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
                   tools_used: Optional[dict] = None,
                   model: Optional[str] = None, workdir: Optional[str] = None,
                   by_hand: bool = False, validated: Optional[dict] = None,
-                  parts_not_shown_holding: Optional[dict] = None, inputs_dirs: tuple = (), outside=(),
+                  parts_not_shown_holding: Optional[dict] = None, parts_read: Optional[dict] = None,
+                  inputs_dirs: tuple = (), outside=(),
                   tree: Optional[str] = None, of_record: bool = True) -> None:
     """Write the record for THIS delivery — `storage` is the port, handed in by the caller that owns it. `generation` = (iteration, reopens, revisions) as it stood
     when the verdict was earned — a rework, a reopen or a revision under it makes the record stale,
@@ -92,6 +93,9 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
         # false close (corner #5, `formal/README.md`). Records written before this field exist read
         # as "text unknown", which the disposition treats as unchanged — the conservative direction.
         "parts_not_shown_holding": dict(parts_not_shown_holding or {}),
+        # …and what it read of each part's probe, held or failing (`accounting.parts_read`), with this round's inputs
+        # directories: an unmap's record reads it later, when they no longer name what the report ran
+        "parts_read": dict(parts_read or {}),
         "criteria_text": {c.name: c.description for c in task.spec.criteria}
         if task is not None else {},
         # What the validator actually DID, by tool. Its report may claim an execution; this says

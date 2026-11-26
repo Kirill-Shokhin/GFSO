@@ -18,7 +18,7 @@ from gfso.core.types import (Mode, Probe, Signal, SignalData, Stage, State, Crit
 from gfso.core.protocol.fsm import available_signals, not_admissible_here
 from gfso.core.protocol.validation import Role, required_role
 from gfso.core.protocol.invariants import (validate_fail_has_criteria,
-                                           fail_names_this_contract)
+                                           fail_names_this_contract, verdict_word)
 from gfso.core.handlers.structural import run_structural
 from gfso.core.protocol.procedure import criteria_without_procedure, part_criteria, probe_id, same_probe
 from gfso.core.protocol.accounting import findings_a_ruling_could_lift, pins_ruled_out, runs_pin, without_pins
@@ -27,7 +27,7 @@ from gfso.core.graph import Graph
 from gfso.core.graph.mutations import producers_of, version_deadline
 from gfso.core.graph.review import SESSION_FIT, finding_keys
 from gfso.core.graph.model import (chosen_checker, PAUSE_KEY, hands_of, is_its_executor, party_kind, signs_as, USERS_PLAN_KEY, REVIEWED_IN_FILE_KEY, admission_key, on_the_wall, project_now, coverage_at, coverage_history, standing_split, dep_scope, generation_of_task, non_leaf_ids, stamped_with,
-                                   recorded_by_an_appointed_observer, logged_criteria, parent_waits)
+                                   recorded_by_an_appointed_observer, logged_criteria, parent_waits, unmaps_key, GENERATION)
 from gfso.engine.audit import VERSION_INSTALLING, on_current_version
 
 
@@ -335,10 +335,13 @@ def _ruled_out(graph: Graph, audit, task, raw: dict) -> dict:
 
 
 def checks_no_longer_run(graph: Graph, audit, task) -> list[dict]:
-    """Each part's check a ruling took off a criterion, at `task` or anywhere below it: what its PASS, and every PASS over
-    it, no longer ran (Thm 11) — {node, criterion, check, command, expect, inputs, decided_by, at, why}."""
+    """Each part's check taken off a criterion, at `task` or anywhere below it: what its PASS, and every PASS over it, no
+    longer ran (Thm 11) — {node, criterion, check, command, expect, inputs, decided_by, at, why, source, says}. Two
+    sources, one record: a ruling by the system's issuer (`source: ruling`), and a re-admission that left a settled part
+    mapped to nothing (`source: unmap`, `unmapped_checks`), signed by its decomposer, with the part's last re-run."""
     out = []
     for t in graph.subtree(task.id):
+        out += unmapped_checks(graph, audit, t)
         entries = audit.get_entries(t.id)
         if not any(e.retire_findings for e in entries):
             continue
@@ -351,8 +354,102 @@ def checks_no_longer_run(graph: Graph, audit, task) -> list[dict]:
                         by = next((r for r in rulings if r["by_system"] and runs_pin(r, i, p)), {})
                         out.append({"node": str(t.id), "criterion": name, "check": i, "command": p.command,
                                     "expect": p.expect, "inputs": sorted(k for k, _ in p.inputs), "finding": by.get("id"),
-                                    "decided_by": "system", "at": by.get("at"), "why": by.get("why"),
+                                    "decided_by": "system", "at": by.get("at"), "why": by.get("why"), "source": "ruling",
                                     "says": f"this part's check no longer runs under the criterion {name!r} of {t.id}"})
+    return out
+
+
+#: a settled part's last re-run on its whole's delivery, as an unmap's row says it
+RERUN_HELD, RERUN_FAILING, RERUN_UNKNOWN, RERUN_NEVER = "held", "failing", "unknown", "never re-run"
+
+
+def unmapped(graph: Graph, audit, parent, m) -> dict:
+    """What leaving the settled part `m.child_id` mapped to nothing takes off `parent`'s procedure under `m.criterion_name`:
+    its checks as `parts_procedure` demands them. The act alone — its re-run is read when the row is read
+    (`last_rerun`), for the delivery in hand then; its signature is the admission's (`admission.record_unmaps`)."""
+    part = graph.get_task(m.child_id)
+    return {"criterion": m.criterion_name, "part": str(part.id),
+            "checks": [{"check": probe_id(c.name, p), "command": p.command, "expect": p.expect,
+                        "inputs": sorted(k for k, _ in p.inputs)}
+                       for c in part_criteria(part.id, settled_procedure(graph, part, audit)) for p in c.check or ()]}
+
+
+def unmapped_procedure(graph: Graph, audit, t) -> dict:
+    """{criterion: the checks of the settled parts unmapped from it that stay unmapped} — no longer demanded, still
+    read as a report cites them (`accounting.parts_read`'s `beside`): a validation that began before the unmap judges the
+    delivery they were demanded on, and its run is what the unmap's row reads (the 2026-10-04 escape)."""
+    out: dict = {}
+    for name, part in _standing_unmaps(graph, t):
+        p = graph.get_task(TaskId(part))
+        out[name] = out.get(name, ()) + part_criteria(p.id, settled_procedure(graph, p, audit))
+    return out
+
+
+def _standing_unmaps(graph: Graph, t) -> dict:
+    """{(criterion, part): the latest unmap act of the pair} for the pairs of `t` still unmapped (`admission.record_unmaps`)."""
+    standing = {(m.criterion_name, str(m.child_id)) for m in t.criterion_mappings}
+    last = {(r["criterion"], r["part"]): r for r in json.loads(graph._storage.get_critique(unmaps_key(t.id)) or "[]")}
+    return {k: r for k, r in last.items() if k not in standing}
+
+
+def _read_of(rec: dict, part_id: str, ids: list) -> Optional[str]:
+    """What one verdict record read of the part's checks `ids`, as its own accounting did over that round's inputs
+    directories (`parts_read`): `failing` where any was shown not holding under whatever criterion, `held` where every
+    one held, None where it read them neither way. A record from before the reading was kept says `failing` where it
+    named the part not shown holding, else `unknown` — it may have run them; nothing says how."""
+    if "parts_read" not in rec:
+        return RERUN_FAILING if any(part_id in ks for ks in (rec.get("parts_not_shown_holding") or {}).values()) \
+            else RERUN_UNKNOWN
+    read = {rec["parts_read"].get(i) for i in ids}
+    return RERUN_FAILING if RERUN_FAILING in read else RERUN_HELD if ids and read == {RERUN_HELD} else None
+
+
+def last_rerun(graph: Graph, audit, t, part_id: str, ids: list) -> dict:
+    """{rerun, rerun_on_this_delivery, rerun_record}: how `t`'s verdict records (`observations` — every party's, every
+    round) read the part's checks `ids`, and the record that reading is taken from, with its stamp.
+
+    On the delivery in hand first: among the decided records that stand for it (`record_stands`, a voided one out) —
+    whoever made them, in whatever order they landed — a run showing the part failing wins over one showing it held (a
+    contradiction errs toward the FAIL, as `part_credit` does), and either is said «on this delivery». Else the newest
+    record that read them at all, of an earlier delivery: «last re-run … not re-run on this delivery». None: `never
+    re-run`. Read when the row is read, never frozen at the unmap, and never off the verdict of record alone: each
+    stale row the earlier readings left (critics over b1db1bb, a7b9480, a27426f)."""
+    now = json.loads(graph._storage.get_exec_verdict(t.id) or "{}")
+    stands = lambda rec: (verdict_word(rec.get("verdict")) is not None and record_stands(graph, audit, t, rec)
+                          and not (rec.get("ts") == now.get("ts") and verdict_word(now.get("verdict")) is None))
+    read = [(rec, got) for rec in reversed(observations(graph._storage, t.id)) if (got := _read_of(rec, part_id, ids))]
+    here = [x for x in read if stands(x[0])]
+    pick = next((x for want in (RERUN_FAILING, RERUN_HELD, RERUN_UNKNOWN) for x in here if x[1] == want), None)
+    rec, got = pick or (read[0] if read else ({}, RERUN_NEVER))
+    return {"rerun": got, "rerun_on_this_delivery": pick is not None,
+            "rerun_record": {"verdict": str(rec.get("verdict")), "validator": rec.get("validator"), "ts": rec.get("ts"),
+                             "log_at": rec.get("log_at"), **{k: rec.get(k, 0) for k in GENERATION}} if rec else None}
+
+
+def _rerun_says(r: dict) -> str:
+    if r["rerun"] == RERUN_NEVER:
+        return ", its check never re-run on the whole's delivery"
+    if r["rerun"] == RERUN_UNKNOWN:
+        return ", its last re-run unknown (the record predates the reading)"
+    if r["rerun_on_this_delivery"]:
+        return " — unmapped while failing on this delivery" if r["rerun"] == RERUN_FAILING else ", its check holding on this delivery"
+    rec = r["rerun_record"]
+    return (f"; last re-run: {r['rerun']} on the whole's delivery of {rec['ts']} (iteration {rec['iteration']}), "
+            f"not re-run on this delivery")
+
+
+def unmapped_checks(graph: Graph, audit, t) -> list[dict]:
+    """The checks of the settled parts a re-admission of `t`'s split left mapped to nothing (`admission.record_unmaps`),
+    one row each while the pair stays unmapped — mapped again, the check runs again. The latest act per pair speaks, with
+    the part's last re-run as the records read now (`last_rerun`)."""
+    out = []
+    for (name, part), r in _standing_unmaps(graph, t).items():
+        rerun = last_rerun(graph, audit, t, part, [c["check"] for c in r["checks"]])
+        out += [{"node": str(t.id), "criterion": name, **c, "finding": None, "decided_by": r["by"], "at": r["at"],
+                 "why": "re-decomposition: the part maps to no criterion of the split", "source": "unmap", "part": part,
+                 **rerun, "says": (f"this settled part's check no longer runs under the criterion {name!r} of {t.id}: its "
+                                   f"decomposer {r['by']} left {part} mapped to nothing" + _rerun_says(rerun))}
+                for c in r["checks"]]
     return out
 
 

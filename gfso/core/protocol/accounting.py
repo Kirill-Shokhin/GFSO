@@ -677,9 +677,16 @@ def _named_by(p: Mapping, known: Mapping, by_hash: Mapping, by_cmd: Mapping, dir
 
 def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping],
                 dirs: Iterable[tuple[str, object]] = (), own: Sequence[Criteria] = ()) -> tuple[set[str], dict[str, list[str]]]:
+    """(the parts' pinned probes this report shows holding, {demanded part probe it cannot credit: why}) — `_part_reading`."""
+    return _part_reading(parts, per_criterion, dirs, own)[:2]
+
+
+def _part_reading(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping],
+                  dirs: Iterable[tuple[str, object]] = (), own: Sequence[Criteria] = ()) -> tuple[set, dict, set]:
     """(the parts' pinned probes this report shows holding over the delivery, {demanded part probe it names but cannot
-    credit: why}) — THE one reading of a part probe's credit: "was it run" (`unrun_parts`), "was it shown holding"
-    (`parts_not_shown_holding`) and the refusal's words (`unaccounted_for`) all read this.
+    credit: why}, the ones it shows not holding) — THE one reading of a part probe's credit: "was it run"
+    (`unrun_parts`), "was it shown holding" (`parts_not_shown_holding`), the refusal's words (`unaccounted_for`) and
+    what an unmap's record says of its part (`parts_read`) all read this.
 
     ONE OBSERVATION, HOWEVER IT IS CITED: a part's probe — its command, its expectation, this delivery — is one fact
     whichever criterion of the whole rests on it. A citation names it by its full id, by a bare hash only it has, or by
@@ -740,7 +747,25 @@ def part_credit(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence
                     if held is False else f"cited by {_cited_as(p)} under '{name}', which the report does not pass, "
                                           "without `held: true` — say whether it held")
     credited = good - bad
-    return credited, {pid: w for pid, w in why.items() if pid not in credited}
+    return credited, {pid: w for pid, w in why.items() if pid not in credited}, bad
+
+
+def parts_read(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping],
+               dirs: Iterable[tuple[str, object]] = (), own: Sequence[Criteria] = (),
+               beside: Mapping[str, Sequence[Criteria]] | None = None) -> dict[str, str]:
+    """{part probe the report speaks of: `held` | `failing`} — `part_credit`'s own reading kept with the record: shown
+    holding; or reported not holding under any criterion, cited under one it fails without `held: true`, or — a probe
+    of `parts`, the demanded procedure — not shown holding under a criterion it fails that rests on it
+    (`parts_not_shown_holding`'s reading). `beside`: probes no longer demanded (an unmapped settled part's) read only as
+    the report cites them: a run that began before their unmap may still speak of them. Read when the verdict is
+    recorded, over that round's inputs directories, which a later reader no longer has."""
+    # …under a key no criterion bears: a criterion's pass vouches only for the probes resting on it
+    read = {**(parts or {}), **{f"(no longer demanded under {n})": cs for n, cs in (beside or {}).items()}}
+    credited, _, bad = _part_reading(read, per_criterion, dirs, own)
+    failed = {_norm(e.get("criterion")) for e in per_criterion or () if spoken_verdict(e.get("verdict")) == "fail"}
+    unshown = {probe_id(c.name, p) for n, cs in (parts or {}).items() if _norm(n) in failed
+               for c in cs for p in (c.check or ()) if _norm(p.command)} - credited
+    return {**{p: "held" for p in credited}, **{p: "failing" for p in bad | unshown}}
 
 
 def unrun_parts(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping],

@@ -14,15 +14,15 @@ from typing import Optional
 
 from gfso.core.graph import Graph
 from gfso.core.graph.model import (project_max_iterations, admission_key, dep_scope, drops_key, non_leaf_ids, on_the_wall, parent_waits, project_now,
-                                   register_log_key)
+                                   register_log_key, unmaps_key)
 from gfso.core.graph.mutations import InvariantViolation, Schedule, declare, one_per_pair, producers_of
 from gfso.core.protocol.procedure import admission_defects
 from gfso.core.handlers.structural import run_structural
 from gfso.core.types import (TERMINAL_STATES, AgentId, CriterionMapping, Register, Signal, SignalData, State,
-                             Task, TaskId, seams_apart)
+                             Task, TaskId, seams_apart, settled_positive)
 
 from .loop import refresh_checks
-from .validation import AdmissionRefused, hole_kind, issuing_condition, no_live_deadline
+from .validation import AdmissionRefused, hole_kind, issuing_condition, no_live_deadline, unmapped
 
 
 @dataclasses.dataclass(frozen=True)
@@ -314,7 +314,7 @@ def _refuse_ids_alike(graph: Graph, children: list) -> None:
 def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], covers: Optional[dict] = None, *,
           replace: bool = False, register: Optional[Register] = None, drops: tuple = (), contract=None,
           max_iterations: Optional[int] = None, send, revise=None, reopen_refusal=None,
-          check: bool = True, deps: Optional[dict] = None) -> Split:
+          check: bool = True, deps: Optional[dict] = None, in_flight=None) -> Split:
     """A split's admission (§11.5) — ONE act for every door: the engine's `decompose_task`, a child created into a
     split, and a host embedding the core with no `Engine`. Whole or nothing: everything the act names is classified
     and every refusal read BEFORE the first write, over the split as it will stand (`Split`); then the writes apply
@@ -339,6 +339,9 @@ def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], cover
                                       contract or parent.spec, carried)
     split = refuse_unless_syntactic(graph, parent, children, covers, register, replace, drops, contract, check,
                                     declared)
+    unmapped_now = settled_unmapped(graph, parent, split)   # …read before the act writes: what its parts stood at
+    if unmapped_now and in_flight is not None and in_flight(parent.id):
+        raise ValueError(_in_flight_refusal(parent.id, unmapped_now))
     if contract is not None and contract != parent.spec:
         revise(contract)                                    # the act's first write: refused, nothing stands
     log_was, edges_were = storage.get_critique(admission_key(parent.id)), storage.get_dep_edges()
@@ -362,6 +365,7 @@ def admit(graph: Graph, storage, log_at, parent_id, children: list[tuple], cover
     if set(node.criterion_mappings) != set(split.node.criterion_mappings):
         # a pair onto a child this act does not issue — standing unchanged, or settled — is the split's too (§2.4)
         graph.update_task(parent.id, criterion_mappings=tuple(split.node.criterion_mappings))
+    record_unmaps(storage, log_at(), parent, unmapped_now)
     record_drops(storage, log_at(), parent.id, drops)
     for d in (d for d in drops if graph.get_state(TaskId(str(d))) != State.CANCELLING):
         send(SignalData(signal=Signal.CANCEL, task_id=TaskId(str(d)), source=parent.assignee,
@@ -492,6 +496,42 @@ def record_admission(storage, log_at: int, parent_id: TaskId, split: Split) -> N
                  "deps": {k: [[str(e.from_id), e.glue] for e in es] for k, es in split.declared.items()},
                  "mappings": [[m.criterion_name, str(m.child_id)] for m in split.node.criterion_mappings]})
     storage.store_critique(key, json.dumps(log_))
+
+
+def settled_unmapped(graph: Graph, parent, split: Split) -> list[dict]:
+    """The settled parts this act leaves mapped to nothing under a criterion the node keeps, each as `unmapped` reads it.
+    Such a part stays DONE and is consumed (§12.14, :1374), and its checks leave the node's procedure — the lift owed
+    where its check resolves on no tree, and the 2026-10-04 escape where later work broke it: the same act to the engine,
+    told apart only by the record its signer reads (Thm 11). A pair gone with its criterion is the contract's revision,
+    `claim_drift`'s `dropped`; a live child left unmapped is CHECK-1b's orphan, refused by the battery."""
+    names = {c.name for c in split.node.spec.criteria}
+    return [unmapped(graph, graph.audit, parent, m)
+            for m in sorted(set(parent.criterion_mappings) - set(split.node.criterion_mappings),
+                            key=lambda m: (m.criterion_name, str(m.child_id)))
+            if m.criterion_name in names and settled_positive(graph.get_task(m.child_id))]
+
+
+def _in_flight_refusal(parent_id, rows: list[dict]) -> str:
+    """Why an act that unmaps a settled part waits while a validation of its whole is in flight (`in_flight`): the run
+    observed the part's checks at its start and merges them over the procedure standing when it lands, so an unmap
+    between drops what it saw — a failing check among it — and the whole records a PASS the part's run refuted, the
+    2026-10-04 escape behind the very record that exists to name it (critic over 6d9f7a7). Liftable by the decomposer's
+    own truthful move, which keeps the work: wait for the verdict, then unmap (§12.16 (ii))."""
+    parts = ", ".join(sorted({f"{r['part']} ({r['criterion']})" for r in rows}))
+    return (f"a validation of {parent_id}'s delivery is in flight, and this act leaves its settled part(s) {parts} mapped "
+            f"to nothing: the run is reading their checks on that delivery, and an unmap now would drop what it observes. "
+            f"Wait for its verdict (`gfso wait`, `get_verdict('{parent_id}')`), then make the same act; nothing of it was "
+            f"written")
+
+
+def record_unmaps(storage, log_at: int, parent, rows: list[dict]) -> None:
+    """Each unmap of a settled part, recorded with the act and signed by it: the split's decomposer, Del(parent) — the
+    re-admission is his act (§11.5, :1121), waiting on nobody's consent; his lever is his signature at the seam (§10.2)."""
+    if rows:
+        key = unmaps_key(parent.id)
+        at = datetime.now().isoformat(sep=" ", timespec="seconds")
+        storage.store_critique(key, json.dumps(json.loads(storage.get_critique(key) or "[]") + [
+            {**r, "by": str(parent.assignee), "at": at, "log_at": log_at} for r in rows]))
 
 
 def record_drops(storage, log_at: int, parent_id: TaskId, drops: tuple) -> None:

@@ -36,7 +36,7 @@ from gfso.core.protocol.procedure import (admission_defects, criterionless, prob
                                           claim_digest)
 from gfso.core.protocol.accounting import (findings_not_reproduced as _findings_not_reproduced, plan_pins, runs_pin,
                                            same_expectation, BOUND_SPENT, PAST_WHOLE, canonical_citations,
-                                           parts_not_shown_holding, refuting_probes, merge_regression, unrerunnable,
+                                           parts_not_shown_holding, parts_read as _parts_read, refuting_probes, merge_regression, unrerunnable,
                                            unaccounted_for)
 
 from gfso.config import (PIPELINE_PAGE, USAGE_PAGE, PERSONS_NAMES, SYSTEM, CALLER, MODEL_DEFAULT, VERDICT_FIELD_CHARS,
@@ -76,6 +76,7 @@ from .validation import (AdmissionRefused, _l0_holes, _l2_undischarged, l2_gate_
                          deferral_refused as _deferral_refused, split_waits_on as _split_waits_on,
                          split_after as _split_after, checks_no_longer_run as _checks_no_longer_run,
                          parts_procedure as _parts_procedure, plans_own_findings as _plans_own_findings,
+                         unmapped_procedure as _unmapped_procedure,
                          settled_procedure as _settled_procedure, observation_binds as _observation_binds,
                          observation_standing, record_stands as _record_stands, redelivery_refusal,
                          execution_admitted as _execution_admitted, hole_kind, project_mode as _project_mode,
@@ -1439,7 +1440,12 @@ class Engine:
                       # round's inputs directories still name what the report ran (`_refuted_coverage_refusal`)
                       parts_not_shown_holding=parts_not_shown_holding(self.parts_procedure(task_id), per_criterion or (),
                                                           inputs_dirs, own=task.spec.criteria)
-                      if task is not None and verdict == Verdict.FAIL else {})
+                      if task is not None and verdict == Verdict.FAIL else {},
+                      # …and what it read of each part's check, those of a part unmapped while it ran among them
+                      parts_read=_parts_read(self.parts_procedure(task_id), per_criterion or (), inputs_dirs,
+                                             own=task.spec.criteria,
+                                             beside=_unmapped_procedure(self._graph, self._audit, task))
+                      if task is not None else {})
         return {"verdict": verdict, "failed_criteria": list(failed_criteria or ())}
 
     def _the_runs_tree(self, task_id: TaskId, generation: Optional[tuple], tree) -> Optional[str]:
@@ -2297,6 +2303,7 @@ class Engine:
         """The engine's hands for the act: its signals, its issuer's revision, its R′ gate, its log."""
         return _admit(self._graph, self._storage, lambda: len(self._audit), parent_id, children, covers,
                       send=self.send_signal_sync, reopen_refusal=self.reopen_refusal, check=act.pop("check", self._validate),
+                      in_flight=self.claims.validation_in_flight,
                       revise=lambda c: self._revise(TaskId(str(parent_id)), c,
                                                     self._graph.issuer_of(TaskId(str(parent_id)))), **act)
 
