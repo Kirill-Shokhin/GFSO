@@ -371,12 +371,13 @@ def _the_screen_is_the_tests_own(monkeypatch):
 @pytest.fixture(autouse=True)
 def _the_launch_is_the_tests_own(monkeypatch):
     """Nor what its launcher set for the commands it runs: a validator judging this tree runs the suite from its CLI's
-    shell, whose environment carries git's long paths (`config.work_env`) and the CLI's own scrub switch — and the
-    tests of what a call is launched with read them as the call's: 3 failed in the judge, 0 in the tree (2026-11-26).
-    A test of inheriting them sets them itself."""
-    for k in [k for k in os.environ if k == "GIT_CONFIG_COUNT" or k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))]:
+    shell, whose environment carries what the product's own launch of a model child sets (`config.subprocess_env`,
+    `headless.client_env`): git's long paths, the CLI's switches, its thinking budget, a door's model URL — and the
+    tests of what a call is launched with read them as the call's: 3 failed in the judge, then 1 (the output cap the
+    product sets), 0 in the tree (2026-11-26). The class, not its members one by one. A test of inheriting one sets it."""
+    for k in [k for k in os.environ if k in ("GIT_CONFIG_COUNT", "MAX_THINKING_TOKENS", "ANTHROPIC_BASE_URL")
+              or k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_", "CLAUDE_CODE_"))]:
         monkeypatch.delenv(k)
-    monkeypatch.delenv("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", raising=False)
 
 
 @pytest.fixture(autouse=True)
