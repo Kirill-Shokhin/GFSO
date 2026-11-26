@@ -4,6 +4,7 @@ runs with the system's six work tools in a place of their own — and a model sp
 Against a scripted local server that speaks the wire (no provider is installed or called): each test hands it the
 replies a model would give and reads what the provider did with them."""
 import json
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -453,7 +454,7 @@ def test_a_place_down_mid_command_keeps_a_conversation_the_next_round_can_send(w
     url, script, _ = wire_server
     script += [{"tools": [("Bash", {"command": "make"}), ("Bash", {"command": "make test"})]}]
     llm = ChatProvider(OpenAIWire(url, "m"), "m", execution=_Down())
-    sid = f"down-{tmp_path.name}"                          # kept by the session's name, outside the run's place
+    sid = f"down-{os.getpid()}-{tmp_path.name}"           # kept by the session's name, outside the run's place
     assert llm.run_agent("s", "u", ("Bash",), cwd=str(tmp_path), session=sid) == ""
     kept = transcript_path(llm.execution, sid)
     msgs = json.loads(kept.read_text(encoding="utf-8"))

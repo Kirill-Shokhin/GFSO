@@ -331,7 +331,7 @@ def _fresh(tmp_path, base, record: dict, name: str = "", project: str = "p") -> 
     """A server's view of the project, its own record in hand — as `executions.execution_of` holds it."""
     E._STARTED.clear()
     E._SESSIONS.clear()
-    x = ContainerExecution(name or f"t{tmp_path.name[-12:]}", IMAGE, None, str(tmp_path / "state"), str(base), project)
+    x = ContainerExecution(name or f"t{os.getpid()}{tmp_path.name}", IMAGE, None, str(tmp_path / "state"), str(base), project)
     x.volume.record = (record.get, record.__setitem__)
     return x
 

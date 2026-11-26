@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -19,25 +20,64 @@ from gfso.core.protocol.procedure import probe_id, round_of
 from gfso.core.types import BATCH, laid_beside, nodes_root
 import gfso.validate as VAL
 
-#: Windows' longest working directory, measured
-CWD = 258
-#: what a delivered repository's tests nest below the judge's copy: this suite's pytest temp and a git object under it
-#: measured at 117 past the repository's top
-NEST = 110
-#: the longest data directory the bound is held for: a home of 40 characters (`C:\Users\<30>`) and `.gfso\data`, or a
-#: source checkout's `data` as deep
-DATA = 60
+#: Windows' longest working directory, measured; and the longest file a tool with no long paths writes (git's objects)
+CWD, FILE = 258, 259
+#: what this suite spells between its tree's top and a test's own directory, at its widest (tests/conftest.py): `\.tmp`,
+#: the run's process id (7 digits), its worker's number (2), the test's `t<n>` (4); and its worker's home, `\h-<8>`
+SUITE, HOME = 5 + 8 + 3 + 6, 5 + 11
+#: what a test lays below its own directory for a git of its own: a repository's place and a pack under it,
+#: `\.gfso-nodes-base\proj\big` + `\.git\objects\pack\pack-<40>.pack` — the deepest measured over the 926 tests that lay
+#: places, rounds and repositories (2026-11-26); its judges' rounds, deeper, are this layout's own (`_judged`), and the
+#: system's git there writes long paths (`config.subprocess_env`), their working directory alone bounded
+TEST_GIT = 26 + 68
+#: what a delivered repository's tests nest below the judge's copy for a file git writes: this suite's, at its widest
+NEST = SUITE + TEST_GIT
+#: the names a test's fake of places standing apart lays its rounds under on this host, in its home's data — the
+#: deepest working directory measured (`\data\places\<10>\.gfso-nodes-base\default\.gfso-scratch-.base\<round>\…`)
+APART = ("base", "default", "root")
+#: the longest data directory the bound is held for: a home of 36 characters (`C:\Users\<27>`) and `.gfso\data`, or a
+#: source checkout's `data` as deep — the room the judged suite's deepest leaves (`test_the_suites_own_…`); this
+#: host's is 32
+DATA = 47
 
 CASES = [("GFSO", "gfso-dev-draft", "root"),
          ("a-repository-named-at-length", "a-project-named-at-length", "n" * 64 + "/a-node-of-a-long-id")]
 
 
-def _judged(tmp_path, base_name, project, node) -> tuple[Path, Path]:
-    """(the deepest copy a validation of `node` judges in — a batch's run again —, the data directory)."""
-    (base := tmp_path / base_name).mkdir()
+def _past(tmp_path, base_name, project, node, apart: bool = False) -> int:
+    """How far past the data directory the deepest copy a validation of `node` judges in lies (`_judged`)."""
+    judged, data = _judged(tmp_path, base_name, project, node, apart)
+    return len(str(judged)) - len(str(data))
+
+
+def _cwd_nest(past: int, apart: int) -> int:
+    """The deepest working directory this suite's tests stand in below its top: a judge's copy in a round of a test's
+    own home (`<test>\\data`), as far past it as the judge's above, or of a fake's places apart in its worker's home."""
+    return len(os.sep + "data") + max(SUITE + past, HOME + apart)
+
+
+def test_the_suites_own_directories_hold_the_depth_budget(tmp_path):
+    """This suite judged at the deepest judge's copy the bound holds for (`DATA` and the judge's round) keeps what it
+    lays within Windows' bounds, and its directories stand as short as `SUITE` and `HOME` say: in pytest's spelling a
+    test's stood 73 below the tree's top, and the suite judged at a validator's round failed 68 tests and erred 14 where
+    the tree passed every one (2026-11-26)."""
+    top = len(str(Path(tempfile.gettempdir()).parent))
+    for at, most in ((tmp_path, SUITE), (Path(os.environ["GFSO_HOME"]), HOME)):
+        assert len(str(at)) - top <= most, f"{at} {len(str(at)) - top} characters below the tree's top, past {most}"
+    past, apart = max(_past(tmp_path / str(i), *c) for i, c in enumerate(CASES)), _past(tmp_path / "a", *APART, apart=True)
+    assert DATA + past + NEST <= FILE, f"a test's git object in the judged suite {DATA + past + NEST} deep"
+    assert DATA + past + _cwd_nest(past, apart) <= CWD, f"a judge's round in the judged suite {DATA + past + _cwd_nest(past, apart)} deep"
+
+
+def _judged(tmp_path, base_name, project, node, apart: bool = False) -> tuple[Path, Path]:
+    """(the deepest copy a validation of `node` judges in — a batch's run again —, the data directory); `apart`: where
+    places stand apart, as a test's fake of them lays its rounds on this host."""
+    (base := tmp_path / base_name).mkdir(parents=True)
     workdir = base if node == "root" else nodes_root(base) / component(project) / node_key(node)
     workdir.mkdir(parents=True, exist_ok=True)
-    rnd = VAL._validation_place(node, str(workdir), LocalExecution(), project=project)
+    ex = LocalExecution()
+    ex.apart = apart
+    rnd = VAL._validation_place(node, str(workdir), ex, project=project)
     return Path(rnd) / f"{BATCH}1_again" / "delivery", Path(os.path.realpath(config.data_dir()))
 
 
@@ -45,11 +85,10 @@ def _judged(tmp_path, base_name, project, node) -> tuple[Path, Path]:
 def test_the_judged_place_holds_the_delivered_tests_depth(tmp_path, base_name, project, node):
     judged, data = _judged(tmp_path, base_name, project, node)
     assert judged.is_relative_to(data), judged
-    past = len(str(judged)) - len(str(data))
-    assert past <= CWD - NEST - DATA, f"the judge's copy {past} characters past the data directory: {judged}"
     if os.name == "nt":
         # …a process started where the delivered tests' deepest stands, below the judge's copy, on this machine
-        at, pad = judged, NEST + DATA - len(str(data))
+        at, pad = judged, _cwd_nest(len(str(judged)) - len(str(data)), _past(tmp_path / "a", *APART, apart=True)) \
+            + DATA - len(str(data))
         while pad > 1:
             n = min(pad - 1, 50)
             at, pad = at / ("t" * n), pad - n - 1

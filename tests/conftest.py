@@ -51,6 +51,14 @@ _TMP = (Path(_COMMON).parent if _COMMON else _ROOT) / ".tmp"
 _TMP.mkdir(exist_ok=True)
 tempfile.tempdir = str(_TMP)
 os.environ.update(TMP=str(_TMP), TEMP=str(_TMP), TMPDIR=str(_TMP), GIT_CEILING_DIRECTORIES=str(_TMP))
+#: …and short below it: a copy of this tree judged at a validator's round stands ~110 characters deep on this host, and
+#: pytest's own spelling (`pytest-of-<user>\pytest-<n>\popen-gw<k>\<the test's name, 30><n>`, repeated by every place a
+#: test lays under a base named so) put 68 between `.tmp` and a test's directory: judged there, the suite failed 68 tests
+#: and erred 14 where the tree passed every one, git and a working directory past Windows' 260 (2026-11-26). A run's
+#: directory is its process's id — no two live runs share one, and a dead one's is known by it —, a worker's its number,
+#: a test's `t<n>` (`tmp_path`), a worker's home `h-<8>` (`_own_state_home`); the budget they hold is stated in
+#: tests/test_a_judged_place_holds_the_delivered_tests_depth.py
+TEST_DIR, HOME = "t", "h-"
 
 
 class _Mute:
@@ -121,13 +129,21 @@ def _writable_then(fn, path, _) -> None:
         fn(path)
 
 
+@pytest.fixture
+def tmp_path(tmp_path_factory) -> Path:
+    """A test's own directory, `t<n>` in its worker's (`TEST_DIR`): named after the test, a base laid in it carried
+    those 31 characters into each place laid beside it (`.gfso-nodes-<base>`, `.gfso-scratch-.<base>`). Its name is its
+    worker's alone: a name a test makes of it for what every worker shares spells the process too."""
+    return tmp_path_factory.mktemp(TEST_DIR)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _own_state_home():
     """A home of the suite's own, for the whole session."""
     prior = os.environ.get("GFSO_HOME")
-    _sweep(*[d for d in Path(tempfile.gettempdir()).glob("gfso-suite-*")
+    _sweep(*[d for d in Path(tempfile.gettempdir()).glob(HOME + "*")
              if _dead(d / OWNER) or (_dead(d / OWNER) is None and time.time() - d.stat().st_mtime > CUT_RUN_S)])
-    os.environ["GFSO_HOME"] = mine = tempfile.mkdtemp(prefix="gfso-suite-")
+    os.environ["GFSO_HOME"] = mine = tempfile.mkdtemp(prefix=HOME)
     (Path(mine) / OWNER).write_text(str(os.getpid()), encoding="utf-8")
     os.environ["GFSO_ALLOWED_HOSTS"] = "testserver"     # the name Starlette's TestClient sends; the door refuses others
     E.CEILING_GROUP = "gfso/suite"                      # its live containers under the machine's ceiling, never its limit
@@ -491,7 +507,12 @@ def pytest_addoption(parser):
     parser.addoption("--live-group", metavar="NAMES", help=f"only these groups' live tests, comma-separated: {', '.join(LIVE_GROUPS)}")
 
 
+@pytest.hookimpl(tryfirst=True)     # …before pytest's own reads the base temp
 def pytest_configure(config):
+    if worker := getattr(config, "workerinput", None):
+        config.option.basetemp = str(Path(config.option.basetemp).parent / worker["workerid"].removeprefix("gw"))
+    elif config.option.basetemp is None:
+        config.option.basetemp = str(_TMP / str(os.getpid()))
     _NoLiveModel.containers = bool(config.getoption("--live") or config.getoption("--live-group"))
     config.addinivalue_line("markers", "no_model_path: the test drives the path where no model answers "
                                        "(a spawn attempt is expected and fails as a missing CLI does)")
@@ -538,24 +559,24 @@ def _take_the_live_lock() -> None:
 
 
 def pytest_sessionstart(session):
-    """`--live` taken by one suite per machine; the run directories of suites that died before their teardown gone (a
-    numbered directory stays three days by its own `.lock`): known by the process each names."""
+    """`--live` taken by one suite per machine; the run directories of suites that died before their teardown gone:
+    known by the process each names."""
     if hasattr(session.config, "workerinput"):
         return
     if session.config.getoption("--live") or session.config.getoption("--live-group"):
         _take_the_live_lock()
     root = session.config._tmp_path_factory.getbasetemp()
     (root / OWNER).write_text(str(os.getpid()), encoding="utf-8")
-    for run in root.parent.glob("pytest-*"):
-        if run != root and _dead(run / OWNER):
-            shutil.rmtree(run, ignore_errors=True)
+    for run in _TMP.iterdir():
+        if run.name.isdigit() and run != root and _dead(run / OWNER):
+            shutil.rmtree(run, onerror=_writable_then)       # …its test repositories' read-only packs too
     for left in _TMP.iterdir():       # …what tests made and left beside it, a day on: no run lasts that long
         try:
             old = time.time() - left.stat().st_mtime > 86400
         except FileNotFoundError:     # a neighbour's running suite removed its own under this walk
             continue
-        if old and left.name != root.parent.name and left != LIVE_LOCK and not left.name.startswith("gfso-suite-"):
-            shutil.rmtree(left, ignore_errors=True) if left.is_dir() else left.unlink(missing_ok=True)
+        if old and left != root and left != LIVE_LOCK and not left.name.startswith(HOME):
+            shutil.rmtree(left, onerror=_writable_then) if left.is_dir() else left.unlink(missing_ok=True)
 
 
 def pytest_terminal_summary(terminalreporter, config):
