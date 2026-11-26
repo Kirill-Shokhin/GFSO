@@ -2748,6 +2748,12 @@ class Engine:
         return (any(self.log_position(p.id, new_state=State.DONE) > at for p in prods)
                 or (any(e.provisional for e in ins) and not resolved_on_current_version(self.audit_log(t.id))))
 
+    def block_lifts_itself(self, t: Task, registered=None) -> bool:
+        """Will this BLOCK end with no one's move — `block_clears_itself`, and the issuer's move the system's to make (a
+        machine's, `issuer_kind`)? The dispatcher lifts only those; a person's issuer lifts his own by RESOLVE_BLOCK, and
+        a reader promising him «it clears by itself» left his seam BLOCKED past its blocker's PASS (ui, 2026-11-26)."""
+        return self.block_clears_itself(t) and self.issuer_kind(t.id, registered) == "machine"
+
     def _refuted_split(self, e) -> Optional[TaskId]:
         """Whose split a refuted wait belongs to: the lowest node both ends sit under — or, where the BLOCK named
         its own ancestor or itself, the blocked node's parent, whose split put it there."""

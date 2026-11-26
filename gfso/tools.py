@@ -269,10 +269,14 @@ def _blocked_by(engine: Engine, t) -> Optional[dict]:
                    if a.signal == Signal.BLOCK and not a.rejected and a.reason), "")
     on = sorted({str(e.from_id) for e in engine.get_dependencies() if str(e.to_id) == str(t.id)
                  and e.discovered})
-    # …AND "CLEARS BY ITSELF" ONLY WHERE IT DOES (`Engine.block_clears_itself`): a block naming what cannot
-    # finish before it, or held to after an answer, was told to wait for producers that never pass
+    # …AND "CLEARS BY ITSELF" ONLY WHERE IT DOES (`Engine.block_lifts_itself`): a block naming what cannot
+    # finish before it, or held to after an answer, was told to wait for producers that never pass; a person's, to
+    # wait for a lift the system never makes of his
     return {"reason": reason or "(the executor named none)", "waits_on": on,
             "what_now": (f"finish {', '.join(on)} — when they pass, the block clears by itself"
+                         if on and engine.block_lifts_itself(t) else
+                         f"finish {', '.join(on)} — when they pass, its issuer {engine.graph.issuer_of(t.id)} lifts it "
+                         f"(RESOLVE_BLOCK, §12.4): the system makes no move of an issuer it does not hold"
                          if on and engine.block_clears_itself(t) else
                          f"no producer finishing clears it: {engine.order_refuted_by(t.id) or 'see the reason'} "
                          f"— its issuer answers it (RESOLVE_BLOCK, a re-ASSIGN, or CANCEL, §12.13)" if on

@@ -289,7 +289,7 @@ class Dispatcher:
             # WHICH BLOCKS CLEAR THEMSELVES is one rule (`Engine.block_clears_itself`), read here and by the
             # issuer's questions: a block that named no node with every producer already DONE, or a repeat one,
             # resumed an executor that blocked again — a paid loop (critic 7 #5; critic, 2026-09-27).
-            if all(p.state.name == "DONE" for p in existing) and self._engine.block_clears_itself(t):
+            if all(p.state.name == "DONE" for p in existing) and self._engine.block_lifts_itself(t, self._agents):
                 # keyed on the BLOCKED EPISODE, not the iteration: the guard exists to stop a
                 # second signal inside one episode, and a node may block twice under the same
                 # contract — with `#iteration` the second block found the key spent and was never
