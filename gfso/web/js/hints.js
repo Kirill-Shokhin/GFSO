@@ -342,7 +342,13 @@ export const PANEL = {
     full: text => hover(text),
     directive: text => hover(text),
     // …who checks the part is its issuer's choice, the signature theirs either way (§10.2; the author, 11-20, via engineering)
-    checkAlways: "Checked by the validator (otherwise by you); you sign either way",
+    appoint: 'Checked by',
+    someoneElse: 'someone else, by name…',
+    askName: 'Who checks it? Their name, as they sign',
+    byIssuer: who => `${who}, its issuer`,
+    // …the records of others where the checker was appointed: evidence beside its record, never the verdict (§10.2)
+    besideWord: 'Beside it:',
+    beside: hover('Recorded by someone other than the appointed checker', 'It stands beside the verdict, never for it'),
     // …the system's validator is a model run: which one, as its record says on a closed node, and on an open one the project's
     // registered validator's, else the server's «by default» — the call that starts it may name another (the author, 11-24:
     // «у нас системный валидатор это конкретная модель»)

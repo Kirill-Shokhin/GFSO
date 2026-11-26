@@ -2,7 +2,7 @@
 // live messages to the units that own them. No unit imports another's handlers; they meet here.
 import {$, esc, coded, ages, phone} from './dom.js';
 import {PROJECT, TASK, GOAL, FOCUS, TOP, getJSON, post, singleFlight, whenMoved, movedBy, pushStep} from './api.js';
-import {S, kept, keep, validatorModelOf, signsAs, hereIn, mineShown, procs, inView, inside, goTo, goUp as up} from './state.js';
+import {S, kept, keep, takeRoster, signsAs, hereIn, mineShown, procs, inView, inside, goTo, goUp as up} from './state.js';
 import {focus, watch, point} from './store.js';
 import {loadCheckMap, terminal, FM} from './vocab.js';
 import {loadGraph, hear, loadFrontier, loadReports, loadMetrics, loadRun, rebuildRun, runIsOpen} from './model.js';
@@ -10,14 +10,14 @@ import {isHidden} from './fold.js';
 import {initGraph, drawGraph, restyle, applyMineDim, toggleMine, annotate} from './graph.js';
 import {drawHeader, drawQuality, toggleReports, resolveReport, stopRun, startRun, setMode, setIntent} from './header.js';
 import {refreshProjects, offerNew, busyByProject, toggleProjects, closeProjects, moreProjects, searchProjects, deleteProject, listOnly, switchHostRuns, rereadHostRuns} from './projects.js';
-import {selectTask, panelOpened, closeSidebar, resign, openReader, closeReader} from './panel.js';
+import {selectTask, panelOpened, closeSidebar, resign, openReader, closeReader, appointed} from './panel.js';
 import {sendAction, submitActionForm, closeForm, recordVerdict, submitVerdict, aiDecompose, aiReview} from './acts.js';
 import * as author from './author.js';
 import * as goal from './goal.js';
 import {mountDeck, paint as paintDeck, onPipeline, onInflight, foldDeck} from './deck.js';
 import {connectWS} from './live.js';
 import {askProjectName, clearNotice, act} from './overlays.js';
-import {mountHints, LEAVING} from './hints.js';
+import {mountHints, LEAVING, PANEL} from './hints.js';
 import {untip, TOUCH} from './tip.js';
 import {drawPlanning, togglePlan, leavePlan} from './planning.js';
 import {onReading, rereadResources} from './resources.js';
@@ -95,7 +95,10 @@ async function firstLoad() {
     if (TASK) point('select', TASK);                   // `?task=` makes one node linkable
     within(panelOpened()).then(() => deck).then(afterDeck);   // …the view framed on the canvas its panel leaves
 }
-S.reload = async () => { await refreshAll(); if (focus().select) await selectTask(focus().select); };
+// …the roster read again at each reload: a validator a mode registers after the page loaded is named as one (critic)
+const readRoster = () => S.roster = Promise.all([getJSON('/api/runtime'), getJSON('/api/agents')])
+    .then(([r, a]) => takeRoster(a.agents, r.system_model)).catch(() => { /* the rows say «the validator» bare */ });
+S.reload = async () => { await Promise.all([refreshAll(), readRoster()]); if (focus().select) await selectTask(focus().select); };
 const projects = () => refreshProjects().then(onInflight);
 // NEWS ON THE NARRATION re-reads, once a burst of it has settled, as much as its widest line asked: the run always; the
 // header; the open node's panel when a line names it (a dispute, a verdict, a validation change it with no transition);
@@ -182,7 +185,10 @@ const ACT = {
     'resolve-report': d => resolveReport(d.id),
     // …who checks a part, its issuer's choice: redrawn from the server's answer either way — the browser ticks the box first,
     // and a refusal left it ticked over an engine holding it off (critic)
-    'set-checker': async d => { await act(post('/api/run/set_checker', {task_id: d.id, checker: d.on === '1' ? 'validator' : 'self'}), {what: 'Who checks this part', ok: null}); await S.reload(); point('select', d.id); },
+    // …from the panel's list: one the engine names, or anyone by name; a name not given leaves the standing one
+    'set-checker': async (d, b) => { const checker = appointed(b.value, d.was, () => prompt(PANEL.askName));
+        if (checker) await act(post('/api/run/set_checker', {task_id: d.id, checker}), {what: 'Who checks this part', ok: null});
+        await S.reload(); point('select', d.id); },
     close: () => point('select', null), select: d => (leavePlan(), point('select', d.id)), view: d => goTo(d.id), read: (d, b) => openReader(d.facet, b.classList.contains('fchip'), d.to),
     signal: sendAction, 'send-signal': submitActionForm, 'form-cancel': closeForm,
     verdict: recordVerdict, 'send-verdict': submitVerdict, 'ai-decompose': aiDecompose, 'ai-review': aiReview,
@@ -221,6 +227,8 @@ document.addEventListener('click', e => {
 $('goal-panel').addEventListener('input', goal.recheck);
 $('goal-panel').addEventListener('click', goal.recheck);   // a row removed by its ×
 $('pl-search').addEventListener('input', searchProjects);
+// a list's choice is its move: `data-change` names it as `data-action` names a press's
+document.addEventListener('change', e => { const b = e.target.closest('[data-change]'); if (b) ACT[b.dataset.change](b.dataset, b); });
 // …AND THE BAR IS ASKED AGAIN: the frontier's `mine` is computed FOR the identity in the box.
 $('mine-name').addEventListener('change', e => { S.mineName = e.target.value; keep(`gfso.mine:${S.project}`, S.mineName);
     if (S.mineOnly) applyMineDim(); refreshHeader(); });
@@ -338,10 +346,8 @@ async function init() {
     }
     // WHO THIS PAGE IS comes before anything it offers: every panel and the header draw its moves by it
     const checks = loadCheckMap();
-    // the model this project's validator runs on, for the panel's Checker row (state.js `validatorModelOf`)
-    Promise.all([getJSON('/api/runtime'), getJSON('/api/agents')])
-        .then(([r, a]) => { S.validatorModel = validatorModelOf(a.agents, PROJECT, r.system_model); })
-        .catch(() => { /* the row says «the validator» */ });
+    // the roster, for who is the system's validator and the model it runs on (state.js `takeRoster`): read before any panel
+    readRoster();
     await whoAmI();
     if (S.me?.refused) return;
     await checks;

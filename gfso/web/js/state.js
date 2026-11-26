@@ -28,8 +28,14 @@ export const viaWord = v => !v ? '' : v === 'session' || v === 'local-peer' ? 'o
 // `_validators_of`) on its own model — every mode registers one, on the project's system model —, an instrument with no model
 // naming none; else `validate_result` at a door, on the server's model unless its call names another (critic: the server's
 // alone named Sonnet where an AUTO project's validator runs on Haiku, the header saying so)
+// THE SYSTEM'S VALIDATOR, one reading for every line that names it: the roster's instrument kinds (roster.py), or the call
+// itself — whatever role name a record of it is signed under, it reads «the validator» (critic: «val» beside «the validator»)
+const INSTRUMENTS = ['llm-validator', 'unittest-checker'];
+export const isInstrument = who => who === 'validate_result' || INSTRUMENTS.includes(S.agents?.[who]?.kind);
+// …the roster as the page holds it, taken whole at each read (main.js): who is an instrument, and the model it runs on
+export const takeRoster = (agents, serverModel) => { S.agents = agents || {}; S.validatorModel = validatorModelOf(S.agents, PROJECT, serverModel); };
 export const validatorModelOf = (agents, project, serverModel) => {
-    const v = Object.values(agents || {}).find(c => ['llm-validator', 'unittest-checker'].includes(c.kind) && [project, null, undefined].includes(c.project));
+    const v = Object.values(agents || {}).find(c => INSTRUMENTS.includes(c.kind) && [project, null, undefined].includes(c.project));
     return v ? {model: v.kind === 'llm-validator' ? v.model || serverModel : null} : {model: serverModel, byDefault: true}; };
 export const moverOf = a => {
     const by = a.source && agentName(a.source);

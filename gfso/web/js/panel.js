@@ -6,7 +6,7 @@
 import {$, el, esc, coded, data, section, ul, rebuild, tally, due} from './dom.js';
 import {PANEL, H, frame, waitWords, KIND} from './hints.js';
 import {task, TOP} from './api.js';
-import {S, hasKids, whereDrawn, taskOf, whoOwes, asGiven, owns, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, atTheGo} from './state.js';
+import {S, hasKids, whereDrawn, taskOf, whoOwes, asGiven, owns, isInstrument, signsAs, minePerformer, lift, agentName, moverOf, stateWord, inWorkOf, atTheGo} from './state.js';
 import {bucketOf, vNow, V_SYMBOL, can, look, closureNote, contested, terminal, modelName, delivered,
         byHand, mark as l2Mark, FM, fmOf, FM_NONE, FM_NO_MODE, consented, conjunct, nameOf, CARRIED, label, enteredWord} from './vocab.js';
 import {roundsOf, at, waitsOf, critAt, recordOf} from './run.js';
@@ -121,7 +121,11 @@ const liftedFull = ({d, vr}) => { const kinds = lifted(vr);
             + (r.expect ? `<div class="verdict-evidence">expected: ${esc(trim(String(r.expect), 300))}</div>` : '')
             + [...r.said.values()].map(ruling).join('') + `</div></li>`))).join('')) + `</div>` : ''; };
 
-function verdict({vr}) {
+// …and others' records beside it under every one of its forms — before the appointee records, a FAIL of the validator's
+// standing is exactly what the issuer needs to see (critic)
+export const verdict = ({vr}) => verdictLine(vr)
+    + besideTheRecord(vr).map(s => `<div class="pn-note check-skip"${PANEL.beside}>${esc(PANEL.besideWord)} ${esc(s)}</div>`).join('');
+function verdictLine(vr) {
     if (vr?.verdict) return `<div class="pn-verdict ${vr.verdict === 'PASS' ? 'check-pass' : 'check-fail'}">${glyph(vr.verdict)}<b>${vr.verdict}</b>`
         + `<span class="pn-who">${signer(vr)}</span>${vr.ts ? `<span class="pn-when">${when(vr.ts)}</span>` : ''}`
         + liftedMark(vr)
@@ -296,11 +300,26 @@ export function checkRow(d, vr) {
         : who === 'self' && issuer === d.assignee ? PANEL.bySelf(whoName(issuer)) : whoName(who === 'self' ? issuer : who))];
 }
 // …and its issuer's choice of it where one exists, the box
-function checkSetting({d, acts}) {
-    if (!d.parent_id || !owns(acts?.moves?.set_checker)) return '';
-    const on = checkerOf(d) === 'validator';
-    return `<div class="pn-note"><label class="act-check"><input type="checkbox"${data({action: 'set-checker', id: d.id, on: on ? '0' : '1'})}${on ? ' checked' : ''}> ${esc(PANEL.checkAlways)}</label></div>`;
+// …WHOM HE MAY APPOINT, the engine's list for the caller now (get_task `checker_choices`: never its executor), the one
+// standing kept among them, and anyone else by name — a person outside the system is never listed (the author, 11-24:
+// «надо понимать кто проверяющий еще до проверки … назначать через интерфейс — для общего случая»)
+export const checkerChoices = (d, owned) => !d.parent_id || !owned || !(d.checker_choices || []).length ? []
+    : [...new Set([...d.checker_choices, checkerOf(d)])];
+export const checkerWord = (d, c) => c === 'validator' ? PANEL.byValidator(S.validatorModel?.model && modelName(S.validatorModel.model), S.validatorModel?.byDefault)
+    : c === 'self' ? PANEL.byIssuer(whoName(taskOf(d.parent_id).assignee || '')) : whoName(c);
+export function checkSetting({d, acts}) {
+    const choices = checkerChoices(d, owns(acts?.moves?.set_checker)), now = checkerOf(d);
+    if (!choices.length) return '';
+    const opt = c => `<option value="${esc(c)}"${c === now ? ' selected' : ''}>${esc(checkerWord(d, c))}</option>`;
+    return `<div class="pn-note"><label class="act-check">${esc(PANEL.appoint)} <select${data({change: 'set-checker', id: d.id, was: now})}>`
+        + `${choices.map(opt).join('')}<option value="">${esc(PANEL.someoneElse)}</option></select></label></div>`;
 }
+// …what a choice in it sends: the one chosen, or the name asked for «someone else»; nothing for the standing one, an empty
+// name or a cancelled ask
+export const appointed = (value, was, ask) => { const c = value || String(ask() || '').trim(); return c && c !== was ? c : ''; };
+// THE RECORDS BESIDE THE VERDICT where its issuer appointed the checker: others', never read as the verdict (get_verdict `others`)
+export const besideTheRecord = vr => (vr?.others || []).map(r => `${r.verdict}${r.failed_criteria?.length ? ` on ${r.failed_criteria.join(', ')}` : ''} — ${recordedBy(r.validator)}`
+    + (r.by_hand ? ', by hand' : '') + (r.ts ? `, ${stamp(r.ts)}` : ''));
 // A SEAM HE ISSUES, HELD IN ITS HOLDER'S CHAT (§10.4: autonomy per task and role): no button sets it — the holder's own
 // connection taking its name records that it works in a chat, and each seam he issues to it is a TOP, his word standing
 // there. The page says so to anyone: who holds it and that its verdict is the person's
@@ -317,6 +336,7 @@ export const selectTask = id => opening = readPanel(id);
 async function readPanel(id) {
     const mine = ++panelRead;
     try {
+        await S.roster;                                // who is the system's validator, before a line names a record's signer
         const soft = p => p.catch(() => null);
         const [d, vr, cr, acts] = await Promise.all([task(id), soft(task(id, '/verdict')), soft(task(id, '/critique')),
             soft(task(id, '/actions?role=*'))]);     // every party's moves with who makes each: the page keeps those it signs
@@ -369,9 +389,11 @@ const txt = x => Array.isArray(x) && x.every(i => typeof i === 'string') ? `<ul 
 // Who produced a verdict: a hand or an instrument — nothing closes on impression (HTTP door, 2026-09-02).
 // …and a node's own executor's report is no validation (§10.3): said as the record says it (critic: «validated by» stood
 // over a SELF-REPORTED PASS)
+// …a record's signer in words: the system's validator as such, whatever role it signed under (state.js `isInstrument`)
+const recordedBy = who => isInstrument(who) ? 'the validator' : agentName(who || '');
 export const signer = vr => vr.by_hand ? byHand(esc(vr.validator || ''))
     : vr.provenance === 'self' ? `self-reported by ${esc(vr.validator ? agentName(vr.validator) : 'its executor')}, not an independent check`
-    : `validated by ${esc(vr.validator ? agentName(vr.validator) : 'an instrument')}${vr.validator_model ? `, ${esc(modelName(vr.validator_model))}` : ''}`;
+    : `validated by ${esc(vr.validator ? recordedBy(vr.validator) : 'an instrument')}${vr.validator_model ? `, ${esc(modelName(vr.validator_model))}` : ''}`;
 export const perCrit = vr => Object.fromEntries((vr?.per_criterion || []).map(c => [c.criterion, c]));
 
 // A criterion's pinned check is what makes it a contract (A1, §2) — folded, the longest part of it.
