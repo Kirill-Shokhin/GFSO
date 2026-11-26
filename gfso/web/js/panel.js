@@ -92,31 +92,44 @@ function head({d, vr, rounds}) {
 // out leaves its check running, and none says this verdict skipped anything: it may have run it. A PASS read without them
 // reads as wide as one still held to all that once failed (Thm 11). Each is one command however many criteria it stood
 // under, with every reason given for it; a check taken off stands in the first record and the last, and is said once.
-const LIFTED = [['checks_no_longer_run', 'check a ruling took off', 'checks a ruling took off', 'it no longer runs under the criteria named; the part it belongs to still holds it', 'they no longer run under the criteria named; the parts they belong to still hold them'],
-                ['findings_not_reproduced', 'finding a later validator did not reproduce', 'findings a later validator did not reproduce', 'no later validation demands it', 'no later validation demands them'],
-                ['retired_after_refutation', 'finding its issuer ruled out', 'findings its issuer ruled out', 'the same finding filed again refutes nothing; its check may still run', 'the same findings filed again refute nothing; their checks may still run']];
+// …the first record has two sources, each its own sentence: a ruling's, and a re-admission that left a settled part
+// mapped to nothing — signed by its decomposer, with the part's last re-run (`source: unmap`, engine validation.py)
+// …each record read by the name its one owner gives it (`Engine.lifted`), the door's own test reads these names here
+const record = name => vr => vr?.[name] || [];
+const takenOff = unmap => vr => record('checks_no_longer_run')(vr).filter(r => (r.source === 'unmap') === unmap);
+const LIFTED = [[takenOff(false), 'check a ruling took off', 'checks a ruling took off', 'it no longer runs under the criteria named; the part it belongs to still holds it', 'they no longer run under the criteria named; the parts they belong to still hold them'],
+                [takenOff(true), "part's check its decomposer unmapped", "parts' checks their decomposer unmapped", 'it no longer runs under the criterion named: its part maps to nothing in this split', 'they no longer run under the criteria named: their parts map to nothing in this split'],
+                [record('findings_not_reproduced'), 'finding a later validator did not reproduce', 'findings a later validator did not reproduce', 'no later validation demands it', 'no later validation demands them'],
+                [record('retired_after_refutation'), 'finding its issuer ruled out', 'findings its issuer ruled out', 'the same finding filed again refutes nothing; its check may still run', 'the same findings filed again refute nothing; their checks may still run', true]];
 const liftedKey = r => `${r.check?.split('/')[0] ?? ''}\n${r.command || r.id || r.criterion}\n${r.expect ?? ''}`;
-const lifted = vr => { const checks = vr?.checks_no_longer_run || [], taken = new Set(checks.flatMap(r => [`${r.criterion}\n${r.command}`, r.finding]));
-    return LIFTED.map(([key, one, many, it, them]) => { const by = new Map();
-        for (const r of vr?.[key] || []) {
-            if (key === 'retired_after_refutation' && (taken.has(`${r.criterion}\n${r.command}`) || (r.id && taken.has(r.id)))) continue;
+export const lifted = vr => { const checks = vr?.checks_no_longer_run || [], taken = new Set(checks.flatMap(r => [`${r.criterion}\n${r.command}`, r.finding]));
+    return LIFTED.map(([rowsOf, one, many, it, them, ruledOut]) => { const by = new Map();
+        for (const r of rowsOf(vr)) {
+            if (ruledOut && (taken.has(`${r.criterion}\n${r.command}`) || (r.id && taken.has(r.id)))) continue;
             const k = liftedKey(r);
             if (!by.has(k)) by.set(k, {...r, criteria: new Set(), said: new Map()});
             by.get(k).criteria.add(r.criterion);
-            if (!by.get(k).said.has(r.why)) by.get(k).said.set(r.why, r);
+            if (!by.get(k).said.has(saidOf(r))) by.get(k).said.set(saidOf(r), r);
         }
         const rows = [...by.values()], n = rows.length;
         return {rows, kind: n > 1 ? many : one, means: n > 1 ? them : it}; }).filter(k => k.rows.length); };
-const liftedMark = vr => { const kinds = lifted(vr), n = new Set(kinds.flatMap(k => k.rows.map(liftedKey))).size;
-    return n ? `<button class="pn-link pn-lifted" data-action="read" data-facet="verdict" data-to="rd-lifted"${PANEL.lifted(kinds.map(k => `${k.rows.length} ${k.kind}: ${k.means}`))}>${tally(n, 'lifted')}</button>` : ''; };
-const ruling = r => (r.printed ? `<div class="verdict-evidence">printed: ${esc(trim(String(r.printed), 300))}</div>` : '')
-    + (r.why ? `<div class="verdict-evidence">${esc(spoken(r.why))}</div>` : '')
-    + `<div class="verdict-evidence">${esc([r.decided_by === 'system' ? 'the system' : r.by && agentName(r.by), r.at && stamp(r.at)].filter(Boolean).join(', '))}</div>`;
-const liftedFull = ({d, vr}) => { const kinds = lifted(vr);
+// …and on the mark itself a part unmapped while its check FAILED on this delivery: an escape reads as an honest lift
+// until the section is opened, and the mark is what a PASS's reader sees first (critic; SETTLED_PART_UNRESOLVABLE_CHECK)
+const unmappedFailing = vr => new Set(takenOff(true)(vr).filter(r => r.rerun === 'failing' && r.rerun_on_this_delivery).map(liftedKey)).size;
+export const liftedMark = vr => { const kinds = lifted(vr), n = new Set(kinds.flatMap(k => k.rows.map(liftedKey))).size, f = unmappedFailing(vr);
+    return n ? `<button class="pn-link pn-lifted${f ? ' check-fail' : ''}" data-action="read" data-facet="verdict" data-to="rd-lifted"${PANEL.lifted(kinds.map(k => `${k.rows.length} ${k.kind}: ${k.means}`))}>${tally(n, 'lifted')}${f ? `, ${f} ${PANEL.whileFailing}` : ''}</button>` : ''; };
+// …what a lift says, and who decided it: an unmap in the record's own sentence (who, the part, its re-run on this
+// delivery), signed by its decomposer; a ruling by its reason, signed by the system or its issuer
+const saidOf = r => r.source === 'unmap' ? r.says : r.why;
+export const ruling = r => (r.printed ? `<div class="verdict-evidence">printed: ${esc(trim(String(r.printed), 300))}</div>` : '')
+    + (saidOf(r) ? `<div class="verdict-evidence">${esc(spoken(saidOf(r)))}</div>` : '')
+    + `<div class="verdict-evidence">${esc([r.decided_by === 'system' ? 'the system' : agentName(r.by || r.decided_by || ''), r.at && stamp(r.at)].filter(Boolean).join(', '))}</div>`;
+const partOf = r => r.part || (r.check?.includes('/') ? r.check.split('/')[0] : '');
+export const liftedFull = ({d, vr}) => { const kinds = lifted(vr);
     return kinds.length ? `<div id="rd-lifted">` + section('Lifted', kinds.map(k => `<div class="verdict-evidence">${k.kind}: ${k.means}</div>`
         + ul('item-list', k.rows.map(r => `<li><div class="verdict-body"><strong>${esc([...r.criteria].join(', '))}</strong>`
             + (r.node && r.node !== d.id ? ` <span class="pn-who">in ${esc(nameOf(taskOf(r.node)) || r.node)}</span>` : '')
-            + (r.check?.includes('/') ? ` <span class="pn-who">a check of ${esc(nameOf(taskOf(r.check.split('/')[0])) || r.check.split('/')[0])}</span>` : '')
+            + (partOf(r) ? ` <span class="pn-who">a check of ${esc(nameOf(taskOf(partOf(r))) || partOf(r))}</span>` : '')
             + (r.command ? `<div class="verdict-evidence"><code>${esc(r.command)}</code></div>` : '')
             + (r.expect ? `<div class="verdict-evidence">expected: ${esc(trim(String(r.expect), 300))}</div>` : '')
             + [...r.said.values()].map(ruling).join('') + `</div></li>`))).join('')) + `</div>` : ''; };
