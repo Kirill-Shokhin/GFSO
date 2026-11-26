@@ -48,6 +48,12 @@ FRESH_S = 3
 TAIL = 200
 
 
+def bound_of(p) -> float:
+    """The seconds the system's run of probe `p` may take: its issuer's stated bound (`Probe.bound_s`), else the default
+    — the one place a run's bound is read, so the runner and the budget a validation gives it cannot disagree."""
+    return p.bound_s or PROBE_S
+
+
 def observing(graph) -> bool:
     """Does this project observe a node's place before a session (`set_mode(observe=)`)? On unless it says no — a
     paired row needs the other arm on the same server."""
@@ -86,10 +92,11 @@ def observe_place(engine, tasks, place: Optional[str], cap: Optional[int] = None
 
 
 def run_checks(ex, probes, place: str, tree: Optional[str], budget: float, touched: Optional[set] = None) -> list:
-    """[(key, {criterion, behaviour, command, expect, exact, rc, out, printed, matched, note})] — each `(key, criterion,
-    probe)` of `probes` run in `tree`, a copy of `place`, with its inputs laid from the contract: each distinct
-    command once, PROBE_S at most and `budget` in all, matched by `printed`. [] where nothing can run: no copy, no shell,
-    inputs that cannot be laid as pinned (refused at admission). The one runner of the system's own checks: before a
+    """[(key, {criterion, behaviour, command, expect, exact, bound_s, bound_supplied, rc, out, printed, matched, note})] —
+    each `(key, criterion, probe)` of `probes` run in `tree`, a copy of `place`, with its inputs laid from the contract:
+    each distinct command once, its own bound at most (`bound_of`; `bound_supplied` where that is the default, as a
+    supplied deadline is logged, §2.5) and `budget` in all — what bounds the caller's state —, matched by `printed`. []
+    where nothing can run: no copy, no shell, inputs that cannot be laid as pinned (refused at admission). The one runner of the system's own checks: before a
     session (`observe_place`) and over a fresh copy of a delivery at its validation (`validate._observe_pins`).
     `touched`: gets the delivered files each check changed in its own copy — what a judge running it changes too."""
     if not (tree and probes and (bash := ex.shell())):
@@ -106,23 +113,27 @@ def run_checks(ex, probes, place: str, tree: Optional[str], budget: float, touch
             pass
     for key, c, p in probes:
         row = {"criterion": c.name, "behaviour": p.behaviour, "command": p.command, "expect": p.expect,
-               "exact": p.exact}
+               "exact": p.exact, "bound_s": (bound := bound_of(p)), "bound_supplied": p.bound_s is None}
         # …one run per command OVER ITS INPUTS: keyed by the command alone, a second criterion pinning it over other
-        # inputs read the first one's output — a false FAIL on correct work, a lost one on wrong work (critic B8)
-        if (once := (p.command, p.inputs)) not in ran:
+        # inputs read the first one's output — a false FAIL on correct work, a lost one on wrong work (critic B8); and
+        # under its bound, or one stated longer would read a run cut at another's
+        if (once := (p.command, p.inputs, bound)) not in ran:
             # …the copies' time not counted: a large delivered tree spent the budget copying, and its later checks —
             # the failing one among them — went unrun, the judge's word deciding (critic B8)
             left = budget - (time.monotonic() - t0 - sum(copying))
-            ran[once] = (_fresh_run(ex, bash, c, p, tree, min(PROBE_S, left), place, copying, touched,
+            ran[once] = (_fresh_run(ex, bash, c, p, tree, min(bound, left), place, copying, touched,
                                     base) if left >= 1
                          else {"note": "not run: the observation's time ran out"})
             # …not finished in the time it was given — its own bound, or what the observation's budget left it, or none
             # left at all —: it decided nothing in finite time, and the delivery's own code spends that budget, so a
             # looping check placed after slow honest ones fell to "the budget's cause" and the judge's word passed it
-            # (critic over the first form, which marked only a check given the whole PROBE_S). `with_engine_observations`
+            # (critic over the first form, which marked only a check given its whole bound). `with_engine_observations`
             # reads it as ⊥ — no PASS, no FAIL —, and the next validation re-runs only the ⊥ criteria, with the whole budget
             if str(ran[once].get("note", "")).startswith(("did not finish", "not run: the observation's time")):
-                ran[once] = {**ran[once], "timed_out": True, "whole": left >= PROBE_S}
+                # …whole where it had all it could be given — its bound, or the whole budget where that is shorter: a
+                # re-ask gives no more, and bounds stated past the validation's own were re-asked, each paid, to its end
+                # (critic over the stated bound); one cut behind others is re-run alone next, with the whole budget
+                ran[once] = {**ran[once], "timed_out": True, "whole": left >= min(bound, budget) - 1}
         # …matched against THIS check's expectation: one command pinned twice with two expectations printed
         # once, and the second inherited the first's match (critic over 27de5f8)
         got = ran[once]

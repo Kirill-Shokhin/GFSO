@@ -25,7 +25,7 @@ from pathlib import Path
 
 from gfso.adapters.llm.stats import _hint, stat_line, calls_of, refused_by_limit, tag_stage
 from gfso.inflight import staged
-from gfso.core.protocol.procedure import EXACT_TEXT, PROBE_S, pinned_files, with_named_files
+from gfso.core.protocol.procedure import BOUND_TEXT, EXACT_TEXT, PROBE_S, pinned_files, with_named_files
 from gfso.core.types import LLMProviderPort, Stage
 from gfso.config import MODEL_DEFAULT, sufficiency_at_authoring
 from gfso.critic.runner import goal_obligations
@@ -113,6 +113,7 @@ _NAME_DESC = {"type": "object", "properties": {
             "behaviour": {"type": "string"}, "command": {"type": "string"},
             "expect": {"type": "string"},
             "exact": {"type": "boolean", "description": EXACT_TEXT},
+            "bound_s": {"type": "number", "description": BOUND_TEXT},
             "inputs": {"type": "array", "description":
                        "files the command reads, pinned with it: relative paths under `{inputs}`, read-only where it runs — a command "
                        "may add files beside them, and edits one only in a copy it made",

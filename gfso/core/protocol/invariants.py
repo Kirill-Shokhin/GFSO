@@ -20,6 +20,8 @@ OVER_A_PASS = "over_a_pass"
 #: an entry's exact pinned checks the system ran that did not finish within their own bound: ⊥ for its criterion,
 #: written only by `accounting.with_engine_observations`, read by the engine as under-observation (`Engine.record_verdict`)
 PAST_BOUND = "past_bound"
+#: …those of them whose bound was the system's default, their issuer having stated none: logged as supplied (§2.5)
+UNDER_THE_DEFAULT = "under_the_default"
 #: an entry's pass observed on no delivered tree — a pin's run on the delivery shows neither its `expect` nor the one the
 #: report cites, or the judge changed its copy where the system's own run decides nothing: ⊥ for its criterion, its
 #: reasons read as `PAST_BOUND` is (`accounting.with_engine_observations`)

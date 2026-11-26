@@ -416,8 +416,10 @@ def test_the_runs_cap_is_read_once_its_copy_stands(monkeypatch, place):
                         lambda t, g: order.setdefault(threading.get_ident(), []).append("cap") or real(t, g))
 
     e, out, _ = _validate(monkeypatch, at)
-    runs = [o for o in order.values() if "cap" in o]       # …the judges', not the system's own checks
-    assert len(runs) == 2 and all(o[:2] == ["copy", "cap"] for o in runs), order
+    # …the two judges', and the system's own run of the pinned checks, whose budget the same remainder caps
+    # (`validate._pins_budget`)
+    runs = [o for o in order.values() if "cap" in o]
+    assert len(runs) == 3 and all(o[:2] == ["copy", "cap"] for o in runs), order
     e.stop()
 
 

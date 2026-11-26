@@ -1127,11 +1127,20 @@ def _observe_pins(engine: Engine, parts: list, workdir, built: Optional[list] = 
                         # copy inside an enclosing repository (critic over the fresh copy). State an executor's own run
                         # left in a place with no recorded commit is the pin's to start clean of (`EXACT_TEXT`)
                         why, rows = ("its inputs could not be laid",
-                                     dict(run_checks(ex, probes, workdir, judged_at(tree, workdir, ex), OBSERVE_S + FRESH_S * len(probes),
-                                                     touched)))
+                                     dict(run_checks(ex, probes, workdir, judged_at(tree, workdir, ex),
+                                                     _pins_budget(probes, _scope_cap(parts, engine.graph)), touched)))
             except Uncopied as e:
                 why = str(e)
     return {k: rows.get(k) or {"note": f"not run: {why}"} for k, _, _ in probes}
+
+
+def _pins_budget(probes: list, cap: Optional[int]) -> float:
+    """The seconds the system's run of a validation's pinned checks may take in all: OBSERVE_S, FRESH_S a check, and the
+    whole of each bound a check's issuer stated (`Probe.bound_s`) on top — one the shared budget cut would be no bound
+    at all — never past `cap`, what is left of the validation's own bound (`_scope_cap`): a run outliving it lands its
+    verdict on a node the clock has handed on."""
+    asked = OBSERVE_S + sum(FRESH_S + (p.bound_s or 0) for *_, p in probes)
+    return asked if cap is None else min(asked, cap)
 
 
 def _read_by_id(engine: Engine, delivered: Optional[tuple], workdir, ex):

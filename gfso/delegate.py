@@ -1374,7 +1374,8 @@ class Dispatcher:
                     self._engine.parking.park_validation(task_id)
 
     def _wait_for_the_issuer(self, task_id: TaskId) -> None:
-        """A delivery whose every unobserved check ran past its whole own bound: not validated again — the same tree
+        """A delivery whose every unobserved check ran past all it could be given (its own bound, or the validation's whole
+        budget where that is shorter): not validated again — the same tree
         times out again, and each re-ask was a paid validator run every half minute until T_validate (critic over the
         timeout ⊥). It waits, no verdict invented, for VALIDATING's bound to hand it to its issuer (§12.2, §16.14)."""
         self._engine.emit_info("delegate", f"{task_id}: {BOUND_SPENT}")

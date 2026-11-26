@@ -64,14 +64,15 @@ class _Says:
 
 
 def _validated(tmp_path, printed: str, exact: bool = True, cmd: str = CMD, expect: str = "hello", runs=False,
-               node=True, before=lambda e: None, cite: str = None, edit: str = None, keep=None) -> dict:
+               node=True, before=lambda e: None, cite: str = None, edit: str = None, keep=None, bound_s=None) -> dict:
     # a node's own place (its validation runs in a copy of it) — or a shared one, which the validator works in itself
     place = tmp_path / ".gfso-nodes-p" / "n" if node else tmp_path / "work"
     place.mkdir(parents=True)
     (place / "out.txt").write_text(printed + "\n")
     e = _eng()
     T.create_task(e, "n", {"description": "greet", "criteria": [{"name": "c", "description": "prints hello", "check": [
-        {"behaviour": "it greets", "command": cmd, "expect": expect, "exact": exact}]}]}, "alice")
+        {"behaviour": "it greets", "command": cmd, "expect": expect, "exact": exact,
+         **({"bound_s": bound_s} if bound_s is not None else {})}]}]}, "alice")
     if keep is not None:
         keep["e"] = e
     T.signal(e, "n", "ACCEPT", "alice")

@@ -1127,7 +1127,9 @@ def _criteria_text(crits: list[dict]) -> str:
     return "\n".join(f"[[plan.root_criteria]]\nname = {q(c['name'])}\ndescription = {q(c['description'])}\n"
                      + "".join(f"\n[[plan.root_criteria.check]]\nbehaviour = {q(p.get('behaviour'))}\ncommand = "
                                f"{q(p.get('command'))}\nexpect = {q(p.get('expect'))}\nexact = "
-                               f"{'true' if p.get('exact') else 'false'}\n" for p in c.get("check") or ())
+                               f"{'true' if p.get('exact') else 'false'}\n"
+                               + (f"bound_s = {json.dumps(p['bound_s'])}\n" if p.get("bound_s") is not None else "")
+                               for p in c.get("check") or ())
                      for c in crits)
 
 
@@ -1373,8 +1375,9 @@ def written_plan(project, engine: Optional[Engine] = None) -> dict:
                       for s in spec.get("subtasks") or ()],
             # …each with its words and its checks, so the page shows what the person agrees to before the go (ui)
             "root_criteria": [{"name": c["name"], "description": c.get("description", ""),
-                               "check": [{k: x.get(k, "" if k != "exact" else False)
-                                          for k in ("behaviour", "command", "expect", "exact")}
+                               "check": [{**{k: x.get(k, "" if k != "exact" else False)
+                                             for k in ("behaviour", "command", "expect", "exact")},
+                                          **({"bound_s": x["bound_s"]} if x.get("bound_s") is not None else {})}
                                          for x in c.get("check") or ()],
                                **({"added_at_the_go": True} if c["name"] in added else {})}
                               for c in spec.get("root_criteria") or ()],

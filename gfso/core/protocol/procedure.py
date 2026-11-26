@@ -27,6 +27,7 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Optional
 
 from gfso import config as _config
+from gfso.core.graph.model import MAX_BOUND_S, bound_seconds
 from gfso.core.types import INPUTS_TOKEN, Criteria, Probe, files_at
 from gfso.core.protocol.probe_runs import (OFF_THE_WORKDIR, UNITTEST_UNIMPORTABLE, probes_off_the_workdir,
                                            probes_unittest_cannot_import)
@@ -165,6 +166,8 @@ def procedure_digest(criteria: Iterable[Criteria]) -> str:
                 h.update(b"\x06" + inputs_digest(p).encode("utf-8"))
             if p.exact:       # only where set: every digest pinned before the field stays
                 h.update(b"\x07")
+            if p.bound_s is not None:     # …and the bound it decides within, its issuer's where stated (`Probe.bound_s`)
+                h.update(b"\x08" + repr(bound_seconds(p.bound_s)).encode("utf-8"))
     return h.hexdigest()[:16]
 
 
@@ -470,7 +473,26 @@ def admission_defects(criteria: Iterable[Criteria]) -> list[str]:
     out += [f"{k}: every probe it pins emits a constant ({', '.join(v)}) and cannot come out false, so the criterion "
             f"forbids nothing (§1.3, §9.6) and a PASS on it observes no work; pin a command that runs the delivery"
             for k, v in sorted(hollow_procedures(crit).items())]
+    out += [f"{k}: {UNBOUNDED_CHECK} — {', '.join(v)}" for k, v in sorted(unrunnable_bounds(crit).items())]
     return out
+
+
+def unrunnable_bounds(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
+    """{criterion: [the stated bound]} of each probe whose `bound_s` no validation can run it under: not seconds above 0,
+    or past the validation's own bound (`check_bound_limit`). One bounded past it is cut by the validation every time and
+    decides nothing (A1 (i)); one unbounded is no finite procedure (§12.15)."""
+    out: dict[str, list[str]] = {}
+    for c in criteria or ():
+        for p in c.check or ():
+            if p.bound_s is not None and not ((s := bound_seconds(p.bound_s)) and s <= check_bound_limit()):
+                out.setdefault(c.name, []).append(f"bound_s {p.bound_s!r}")
+    return out
+
+
+def check_bound_limit() -> float:
+    """The longest bound a check may state: the server's own T_validate (§12.2), whose remainder caps every validation's
+    run (`validate._validation_cap`); none set, the longest a bound may be at all (`MAX_BOUND_S`)."""
+    return _config.state_bound("VALIDATING") or MAX_BOUND_S
 
 
 #: A pinned file a probe runs, sources, compiles or feeds on stdin — empty, it runs nothing. An empty file passed as an
@@ -787,8 +809,18 @@ def part_criteria(part_id, criteria: Iterable[Criteria]) -> tuple[Criteria, ...]
                  if any(_norm(p.command) for p in (c.check or ())))
 
 
-#: the seconds one exact pinned check the system runs may take, its build included — the bound every reader names
+#: the seconds one pinned check the system runs may take, its build included, where its issuer stated none
+#: (`Probe.bound_s`) — the default every reader names, logged as supplied where it is the one a run took
 PROBE_S = 60
+
+#: What an author is told a check's `bound_s` is — one text for every schema that pins a probe, the default from its owner.
+BOUND_TEXT = (f"the seconds the system's own run of this command may take, its build included; left out, {PROBE_S}. A "
+              "command still running then decides nothing and leaves its criterion undecided, so state the bound a slow "
+              "check needs (a whole test suite, a large corpus), at most the validation's own bound")
+#: …and what a refusal of one says it must be
+UNBOUNDED_CHECK = ("a check's `bound_s` is seconds above 0 and at most the validation's own bound, T_validate (§12.2): "
+                   "past it the validation cuts the run every time and it decides nothing, unbounded it is no finite "
+                   "procedure (§12.15); state seconds inside it, or leave it out for the default")
 
 
 def same_probe(p: Probe) -> tuple:

@@ -49,8 +49,8 @@ from gfso.core.graph.model import on_the_wall, project_max_iterations, project_n
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.graph.review import UNDECIDED, finding_reasons, is_undecided
 from gfso.core.handlers.structural import risks_naming_own_criteria
-from gfso.core.protocol.procedure import (EXACT_TEXT, as_read, inputs_token, laid as over_dirs, materialize_inputs,
-                                          same_probe, shows, PROBE_S, pinned_files, probe_id, probe_key,
+from gfso.core.protocol.procedure import (BOUND_TEXT, EXACT_TEXT, as_read, inputs_token, laid as over_dirs,
+                                          materialize_inputs, same_probe, shows, PROBE_S, pinned_files, probe_id, probe_key,
                                           probes_from as _checks_of, with_named_files, criterionless)
 from gfso.core.protocol.accounting import unrerunnable
 from gfso.core.types import (AgentId, Criteria, IN_THE_WORKS_PATH, INPUTS_TOKEN, PlaceUnavailable, Register, RevisionReason,
@@ -679,6 +679,7 @@ _CRITERIA = {"type": "array", "items": {"type": "object", "properties": {
     "check": {"type": "array", "items": {"type": "object", "properties": {
         "behaviour": {"type": "string"}, "command": {"type": "string"}, "expect": {"type": "string"},
         "exact": {"type": "boolean", "description": EXACT_TEXT},
+        "bound_s": {"type": "number", "description": BOUND_TEXT},
         "carry": {"type": "string", "description": "the id of one of THIS node's own pinned probes, as shown after "
                   "`decided by` (`criterion#hex`): the system copies that probe into this criterion exactly — command, "
                   "expect and its pinned inputs with their content; the other fields of this probe are then ignored. "
@@ -792,9 +793,13 @@ def _probes(stored, answered: tuple) -> tuple:
     named = lambda pr: dataclasses.replace(pr, inputs=tuple(with_named_files(
         {"name": stored.name, "check": [{"command": pr.command, "inputs": list(pr.inputs)}]}, files)["check"][0]
         ["inputs"].items()))
-    return tuple(dataclasses.replace(pr, inputs=by_cmd[pr.command].inputs) if pr.command in by_cmd and not pr.inputs
-                 else dataclasses.replace(pr, inputs=pinned) if not pr.inputs and INPUTS_TOKEN in pr.command
-                 else named(pr) if pr.inputs else pr for pr in answered)
+    # …and its stated bound (`bound_s`), as `planning._exact_kept` keeps one: restated without it, the check fell to the
+    # default and a 9-minute suite came back ⊥ on the restatement alone
+    kept = lambda pr: (dataclasses.replace(pr, bound_s=by_cmd[pr.command].bound_s)
+                       if pr.bound_s is None and pr.command in by_cmd else pr)
+    return tuple(kept(dataclasses.replace(pr, inputs=by_cmd[pr.command].inputs) if pr.command in by_cmd and not pr.inputs
+                      else dataclasses.replace(pr, inputs=pinned) if not pr.inputs and INPUTS_TOKEN in pr.command
+                      else named(pr) if pr.inputs else pr) for pr in answered)
 
 
 def spec_with(task, criteria: list, additions_only: bool = False, repin: frozenset = frozenset(), split=()) -> Spec:

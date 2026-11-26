@@ -21,6 +21,7 @@ class ProbeIn(BaseModel):
     # field, and a door that rebuilds a probe field by field is exactly where it goes missing.
     inputs: dict[str, str] = {}
     exact: bool = False      # `expect` is the whole printed output (`Probe.exact`)
+    bound_s: Optional[float] = None     # its issuer's bound on the system's run; None = the default (`Probe.bound_s`)
 
 
 class CriteriaIn(BaseModel):

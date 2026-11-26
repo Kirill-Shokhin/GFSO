@@ -164,14 +164,18 @@ def beyond_said(spec: dict, request: str, before: dict | None = None, said=()) -
 def _exact_kept(before: dict, after: dict) -> dict:
     """`after`, each check the round left as it was (one command, one expectation) still `exact` where it was: a model
     re-emitting a criterion left the flag out, and a note about two checks silently loosened six others (tracker,
-    Sonnet, 2026-11-03). What the system runs exactly is no less so for a round that did not mean to change it."""
-    exact = {(p.get("command"), p.get("expect")) for x in _parts(before).values() for c in x.get("criteria") or ()
-             for p in c.get("check") or () if p.get("exact") is True}
+    Sonnet, 2026-11-03). What the system runs exactly is no less so for a round that did not mean to change it — nor
+    under a shorter bound: a stated `bound_s` the round left out is kept as well."""
+    was = [p for x in _parts(before).values() for c in x.get("criteria") or () for p in c.get("check") or ()]
+    exact = {(p.get("command"), p.get("expect")) for p in was if p.get("exact") is True}
+    bound = {(p.get("command"), p.get("expect")): p["bound_s"] for p in was if p.get("bound_s") is not None}
     for x in _parts(after).values():
         for c in x.get("criteria") or ():
             for p in c.get("check") or ():
-                if (p.get("command"), p.get("expect")) in exact:
+                if (k := (p.get("command"), p.get("expect"))) in exact:
                     p["exact"] = True
+                if k in bound and p.get("bound_s") is None:
+                    p["bound_s"] = bound[k]
     return after
 
 

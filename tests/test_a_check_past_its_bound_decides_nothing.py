@@ -76,10 +76,13 @@ def test_a_whole_bound_spent_is_not_asked_again(tmp_path, monkeypatch):
     assert _classify_no_verdict(said, "n", out) == "no-verdict:bound"
 
 
-def test_a_bound_the_budget_cut_is_asked_again(tmp_path, monkeypatch):
-    """Cut by the shared budget, the check never had its own bound: the re-run with the whole budget may decide it."""
+def test_a_bound_past_the_whole_budget_is_not_asked_again(tmp_path, monkeypatch):
+    """Cut by the budget it had whole — the validation's own, shorter than its bound —, the check is spent: a re-ask's
+    budget is the same or less (the validation's time only runs down), so asked again it was paid for, ⊥ each time, to
+    the end of its bound (critic over the stated bound). One cut behind others' share IS asked again, alone, with the
+    whole budget: `test_a_check_bound_past_the_budget_is_spent_once_it_had_the_whole_budget`."""
     monkeypatch.setattr(O, "PROBE_S", 2)
     monkeypatch.setattr(VAL, "OBSERVE_S", 0, raising=False)
     monkeypatch.setattr(VAL, "FRESH_S", 1.5, raising=False)
     out = _validated(tmp_path, "hello", cmd="sleep 1.6; while :; do :; done; cat out.txt")
-    assert out.get("verdict") not in ("PASS", "FAIL") and BOUND_SPENT not in str(out.get("verdict_defects")), out
+    assert out.get("verdict") not in ("PASS", "FAIL") and BOUND_SPENT in str(out.get("verdict_defects")), out

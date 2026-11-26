@@ -17,8 +17,8 @@ from typing import Iterable, Mapping, Sequence
 
 from gfso.core.types import HOST, INPUTS_TOKEN, Criteria, Probe, unprojected
 from gfso.core.graph.model import is_its_executor
-from gfso.core.protocol.invariants import (ON_NO_DELIVERY, OVER_A_PASS, PAST_BOUND, emits_a_constant, probe_held,
-                                          probes_of, spoken_verdict, underprobed)
+from gfso.core.protocol.invariants import (ON_NO_DELIVERY, OVER_A_PASS, PAST_BOUND, UNDER_THE_DEFAULT, emits_a_constant,
+                                          probe_held, probes_of, spoken_verdict, underprobed)
 from gfso.core.protocol.procedure import (PROBE_S, contains, finding_id, inputs_dir_name, inputs_token, layable_over,
                                           pinned_probes, probe_id, probe_key as _norm, procedure_digest, round_of,
                                           runs_a_past_build, same_probe, tokenized)
@@ -532,10 +532,11 @@ PAST_WHOLE = "past_bound_whole"
 #: a shell's exit when the command could not be run at all — not found, not executable: no observation of the delivery
 NOT_RUN_RC = (126, 127)
 #: said in a refusal whose every unobserved criterion is PAST_WHOLE — read by the dispatcher, which stops re-asking
-BOUND_SPENT = ("NOT ASKED AGAIN: every unobserved check ran past its whole own bound on this delivered tree, which would "
-               "time out again — VALIDATING's bound hands the node to its issuer (§12.2), who may re-pin the check to finish "
-               f"inside the system's fixed per-check bound, {PROBE_S} s with its build (a slow corpus split across "
-               "checks), or cancel")
+BOUND_SPENT = ("NOT ASKED AGAIN: every unobserved check ran past all it could be given on this delivered tree — its own bound, or "
+               "the validation's whole budget where that is shorter —, which would "
+               "time out again — VALIDATING's bound hands the node to its issuer (§12.2), who may state the bound the "
+               f"check needs (its `bound_s`, the default {PROBE_S} s with its build, at most the validation's own bound), "
+               "re-pin it to finish inside its bound, or cancel")
 
 
 def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria],
@@ -557,7 +558,7 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
               for p in (c.check or ()) if _norm(p.command)}
     seen = {pid: o for pid, o in (observed or {}).items() if pid in pinned}
     def _the_reports(e: Mapping) -> dict:    # …the system's marks alone: a report cannot ⊥ its own FAIL, nor speak as the system
-        e = {k: v for k, v in e.items() if k not in (PAST_BOUND, PAST_WHOLE, OVER_A_PASS, ON_NO_DELIVERY)}
+        e = {k: v for k, v in e.items() if k not in (PAST_BOUND, PAST_WHOLE, UNDER_THE_DEFAULT, OVER_A_PASS, ON_NO_DELIVERY)}
         return {**e, "probe": [{k: v for k, v in q.items() if k != SYSTEM_SAW} for q in probes_of(e)]} if probes_of(e) else e
 
     def _copies(seen: dict) -> dict:   # every id one observation is of (`same_probe`)
@@ -603,6 +604,7 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
                    f"{unseen[pid].get('note')}: undecided" for pid in late]
             e = {**e, "verdict": "undecidable", "probe": probes, PAST_BOUND: late,
                  PAST_WHOLE: all(unseen[pid].get("whole") for pid in late),
+                 **({UNDER_THE_DEFAULT: d} if (d := [pid for pid in late if unseen[pid].get("bound_supplied")]) else {}),
                  "evidence": " | ".join(why + [str(e["evidence"])] if e.get("evidence") else why)}
         else:
             if probes:
@@ -847,7 +849,9 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
         if e.get(PAST_BOUND):
             gaps.setdefault(str(e.get("criterion")), []).append(
                 f"the system ran its pinned check(s) {', '.join(map(str, e[PAST_BOUND]))} and they did not finish within "
-                f"the time they were given — undecided")
+                f"the time they were given — undecided"
+                + (f"; {', '.join(map(str, d))} under the system's default bound, {PROBE_S} s, their issuer having "
+                   f"stated none (`bound_s`)" if (d := e.get(UNDER_THE_DEFAULT)) else ""))
         if e.get(ON_NO_DELIVERY):     # …nor a pass observed on no delivered tree: the same ⊥, the report's to redo
             gaps.setdefault(str(e.get("criterion")), []).extend(map(str, e[ON_NO_DELIVERY]))
     # The internal-node exemption (§10.3) is narrowed to the case that HAS it: §10.3 lets an INTERNAL node

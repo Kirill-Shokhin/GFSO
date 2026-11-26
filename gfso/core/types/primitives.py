@@ -57,6 +57,13 @@ class Probe:
     # `held: true` over an output that differs is the false PASS the engine overrules (`validate._observe_pins`).
     # False: `expect` describes the output in words or names a part of it, which only a reader can judge.
     exact: bool = False
+    # The seconds the system's own run of it may take, its build included, as its ISSUER states them; None = unstated,
+    # and the run takes the system's default (`observe.bound_of`), logged as supplied (§2.5's rule for the deadline).
+    # One fixed bound nobody could state made a slow honest check undecidable on every delivery: a whole suite pinned
+    # at ~9 minutes passed in its validator's run, 5093 of 5093, and was ⊥ because the system's run was cut at 60 s.
+    # The value lies outside conformance (§12.16), its existence is finiteness (§12.15); the admission keeps it
+    # inside the validation's own bound (`procedure.admission_defects`).
+    bound_s: Optional[float] = None
 
     def __post_init__(self):
         raw = self.inputs
@@ -73,17 +80,20 @@ class Probe:
         if isinstance(p, Probe):
             return p
         return cls(str(p.get("behaviour", "") or ""), str(p.get("command", "") or ""),
-                   str(p.get("expect", "") or ""), p.get("inputs") or (), p.get("exact") is True)
+                   str(p.get("expect", "") or ""), p.get("inputs") or (), p.get("exact") is True, p.get("bound_s"))
 
     def to_dict(self) -> dict:
         """The probe as a door serializes it — one writer, so a field cannot travel through one
-        door and be dropped by the next (the `check` field itself was lost that way once). `exact` only when set:
-        every probe stored before it existed reads back, and digests, unchanged."""
+        door and be dropped by the next (the `check` field itself was lost that way once). `exact` and `bound_s` only
+        when set: every probe stored before them reads back, and digests, unchanged — and a bound absent is the default,
+        told apart from one its issuer stated."""
         d = {"behaviour": self.behaviour, "command": self.command, "expect": self.expect}
         if self.inputs:
             d["inputs"] = dict(self.inputs)
         if self.exact:
             d["exact"] = True
+        if self.bound_s is not None:
+            d["bound_s"] = self.bound_s
         return d
 
 
