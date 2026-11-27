@@ -39,7 +39,7 @@ from gfso.core.types import (BATCH, HOST, LAID, AgentId, Criteria, LLMProviderPo
 from gfso.engine.verdicts import BEING_OBSERVED, OUTSIDE, READ_NOT_OBSERVED, outside_seen
 from gfso.core.protocol.invariants import INTENT, RED_SET, criterion_meant, probes_of, red_set, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import laid_down_dirs, probe_id
-from gfso.core.protocol.accounting import (BOUND_SPENT, SYSTEMS_ACT, canonical_citations, with_engine_observations,
+from gfso.core.protocol.accounting import (NOT_ASKED_AGAIN, SYSTEMS_ACT, canonical_citations, with_engine_observations,
                                            with_part_observations)
 from gfso.core.graph.model import generation_of_task, project_now, project_state_bound
 from gfso.observe import FRESH_S, OBSERVE_S, run_checks
@@ -85,8 +85,21 @@ _VALIDATOR_SCHEMA = {
         "per_criterion": {"type": "array", "items": {
             "type": "object",
             "properties": {"criterion": {"type": "string"},
-                           "verdict": {"type": "string", "enum": ["pass", "fail", "undecidable"]},
-                           "evidence": {"type": "string"},
+                           # …each word's meaning where the report is written (§2.3, Inv-3; §11.2 for
+                           # `not_decidable`): two ⊥s apart — the instrument's, which another validation can cure, and
+                           # the text's, which only its author repairs; one word for both sent a delivery that did not
+                           # build to «rewrite the criterion» instead of rework (critic over cc4da2d)
+                           "verdict": {"type": "string", "enum": ["pass", "fail", "undecidable", "not_decidable"],
+                                       "description":
+                                       "`pass` only when every behaviour was observed holding; `fail` with an "
+                                       "observation that refutes it — the delivery not building, not running or "
+                                       "lacking what the criterion needs is such an observation; `undecidable` when "
+                                       "you observed nothing that decides it — it fails nothing and is asked again; "
+                                       "`not_decidable` only when the criterion's own words cannot be decided on any "
+                                       "delivery (an action, an opinion, nothing observable) — a defect of its text, "
+                                       "its `evidence` saying what in the words makes it so"},
+                           "evidence": {"type": "string", "description":
+                                        "one line: the command and what it printed, or the file and what it holds"},
                            # WHAT WAS OBSERVED THAT DIFFERS FROM WHAT THE CRITERION STATES — as
                            # DATA, one short line each, not as prose inside the evidence. The
                            # divergence is the criterion's value and that value is fail (Inv-2,
@@ -117,7 +130,10 @@ _VALIDATOR_SCHEMA = {
                            "behaviours": {"type": "array", "items": {"type": "string"},
                                           "description": "each distinct behaviour this criterion "
                                                          "requires — one entry per conjunct, in the "
-                                                         "criterion's own words"},
+                                                         "criterion's own words. A behaviour is what can "
+                                                         "be false on its own: two clauses that cannot "
+                                                         "fail apart (a fact and its negative restatement) "
+                                                         "are one"},
                            # …and the person's words a fail of `answers_the_persons_words` stands on, checked against
                            # their record (`invariants.verdict_report_defects`)
                            "quote": {"type": "string", "description":
@@ -127,7 +143,11 @@ _VALIDATOR_SCHEMA = {
                            # The claim must be RE-RUNNABLE, on the PASS side as much as the FAIL
                            # side: the measurement's load-bearing direction is the false PASS.
                            # ONE PROBE PER BEHAVIOUR, in the same order.
-                           "probe": {"type": "array", "items": {"type": "object", "properties": {
+                           "probe": {"type": "array", "description":
+                                     "the observations this verdict stands on, on the pass side as on the fail side: "
+                                     "every behaviour in `behaviours` observed by a probe labelled with it — a pinned "
+                                     "check the system ran, cited by its id, or a command of your own",
+                                     "items": {"type": "object", "properties": {
                                # The pinned probe's own name, when this entry is one of them. The
                                # contract pins its procedure before the work (A1/§2, Inv-1 §12.3)
                                # and a PASS that skips a pinned probe is refused — so a report says
@@ -138,7 +158,9 @@ _VALIDATOR_SCHEMA = {
                                    "the id in brackets, when this entry runs a PINNED CHECK or a "
                                    "REGRESSION line of the contract (omit for your own exploration). "
                                    "Without it the probe is matched by its exact command; a command "
-                                   "or hash two demanded probes share counts for neither"},
+                                   "or hash two demanded probes share counts for neither. A pinned check "
+                                   "is cited or run exactly as the packet gives it, however broken it "
+                                   "looks — a command of yours in its place observes nothing it pins"},
                                # …and for a PART'S PINNED CHECK, whether it held: the verdict is per criterion,
                                # and only this says a failure is the part's, read on this delivery
                                # (`accounting.parts_not_shown_holding`)
@@ -184,7 +206,8 @@ _VALIDATOR_SCHEMA = {
                                           "counted unobserved. Write the absence so it SHOWS: "
                                           "`grep -rc configparser iniq/ | grep -v ':0' | wc -l` "
                                           "expecting `0`, or append `; echo exit=$?` and expect the "
-                                          "code. (Three honest reports in a row were sent back over "
+                                          "code. Never fabricated: an absence you did not search for "
+                                          "is unobserved. (Three honest reports in a row were sent back over "
                                           "exactly this, at a paid round each — the rule was right "
                                           "and was written down nowhere the writer of the probe "
                                           "could read it: MCP door, wave 23, 2026-09-03.)"},
@@ -196,11 +219,15 @@ _VALIDATOR_SCHEMA = {
                                "behaviour": {"type": "string", "description":
                                              "the entry of `behaviours` this command observes — "
                                              "repeat the same command with another name when one "
-                                             "run genuinely observes several"}},
+                                             "run genuinely observes several. Unlabelled probes are "
+                                             "only counted against the behaviours, and a behaviour "
+                                             "they do not reach is unobserved"}},
                                "required": ["command", "expect"]}}},
             "required": ["criterion", "verdict", "evidence", "behaviours", "probe",
                          "divergences"]}},
-        "seams": {"type": "string"},
+        "seams": {"type": "string", "description":
+                  "an advisory: a dependency the delivery stubs instead of using its producer's real output — it "
+                  "decides nothing; where it makes a criterion fail, that criterion's own evidence shows it"},
         # WHAT WAS SEEN BEYOND THE CRITERIA, as data for the issuer and never a verdict input (Inv-2): written in prose
         # ("observed but outside the stated criteria … NOT IN (SELECT …) give NULL"), the row's held-out miss was seen
         # at contact and no channel carried it to the one who could write the criterion (§8.3 FM-1.f at contact)
@@ -1561,11 +1588,19 @@ def _sign_scope(engine, top, verdicts: dict, validator_id: str, sign: bool) -> s
     state = engine.graph.get_state(top.id)
     return ("pass" if state == State.DONE else "fail" if failing else
             "recorded" if not sign and str(top.id) not in undecided else
-            # …every undecided node ⊥ by checks that ran their whole bound on the tree it delivered: asked again, the same
-            # tree times out again (`BOUND_SPENT`)
-            "no-verdict:bound" if undecided and not again and all(
-                BOUND_SPENT in str((verdicts.get(x) or {}).get("error") or "") for x in undecided) else
-            "no-verdict" if undecided and not again else "rejected")
+            # …every undecided node ⊥ where asking again cannot change it (`not_asked_again`): the same tree times out again,
+            # a criterion not decidable as written is refused again
+            # …read over the nodes a refusal left undecided: one waiting on an undecided part carries no refusal of its
+            # own, and read as a re-askable one it hid its part's class from the scope's route
+            _not_asked_again([w for x in undecided if (w := str((verdicts.get(x) or {}).get("error") or ""))])
+            or "no-verdict"
+            if undecided and not again else "rejected")
+
+
+def _not_asked_again(refusals: list) -> Optional[str]:
+    """`no-verdict:spent` where every refusal says no re-asked validation changes it (`accounting.not_asked_again`), else
+    None — one word, one route for every class it names."""
+    return "no-verdict:spent" if refusals and all(NOT_ASKED_AGAIN in r for r in refusals) else None
 
 
 @system_decides()
@@ -1837,8 +1872,8 @@ def _classify_no_verdict(engine, task_id: TaskId, out: dict) -> str:
     # ended with no result event — `transport_torn`); here it only has to be believed rather
     # than re-derived from a cost of zero, which is the inference that misdiagnosed it.
     _stats = out.get("stats") or ()
-    if BOUND_SPENT in f"{_why} {out.get('verdict_defects') or ''}":     # …a refused report's reason rides here
-        return "no-verdict:bound"
+    if spent := _not_asked_again([f"{_why} {out.get('verdict_defects') or ''}"]):     # …a refused report's reason rides here
+        return spent
     if refused_by_limit(_stats) or is_limit(_why):
         return "no-verdict:limit"
     if torn_among(_stats):

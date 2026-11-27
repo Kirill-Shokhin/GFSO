@@ -163,9 +163,6 @@ def closure_of(engine, task_id: TaskId) -> Optional[dict]:
             # a later reading of the verdict has to be able to weigh.
             "probes_over_unpinned_sets": reads_an_unpinned_set(t.spec.criteria) or None,
             "beyond_the_procedure": rec.get("probes_beyond_the_procedure"),
-            # …and the behaviours the validator NAMED past a pinned procedure it ran whole: exploration, decided by
-            # nothing — the criterion stood on its procedure (`accounting.named_beyond_procedure`)
-            "named_not_separately_observed": rec.get("named_beyond_the_procedure") or None,
             # A refutation whose criterion was renamed or replaced by a plan repair: the
             # obligation to re-run it cannot be enforced against a criterion that no longer
             # exists, so it is named here rather than lost. Silence is the failure mode this

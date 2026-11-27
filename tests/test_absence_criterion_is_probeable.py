@@ -1,4 +1,5 @@
-"""A criterion that FORBIDS must still be probeable, and the prompt must say how.
+"""A criterion that FORBIDS must still be probeable, and the report's schema must say how — where the model reads it
+while it writes the probe (the prompt is the critic's, ≈350 words; the bookkeeping is the field descriptions).
 
 `record_exec_verdict(require_probe=True)` refuses a verdict whose criterion carries no probe, and a
 probe's `expect` is defined as a substring of the command's REAL output. An absence ("does not import
@@ -10,23 +11,26 @@ never stated — so this pins the statement, not the wording of any one example.
 """
 from __future__ import annotations
 
-from pathlib import Path
+import json
 
-PROMPT = Path(__file__).resolve().parents[1] / "gfso" / "mcp" / "prompts" / "validator.md"
+from gfso.validate import _VALIDATOR_SCHEMA
+
+#: the schema as the validator reads it: the format instruction prints it whole (`structured.schema_instruction`)
+TEXT = json.dumps(_VALIDATOR_SCHEMA, ensure_ascii=False).lower()
 
 
-def test_validator_prompt_says_how_to_probe_an_absence():
-    text = PROMPT.read_text(encoding="utf-8").lower()
-    assert "absence" in text, "the prompt never mentions the absence case"
+def test_the_schema_says_how_to_probe_an_absence():
+    text = TEXT
+    assert "absence" in text, "the schema never mentions the absence case"
     # The two halves that make the form reachable: the observation must be MADE to print, and the
     # honest exits stay closed (no omission, no fabrication).
     assert any(k in text for k in ("$?", "grep -c")), \
         "no concrete way to turn an empty result into a printable observation"
     assert "fabricate" in text, \
-        "the prompt must keep the dishonest exit closed while opening the reachable one"
+        "the schema must keep the dishonest exit closed while opening the reachable one"
 
 
-def test_the_prompt_defines_a_behaviour_as_separately_falsifiable():
+def test_the_schema_defines_a_behaviour_as_separately_falsifiable():
     """A behaviour is what can be false on its own — not a clause.
 
     The engine demotes a criterion whose behaviours are not all observed, so the enumeration decides
@@ -35,6 +39,4 @@ def test_the_prompt_defines_a_behaviour_as_separately_falsifiable():
     lapsed — which are one fact said three ways, and no evidence could cover them all. Two nodes
     escalated over complete work. The rule stands; what it counts had to be defined.
     """
-    text = PROMPT.read_text(encoding="utf-8").lower()
-    assert "false on its own" in text or "separately falsifiable" in text
-    assert "one behaviour, not two" in text or "cannot fail independently" in text
+    assert "false on its own" in TEXT and "cannot fail apart" in TEXT

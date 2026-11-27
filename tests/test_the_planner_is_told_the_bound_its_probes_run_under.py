@@ -14,4 +14,4 @@ def test_the_issuer_and_the_refusal_name_the_same_bound():
     """Whoever re-pins a check past its bound — the issuer, told so by the refusal — is told the number, from one owner."""
     assert observe.PROBE_S is procedure.PROBE_S and loop.PROBE_S is procedure.PROBE_S
     assert f"runs {procedure.PROBE_S} seconds at most" in issuer._prompt() and "<PROBE_S>" not in issuer._prompt()
-    assert f"{procedure.PROBE_S} s with its build" in accounting.BOUND_SPENT
+    assert f"{procedure.PROBE_S} s with its build" in accounting.PAST_ITS_BOUND

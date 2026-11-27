@@ -30,9 +30,11 @@ def _record(check: dict, monkeypatch):
     T.signal(e, "root", "ACCEPT", "me")
     T.signal(e, "root", "DELIVER", "me", result="built")
     e.wait_idle()
-    probe = dict(check, id=probe_id(_C, check).split("#", 1)[1], behaviour=_NAMED[0])
+    # …every behaviour labelled on the one pinned run, as the label rule asks (no criterion passes on a behaviour no
+    # probe is labelled with): what is left to refuse a constant is the constant guard alone
+    probes = [dict(check, id=probe_id(_C, check).split("#", 1)[1], behaviour=b) for b in _NAMED]
     entry = {"criterion": _C, "verdict": "pass", "evidence": "the pinned check printed ok", "behaviours": _NAMED,
-             "probe": [probe], "divergences": []}
+             "probe": probes, "divergences": []}
     try:
         return e.record_exec_verdict("root", "PASS", [], "validator", per_criterion=[entry], require_probe=True,
                                      tools_used={"Bash": 1})["verdict"]

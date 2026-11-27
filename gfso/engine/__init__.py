@@ -31,13 +31,13 @@ from gfso.core.graph.projection import build as build_projection, render as rend
 from gfso.core.protocol.fsm import available_signals, not_admissible_here, transition
 from gfso.core.protocol.validation import required_role, Role
 from gfso.core.protocol.invariants import (decided_verdict, spoken_verdict, probes_of, probes_that_expected_nothing,
-                                           verdict_report_defects, probe_labels, unrun_probes, INTENT, PAST_BOUND)
+                                           verdict_report_defects, probe_labels, unrun_probes, INTENT)
 from gfso.core.protocol.procedure import (admission_defects, criterionless, probe_id, probe_key, layable_over,
                                           claim_digest)
 from gfso.core.protocol.accounting import (findings_not_reproduced as _findings_not_reproduced, plan_pins, runs_pin,
-                                           same_expectation, BOUND_SPENT, PAST_WHOLE, canonical_citations,
+                                           same_expectation, canonical_citations,
                                            parts_not_shown_holding, parts_read as _parts_read, refuting_probes, merge_regression, unrerunnable,
-                                           unaccounted_for)
+                                           not_asked_again, unaccounted_for, with_owed_behaviours, with_part_observations)
 
 from gfso.config import (PIPELINE_PAGE, USAGE_PAGE, PERSONS_NAMES, SYSTEM, CALLER, MODEL_DEFAULT, VERDICT_FIELD_CHARS,
                          agent_id as _config_agent_id, state_timeout as _config_state_timeout)
@@ -1165,8 +1165,13 @@ class Engine:
         """(the node, its report with every pinned probe it cites as the system spelled it cited by its id —
         `canonical_citations`, the node's own and its parts', its failed list)."""
         task = self._graph.get_task(task_id)
-        return task, (canonical_citations(per_criterion, task.spec.criteria, self.parts_procedure(task_id))
-                      if per_criterion and task is not None else per_criterion), failed
+        if not (per_criterion and task is not None):
+            return task, per_criterion, failed
+        parts = self.parts_procedure(task_id)
+        # …and every pin it cites `{id, held}` written out, the node's own and its parts', at the record — so the door a
+        # person records through reads a citation as the validator's does (critic over 2b6c6e2)
+        return task, with_part_observations(parts, canonical_citations(per_criterion, task.spec.criteria, parts),
+                                            task.spec.criteria), failed
 
     def record_exec_verdict(self, task_id: TaskId, verdict: str, failed_criteria: list,
                             validator_id: str, per_criterion: Optional[list] = None,
@@ -1270,6 +1275,9 @@ class Engine:
             # reader in the tree, a test asserting the contradiction is merely STORED. Folded into
             # `gaps` so the disposition below (⊥ belongs to the INSTRUMENT, never to the executor's
             # rework budget) applies unchanged.
+            # …owing what a refused report on this delivery named (`with_owed_behaviours`): a retry may not pass by
+            # naming less than the reading it was refused over
+            per_criterion = with_owed_behaviours(per_criterion, self.refused_report_for_this_delivery(task_id))
             gaps = unaccounted_for(task, per_criterion, by_hand, validator_id,
                                    self.regression_probes(task_id),
                                    internal=not self._graph.is_public(task), dirs=inputs_dirs,
@@ -1339,15 +1347,18 @@ class Engine:
                     verdict, failed_criteria = Verdict.FAIL, sorted(set(real))
                 else:
                     raise ValueError(
-                        (BOUND_SPENT + ". " if set(gaps) <= {str(e.get("criterion")) for e in per_criterion
-                                                             if e.get(PAST_BOUND) and e.get(PAST_WHOLE)} else "") +
-                        f"not a verdict on {task_id} (⊥, not pass — §2.3): the report names "
-                        f"behaviours it never observed and refutes nothing, so it decides nothing. "
+                        (f"{_spent}. " if (_spent := not_asked_again(gaps, per_criterion, self.refusals_on_this_delivery(task_id))) else "") +
+                        f"not a verdict on {task_id} (⊥, not pass — §2.3): the report leaves criteria "
+                        f"undecided — behaviours it never observed, or a word that is not a fail — and refutes "
+                        f"nothing, so it decides nothing. "
                         + "; ".join(f"criterion '{c}' — unobserved: {', '.join(b)}"
                                     for c, b in sorted(gaps.items()))
-                        + ". Re-run the validation running each criterion's WHOLE pinned procedure — a "
-                          "criterion stands on it — and, where a criterion pins none, a probe for EVERY "
-                          "behaviour it names (one command may observe several — label it with `behaviour`). "
+                        + ". Validate again, observing every behaviour each criterion's words state: a pinned "
+                          "check the system ran is cited from its run under its id, never run again; a behaviour "
+                          "no such run shows needs a probe of your own labelled with that `behaviour` (one command "
+                          "observing several carries each label). A criterion nothing you observed decides is "
+                          "`undecidable`; one whose words no delivery can decide is `not_decidable`, with what in "
+                          "them makes it so; a delivery that does not build or run is a `fail`. "
                           "This is the instrument's gap, not the executor's: do not send the node "
                           "to rework over it. The probes are the INSTRUMENT's to write; the other way "
                           "through is `record_verdict` with what YOU observed."

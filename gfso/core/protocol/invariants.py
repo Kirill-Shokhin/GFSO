@@ -178,9 +178,10 @@ RED_SET = "the issuer's FAIL payload must be the red set (Inv-3)"
 
 
 def red_set(entries: Sequence[Mapping], known: Iterable[str] | None = None) -> list[str]:
-    """The criteria some entry does not pass, in first-spoken order (Inv-3: FAIL ⇒ failed_criteria ≠ ∅ over the node's
-    criteria) — one non-pass entry is its value, however many pass beside it (Inv-2). `known`: the node's criteria; an
-    entry about anything else is no conjunct of its V."""
+    """The criteria some entry does not pass, in first-spoken order — what keeps V from pass, one non-pass entry
+    however many pass beside it (Inv-2). Not yet the FAIL payload: of these, only what the report REFUTED (`fail`) is;
+    any other word is ⊥ (`accounting.unaccounted_for`), and the record refuses a report that refutes nothing (Inv-3).
+    `known`: the node's criteria; an entry about anything else is no conjunct of its V."""
     red = dict.fromkeys(str(e.get("criterion")) for e in entries or () if spoken_verdict(e.get("verdict")) != "pass")
     return list(red) if known is None else [n for n in red if n in set(map(str, known))]
 

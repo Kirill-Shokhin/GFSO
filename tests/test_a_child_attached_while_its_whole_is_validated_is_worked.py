@@ -55,7 +55,10 @@ class _Validator:
             self.first()
         failed = [c.name for c in crits] if self.verdict == "FAIL" else []
         return "```json\n" + json.dumps({"verdict": self.verdict, "failed_criteria": failed, "outside": self.outside, "per_criterion": [
-            {"criterion": c.name, "verdict": self.verdict.lower(), "evidence": "ran it", "behaviours": [f"{c.name} holds"],
+            # …naming the behaviours its probes are labelled with: a behaviour named and observed by no labelled probe
+            # leaves its criterion ⊥, and this stub's report must be one a validator could give
+            {"criterion": c.name, "verdict": self.verdict.lower(), "evidence": "ran it",
+             "behaviours": list(dict.fromkeys(p.behaviour for p in (c.check or ()) if p.behaviour)) or [f"{c.name} holds"],
              "probe": [{"command": p.command, "expect": p.expect, "behaviour": p.behaviour} for p in c.check or ()]
              + [{"id": probe_id(pc.name, p), "command": p.command, "expect": p.expect, "behaviour": p.behaviour}
                 for pc in parts.get(c.name, ()) for p in (pc.check or ())]} for c in crits]}) + "\n```"

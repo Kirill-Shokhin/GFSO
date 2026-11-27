@@ -1,19 +1,18 @@
-"""A criterion is decided by the procedure it pinned; what the validator names beyond it is exploration.
+"""A criterion passes only on what observed every behaviour its words state — a pinned procedure run whole included.
 
-Measured on AUTO coreutils (2026-10-10, every role on one cheap model): 7 of 19 validations decided nothing, and
-every one would still be refused by the engine as it stood — by the FORM of the report, not by missing coverage.
-Four named behaviours (`\\0NNN`, a mid-line `\\r`, LANG variants) that the criterion's OWN pinned probe exercises,
-run and cited by id, and labelled that probe with one behaviour; the report that passed repeated the same command
-once per label. Two put a seam criterion only under the free-text `seams` note. Two did not parse over a top-level
+Measured on AUTO coreutils (2026-10-10, every role on one cheap model): 7 of 19 validations decided nothing. Four
+named behaviours (`\\0NNN`, a mid-line `\\r`, LANG variants) that the criterion's OWN pinned probe exercises, run and
+cited by id, and labelled that probe with one behaviour; the report that passed repeated the same command once per
+label. Two put a seam criterion only under the free-text `seams` note. Two did not parse over a top-level
 `failed_criteria` the record derives from the entries anyway.
 
-A1 and Inv-1's pre-registration say which half binds: a criterion is decided by its pinned procedure, so where the
-report ran ALL of it and it held, a behaviour named without a label of its own is recorded as named but not
-separately observed. Nothing else moves: a procedure run short, an owed part probe, a standing finding, an observed
-divergence decide exactly as before (Inv-2, Inv-3).
+The first cure exempted such a criterion — its pin ran whole, so what was named past it passed as «named but not
+separately observed». That is a PASS over behaviours observed by nothing (§2.3, §12.8: any other status is ⊥ until
+decided), so it went: a behaviour named and observed by no probe leaves its criterion ⊥, and the cure of the coreutils
+class is the label — one command observing several behaviours carries each (`behaviour`).
 
-CONTROL: make `accounting.named_beyond_procedure` return `{}` and the acceptance tests go red; drop its `not in unrun`
-clause and the short-procedure control goes red.
+CONTROL: put the exemption back (filter `underprobed`'s gaps on a pinned procedure run whole in
+`accounting.unaccounted_for`) and the first test goes red.
 """
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ import gfso.tools as T
 from gfso.adapters.llm.structured import parse_structured
 from gfso.core.protocol.invariants import verdict_report_defects
 from gfso.core.protocol.procedure import probe_id
-from gfso.core.protocol.accounting import coverage, unaccounted_for
+from gfso.core.protocol.accounting import unaccounted_for
 from gfso.core.types import TaskId
 from gfso.packets import validator_packet
 from gfso.validate import _VALIDATOR_SCHEMA, _listed_failed, _report_contradicts_itself
@@ -76,24 +75,26 @@ def _entry(*probes, verdict="pass", **kw):
             "behaviours": list(NAMED), "probe": list(probes), "divergences": [], **kw}
 
 
-# === (a) the criterion stands on its procedure ===
+# === (a) a behaviour observed by nothing leaves its criterion ⊥, a pin run whole or not ===
 
-def test_a_named_behaviour_the_whole_pinned_procedure_ran_over_is_not_a_refusal(engine):
-    """The root.echo shape: one pinned sweep, run and cited by id, labelled with the first behaviour only."""
+def test_a_named_behaviour_the_whole_pinned_procedure_ran_over_unlabelled_is_undecided(engine):
+    """The root.echo shape: one pinned sweep, run and cited by id, labelled with the first behaviour only — the second
+    is observed by nothing on the record, so no PASS, and with nothing refuted no verdict."""
     e = engine(SWEEP)
-    out = e.record_exec_verdict("root", "PASS", [], "validator", per_criterion=[_entry(_ran(SWEEP))],
-                                require_probe=True)
+    with pytest.raises(ValueError) as ex:
+        e.record_exec_verdict("root", "PASS", [], "validator", per_criterion=[_entry(_ran(SWEEP))],
+                              require_probe=True)
+    assert "⊥" in str(ex.value) and NAMED[1] in str(ex.value), str(ex.value)
+    assert e.get_exec_verdict(TaskId("root")) is None
+
+
+def test_the_label_is_the_cure_one_command_observing_both(engine):
+    """The same sweep cited once per behaviour it observes: the PASS stands, and the record names no exemption."""
+    e = engine(SWEEP)
+    out = e.record_exec_verdict("root", "PASS", [], "validator", require_probe=True,
+                                per_criterion=[_entry(_ran(SWEEP), _ran(SWEEP, NAMED[1]))])
     assert out["verdict"] == "PASS", out
-    rec = e.get_exec_verdict(TaskId("root"))
-    assert rec["named_beyond_the_procedure"] == {ESC: [NAMED[1]]}, (
-        "the behaviour named past the procedure must stay visible in the record, as named but not separately observed")
-
-
-def test_the_record_says_nothing_was_named_beyond_when_every_label_is_there(engine):
-    e = engine(SWEEP)
-    e.record_exec_verdict("root", "PASS", [], "validator", require_probe=True,
-                          per_criterion=[_entry(_ran(SWEEP), _ran(SWEEP, NAMED[1]))])
-    assert e.get_exec_verdict(TaskId("root"))["named_beyond_the_procedure"] == {}
+    assert "named_beyond_the_procedure" not in e.get_exec_verdict(TaskId("root"))
 
 
 def test_a_procedure_run_short_keeps_the_label_rule(engine):
@@ -217,11 +218,3 @@ def test_a_criterion_short_on_another_count_is_refused_for_everything_it_is_shor
     gaps = unaccounted_for(e.graph.get_task(TaskId("root")), [_entry(_ran(SWEEP))], False, "validator", regression,
                            standing=_STANDS)
     assert NAMED[1] in gaps[ESC] and any("REFUTED" in g for g in gaps[ESC]), gaps
-
-
-def test_the_record_names_nothing_beyond_a_procedure_run_short(engine):
-    """CONTROL — a behaviour is exploration only past a procedure run WHOLE; short of it, it is an unobserved conjunct
-    and the record must not file it as exploration."""
-    crit = engine(SWEEP, OTHER).graph.get_task(TaskId("root")).spec.criteria
-    assert coverage(crit, [_entry(_ran(SWEEP))])["named_beyond_the_procedure"] == {}
-    assert coverage(crit, [_entry(_ran(SWEEP), _ran(OTHER))])["named_beyond_the_procedure"] == {ESC: [NAMED[1]]}

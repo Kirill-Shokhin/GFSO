@@ -67,7 +67,7 @@ def test_a_retry_is_handed_the_exact_gap_and_the_attempt_number():
     assert "unobserved: the file exists, the file is readable" in said, (
         "the retry is told it failed and not what was missing")
     assert "this is attempt 2" in said.lower(), said[-400:]
-    assert "for every behaviour you name" in said, "the repair is not stated"
+    assert "of every behaviour its words state" in said and "labelled probe" in said, "the repair is not stated"
     e.stop()
 
 

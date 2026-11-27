@@ -52,7 +52,7 @@ from gfso.core.handlers.structural import risks_naming_own_criteria
 from gfso.core.protocol.procedure import (BOUND_TEXT, EXACT_TEXT, as_read, inputs_token, laid as over_dirs,
                                           materialize_inputs, same_probe, shows, PROBE_S, pinned_files, probe_id, probe_key,
                                           probes_from as _checks_of, with_named_files, criterionless)
-from gfso.core.protocol.accounting import unrerunnable
+from gfso.core.protocol.accounting import not_decidable_as_written, refused_why, unrerunnable
 from gfso.core.types import (AgentId, Criteria, IN_THE_WORKS_PATH, INPUTS_TOKEN, PlaceUnavailable, Register, RevisionReason,
                              Signal, SignalData, Spec, Stage, State, TaskId, laid_beside, register_of, set_aside_of,
                              system_decides)
@@ -517,6 +517,9 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
         out.append(f"## Its own split\n{_own_split(engine, task) if split else _split_lines(engine, task)}")
     if not plan:   # a repair needs what was observed failing: the verdict and the delivery ride here
         out += _what_happened(engine, task)
+    if why := refused_why(lapsed_report(engine, task), task.spec.criteria):
+        out.append("## Why its validation decided nothing — the refused report, per criterion not passed\n"
+                   + "\n".join(f"- {w}" for w in why))
     # …and what validators saw beyond the criteria in the WHOLE split this question's moves lie in: FM-1.f met at contact
     # (§8.3). Shown only the asking node's subtree, a split re-planned by promotions answering a sibling's block never
     # saw the hole another child's validator wrote (critic over 5cad9c4)
@@ -588,6 +591,14 @@ def issuer_context(engine, task_id: TaskId, question: str, refusal: str = "", la
                   "that finds a contract so challenges it) — continue it with a new contract whose deadline leaves what it "
                   "waits on time; closing it is not a move here."
                   if _offer_lapsed(engine, task) else
+                  "\n\nIts delivery stands unvalidated: its validation was refused, and each criterion it did not "
+                  "pass is listed above under «Why its validation decided nothing» with what it asks of you — rewrite "
+                  "one not decidable as written, its check with it; state the bound a check past it needs, or re-pin "
+                  "it; for one nothing observed could decide, say so, and rewrite it decidable here or re-present it. "
+                  "`reassign` carries your answers; the executor re-delivers the same result and it is validated "
+                  "then — re-presented unchanged, a criterion not decidable as written is refused again. Closing it is "
+                  "not a move here."
+                  if lapsed_report(engine, task) else
                   "\n\nIts delivery stands unvalidated: the validation's bound passed with no verdict, which says "
                   "nothing against the work — `reassign` keeping its contract re-presents it, the executor re-delivers "
                   "the same result and it is validated then; closing it is not a move here."
@@ -1026,6 +1037,13 @@ def _validation_lapsed(engine, task) -> bool:
     indicts (§12.16 (ii)) — a machine issuer cancelled such a delivery "contract fully satisfied" and re-issued it
     (tn7a14284, 2026-10-20)."""
     return _lapsed_from(engine, task) == State.VALIDATING
+
+
+def lapsed_report(engine, task) -> list:
+    """The refused report's entries where this node's validation lapsed over it — VALIDATING's bound passed with that
+    report on this delivery (§12.2) —, read for the why per criterion (`accounting.refused_why`); [] otherwise."""
+    rec = (engine.refused_report_for_this_delivery(task.id) or {}) if _validation_lapsed(engine, task) else {}
+    return list(rec.get("per_criterion") or ())
 
 
 def _lapsed_from(engine, task) -> Optional[State]:
@@ -2490,6 +2508,17 @@ def settle(engine, agents, task_id: TaskId, question: str, actor: str, verbs: Ve
                f"{what_contact_refuted(engine, task_id) or QUESTIONS[question]['ask'][:200]}) — only the user re-plans "
                f"it: hand a corrected plan as a new goal (`auto_decompose` with `spec`, closed as this one; or `refine_plan` on its file, then `auto_decompose(plan=path)` on a new project, which contact may then repair),or `set_mode` "
                f"(with `user_said`) to hold the plan yourself; `start_project` alone stops it here again")
+        engine.stops.pause("system", why)
+        return {"status": "users", "why": why}
+    # …A CRITERION OF THE USER'S THEIR VALIDATOR CANNOT DECIDE AS WRITTEN is theirs to rewrite: the system only adds to
+    # their criteria (`users_criteria`), and re-presented as written it is refused again
+    if (question == "escalation" and users_criteria(engine.graph, (t := engine.graph.get_task(task_id)))
+            and not_decidable_as_written(report := lapsed_report(engine, t))):
+        why = (f"{task_id}'s validation was refused over the user's criteria — " + "; ".join(refused_why(report, t.spec.criteria))
+               + " — a criterion not decidable as written is a defect of its text, not of the work; only the "
+            f"user rewrites a criterion of theirs: hand the goal with it rewritten as a new goal (`auto_decompose` with "
+            f"`spec`; or `refine_plan` on its file, then `auto_decompose(plan=path)` on a new project), or `set_mode` "
+            f"(with `user_said`) to hold it yourself; `start_project` alone stops it here again")
         engine.stops.pause("system", why)
         return {"status": "users", "why": why}
     if question == "parked" and not moves_for(engine, (t := engine.graph.get_task(task_id)), question):

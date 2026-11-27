@@ -27,7 +27,7 @@ from gfso.places import cheap_to_ask
 from gfso.inflight import flight, being_rewritten, in_flight
 from gfso.core.graph.model import generation_of_task, signs_as
 from gfso.core.protocol.procedure import criterionless, probes_from as _checks_of
-from gfso.core.protocol.accounting import BOUND_SPENT
+from gfso.core.protocol.accounting import NOT_ASKED_AGAIN
 from gfso.core.types import (TaskId, AgentId, Criteria, Signal, SignalData, Spec, State,
                              Action, Mode, PlaceUnavailable,
                              EXECUTOR_STATES, SPAWNABLE_ACTIONS, passed, register_of)
@@ -875,7 +875,7 @@ class Dispatcher:
                 self._seen.discard(vkey)                # revalidates, on the standing records, when the graph moves
             if ret in ("pass", "fail", "recorded", "no-instrument", "rejected"):
                 return
-            if ret in ("no-verdict:limit", "no-verdict:bound"):
+            if ret in ("no-verdict:limit", "no-verdict:spent"):
                 return (self._wait_out_limit(top_id, vkey, "the scope's validator") if ret == "no-verdict:limit"
                         else self._wait_for_the_issuer(top_id))
             if ret == "no-verdict:torn" and self._redial(top_id, vkey):   # a cut call is no answer: it spends no retry
@@ -1302,7 +1302,7 @@ class Dispatcher:
                 # own instead — small, because an installation that cannot complete a call twice in
                 # a row has a problem no third attempt fixes, and finite, because an unbounded
                 # redial is the loop Inv-5 exists against.
-                if ret in ("no-verdict:limit", "no-verdict:bound"):
+                if ret in ("no-verdict:limit", "no-verdict:spent"):
                     return (self._wait_out_limit(task_id, key, "the validator's") if ret == "no-verdict:limit"
                             else self._wait_for_the_issuer(task_id))
                 if ret == "no-verdict:torn" and self._redial(task_id, key):
@@ -1374,11 +1374,16 @@ class Dispatcher:
                     self._engine.parking.park_validation(task_id)
 
     def _wait_for_the_issuer(self, task_id: TaskId) -> None:
-        """A delivery whose every unobserved check ran past all it could be given (its own bound, or the validation's whole
-        budget where that is shorter): not validated again — the same tree
-        times out again, and each re-ask was a paid validator run every half minute until T_validate (critic over the
-        timeout ⊥). It waits, no verdict invented, for VALIDATING's bound to hand it to its issuer (§12.2, §16.14)."""
-        self._engine.emit_info("delegate", f"{task_id}: {BOUND_SPENT}")
+        """A refusal no re-asked validation changes (`accounting.not_asked_again`: checks past their whole bound, criteria
+        not decidable as written, or both): not validated again — each re-ask was a paid run every half minute until
+        T_validate for the same ⊥ (critics over the timeout ⊥ and over the K-a batch). ⊥ is no event (§12.2): the node
+        waits in VALIDATING, no verdict invented, until its bound hands it to its issuer with the refused report's why
+        (§16.14). One route for every class: where the system issues it waits; a person issuing it is told on their
+        frontier now (`park_validation`) — waiting silently told them nothing (critic over cc4da2d)."""
+        self._engine.emit_info("delegate", f"{task_id}: {NOT_ASKED_AGAIN} — the refused report says no further validation "
+                                           f"of this delivered tree changes it; VALIDATING's bound hands it to its issuer")
+        if not system_issues(self._engine, self._agents, task_id):
+            self._engine.parking.park_validation(task_id)
 
     def _ask_again_where_the_system_issues(self, task_id: TaskId, key: str, wait: float) -> bool:
         """After two validations with no verdict: where the SYSTEM is the node's issuer, schedule its

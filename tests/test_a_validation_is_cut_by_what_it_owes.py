@@ -160,9 +160,9 @@ def test_a_split_criterion_is_the_conjunction_of_its_runs(monkeypatch, word, bad
         # …and the WHY that reaches the executor is the refutation, not the word of the run that passed its share
         ((c, why, _),) = e.rework_findings(T.TaskId("big"))
         assert c == "wide" and why.startswith(f"fail: {bad} printed nothing"), why
-    else:                                                          # …one run left it undecided: no PASS — a FAIL
-        assert out["verdict"] == "FAIL" and record["failed_criteria"] == ["wide"]   # (the report says so, validator.md)
-        assert wide[0]["verdict"] == "undecidable"
+    else:                                                          # …one run left it undecided: no PASS, and no FAIL —
+        assert out["verdict"] is None and record is None           # it refuted nothing: ⊥, the report no verdict
+        assert not e.rework_findings(T.TaskId("big"))
     e.stop()
 
 

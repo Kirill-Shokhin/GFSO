@@ -151,8 +151,10 @@ def test_any_word_short_of_pass_on_it_needs_the_quote(no_model, word):
     e, root = _gone()
     with pytest.raises(ValueError, match="quote"):
         e.record_exec_verdict(root.id, "FAIL", [INTENT], "val", per_criterion=_report(word=word))
-    rec = e.record_exec_verdict(root.id, "FAIL", [INTENT], "val", per_criterion=_report("ещё считает пустые строки", word))
-    assert rec["failed_criteria"] == [INTENT], rec
+    # …and quoted, a word that is not a fail refutes nothing: ⊥, never the FAIL payload (Inv-3) — the report is refused
+    with pytest.raises(ValueError, match="refutes nothing") as bottom:
+        e.record_exec_verdict(root.id, "FAIL", [INTENT], "val", per_criterion=_report("ещё считает пустые строки", word))
+    assert "quote" not in str(bottom.value).split("Validate again")[0], str(bottom.value)
 
 
 @pytest.mark.parametrize("mark", ["past_bound", "on_no_delivery", "over_a_pass"])

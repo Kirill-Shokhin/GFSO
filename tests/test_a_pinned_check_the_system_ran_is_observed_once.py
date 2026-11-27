@@ -5,18 +5,23 @@ suite twice — the system's own run, which a PASS stands on (`validate._observe
 the same command over the same delivery. Its packet said «run `<command>`» under a prompt reading «run every pinned
 probe», with «need not be run again» beside it. The second run observes nothing the first did not.
 
-A check not exact that did not match stays the validator's to observe: printed nothing, or not what it pins, its run
-decided nothing a substring reads (`accounting.with_engine_observations`).
+A check not exact that printed text its `expect` — a substring proxy — does not match is handed as that run too, with
+what it printed: the output IS an observation (§10.2), and the validator decides from it, running the check itself
+only where that output cannot show the behaviour. Measured: replay r1's validator re-ran the suite for ~11 min because
+its pin expected «0 failed», a line green pytest never prints (it printed «5110 passed»). One the system did not run,
+or that printed nothing, stays the validator's to run (`accounting.the_systems_run`).
 
-CONTROL: render the command whatever `seen` says (`ran = False` in `packets._probe_line`) and the first test goes red;
-hand every run as decided (`ran = "matched" in s`) and the second does.
+CONTROL: render the command whatever `seen` says (`ran = False` in `packets._probe_line`) and the first and third tests
+go red; hand every run as decided (`run = DECIDED`) and the second does.
 """
 from __future__ import annotations
 
 import pytest
 
 import gfso.tools as T
+from gfso.core.protocol.accounting import with_engine_observations
 from gfso.core.protocol.procedure import probe_id
+from gfso.core.types import Criteria, Probe
 from gfso.packets import validator_packet
 from tests.support import DENIAL_ENTRY, UNMODELLED_FAULT, make_engine
 
@@ -52,9 +57,33 @@ def test_a_pinned_check_the_system_could_not_run_is_the_validators_to_run(node):
     e, t, pid = node
     for seen in (None, {("root", pid): {"note": "not run: no shell to run it in"}},
                  {("root", pid): {"rc": 0, "printed": "", "matched": False}},
-                 {("root", pid): {"rc": 1, "printed": "2 failed", "matched": False}}):
+                 {("root", pid): {"rc": 127, "printed": "pytest: command not found", "matched": False}}):
         text = validator_packet(e, t, "built it", ".", seen=seen)
         assert f"run `{CMD}`" in text and "the system RAN" not in text, text
+
+
+def test_a_pinned_check_whose_proxy_missed_is_handed_with_what_it_printed(node):
+    """The replay r1 shape: green pytest printed «5110 passed», the pin expected «0 failed»."""
+    e, t, pid = node
+    text = validator_packet(e, t, "built it", ".", seen={("root", pid): {
+        "rc": 0, "printed": "....\n5110 passed in 640s", "out": "5110 passed in 640s", "matched": False}})
+    assert f"the system RAN `{CMD}` on this delivery" in text and "substring proxy" in text, text
+    assert "5110 passed in 640s" in text, "the validator is not shown what the system's run printed"
+    assert f"run `{CMD}`" not in text, text
+
+
+def test_citing_what_the_systems_run_printed_is_evidence_for_the_record():
+    """The record reads such a report as the packet hands it: a pass citing the pin with an `expect` that is part of
+    what the system's run printed stands; one citing the missed proxy is ⊥ (`accounting._reproduced`)."""
+    p = Probe("the suite", CMD, "0 failed")
+    c = Criteria("suite", "the suite passes", check=(p,))
+    pid = probe_id("suite", p)
+    seen = {pid: {"rc": 0, "printed": "....\n5110 passed in 640s", "out": "5110 passed in 640s", "matched": False}}
+    cite = lambda expect: [{"criterion": "suite", "verdict": "pass", "evidence": "the system's run", "behaviours":
+                            ["the suite"], "probe": [{"id": pid, "command": CMD, "expect": expect,
+                                                      "behaviour": "the suite"}]}]
+    assert with_engine_observations(cite("5110 passed"), [c], {}, seen)[0]["verdict"] == "pass"
+    assert with_engine_observations(cite("0 failed"), [c], {}, seen)[0]["verdict"] == "undecidable"
 
 
 def test_an_exact_check_that_did_not_match_is_handed_as_decided(monkeypatch):
@@ -73,3 +102,16 @@ def test_an_exact_check_that_did_not_match_is_handed_as_decided(monkeypatch):
                                                                           "out": "not ok"}})
     e.stop()
     assert "the system RAN `./tool` on this delivery" in text and "printed «not ok»" in text, text
+
+
+def test_the_record_keeps_the_expect_the_validator_cited_for_an_own_pin(node):
+    """Cited `{id, held, expect}` as the packet asks where the proxy missed, the stored record reads the line the
+    validator cited from the system's output — not the pin's own, which that run did not print (critic over b4129a7)."""
+    e, t, pid = node
+    T.signal(e, "root", "ACCEPT", "me")
+    T.signal(e, "root", "DELIVER", "me", result="built it")
+    e.record_exec_verdict("root", "PASS", [], "val-1", require_probe=True, per_criterion=[
+        {"criterion": "suite", "verdict": "pass", "evidence": "the system's run printed 5110 passed",
+         "behaviours": ["the suite"], "probe": [{"id": pid, "held": True, "expect": "5110 passed"}], "divergences": []}])
+    (probe,) = e.get_exec_verdict("root")["per_criterion"][0]["probe"]
+    assert probe["expect"] == "5110 passed" and probe["command"] == CMD, probe

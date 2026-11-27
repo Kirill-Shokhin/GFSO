@@ -11,7 +11,7 @@ from typing import Optional
 
 from gfso.core.protocol.invariants import INTENT, QUOTE_WORDS
 from gfso.core.protocol.procedure import EXACT_READ, laid, materialize_inputs, probe_id, probe_key, same_probe
-from gfso.core.protocol.accounting import unrerunnable
+from gfso.core.protocol.accounting import DECIDED, the_systems_run, unrerunnable
 from gfso.core.types import EXECUTOR_STATES, INPUTS_TOKEN, Signal, TaskId, files_at, set_aside_of
 from gfso.engine import PERSONS_ACTS, Engine
 from gfso.engine.audit import rejected_on_current_version
@@ -570,6 +570,21 @@ def owed_probes(engine: Engine, task, crits) -> list:
     return out
 
 
+def _how_to_observe(run: Optional[str], cmd: str) -> str:
+    """How a validator observes a pin, by the system's run of it (`accounting.the_systems_run`). A pin the system RAN
+    is handed as that run, never as a command to run: told «need not be run again» under «run every pinned probe», a
+    validator re-ran an 11-minute suite the system had just run (11-27). One whose output its `expect` — a substring
+    proxy — missed is handed with that output: replay r1's validator re-ran the suite for ~11 min over a pin expecting
+    «0 failed», a line green pytest never prints (it printed «5110 passed»)."""
+    if run is None:
+        return f"run `{cmd}`"
+    return f"the system RAN `{cmd}` on this delivery — " + (
+        "cite it under this id with `held`, never run it again" if run == DECIDED else
+        "what it printed is below, and its `expect` is a substring proxy that did not match it: decide from that "
+        "output whether the behaviour holds, citing it under this id with an `expect` that is a part of what it "
+        "printed; run it yourself only if that output cannot show it")
+
+
 def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir: Optional[str] = None,
                    carry: Optional[dict] = None, seen: Optional[dict] = None) -> str:
     """The criteria one run validates, each with the pinned probes it must run and the once-refuting probes it
@@ -610,14 +625,8 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
     def _probe_line(c, p, part: bool = False) -> str:
         pid = probe_id(c.name, p)
         d, s = _dirs.get(pid), (seen or {}).get((tid, pid))
-        # …one the system's run DECIDES — it matched, or an exact one did not — is handed as that run, never as a command
-        # to run: told «need not be run again» under «run every pinned probe», a validator re-ran an 11-minute suite the
-        # system had just run (11-27). One not exact that did not match is still the validator's to observe
-        # (`accounting.with_engine_observations`: printed nothing, or not what it pins — critic over 359730d)
-        if ran := (s or {}).get("matched") is True or p.exact and (s or {}).get("matched") is False:
-            how = f"the system RAN `{_cmd(c, p)}` on this delivery — cite it under this id with `held`, never run it again"
-        else:
-            how = f"run `{_cmd(c, p)}`"
+        run = the_systems_run(p, s)
+        ran, how = run is not None, _how_to_observe(run, _cmd(c, p))
         return (f"    - {'PART’S ' if part else ''}PINNED CHECK [{pid}] — {p.behaviour}: {how} → {must_show(p, s)}"
                 + ("\n      (the part it belongs to passed its own validation on an earlier delivery; its result "
                    "now stands inside THIS delivery, and this criterion rests on it — "
@@ -626,7 +635,7 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
                    "showed what it must, false if not — and then every criterion resting on it fails)" if part else "")
                 + (f"\n      (its {len(p.inputs)} input file(s) were written by the system from the "
                    f"contract into {d} — run the command as shown; do not substitute files from "
-                   f"the delivery)" if d and not ran else ""))
+                   f"the delivery)" if d and run != DECIDED else ""))
 
     def _crit_block(c, items) -> str:
         # …A SEAM CRITERION ANSWERED IN ITS OWN ENTRY: reported only under the free-text `seams` note it had no verdict,
@@ -660,8 +669,9 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
                       for pid in again[None] for pc, p in [_part_probes[pid]]]
         # …AND WHAT IT OWES THAT ANOTHER RUN CARRIES: its verdict is the conjunction of the runs' verdicts on it
         if any(carry.get(pid) != c.name for pid, _ in items):
-            lines.append("    - (what this criterion owes is SPLIT between runs of this validation: run what is listed "
-                         "here and report this criterion on it — the runs' verdicts on it are conjoined, so one FAIL "
+            lines.append("    - (what this criterion owes is SPLIT between runs of this validation: observe what is "
+                         "listed here — cite what the system ran, run what it did not — and report this criterion on "
+                         "it — the runs' verdicts on it are conjoined, so one FAIL "
                          "fails it and nothing passes it that a run left undecided)")
         # …AND WHAT ITS ISSUER RULED OUTSIDE IT, with his reason: unseen, the next validator files the same ground again
         lines += [f"    - RULED OUT by its issuer [{r.get('id')}] `{r.get('command')}` — {r.get('why') or 'no reason given'}: "
@@ -719,10 +729,17 @@ def _persons_words(engine: Engine, task, crits) -> str:
         while at is not None and not (heard := mine(at.id)):    # …a part's: its nearest whole's
             at = engine.graph.get_parent(at.id)
         said = "".join(f"### {_HEARD.get(h['act'], h['act'])}\n{h['said']}\n\n" for h in heard)
+        # …and said to be a whole's where they are: a part answers its share of them, and every sibling's share landed in
+        # `outside` as probed rows the issuer must read (critic over 2b6c6e2; the cure 89ca38b9 carried in the old prose)
+        share = ("" if at is task else " — said over the whole this node is a part of: this node answers its own share "
+                 "of them, its criteria above; what a sibling part covers is not missing here")
         return (f"## The person's recorded words — the goal this delivery serves (question 1; no criterion of theirs is "
-                f"judged here)\n\n{said}" if said else "")
+                f"judged here){share}\n\n{said}" if said else "")
     return (f"## The person's recorded words — what `{INTENT}` is read against\n"
-            "The goal as given is the node's description above; then, as recorded. Any verdict short of pass carries "
+            "The goal as given is the node's description above; then, as recorded. Read the criterion's own text "
+            "first: the person's clarifications written into it bind. Then their words are its content — a thing they "
+            "ask that the result misses is its fail; what they would also want, with nothing of theirs to quote, goes "
+            "in `outside`. Any verdict short of pass carries "
             "`quote`: ONE unbroken span (no `…`) of at least "
             f"{QUOTE_WORDS} words of ONE of the person's own utterances (the goal, their words), or the whole of a shorter one:\n\n"
             + "".join(f"### {_HEARD.get(h['act'], h['act'])}\n{h['said']}\n\n" for h in heard_on(engine.graph, task.id)))
@@ -775,11 +792,14 @@ def validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[s
              + ("what was missing is the EVIDENCE. " if _evidence_short(str(_gap.get("defects"))) else
                 f"what was wrong is the report's FORM — name each criterion exactly as this packet lists it, "
                 f"and give its verdict on its own entry; then, as before: ")
-             + f"Validate the same delivery again: run every criterion's WHOLE pinned procedure — a "
-             f"criterion stands on it — and, under a criterion that pins none, give a labelled probe — a "
-             f"command, what its output must show, and the `behaviour` it observes — for every "
-             f"behaviour you name. Naming three behaviours and probing one is refused; naming one "
-             f"behaviour and probing it is not. This is attempt {int(_gap.get('refusals', 1)) + 1}.\n"
+             + f"Validate the same delivery again: a criterion passes only on what was observed of every "
+             f"behaviour its words state — cite a pinned check the system ran from its run, under its id, "
+             f"never running it again; for a behaviour no such run shows, give a labelled probe of your own "
+             f"— a command, what its output must show, and the `behaviour` it observes (one command observing "
+             f"several carries each label). Every behaviour the refused report named stays owed — naming fewer this "
+             f"time decides nothing. A criterion nothing you observed decides is `undecidable`, one whose words no delivery can "
+             f"decide `not_decidable` with why; a delivery that does not build or run is a `fail`. "
+             f"This is attempt {int(_gap.get('refusals', 1)) + 1}.\n"
              if _gap else "")
     negl = "\n".join(f"- {n.item}" for n in set_aside_of(task))
     return (f"# Node under validation: {tid} — {task.spec.name}\n\n{task.spec.description}\n{prior}"

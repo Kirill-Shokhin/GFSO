@@ -13,7 +13,7 @@ import gfso.observe as O
 import gfso.tools_llm as TL
 from gfso.validate import _classify_no_verdict
 from gfso.core.protocol.procedure import probe_id
-from gfso.core.protocol.accounting import BOUND_SPENT, PAST_WHOLE, with_engine_observations
+from gfso.core.protocol.accounting import NOT_ASKED_AGAIN, PAST_WHOLE, with_engine_observations
 from gfso.core.protocol.invariants import PAST_BOUND
 from gfso.core.types import Criteria, Probe
 from tests.test_the_system_runs_an_exact_check_itself import _validated
@@ -69,12 +69,12 @@ def test_a_looping_check_after_slow_honest_ones_is_no_pass(tmp_path, monkeypatch
 
 def test_a_whole_bound_spent_is_not_asked_again(tmp_path, monkeypatch):
     """Given its whole bound and still unfinished, the same tree times out again: the refusal says so, and the
-    dispatcher reads it as `no-verdict:bound` — no paid re-ask every half minute until T_validate (critic)."""
+    dispatcher reads it as `no-verdict:spent` — no paid re-ask every half minute until T_validate (critic)."""
     monkeypatch.setattr(O, "PROBE_S", 2)
     out = _validated(tmp_path, "hello", cmd="while :; do :; done; cat out.txt")
-    assert BOUND_SPENT in str(out.get("verdict_defects")), out
+    assert NOT_ASKED_AGAIN in str(out.get("verdict_defects")), out
     said = type("E", (), {"emit_info": lambda self, *a: None})()
-    assert _classify_no_verdict(said, "n", out) == "no-verdict:bound"
+    assert _classify_no_verdict(said, "n", out) == "no-verdict:spent"
 
 
 def test_the_systems_read_of_the_delivery_spends_none_of_a_checks_budget(tmp_path, monkeypatch):
@@ -87,7 +87,7 @@ def test_the_systems_read_of_the_delivery_spends_none_of_a_checks_budget(tmp_pat
     real = O.on_disk
     monkeypatch.setattr(O, "on_disk", lambda *a, **k: (time.sleep(1.2), real(*a, **k))[1])
     out = _validated(tmp_path, "hello", cmd="sleep 1.6; while :; do :; done; cat out.txt")
-    assert out.get("verdict") not in ("PASS", "FAIL") and BOUND_SPENT in str(out.get("verdict_defects")), out
+    assert out.get("verdict") not in ("PASS", "FAIL") and NOT_ASKED_AGAIN in str(out.get("verdict_defects")), out
 
 
 def test_a_bound_past_the_whole_budget_is_not_asked_again(tmp_path, monkeypatch):
@@ -99,4 +99,4 @@ def test_a_bound_past_the_whole_budget_is_not_asked_again(tmp_path, monkeypatch)
     monkeypatch.setattr(VAL, "OBSERVE_S", 0, raising=False)
     monkeypatch.setattr(VAL, "FRESH_S", 1.5, raising=False)
     out = _validated(tmp_path, "hello", cmd="sleep 1.6; while :; do :; done; cat out.txt")
-    assert out.get("verdict") not in ("PASS", "FAIL") and BOUND_SPENT in str(out.get("verdict_defects")), out
+    assert out.get("verdict") not in ("PASS", "FAIL") and NOT_ASKED_AGAIN in str(out.get("verdict_defects")), out

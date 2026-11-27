@@ -47,5 +47,5 @@ def test_the_persons_words_reach_a_validator_with_no_criterion_of_theirs(e, node
 def test_the_validator_is_asked_the_whole_against_the_goal_first():
     prompt = (Path(__file__).parents[1] / "gfso" / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
     assert "not for exploring beyond the contract" not in prompt, "the line forbidding the critic's method is back"
-    whole, each = prompt.index("**The whole, against the goal"), prompt.index("**For each criterion, in order")
-    assert prompt.index("**Does the delivery answer the goal?**") < whole < each, "the goal is not asked first"
+    whole, each = prompt.index("Judge the WHOLE delivery"), prompt.index("**The verdict is per written criterion")
+    assert prompt.index("Does the delivery answer the goal?") < whole < each, "the goal is not asked first"

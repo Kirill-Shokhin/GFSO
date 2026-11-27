@@ -17,8 +17,8 @@ from typing import Iterable, Mapping, Sequence
 
 from gfso.core.types import HOST, INPUTS_TOKEN, Criteria, Probe, unprojected
 from gfso.core.graph.model import is_its_executor
-from gfso.core.protocol.invariants import (ON_NO_DELIVERY, OVER_A_PASS, PAST_BOUND, UNDER_THE_DEFAULT, emits_a_constant,
-                                          probe_held, probes_of, spoken_verdict, underprobed)
+from gfso.core.protocol.invariants import (ON_NO_DELIVERY, OVER_A_PASS, PAST_BOUND, UNDER_THE_DEFAULT, probe_held,
+                                          probes_of, spoken_verdict, underprobed)
 from gfso.core.protocol.procedure import (PROBE_S, contains, finding_id, inputs_dir_name, inputs_token, layable_over,
                                           pinned_probes, probe_id, probe_key as _norm, procedure_digest, round_of,
                                           runs_a_past_build, same_probe, tokenized)
@@ -118,24 +118,6 @@ def unrun_pinned(criteria: Sequence[Criteria], per_criterion: Sequence[Mapping],
     return out
 
 
-def named_beyond_procedure(criteria: Sequence[Criteria], per_criterion: Sequence[Mapping],
-                           dirs: Iterable[tuple[str, object]] = ()) -> dict[str, list[str]]:
-    """{criterion: behaviours the report named under it without a probe labelled for each} — over PASSED criteria whose
-    whole pinned procedure this report ran. Such a criterion is decided by that procedure (A1; Inv-1 pre-registered it
-    before the work): what the validator names beyond it is exploration — recorded beside the verdict as named but not
-    separately observed, never a conjunct the verdict waits on. Measured (AUTO coreutils, 2026-10-10): four of seven
-    refused reports named `\\0NNN`, a mid-line `\\r`, LANG variants — which the criterion's own pinned probe, run and
-    cited by id, exercises — and were refused for labelling that probe with one behaviour. A criterion with no pinned
-    procedure, one passed short of it, or one whose named behaviour carries a divergence (a FAIL, §12.8) keeps the
-    label rule (`underprobed`)."""
-    named = underprobed(per_criterion)
-    verdicts, _ = _read_report(per_criterion, dirs)
-    unrun = unrun_pinned(criteria, per_criterion, dirs)
-    return {c.name: named[c.name] for c in criteria or ()
-            if c.name in named and c.name not in unrun and verdicts.get(_norm(c.name)) == "pass"
-            and any(_norm(p.command) and not emits_a_constant(p.command) for p in (c.check or ()))}
-
-
 def orphaned_regression(criteria: Iterable[Criteria], regression: Mapping) -> dict[str, list[str]]:
     """{criterion name no longer in the contract: [the probes that once refuted it]}.
 
@@ -188,8 +170,7 @@ def coverage(criteria: Sequence[Criteria], per_criterion: Sequence[Mapping],
             "pinned_probes_run": ran,
             "criteria_with_procedure": sum(1 for v in pinned.values() if v),
             "criteria_total": len(pinned),
-            "probes_beyond_the_procedure": extra,
-            "named_beyond_the_procedure": named_beyond_procedure(criteria, per_criterion, dirs)}
+            "probes_beyond_the_procedure": extra}
 
 
 def without_past_builds(regression: Mapping) -> dict[str, list[dict]]:
@@ -492,21 +473,30 @@ def _cited_as(p: Mapping) -> str:
     return f"`{i}`" if (i := str(p.get("id", "")).strip()) else "its command"
 
 
-def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping]) -> list:
-    """The report's entries, each part probe it observed written out in full where a criterion rests on it: a citation
-    `{id, held}` — the form the validator's packet asks for — given the pinned command and expectation it names, and a
-    criterion resting on a part probe another entry of the report observed given that observation. A criterion whose only
-    procedure was a part probe carried by another run was refused for "no reproducible probe", and a validator invented
-    one whose expectation then disagreed with the pinned one (finder over 190f4db; GB_sql_database_tn03ao788). An entry
-    with nothing to write out is returned as it came."""
+def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping],
+                           criteria: Sequence[Criteria] = ()) -> list:
+    """The report's entries, each pinned probe it cites written out in full — the node's own (`criteria`) and its parts':
+    a citation `{id, held}` — the form the validator's packet asks for — given the pinned command, expectation and
+    behaviour it names, and a criterion resting on a part probe another entry of the report observed given that
+    observation. A criterion whose only procedure was a part probe carried by another run was refused for "no
+    reproducible probe", and a validator invented one whose expectation then disagreed with the pinned one (finder over
+    190f4db; GB_sql_database_tn03ao788); an own pin cited as the packet asks observed nothing once a pin no longer carried
+    a criterion by having run (critic over 2b6c6e2). An entry with nothing to write out is returned as it came."""
     pinned = {probe_id(c.name, p): p for cs in (parts or {}).values() for c in cs for p in (c.check or ()) if _norm(p.command)}
-    if not pinned:
+    own = {probe_id(c.name, p): p for c in criteria or () for p in (c.check or ()) if _norm(p.command)}
+    if not (pinned or own):
         return list(per_criterion or ())
-    full = lambda q, pid: {**q, "command": pinned[pid].command, "expect": pinned[pid].expect,
-                           "behaviour": q.get("behaviour") or pinned[pid].behaviour}
-    cited = lambda q: str(q.get("id", "")).strip() in pinned and not _norm(q.get("command", ""))
+    every = {**own, **pinned}
+    # …an own pin's `expect` the report gave kept: where the system's run printed what its pinned `expect` — a substring
+    # proxy — missed, the packet asks for one that is part of that output, and the pinned one written over it stored a
+    # held pin over a line the system saw NOT printed (critic over b4129a7). A part's is the pinned one (GB_sql above)
+    full = lambda q, pid: {**q, "command": every[pid].command, "behaviour": q.get("behaviour") or every[pid].behaviour,
+                           "expect": q["expect"] if pid in own and str(q.get("expect") or "").strip() else every[pid].expect}
+    cited = lambda q: str(q.get("id", "")).strip() in every and not _norm(q.get("command", ""))
     out = [{**e, "probe": [full(q, str(q["id"]).strip()) if cited(q) else q for q in probes_of(e)]}
            if any(cited(q) for q in probes_of(e)) else e for e in per_criterion or ()]
+    if not pinned:
+        return out
     # …never one the report says, anywhere and however cited, did not hold (one observation: `part_credit`)
     failed = {pid for e in out for q in probes_of(e) if probe_held(q.get("held")) is False
               for pid in pinned if str(q.get("id", "")).strip() in (pid, pid.split("#")[-1])}
@@ -527,16 +517,111 @@ def with_part_observations(parts: Mapping[str, Sequence[Criteria]], per_criterio
 
 
 #: …and whether every one of them had its WHOLE bound (no budget cutting it): then the same tree times out again, and
-#: asking the validation again only pays for the same ⊥ (`BOUND_SPENT`, the dispatcher's `no-verdict:bound`)
+#: asking the validation again only pays for the same ⊥ (`not_asked_again`)
 PAST_WHOLE = "past_bound_whole"
 #: a shell's exit when the command could not be run at all — not found, not executable: no observation of the delivery
 NOT_RUN_RC = (126, 127)
-#: said in a refusal whose every unobserved criterion is PAST_WHOLE — read by the dispatcher, which stops re-asking
-BOUND_SPENT = ("NOT ASKED AGAIN: every unobserved check ran past all it could be given on this delivered tree — its own bound, or "
-               "the validation's whole budget where that is shorter —, which would "
-               "time out again — VALIDATING's bound hands the node to its issuer (§12.2), who may state the bound the "
-               f"check needs (its `bound_s`, the default {PROBE_S} s with its build, at most the validation's own bound), "
-               "re-pin it to finish inside its bound, or cancel")
+#: the gap of a criterion its validator found not decidable as written (`not_decidable_as_written`), and its word
+AS_WRITTEN, NOT_DECIDABLE = "not decidable as written", "not_decidable"
+#: said first in a refusal no re-asked validation changes (`not_asked_again`) — read by the dispatcher, which stops asking
+NOT_ASKED_AGAIN = "NOT ASKED AGAIN"
+#: what each class a re-ask cannot change asks of the issuer — one owner, for the refusal and the issuer's question
+PAST_ITS_BOUND = ("its check ran past all it could be given on this delivered tree — its own bound, or the validation's "
+                  "whole budget where that is shorter — and would time out again: state the bound it needs (its "
+                  f"`bound_s`, the default {PROBE_S} s with its build, at most the validation's own bound), re-pin it to "
+                  "finish inside its bound, or cancel")
+WRITTEN_AS = ("its words are decidable on no delivery — a defect of the criterion's text (§9.7, §11.2), not of the work: "
+              "rewrite it so the delivery can decide it")
+
+
+UNREACHED = ("nothing observed decides it on this delivery — the instrument could not reach it: say so; rewrite it "
+             "decidable here, or re-present it")
+
+
+def refused_why(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria] = ()) -> list[str]:
+    """For each criterion a refused report left undecided — the criterion, its validator's word, its evidence, and what
+    that class asks of the node's issuer (`WRITTEN_AS`, `PAST_ITS_BOUND`, `UNREACHED`) — THE one rendering, for the
+    machine issuer's question and the person's frontier at the lapse (§12.2: the bound hands the node over; Thm 11: with
+    why). Read off the report's own words AND its gaps: a criterion the validator called `pass` with a behaviour it named
+    and no labelled probe observed, or a pin it skipped, is undecided too — the class K-b grows, which read off the words
+    alone reached the issuer as an empty list (critic over f73c2c2)."""
+    asks = lambda e: (WRITTEN_AS if str(e.get("criterion")) in not_decidable_as_written([e]) else
+                      PAST_ITS_BOUND if e.get(PAST_BOUND) and e.get(PAST_WHOLE) else UNREACHED)
+    unseen, unrun = underprobed(per_criterion), unrun_pinned(criteria, per_criterion) if criteria else {}
+    out = []
+    for e in per_criterion or ():
+        c = str(e.get("criterion"))
+        if spoken_verdict(e.get("verdict")) != "pass":
+            out.append(f"{c} — {spoken_verdict(e.get('verdict')) or 'no word'}: "
+                       f"«{str(e.get('evidence') or 'no evidence given').strip()[:400]}» — {asks(e)}")
+        elif gap := [*(f"named and observed by no labelled probe: {b}" for b in unseen.get(c, ())),
+                     *(f"pinned check not cited from the system's run: {p}" for p in unrun.get(c, ()))]:
+            out.append(f"{c} — pass, undecided: {'; '.join(gap)} — {UNREACHED}")
+    return out
+
+
+def with_owed_behaviours(per_criterion: Sequence[Mapping], refused: Mapping | None) -> list:
+    """The report's entries, each owing too the behaviours the refused report on THIS delivery named under its criterion
+    — unless it refutes the criterion. Judged report by report, a retry that simply stopped naming the behaviour it was
+    refused over passed (critic over f73c2c2: «sorts ascending and is stable under ties», the second named and dropped):
+    which behaviours a criterion's words state does not shrink between two readings of one delivery (§2.3)."""
+    named: dict[str, list[str]] = {}
+    for e in (refused or {}).get("per_criterion") or ():
+        if isinstance(e, Mapping):
+            named.setdefault(_norm(e.get("criterion")), []).extend(
+                str(b) for b in (e.get("behaviours") or ()) if str(b).strip())
+    out = []
+    for e in per_criterion or ():
+        have = [str(b) for b in (e.get("behaviours") or ())]
+        add = [b for b in dict.fromkeys(named.get(_norm(e.get("criterion")), ())) if b not in have]
+        out.append({**e, "behaviours": have + add} if add and spoken_verdict(e.get("verdict")) != "fail" else e)
+    return out
+
+
+def not_asked_again(gaps: Mapping[str, Sequence[str]], per_criterion: Sequence[Mapping], refused_before: int = 0) -> str:
+    """What a refusal over `gaps` says first where re-asking the validation cannot change it — every gap of a class no
+    re-ask changes: a check past its whole bound, a criterion not decidable as written, or any mix of the two (§12.2: ⊥
+    is no event; the bound hands the node to its issuer) — naming which criteria are which; else "". A check past its
+    whole bound is MEASURED (the same tree times out again); «not decidable as written» is one validator's READING of the
+    text, so it is spent only once a second run on this delivery read it so too (`refused_before`): one wrong reading
+    stopped an auto run for its person with no second look (critic over f73c2c2)."""
+    bound = {str(e.get("criterion")) for e in per_criterion or () if e.get(PAST_BOUND) and e.get(PAST_WHOLE)} & set(gaps)
+    written = {c for c, b in gaps.items() if c not in bound and len(b) == 1 and str(b[0]).startswith(AS_WRITTEN)}
+    if written and refused_before < 1:
+        return ""
+    if not gaps or set(gaps) != bound | written:
+        return ""
+    return (f"{NOT_ASKED_AGAIN}: no further validation of this delivered tree changes it — VALIDATING's bound hands the "
+            f"node to its issuer (§12.2): " + "; ".join(f"{', '.join(sorted(cs))} — {asks}" for cs, asks in
+                                                       ((bound, PAST_ITS_BOUND), (written, WRITTEN_AS)) if cs))
+
+
+def not_decidable_as_written(per_criterion: Sequence[Mapping]) -> dict[str, str]:
+    """{criterion: the validator's evidence} for each criterion the report calls `not_decidable` — its words decidable
+    on no delivery — none the system marked by its own run (past its bound, observed on no delivery: the system's ⊥).
+    `undecidable` is not one: «I observed nothing deciding it» is the instrument's ⊥, which another validation cures —
+    read as the text's, a delivery that did not build went to «rewrite the criterion» (critic over cc4da2d)."""
+    return {str(e.get("criterion")): str(e.get("evidence") or "no reason given").strip()[:400]
+            for e in per_criterion or () if spoken_verdict(e.get("verdict")) == NOT_DECIDABLE
+            and not any(e.get(k) for k in (PAST_BOUND, ON_NO_DELIVERY))}
+
+
+#: how the system's run of a pin stands (`the_systems_run`): it decides the criterion, or it printed text its `expect`
+#: — a substring proxy — does not match, which the validator reads
+DECIDED, PRINTED = "decided", "printed"
+
+
+def the_systems_run(p: Probe, o: Mapping | None) -> str | None:
+    """How the system's run `o` of pin `p` on the delivery stands — THE one reading, for the record and the packet:
+    DECIDED (it matched; or it printed otherwise where that is the delivery's FAIL — an exact pin, a program the
+    delivery lacks), PRINTED (not exact, printed some text with no part of its `expect`: the proxy missed, and the
+    output is the observation the validator decides from, §10.2), or None (no run, past its bound, printed nothing, a
+    program the shell did not find: nothing a reader decides from)."""
+    if not o or o.get("matched") not in (True, False):
+        return None
+    if o["matched"] is True or p.exact or delivery_lacks(o):
+        return DECIDED
+    return PRINTED if o.get("rc") not in NOT_RUN_RC and str(o.get("printed") or "").strip() else None
 
 
 def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria],
@@ -569,10 +654,9 @@ def with_engine_observations(per_criterion: Sequence[Mapping], criteria: Sequenc
     # the report cites it printing (`_reproduced`); one that printed nothing, or whose bare-named program the shell did
     # not find, observed nothing a substring decides — the validator's word, as before (A1 (i))
     off = _copies({pid: o for pid, o in seen.items() if o.get("matched") is False
-                   and (pinned[pid].exact or delivery_lacks(o))})
-    unshown = {pid: o for pid, o in _copies({pid: o for pid, o in seen.items() if not pinned[pid].exact
-                                              and o.get("matched") is False and o.get("rc") not in NOT_RUN_RC
-                                              and str(o.get("printed") or "").strip()}).items() if pid not in off}
+                   and the_systems_run(pinned[pid], o) == DECIDED})
+    unshown = {pid: o for pid, o in _copies({pid: o for pid, o in seen.items()
+                                              if the_systems_run(pinned[pid], o) == PRINTED}).items() if pid not in off}
     unseen = {pid: o for pid, o in _copies({pid: o for pid, o in seen.items() if "matched" not in o}).items()
               if pid not in off and "matched" not in seen.get(pid, {})}
     if not (off or unshown or unseen or edited):
@@ -824,11 +908,12 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
                     delivery: str | Path | None = None, *, standing) -> dict[str, list[str]]:
     """{criterion: [what this report did not account for]} — ONE owner for that question.
 
-    Four sources, one answer: the behaviours the report itself named and did not probe
-    (`underprobed`), the procedure the CONTRACT pinned and the report skipped, the probes that
-    already REFUTED this node once, and the pinned procedure of every part `parts` names under the
-    criterion it is mapped to (`unrun_parts`). They are ways of saying the same thing — a conjunct
-    nobody observed cannot carry a pass (§2.3) — and they lived as appended blocks inside a
+    Five sources, one answer: the behaviours the report itself named and did not probe
+    (`underprobed`), a criterion it gives a word neither pass nor fail, the procedure the CONTRACT
+    pinned and the report skipped, the probes that already REFUTED this node once, and the pinned
+    procedure of every part `parts` names under the criterion it is mapped to (`unrun_parts`). They
+    are ways of saying the same thing — a conjunct nobody decided has no value (§2.3): no pass, and
+    no FAIL either, which names only what was refuted (Inv-3) — and they lived as appended blocks inside a
     verdict recorder that had grown past the size the suite's FORM ratchet holds at zero. That
     ratchet is not decoration: a rule appended to a long function is a rule nobody finds later.
 
@@ -838,9 +923,10 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     would be — and demanding it there froze every internal node in VALIDATING, which is the worse
     defect. The demand stands wherever the verdict is somebody else's: every seam, every instrument.
     """
-    # …the behaviours named beyond a pinned procedure the report ran whole are exploration, not gaps — unless the
-    # criterion falls short on another count below, where the refusal names everything it is short of, as before
-    stood = named_beyond_procedure(task.spec.criteria, per_criterion, dirs) if task is not None else {}
+    # …a behaviour named and observed by nothing leaves its criterion ⊥ whether or not a pinned check ran whole (§2.3,
+    # §12.8): the pin observes what it was built to observe, and one command observing several behaviours says so by
+    # its `behaviour` labels. The exemption that passed such a criterion on its pin (coreutils, 2026-10-10: `\0NNN`, a
+    # mid-line `\r`, LANG variants the pin did exercise, unlabelled) was cured by the label, not by a pass
     gaps = underprobed(per_criterion)
     # …and an exact check the SYSTEM ran and left unfinished in the time it was given (`with_engine_observations`): it
     # decided nothing in finite time (A1 (i)), whoever validates — no PASS over it, and no FAIL either: an honest slow
@@ -854,12 +940,21 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
                    f"stated none (`bound_s`)" if (d := e.get(UNDER_THE_DEFAULT)) else ""))
         if e.get(ON_NO_DELIVERY):     # …nor a pass observed on no delivered tree: the same ⊥, the report's to redo
             gaps.setdefault(str(e.get("criterion")), []).extend(map(str, e[ON_NO_DELIVERY]))
+    # …and a word neither pass nor fail refutes nothing: its criterion has no value (§2.3), so it is ⊥, never the FAIL
+    # payload — that is what the report refuted (Inv-3, Thm 2). Read as a fail, a validator's `undecidable` went to
+    # rework charged to the executor, who had nothing to fix
+    for e in per_criterion or ():
+        if (w := spoken_verdict(e.get("verdict"))) not in ("pass", "fail") and str(e.get("criterion")) not in gaps:
+            gaps[str(e.get("criterion"))] = [f"the report leaves it {w or 'without a word'} and refutes nothing in it"]
+    # …and one the validator calls `undecidable` itself is a defect of the criterion's TEXT (§11.2 form item (1)): its
+    # author repairs it, no label or probe the validator adds does — what it named and did not probe is not asked of it
+    gaps.update({c: [f"{AS_WRITTEN} — the validator: «{why}»"] for c, why in not_decidable_as_written(per_criterion).items()})
     # The internal-node exemption (§10.3) is narrowed to the case that HAS it: §10.3 lets an INTERNAL node
     # self-verify; at a seam independence is owed and a self-validation is not a verdict at all. The
     # caller guarantees that upstream today, and the repo's own recurring class is a rule that
     # holds at one door and not at the next — so it is checked here, where the rule lives.
     if task is None or (bool(by_hand) and internal and is_its_executor(task, validator_id)):
-        return {c: b for c, b in gaps.items() if b != stood.get(c)}
+        return gaps
     for name, ids in unrun_pinned(task.spec.criteria, per_criterion, dirs).items():
         gaps.setdefault(name, []).append(
             "the procedure this criterion PINS was not run: " + ", ".join(ids)
@@ -891,4 +986,4 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
                 + " — one citation serves every criterion resting on it when it names that probe alone (its full "
                   "id, a hash or a command no other demanded probe has) with `held: true`, or without `held` under a "
                   "criterion the report passes")
-    return {c: b for c, b in gaps.items() if b != stood.get(c)}
+    return gaps

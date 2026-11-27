@@ -125,7 +125,9 @@ def _the_parts_check(e, crit="g"):
 
 
 def _cited(pid, held):
-    return {"id": pid, "behaviour": "b", "command": "x", "held": held}
+    """The part's check cited as the validator's packet asks: its id and whether it held — the record writes out its
+    pinned command, expectation and behaviour (`accounting.with_part_observations`)."""
+    return {"id": pid, "held": held}
 
 
 def test_unmap_record_names_the_decomposer_the_time_and_the_parts_last_rerun():

@@ -12,6 +12,7 @@ from gfso.engine.joins import NOT_ON_ITS_BRANCH
 from gfso.config import ONE_CALL, agent_id as _config_agent_id, how_it_is_waited
 from gfso.core.graph.model import is_its_executor, party_kind, root_of
 from gfso.core.graph.review import is_undecided
+from gfso.core.protocol.accounting import refused_why
 from gfso.core.types import (Action, DoneReason, Mode, Signal, State, TERMINAL_STATES, WORK_STATES, Task, TaskId,
                              Verdict, Wait, settled_positive)
 from .moves import Move, door_holder
@@ -663,7 +664,11 @@ class NodeSteps:
                           "yourself, or record a verdict and sign as the issuer."
                           + (" What the validator DID observe before it gave up is on the record: "
                              "`get_verdict` shows it under `refused_report` — evidence, not a "
-                             "verdict." if self.engine.rejected_report(t.id) else ""))
+                             "verdict." if self.engine.rejected_report(t.id) else "")
+                          # …and why, per criterion not passed, with what each asks of them (`accounting.refused_why`)
+                          + ("".join(f" · {w}" for w in refused_why(
+                              (self.engine.refused_report_for_this_delivery(t.id) or {}).get("per_criterion"),
+                              t.spec.criteria))))
         if (_why := self.engine.parking.contested_reason(t.id)):
             directive += (f" | ITS EXECUTOR DISPUTES THE CONTRACT and could not say so in a signal "
                           f"(the state does not admit CHALLENGE — §12.4 admits it from OFFERED and, "
