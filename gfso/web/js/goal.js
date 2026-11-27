@@ -110,7 +110,7 @@ function read(plan) {
 // The planner takes the statement as text — everything the form holds, so nothing typed is dropped.
 const asText = v => [v.name, v.description,
     v.criteria.length && 'Criteria:\n' + v.criteria.map(c => `- ${c.name}: ${c.description}`
-        + c.check.map(p => `\n  check: ${p.behaviour} — \`${p.command}\` → ${p.expect}`).join('')).join('\n'),
+        + c.check.map(p => `\n  check: ${p.behaviour} — ` + (p.procedure && !p.command ? `in words: ${p.procedure}` : `\`${p.command}\` → ${p.expect}`)).join('')).join('\n'),
     v.scope.length && 'Out of scope:\n' + v.scope.map(s => `- ${s}`).join('\n'),
     v.accepted_risks.length && 'Accepted risks:\n' + v.accepted_risks.map(r => `- ${r.item}${r.justification ? ' — ' + r.justification : ''}`).join('\n'),
 ].filter(Boolean).join('\n\n');

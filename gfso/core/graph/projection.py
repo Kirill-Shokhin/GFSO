@@ -186,7 +186,8 @@ def probe_view(p) -> tuple:
     their content — "a child carries the parent's probe" was judged by the file's name, and a child holding the same
     command over another `prog.c` read as carrying it (critic over 9997bb6)."""
     return (p.behaviour, p.command, p.expect,
-            [f"{x}@{hashlib.sha256(str(body).encode()).hexdigest()[:8]}" for x, body in p.inputs])
+            [f"{x}@{hashlib.sha256(str(body).encode()).hexdigest()[:8]}" for x, body in p.inputs],
+            *((p.procedure,) if p.procedure else ()))     # …a reader's check, only where set: every other view stays
 
 
 #: one pinned input file shown to a reader at most this long — a guard against a corpus, not a budget: the three plans that
@@ -212,8 +213,9 @@ def pinned_lines(check, indent: str) -> list[str]:
     """A criterion's pinned checks as the checker reads them — the parent's and the children's alike: a criterion IS
     what its procedure decides (A1(i)), and a checker shown the parent's probes and only the children's prose judged the
     prose (own-plan row 3: a child carrying the root's exact probe, and the checker naming one more instance for 98 min)."""
-    return [f"{indent}- pinned check — {beh}: `{cmd}` → expect: {exp}"
-            + (f" (`{{inputs}}` = {len(files)} file(s) pinned with this probe: {', '.join(files)})" if files else "")
+    return [(f"{indent}- pinned check — {beh}: in words, performed by its validator: «{rest[1]}»"
+             if len(rest) > 1 and not str(cmd).strip() else f"{indent}- pinned check — {beh}: `{cmd}` → expect: {exp}"
+             + (f" (`{{inputs}}` = {len(files)} file(s) pinned with this probe: {', '.join(files)})" if files else ""))
             for beh, cmd, exp, *rest in (check or ()) for files in [rest[0] if rest else []]]
 
 

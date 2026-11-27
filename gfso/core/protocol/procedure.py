@@ -63,7 +63,7 @@ def probe_id(criterion_name: str, probe: Probe | Mapping) -> str:
     # …AND NOT THE VALIDATION ROUND: a validator's own file sits in that round's scratch (`<task>_<epoch>`, beside the
     # delivery — tools_llm `_validation_place`), so one probe filed in four rounds was four findings, each to be re-run
     # and each to be ruled on apart (p_wide.c on root.pp, GB_c_compiler_tmp5cb096)
-    seed = _ROUND.sub(r"\1{round}", _norm(probe.command)) or _norm(probe.behaviour)
+    seed = _ROUND.sub(r"\1{round}", _norm(probe.command)) or _norm(probe.procedure) or _norm(probe.behaviour)
     return f"{_norm(criterion_name)}#{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:8]}"
 
 
@@ -168,6 +168,8 @@ def procedure_digest(criteria: Iterable[Criteria]) -> str:
                 h.update(b"\x07")
             if p.bound_s is not None:     # …and the bound it decides within, its issuer's where stated (`Probe.bound_s`)
                 h.update(b"\x08" + repr(bound_seconds(p.bound_s)).encode("utf-8"))
+            if p.procedure:       # …a reader's check, only where set
+                h.update(b"\x09" + _norm(p.procedure).encode("utf-8"))
     return h.hexdigest()[:16]
 
 
@@ -206,7 +208,26 @@ def criteria_without_procedure(criteria: Iterable[Criteria]) -> list[str]:
     producer's own PASS, and the integration implication is the PARENT's (§6.5, §8.7). A criterion that reads a
     producer's result (`depends_on`, `add_dependency(..., check=[…])`) is a criterion like any other.
     """
-    return [c.name for c in (criteria or ()) if not any(_norm(p.command) for p in (c.check or ()))]
+    return [c.name for c in (criteria or ()) if not any(p.pins for p in (c.check or ()))]
+
+
+def misformed_checks(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
+    """{criterion: why each of its checks is neither form} — a check is a COMMAND the system runs or a PROCEDURE in words a
+    reader performs, which its issuer states by the one field he fills: both filled leave who performs it unsaid, neither
+    pins anything, and a reader's check carrying `expect`, `inputs`, `exact` or `bound_s` holds a command's fields that
+    nothing runs."""
+    out: dict[str, list[str]] = {}
+    for c in criteria or ():
+        for p in c.check or ():
+            label = p.behaviour.strip() or "a check"
+            if p.command.strip() and p.procedure.strip():
+                out.setdefault(c.name, []).append(f"«{label}» carries both a `command` and a `procedure`")
+            elif not p.pins:
+                out.setdefault(c.name, []).append(f"«{label}» carries neither a `command` nor a `procedure`")
+            elif p.in_words and (got := [k for k, v in (("expect", p.expect.strip()), ("inputs", p.inputs),
+                                                         ("exact", p.exact), ("bound_s", p.bound_s is not None)) if v]):
+                out.setdefault(c.name, []).append(f"«{label}» is a procedure in words and carries {', '.join(got)}")
+    return out
 
 
 def inputs_unpinned(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
@@ -435,7 +456,7 @@ def criterionless(criteria: Iterable[Criteria]) -> Optional[str]:
         return None
     return ("the contract has no criterion the node itself decides — a task's criteria are a finite NONEMPTY set of "
             "decidable predicates (§2.2, A1), and over none every result passes; give it at least one "
-            "criterion with its `check: [{behaviour, command, expect}]`")
+            "criterion with its `check: [{behaviour, command, expect}]` (or `[{behaviour, procedure}]`)")
 
 
 def admission_defects(criteria: Iterable[Criteria]) -> list[str]:
@@ -447,8 +468,12 @@ def admission_defects(criteria: Iterable[Criteria]) -> list[str]:
     if why := criterionless(crit):
         return [why]
     out = [f"{k}: the contract would pin no check on it — nothing would decide it but a probe improvised at "
-           f"validation time (A1, §2; pre-registration, Inv-1 §12.3); give it `check: [{{behaviour, command, expect}}]`"
+           f"validation time (A1, §2; pre-registration, Inv-1 §12.3); give it `check: [{{behaviour, command, expect}}]`, "
+           f"or `[{{behaviour, procedure}}]` where no command decides it"
            for k in criteria_without_procedure(crit)]
+    out += [f"{k}: {'; '.join(v)} — a check is EITHER a `command` the system runs (with its `expect`, `inputs`, `exact`, "
+            f"`bound_s`) OR a `procedure` in words for the checker to perform, its issuer's choice by the field filled; "
+            f"give each exactly one" for k, v in sorted(misformed_checks(crit).items())]
     out += [f"{k}: two probes of one criterion run one command ({', '.join(v)}) — a probe is named by its command, so "
             f"the second would be laid down over the first and never run; give each its own (its own file name under "
             f"{{inputs}})" for k, v in sorted(twin_probes(crit).items())]
@@ -484,7 +509,8 @@ def unrunnable_bounds(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for c in criteria or ():
         for p in c.check or ():
-            if p.bound_s is not None and not ((s := bound_seconds(p.bound_s)) and s <= check_bound_limit()):
+            if not p.in_words and p.bound_s is not None and not (
+                    (s := bound_seconds(p.bound_s)) and s <= check_bound_limit()):
                 out.setdefault(c.name, []).append(f"bound_s {p.bound_s!r}")
     return out
 
@@ -528,7 +554,8 @@ def hollow_procedures(criteria: Iterable[Criteria]) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for c in criteria or ():
         cmds = [p.command for p in (c.check or ()) if _norm(p.command)]
-        if cmds and all(emits_a_constant(x) for x in cmds):
+        # …a reader's check beside them can come out false: the criterion forbids something
+        if cmds and all(emits_a_constant(x) for x in cmds) and not any(p.in_words for p in c.check):
             out[c.name] = cmds
     return out
 
@@ -760,6 +787,11 @@ EXACT_TEXT = ("true when `expect` is the COMPLETE output the command prints on c
               "names only part of it")
 
 
+#: What an author is told a check's `procedure` is — one text for every schema that pins a probe (`Probe.procedure`).
+PROCEDURE_TEXT = ("a procedure in words for the checker to perform — never run by the system; use it where no command "
+                  "decides the behaviour, and leave `command`, `expect`, `inputs`, `exact` and `bound_s` empty")
+
+
 #: a scratch directory and the round under it, anywhere in a path
 _SCRATCH_ROUND = re.compile(r"[\\/](\.gfso-scratch-[^\\/]+)[\\/]+([^\\/]+)")
 
@@ -806,7 +838,7 @@ def part_criteria(part_id, criteria: Iterable[Criteria]) -> tuple[Criteria, ...]
     probe id, inputs directory and `{inputs:<id>}` token is the part's own and never the whole's, whose
     probe may pin the same command under a criterion of the same name."""
     return tuple(replace(c, name=f"{part_id}/{c.name}") for c in criteria or ()
-                 if any(_norm(p.command) for p in (c.check or ())))
+                 if any(p.pins for p in (c.check or ())))
 
 
 #: the seconds one pinned check the system runs may take, its build included, where its issuer stated none
@@ -830,6 +862,10 @@ def same_probe(p: Probe) -> tuple:
     credits all of them (`part_credit`)."""
     # …NOT `exact`: it says who can decide the output, not what running the command observes — told apart by it, one
     # run of a command pinned twice would be owed twice and credit only the copy it was cited by
+    # …a check in words by its behaviour AND its words: one procedure reading under two behaviours is two checks, and
+    # merged, a report citing one passed the other (outside critic over a71c876d)
+    if p.in_words:
+        return p.procedure.strip(), _norm(p.behaviour).lower(), tuple(p.inputs or ())
     return p.command.strip(), (p.expect or "").strip(), tuple(p.inputs or ())
 
 

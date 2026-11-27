@@ -412,7 +412,7 @@ export const perCrit = vr => Object.fromEntries((vr?.per_criterion || []).map(c 
 // A criterion's pinned check is what makes it a contract (A1, §2) — folded, the longest part of it.
 export const pinned = (c, key) => (c.check || []).length
     ? `<details class="crit-check" data-key="${esc(key)}"><summary>check (${plural(c.check.length, 'probe')})</summary><pre>`
-      + c.check.map(p => [p.behaviour && `# ${p.behaviour}`, `$ ${p.command}`, `→ ${p.expect}`,
+      + c.check.map(p => [p.behaviour && `# ${p.behaviour}`, ...(p.procedure && !p.command ? [`(in words) ${p.procedure}`] : [`$ ${p.command}`, `→ ${p.expect}`]),
                           Object.keys(p.inputs || {}).length && `inputs: ${Object.keys(p.inputs).join(', ')}`]
                          .filter(Boolean).map(esc).join('\n')).join('\n\n') + `</pre></details>`
     : `<div class="check-fail">no pinned check — nothing decides this criterion but a probe improvised at validation time</div>`;

@@ -3004,7 +3004,7 @@ class Engine:
 
     def _probes_of(self, task_id: TaskId) -> list:
         t = self._graph.get_task(task_id)
-        return [] if t is None else [[c.name, [p.command for p in c.check or ()]] for c in t.spec.criteria
+        return [] if t is None else [[c.name, [p.command or p.procedure for p in c.check or ()]] for c in t.spec.criteria
                                      if not c.depends_on]
 
     def held_in_chat(self, task_id: TaskId) -> bool:

@@ -17,8 +17,8 @@ from typing import Iterable, Mapping, Sequence
 
 from gfso.core.types import HOST, INPUTS_TOKEN, Criteria, Probe, unprojected
 from gfso.core.graph.model import is_its_executor
-from gfso.core.protocol.invariants import (ON_NO_DELIVERY, OVER_A_PASS, PAST_BOUND, UNDER_THE_DEFAULT, probe_held,
-                                          probes_of, spoken_verdict, underprobed)
+from gfso.core.protocol.invariants import (ON_NO_DELIVERY, OVER_A_PASS, PAST_BOUND, UNDER_THE_DEFAULT, emits_a_constant,
+                                          good_probes, probe_held, probes_of, spoken_verdict, underprobed)
 from gfso.core.protocol.procedure import (PROBE_S, contains, finding_id, inputs_dir_name, inputs_token, layable_over,
                                           pinned_probes, probe_id, probe_key as _norm, procedure_digest, round_of,
                                           runs_a_past_build, same_probe, tokenized)
@@ -97,22 +97,71 @@ def _read_report(per_criterion: Sequence[Mapping], dirs: Iterable[tuple[str, obj
     return verdicts, reported
 
 
+def _every_check(criteria: Iterable[Criteria], parts: Mapping | None) -> list[tuple[str, Probe]]:
+    """[(id, check)] of every check the node owes — its own and its parts'."""
+    return [(probe_id(c.name, p), p) for cs in [criteria or (), *(parts or {}).values()] for c in cs for p in c.check or ()]
+
+
+def words_copies(criteria: Iterable[Criteria], parts: Mapping | None = None) -> dict[str, list[str]]:
+    """{id of a check in words: the ids of every copy of it the node owes, in the order owed — its own first}: a part's
+    check restated at the whole (`same_probe`) is ONE check, shown once under the first id and owed as one, whichever
+    copy an observation cites (as `part_credit` reads a command's copies)."""
+    by: dict[tuple, list[str]] = {}
+    for pid, p in _every_check(criteria, parts):
+        if p.in_words and pid not in by.setdefault(same_probe(p), []):
+            by[same_probe(p)].append(pid)
+    return {pid: ids for ids in by.values() for pid in ids}
+
+
+def performed(criteria: Iterable[Criteria], per_criterion: Sequence[Mapping], parts: Mapping | None = None,
+              by_hand: bool = False) -> set[str]:
+    """The ids of the checks in words — the node's own and its parts' — this report performed: ONLY by an observation
+    bound to one by its own id. A model's entry cites the id on a probe of the validator's own — a command with what it
+    must show, one that can come out false, and no run or citation of any command pin of the node or its parts; a hand
+    record (§10.2: the check is the evaluation whoever performs it; `record_verdict`) cites the id under an entry with
+    evidence. Never by a label: a command pin sharing the behaviour's words, cited from the system's run as the packet
+    asks, decided the check in words with it (outside critic over 6ab2a458). Performed, every copy is (`words_copies`)."""
+    copies, pins = words_copies(criteria, parts), [(i, p) for i, p in _every_check(criteria, parts) if _norm(p.command)]
+    hashes: dict[str, set[str]] = {}
+    for pid in copies:
+        hashes.setdefault(pid.split("#")[-1], set()).add(pid)
+    def _names(q) -> set[str]:
+        i = str(q.get("id", "")).strip()
+        return {i} if i in copies else hashes.get(i, set()) if len(hashes.get(i, ())) == 1 else set()
+    def _a_pin(q) -> bool:          # …the system's run, or the validator's run or citation, of a command pin
+        cmd = re.sub(r"\{inputs:[^}]*\}", INPUTS_TOKEN, str(q.get("command") or ""))
+        return bool(q.get(SYSTEM_SAW)) or any(str(q.get("id", "")).strip() in (i, i.split("#")[-1])
+                                               or _norm(cmd) == _norm(p.command) for i, p in pins)
+    out: set[str] = set()
+    for e in per_criterion or ():
+        hand = by_hand and str(e.get("evidence") or "").strip()
+        for q in (probes_of(e) if hand else good_probes(e)):
+            # …never one its own report says did not hold
+            if probe_held(q.get("held")) is not False and (hand or not (
+                    emits_a_constant(str(q.get("command") or "")) or _a_pin(q))) and (ids := _names(q)):
+                out |= {c for i in ids for c in copies[i]}
+    return out
+
+
 def unrun_pinned(criteria: Sequence[Criteria], per_criterion: Sequence[Mapping],
-                 dirs: Iterable[tuple[str, object]] = ()) -> dict[str, list[str]]:
-    """{criterion: [pinned probe ids the report does not account for]} — over PASSED criteria only.
+                 dirs: Iterable[tuple[str, object]] = (), by_hand: bool = False,
+                 parts: Mapping | None = None) -> dict[str, list[str]]:
+    """{criterion: [pinned probe ids the report does not account for]} — over PASSED criteria only: a command run or
+    cited, a reader's check performed (`performed`, its labels read beside the `parts` resting on the criterion).
 
     A criterion the report refutes is not asked to have run the rest of its procedure: a refutation
     is already the verdict, and demanding the full sweep before a FAIL may be spoken would buy
     silence, not coverage. A criterion left `undecidable` is likewise not a claim of execution.
     """
     verdicts, reported = _read_report(per_criterion, dirs)
+    done = performed(criteria, per_criterion, parts, by_hand)
     out: dict[str, list[str]] = {}
     for c in criteria or ():
         name = _norm(c.name)
         if verdicts.get(name) != "pass":
             continue
-        missing = [probe_id(c.name, p) for p in (c.check or ())
-                   if _norm(p.command) and probe_id(c.name, p) not in reported.get(name, set())]
+        missing = [pid for p in (c.check or ()) if (pid := probe_id(c.name, p)) and (
+            pid not in done if p.in_words else _norm(p.command) and pid not in reported.get(name, set()))]
         if missing:
             out[c.name] = missing
     return out
@@ -137,15 +186,16 @@ def orphaned_regression(criteria: Iterable[Criteria], regression: Mapping) -> di
 
 
 def coverage(criteria: Sequence[Criteria], per_criterion: Sequence[Mapping],
-             dirs: Iterable[tuple[str, object]] = ()) -> dict:
+             dirs: Iterable[tuple[str, object]] = (), by_hand: bool = False) -> dict:
     """What a verdict records about its own reach: the digest, the pinned count, and what was run
-    BEYOND the pinned set — the honest half of "checked by P, behaviour outside P unchecked"."""
+    BEYOND the pinned set — the honest half of "checked by P, behaviour outside P unchecked". `by_hand`: a reader's check
+    cited with its recorder's words was performed (`performed`), and «never run» would be untrue."""
     pinned = pinned_probes(criteria)
     pinned_ids = {i["id"] for v in pinned.values() for i in v}
     extra = 0
     for e in per_criterion or ():
         name = _norm(e.get("criterion"))
-        for p in probes_of(e):
+        for p in probes_of(e):      # …a probe citing a check in words is that check's, by its id
             if not (_reported_ids(name, [p], dirs) & pinned_ids) and _norm(p.get("command", "")):
                 extra += 1
     # …AND HOW MANY OF THEM THIS REPORT ACTUALLY ACCOUNTED FOR. `pinned_probes` is a property of
@@ -156,6 +206,7 @@ def coverage(criteria: Sequence[Criteria], per_criterion: Sequence[Mapping],
     # remove, on the change's own surface. So the count of what RAN is stored beside it, computed
     # from the report, and the two can be compared by anyone reading the record.
     ran = 0
+    done = performed(criteria, per_criterion, None, by_hand)
     for c in criteria or ():
         name = _norm(c.name)
         reported = set()
@@ -163,8 +214,8 @@ def coverage(criteria: Sequence[Criteria], per_criterion: Sequence[Mapping],
             if _norm(e.get("criterion")) != name:
                 continue
             reported |= _reported_ids(name, probes_of(e), dirs)
-        ran += sum(1 for p in (c.check or ())
-                   if _norm(p.command) and probe_id(c.name, p) in reported)
+        ran += sum(1 for p in (c.check or ()) if (pid := probe_id(c.name, p)) and (
+            pid in done if p.in_words else _norm(p.command) and pid in reported))
     return {"procedure_digest": procedure_digest(criteria),
             "pinned_probes": sum(len(v) for v in pinned.values()),
             "pinned_probes_run": ran,
@@ -351,14 +402,15 @@ def runs_pin(finding: Mapping, pid: str, pin: Probe) -> bool:
 def _pins_lifted(crits: Sequence[Criteria], ruled: Iterable[Mapping], keeps_own: bool) -> set[str]:
     """The ids of the pinned checks in `crits` that `ruled` run (each within what it says stood then, `then`, where said)
     and their copies — or none where the criterion, with no pin of its own (`keeps_own`), would keep no check at all."""
-    pins = [(probe_id(c.name, p), p) for c in crits for p in c.check or () if _norm(p.command)]
+    # …a reader's check among them: no ruling runs it (`runs_pin`), and it is a check the criterion keeps
+    pins = [(probe_id(c.name, p), p) for c in crits for p in c.check or () if p.pins]
     gone = {same_probe(p) for i, p in pins for r in ruled
             if runs_pin(r, i, p) and ("then" not in r or same_probe(p) in r["then"])}
     return {i for i, p in pins if same_probe(p) in gone} if keeps_own or any(same_probe(p) not in gone for _, p in pins) else set()
 
 
 def _pinned_criteria(criteria: Iterable[Criteria]) -> set[str]:
-    return {_norm(c.name) for c in criteria or () if any(_norm(p.command) for p in c.check or ())}
+    return {_norm(c.name) for c in criteria or () if any(p.pins for p in c.check or ())}
 
 
 def pins_ruled_out(parts: Mapping[str, Sequence[Criteria]], rulings: Iterable[Mapping], own: Iterable[Criteria]) -> dict[str, set[str]]:
@@ -548,6 +600,7 @@ def refused_why(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria] =
     asks = lambda e: (WRITTEN_AS if str(e.get("criterion")) in not_decidable_as_written([e]) else
                       PAST_ITS_BOUND if e.get(PAST_BOUND) and e.get(PAST_WHOLE) else UNREACHED)
     unseen, unrun = underprobed(per_criterion), unrun_pinned(criteria, per_criterion) if criteria else {}
+    words = {probe_id(c.name, p) for c in criteria or () for p in c.check or () if p.in_words}
     out = []
     for e in per_criterion or ():
         c = str(e.get("criterion"))
@@ -555,7 +608,8 @@ def refused_why(per_criterion: Sequence[Mapping], criteria: Sequence[Criteria] =
             out.append(f"{c} — {spoken_verdict(e.get('verdict')) or 'no word'}: "
                        f"«{str(e.get('evidence') or 'no evidence given').strip()[:400]}» — {asks(e)}")
         elif gap := [*(f"named and observed by no labelled probe: {b}" for b in unseen.get(c, ())),
-                     *(f"pinned check not cited from the system's run: {p}" for p in unrun.get(c, ()))]:
+                     *(f"pinned procedure in words not performed: {p}" if p in words else
+                       f"pinned check not cited from the system's run: {p}" for p in unrun.get(c, ()))]:
             out.append(f"{c} — pass, undecided: {'; '.join(gap)} — {UNREACHED}")
     return out
 
@@ -855,7 +909,8 @@ def parts_read(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[
 
 
 def unrun_parts(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence[Mapping],
-                dirs: Iterable[tuple[str, object]] = (), own: Sequence[Criteria] = ()) -> dict[str, list[str]]:
+                dirs: Iterable[tuple[str, object]] = (), own: Sequence[Criteria] = (),
+                by_hand: bool = False) -> dict[str, list[str]]:
     """{criterion of the whole: [its parts' pinned probe ids this PASS did not show holding]} — over PASSED criteria only.
 
     A whole's result is its subtree's artifact as it stands when the WHOLE is delivered (§11.3); a part's PASS
@@ -867,12 +922,14 @@ def unrun_parts(parts: Mapping[str, Sequence[Criteria]], per_criterion: Sequence
     criterion resting on it (`part_credit`)."""
     verdicts, _ = _read_report(per_criterion, dirs)
     credited, _ = part_credit(parts, per_criterion, dirs, own)
+    done = performed(own, per_criterion, parts, by_hand)
     out: dict[str, list[str]] = {}
     for name, crits in (parts or {}).items():
         if verdicts.get(_norm(name)) != "pass":
             continue
-        if missing := [pid for c in crits for p in (c.check or ())
-                       if _norm(p.command) and (pid := probe_id(c.name, p)) not in credited]:
+        # …a part's reader's check, performed under any criterion of the whole resting on it
+        if missing := [pid for c in crits for p in (c.check or ()) if (pid := probe_id(c.name, p)) and (
+                pid not in done if p.in_words else _norm(p.command) and pid not in credited)]:
             out[name] = missing
     return out
 
@@ -955,11 +1012,18 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # holds at one door and not at the next — so it is checked here, where the rule lives.
     if task is None or (bool(by_hand) and internal and is_its_executor(task, validator_id)):
         return gaps
-    for name, ids in unrun_pinned(task.spec.criteria, per_criterion, dirs).items():
-        gaps.setdefault(name, []).append(
-            "the procedure this criterion PINS was not run: " + ", ".join(ids)
-            + " — the contract fixed these before the work (Inv-1, §12.3); a pass that skips them "
-              "is a pass on a procedure invented at validation time")
+    words = {probe_id(c.name, p) for c in task.spec.criteria for p in c.check or () if p.in_words} | {
+        probe_id(c.name, p) for cs in (parts or {}).values() for c in cs for p in c.check or () if p.in_words}
+    for name, ids in unrun_pinned(task.spec.criteria, per_criterion, dirs, bool(by_hand), parts).items():
+        if run := [i for i in ids if i not in words]:
+            gaps.setdefault(name, []).append(
+                "the procedure this criterion PINS was not run: " + ", ".join(run)
+                + " — the contract fixed these before the work (Inv-1, §12.3); a pass that skips them "
+                  "is a pass on a procedure invented at validation time")
+        if read := [i for i in ids if i in words]:
+            gaps.setdefault(name, []).append(
+                "the procedure in words this criterion PINS was not performed: " + ", ".join(read)
+                + " — no probe of the report's own cites its id with a command and what it must show")
     # What contact already found here was paid for with a round (§9.9). Re-running it is what makes
     # a repair CHECKED rather than asserted: the loop this closes is the executor fixing what was
     # named while the next validator writes fresh probes and never looks there again.
@@ -972,7 +1036,13 @@ def unaccounted_for(task, per_criterion: Sequence[Mapping], by_hand: bool, valid
     # …SAID AS IT IS: a probe the report names but cannot be credited with is not a probe "not run" — told so, the
     # validator re-read every probe and dropped a different subset each round (GB_c_compiler_tmqn88552)
     _, why = part_credit(parts, per_criterion, dirs, task.spec.criteria)
-    for name, ids in unrun_parts(parts, per_criterion, dirs, own=task.spec.criteria).items():
+    for name, ids in unrun_parts(parts, per_criterion, dirs, own=task.spec.criteria, by_hand=bool(by_hand)).items():
+        if read := [i for i in ids if i in words]:
+            gaps.setdefault(name, []).append(
+                "the procedure in words of a part this criterion rests on was not performed over this delivery: "
+                + ", ".join(read) + " — no probe of the report's own cites its id with a command and what it must "
+                  "show")
+            ids = [i for i in ids if i not in words]
         if unseen := [i for i in ids if i not in why]:
             gaps.setdefault(name, []).append(
                 "the pinned procedure of a part this criterion rests on was not run over this delivery — nothing of "

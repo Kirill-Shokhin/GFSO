@@ -49,7 +49,7 @@ from gfso.core.graph.model import on_the_wall, project_max_iterations, project_n
 from gfso.core.graph.mutations import Schedule, producers_of
 from gfso.core.graph.review import UNDECIDED, finding_reasons, is_undecided
 from gfso.core.handlers.structural import risks_naming_own_criteria
-from gfso.core.protocol.procedure import (BOUND_TEXT, EXACT_TEXT, as_read, inputs_token, laid as over_dirs,
+from gfso.core.protocol.procedure import (BOUND_TEXT, EXACT_TEXT, PROCEDURE_TEXT, as_read, inputs_token, laid as over_dirs,
                                           materialize_inputs, same_probe, shows, PROBE_S, pinned_files, probe_id, probe_key,
                                           probes_from as _checks_of, with_named_files, criterionless)
 from gfso.core.protocol.accounting import not_decidable_as_written, refused_why, unrerunnable
@@ -216,6 +216,8 @@ def crit_block(c, laid: "dict | None" = None) -> str:
     """A criterion as the issuer must see it to repair it: the text AND the procedure that decides it. `laid` — {probe
     id: the directory its pinned inputs were written to} — renders a probe runnable as shown, as a validator's is."""
     def _line(p):
+        if p.in_words:
+            return f"    - decided by `{probe_id(c.name, p)}` — {p.behaviour}: in words, performed by its validator: «{p.procedure}»"
         d = (laid or {}).get(probe_id(c.name, p))
         return (f"    - decided by `{probe_id(c.name, p)}` — {p.behaviour}: "
                 f"`{p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command}`"
@@ -689,6 +691,7 @@ _CRITERIA = {"type": "array", "items": {"type": "object", "properties": {
     "name": {"type": "string"}, "description": {"type": "string"},
     "check": {"type": "array", "items": {"type": "object", "properties": {
         "behaviour": {"type": "string"}, "command": {"type": "string"}, "expect": {"type": "string"},
+        "procedure": {"type": "string", "description": PROCEDURE_TEXT},
         "exact": {"type": "boolean", "description": EXACT_TEXT},
         "bound_s": {"type": "number", "description": BOUND_TEXT},
         "carry": {"type": "string", "description": "the id of one of THIS node's own pinned probes, as shown after "
@@ -796,7 +799,7 @@ def _probes(stored, answered: tuple) -> tuple:
     session a597fc08)."""
     if not answered:
         return stored.check
-    by_cmd = {pr.command: pr for pr in stored.check}
+    by_cmd = {pr.command: pr for pr in stored.check if pr.command.strip()}
     pinned = tuple({path: (path, body) for pr in stored.check for path, body in pr.inputs}.values())
     # …and a probe that NAMES the files without their content gets the content this criterion pins (`with_named_files`):
     # an accepted dispute re-pinned an integration node's commands and kept its 41 files named and empty (2026-10-22)
@@ -946,6 +949,8 @@ def underived_at_the_root(engine, task, new_spec: Spec, answer: dict, where: Opt
     old = {c.name: c for c in task.spec.criteria}
     given = {(str(d.get("criterion", "")), probe_key(d.get("probe"))): str(d.get("derived_by", ""))
              for d in answer.get("derivations") or () if isinstance(d, dict)}
+    # …a command pin by its command and expectation, as before checks in words: a re-pin of its inputs alone is no re-pin
+    # (read by `same_probe`, the replaced probe was derived over the new inputs and every such answer refused)
     pair = lambda p: (p.command, p.expect)
     wrong = []
 
@@ -967,15 +972,18 @@ def underived_at_the_root(engine, task, new_spec: Spec, answer: dict, where: Opt
     # …A CRITERION THE ANSWER ADDS TOO: it is a claim about the world made for the user no less than a re-pin, and
     # skipping new names let the replay's landing answer add a `\UHHHHHHHH` pin beside the root's `\uHHHH` prose,
     # unchecked (PLAN_CONSISTENT_BEFORE_GO r3, 2026-11-16)
+    if kept := _words_kept(task, new_spec):
+        return kept
     for c in new_spec.criteria:
         now, was = {pair(p) for p in c.check or ()}, (old[c.name].check or ()) if c.name in old else ()
-        for p in (p for p in c.check or () if pair(p) not in {pair(q) for q in was}):
+        # …a check in words pins no expectation to derive (`Probe.in_words`); the person's stays (`_words_kept`)
+        for p in (p for p in c.check or () if not p.in_words and pair(p) not in {pair(q) for q in was}):
             if (out := derive(c, p, "the expectation it pins")) is not None and not shows(out, p.expect):
                 wrong.append(f"«{c.name}» `{p.command[:80]}`: its derivation prints {out.strip()[:200]!r}, not the "
                              f"expectation {p.expect[:200]!r}")
         # …AND THE PROBE IT REPLACES WAS WRONG: a new command can be honestly derived and still check a narrower thing
         # (critic's live replay: `WHERE salary > 55000.0` after a raise, Bob only, the Alice row out of the check)
-        for q in (q for q in was if pair(q) not in now):
+        for q in (q for q in was if not q.in_words and pair(q) not in now):
             if (out := derive(c, q, "the user's probe it replaces must be shown wrong")) is not None \
                     and shows(out, q.expect):
                 wrong.append(f"«{c.name}» `{q.command[:80]}`: the probe it replaces was right — its derivation "
@@ -984,6 +992,18 @@ def underived_at_the_root(engine, task, new_spec: Spec, answer: dict, where: Opt
             "delivery (`derivations`: the criterion, the probe's command, and `derived_by` — e.g. python3 with its "
             "standard library, sqlite3 included); the system runs it with only the pinned inputs and finds: "
             + "; ".join(wrong)) if wrong else None
+
+
+def _words_kept(task, new_spec: Spec) -> Optional[str]:
+    """Why `new_spec` drops or replaces a check in words the person's goal pins at this root — or None. No derivation
+    shows a reading wrong, so «the probe it replaces must be shown wrong» can never be met for one: skipped, any derivable
+    command replaced it (outside critic over 6ab2a458); and the goal's criteria are the person's (§2.2)."""
+    now = {c.name: {same_probe(p) for p in c.check or ()} for c in new_spec.criteria}
+    gone = [f"«{c.name}» «{q.behaviour}»" for c in task.spec.criteria for q in c.check or ()
+            if q.in_words and same_probe(q) not in now.get(c.name, set())]
+    return ("under AUTO the person's checks in words on the goal stay as they wrote them — no derivation shows a reading "
+            "wrong, and the goal's criteria are theirs (§2.2): " + ", ".join(gone) + " would be dropped or replaced; keep "
+            "each as pinned, and bring a change of it to the person") if gone else None
 
 
 def off_the_goal(engine, task, new_spec: Spec, answer: dict, where: Optional[str] = None, verbs=None) -> Optional[str]:

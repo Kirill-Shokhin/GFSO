@@ -11,7 +11,7 @@ from typing import Optional
 
 from gfso.core.protocol.invariants import INTENT, QUOTE_WORDS
 from gfso.core.protocol.procedure import EXACT_READ, laid, materialize_inputs, probe_id, probe_key, same_probe
-from gfso.core.protocol.accounting import DECIDED, the_systems_run, unrerunnable
+from gfso.core.protocol.accounting import DECIDED, the_systems_run, unrerunnable, words_copies
 from gfso.core.types import EXECUTOR_STATES, INPUTS_TOKEN, Signal, TaskId, files_at, set_aside_of
 from gfso.engine import PERSONS_ACTS, Engine
 from gfso.engine.audit import rejected_on_current_version
@@ -44,6 +44,8 @@ def _crit_line(c, dirs: dict) -> str:
     what will be RUN, written before the work, so the executor builds against the check rather than
     against its own reading of the criterion."""
     def _probe(p) -> str:
+        if p.in_words:
+            return f"    - will be checked by — {p.behaviour}: a reader performs «{p.procedure}» on your delivery"
         d = dirs.get(probe_id(c.name, p))
         cmd = p.command.replace(INPUTS_TOKEN, d.as_posix()) if d else p.command
         return (f"    - will be checked by — {p.behaviour}: `{cmd}` → {must_show(p)}"
@@ -564,7 +566,7 @@ def owed_probes(engine: Engine, task, crits) -> list:
     for c in crits:
         own = [(probe_id(c.name, p), (c, p, False)) for p in (c.check or ())]
         mine = [(probe_id(pc.name, p), (pc, p, True)) for pc in parts.get(c.name, ()) for p in (pc.check or ())
-                if p.command.strip() and same_probe(p) not in shown and not shown.add(same_probe(p))]
+                if p.pins and same_probe(p) not in shown and not shown.add(same_probe(p))]
         pinned = {pid for pid, _ in own}
         out.append((c, own + mine + [(p.get("id"), p) for p in reg.get(c.name, ()) if p.get("id") not in pinned]))
     return out
@@ -585,6 +587,33 @@ def _how_to_observe(run: Optional[str], cmd: str) -> str:
         "printed; run it yourself only if that output cannot show it")
 
 
+def _owed_as(pid: str, copies: dict, carry: dict) -> str:
+    """The id a check is owed under: a check in words restated at the whole, or by another part, is one check
+    (`accounting.words_copies`), owed under the copy the packet carries — shown as another run's, the validator was told
+    it was not his while the gate demanded it (outside critic over 6ab2a458)."""
+    return next((i for i in copies.get(pid, ()) if i in carry), pid)
+
+
+def _in_words(pid: str, p) -> str:
+    """A reader's check as its validator is handed it (`Probe.in_words`): a procedure to perform, observed only by a probe
+    of its own cited under this id (`accounting.performed`)."""
+    return (f"PINNED PROCEDURE [{pid}] — {p.behaviour}: {p.procedure} → perform it, and report it under ITS id: a probe "
+            f"of your own with `id`: {pid}, the command you ran and what it must show — no label, no pinned check's run "
+            f"and no other id stands for it")
+
+
+def _validators_inputs(engine: Engine, criteria, scratch: Optional[str], workdir: Optional[str]) -> dict:
+    """{probe id: its directory} — every pinned probe's INPUTS laid down for a validation from the contract, by the system,
+    under `scratch` (else a temp of the work's): never read from the delivery, where the executor could have grown them
+    (the corpus that moved under `c_compiler`)."""
+    if not any(p.inputs for c in criteria for p in (c.check or ())):
+        return {}
+    ex = execution_of(engine)
+    at = Path(scratch) / "probe_inputs" if scratch else ex.files.mkdtemp("gfso-probe-inputs-", ex.temp_of(workdir))
+    with ex.system_writes(str(at)):                         # …the system's laying: no judge's disk growth
+        return materialize_inputs(criteria, at, ex.files)
+
+
 def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir: Optional[str] = None,
                    carry: Optional[dict] = None, seen: Optional[dict] = None) -> str:
     """The criteria one run validates, each with the pinned probes it must run and the once-refuting probes it
@@ -601,16 +630,9 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
     # was on its own delivery, and this one may have rewritten it (`validation.parts_procedure`).
     _retired = engine.retired_findings(TaskId(tid))
     _parts = engine.parts_procedure(TaskId(tid))
+    _copies = words_copies(task.spec.criteria, _parts)
     _part_probes = {probe_id(pc.name, p): (pc, p) for pcs in _parts.values() for pc in pcs for p in (pc.check or ())}
-    _all = engine.validation_procedure(TaskId(tid))
-    # A probe's INPUTS are laid down here, from the contract, by the system — never read from the
-    # delivery, where the executor could have grown them (the corpus that moved under `c_compiler`).
-    ex = execution_of(engine)
-    _dirs = {}
-    if any(p.inputs for c in _all for p in (c.check or ())):
-        _at = Path(scratch) / "probe_inputs" if scratch else ex.files.mkdtemp("gfso-probe-inputs-", ex.temp_of(workdir))
-        with ex.system_writes(str(_at)):                         # …the system's laying: no judge's disk growth
-            _dirs = materialize_inputs(_all, _at, ex.files)
+    _dirs = _validators_inputs(engine, engine.validation_procedure(TaskId(tid)), scratch, workdir)
     owed = owed_probes(engine, task, crits)
     if carry is None:
         carry = {pid: c.name for c, items in owed for pid, _ in items}
@@ -624,6 +646,8 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
 
     def _probe_line(c, p, part: bool = False) -> str:
         pid = probe_id(c.name, p)
+        if p.in_words:      # …never run by the system, so never a run to cite nor a command to run
+            return f"    - {'PART’S ' if part else ''}{_in_words(pid, p)}"
         d, s = _dirs.get(pid), (seen or {}).get((tid, pid))
         run = the_systems_run(p, s)
         ran, how = run is not None, _how_to_observe(run, _cmd(c, p))
@@ -652,8 +676,8 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
                   for pid, x in items if carry.get(pid) == c.name]
         # A PART'S PROBE WRITTEN ELSEWHERE serves this criterion too: one observation of it, wherever it is made
         again: dict = {}
-        for pid in dict.fromkeys(probe_id(pc.name, p) for pc in _parts.get(c.name, ()) for p in (pc.check or ())
-                                 if p.command.strip()):
+        for pid in dict.fromkeys(_owed_as(probe_id(pc.name, p), _copies, carry) for pc in _parts.get(c.name, ())
+                                 for p in (pc.check or ()) if p.pins):
             if carry.get(pid) != c.name:
                 again.setdefault(carry.get(pid), []).append(pid)
         lines += [f"    - rests also on the PART’S PINNED CHECKS written out under **{at}**: {', '.join(ids)} — one "
@@ -665,7 +689,8 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
             lines.append("    - rests also on the PART’S PINNED CHECKS below, each observed by ANOTHER run of this "
                          "validation — shown as the contract pins them so you know what they run and must show; not "
                          "yours to run or report, and one observation of each serves this criterion:")
-            lines += [f"      · [{pid}] — {p.behaviour}: `{_cmd(pc, p)}` → {must_show(p)}"
+            lines += [f"      · [{pid}] — {p.behaviour}: " + (f"«{p.procedure}», performed in words" if p.in_words
+                                                         else f"`{_cmd(pc, p)}` → {must_show(p)}")
                       for pid in again[None] for pc, p in [_part_probes[pid]]]
         # …AND WHAT IT OWES THAT ANOTHER RUN CARRIES: its verdict is the conjunction of the runs' verdicts on it
         if any(carry.get(pid) != c.name for pid, _ in items):

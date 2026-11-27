@@ -73,7 +73,9 @@ runnable by someone who was not the executor), `expect` (what the observation mu
 whole output the command prints on correct work and the system decides it by running the command; false: `expect`
 describes the output in words and a reader judges) and `inputs` (the files the command reads, `{relative path: content}`,
 which the command finds under `{inputs}`). The fields are those of `Probe` (`gfso/core/types/primitives.py`); `exact` and
-`inputs` are written only when set (`Probe.to_dict`).
+`inputs` are written only when set (`Probe.to_dict`). Where no command decides a behaviour, a probe is `behaviour` and
+`procedure` instead — the reading the checker performs, in words, never run by the system — with `command`, `expect`,
+`exact`, `inputs` and `bound_s` left empty; a probe carrying both forms, or neither, is refused.
 
 **Parts** (`[[plan.subtasks]]`): `id` (required, unique; the name the file's other places refer to), `name`, `description`
 (the part's contract text), `criteria` (as above; a part's criteria are what it must satisfy), and the claim of what its

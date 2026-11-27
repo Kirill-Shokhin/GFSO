@@ -115,7 +115,8 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
         # Without it a PASS is a word; with it a later reader can re-run exactly what was run.
         # …counted by the gate's own reader, over the same inputs directories: a probe reported by its laid-down
         # command and no id was ACCEPTED by the gate and recorded "never run" here (GB_c_compiler_tmokgz344, root.vec)
-        **(procedure_coverage(task.spec.criteria, per_criterion or (), inputs_dirs) if task is not None else {}),
+        **(procedure_coverage(task.spec.criteria, per_criterion or (), inputs_dirs, bool(by_hand))
+           if task is not None else {}),
         "ts": ts, "log_at": int(log_at)}
     # …with what each criterion read, the record whole: the current record is overwritten by the next round, so a past
     # FAIL's passing criteria could not be told from unchecked ones (the ui stream's verdict history, 2026-10-27), and a

@@ -1079,7 +1079,8 @@ name = ""
 # One criterion per thing the person asked for, in their words; nothing they did not ask. Each carries a check fixed
 # now: a command someone else can run on the result and what it must print. exact = true: `expect` IS that output, its
 # very text (spacing loose), compared by running it — never a description of it; false: described in words, judged by
-# a reader. Copy the block for the next criterion.
+# a reader. Where no command decides it, write `procedure = "…"` instead of command/expect/exact: the checker performs
+# those words, the system never runs them. Copy the block for the next criterion.
 [[plan.root_criteria]]
 name = ""
 description = ""
@@ -1129,6 +1130,7 @@ def _criteria_text(crits: list[dict]) -> str:
                                f"{q(p.get('command'))}\nexpect = {q(p.get('expect'))}\nexact = "
                                f"{'true' if p.get('exact') else 'false'}\n"
                                + (f"bound_s = {json.dumps(p['bound_s'])}\n" if p.get("bound_s") is not None else "")
+                               + (f"procedure = {q(p['procedure'])}\n" if p.get("procedure") else "")
                                for p in c.get("check") or ())
                      for c in crits)
 
@@ -1377,7 +1379,8 @@ def written_plan(project, engine: Optional[Engine] = None) -> dict:
             "root_criteria": [{"name": c["name"], "description": c.get("description", ""),
                                "check": [{**{k: x.get(k, "" if k != "exact" else False)
                                              for k in ("behaviour", "command", "expect", "exact")},
-                                          **({"bound_s": x["bound_s"]} if x.get("bound_s") is not None else {})}
+                                          **({"bound_s": x["bound_s"]} if x.get("bound_s") is not None else {}),
+                                          **({"procedure": x["procedure"]} if x.get("procedure") else {})}
                                          for x in c.get("check") or ()],
                                **({"added_at_the_go": True} if c["name"] in added else {})}
                               for c in spec.get("root_criteria") or ()],

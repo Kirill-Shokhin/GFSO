@@ -64,6 +64,21 @@ class Probe:
     # The value lies outside conformance (§12.16), its existence is finiteness (§12.15); the admission keeps it
     # inside the validation's own bound (`procedure.admission_defects`).
     bound_s: Optional[float] = None
+    # A READER's check: what the checker is to do and what must hold, in words, its `command` empty — the issuer's own
+    # statement that no command decides the behaviour. Pinned before the work as a command is (Inv-1), never run by the
+    # system: written into `command`, `read the delivery against prompt.md` ran as bash, printed a shell error as the
+    # pin's run, and every criterion it carried was ⊥ whatever the validator observed.
+    procedure: str = ""
+
+    @property
+    def in_words(self) -> bool:
+        """A reader's check — the form its issuer chose by the field he filled, never read off the text."""
+        return bool(self.procedure.strip()) and not self.command.strip()
+
+    @property
+    def pins(self) -> bool:
+        """Does it pin a decision procedure at all — a command, or a procedure in words?"""
+        return bool(self.command.strip() or self.procedure.strip())
 
     def __post_init__(self):
         raw = self.inputs
@@ -80,7 +95,8 @@ class Probe:
         if isinstance(p, Probe):
             return p
         return cls(str(p.get("behaviour", "") or ""), str(p.get("command", "") or ""),
-                   str(p.get("expect", "") or ""), p.get("inputs") or (), p.get("exact") is True, p.get("bound_s"))
+                   str(p.get("expect", "") or ""), p.get("inputs") or (), p.get("exact") is True, p.get("bound_s"),
+                   str(p.get("procedure", "") or ""))
 
     def to_dict(self) -> dict:
         """The probe as a door serializes it — one writer, so a field cannot travel through one
@@ -94,6 +110,8 @@ class Probe:
             d["exact"] = True
         if self.bound_s is not None:
             d["bound_s"] = self.bound_s
+        if self.procedure:
+            d["procedure"] = self.procedure
         return d
 
 

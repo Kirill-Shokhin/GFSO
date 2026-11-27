@@ -22,6 +22,7 @@ class ProbeIn(BaseModel):
     inputs: dict[str, str] = {}
     exact: bool = False      # `expect` is the whole printed output (`Probe.exact`)
     bound_s: Optional[float] = None     # its issuer's bound on the system's run; None = the default (`Probe.bound_s`)
+    procedure: str = ""      # a reader's check in words, never run by the system (`Probe.procedure`)
 
 
 class CriteriaIn(BaseModel):

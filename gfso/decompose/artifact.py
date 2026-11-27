@@ -67,7 +67,7 @@ _FIT_KEYS = ("executor", "parts", *(f"whole_{k}" for k in _FIT))
 #: what the build reads of each row below them — a field it does not read is a slip, built silently without this
 _ROWS = {"part": ("id", "name", "description", "criteria", "writes", "runs"),
          "criterion": ("name", "description", "check", "depends_on", "asked"),
-         "probe": ("behaviour", "command", "expect", "exact", "bound_s", "inputs"),
+         "probe": ("behaviour", "command", "procedure", "expect", "exact", "bound_s", "inputs"),
          "dep": ("from", "to", "glue", "reads"), "mapping": ("criterion", "child_id"), "scope": ("item", "why_out"),
          "risk": ("item", "predictability", "justification", "invalidation_condition", "invalidation", "p", "impact",
                   "component", "denial"),

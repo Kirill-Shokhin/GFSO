@@ -31,14 +31,17 @@ export const readPairs = (box, [ka, kb] = ['name', 'description'], both = true, 
 // A CRITERION IS A CONTRACT ONLY WITH ITS CHECK PINNED (A1, §2): the engine refuses one with no probe, so
 // every form that writes criteria — the goal, Edit, Decompose — carries the probes under each row. What a
 // read brought beyond the form's fields (a probe's `inputs`, a seam's `depends_on`) rides back untouched.
-const PROBE = ['behaviour', 'command', 'expect'];
+// …a check is a command with what it must show, or a procedure in words a reader performs (`Probe.procedure`)
+const PROBE = ['behaviour', 'command', 'expect', 'procedure'];
 function probeRow(box, p = {}) {
     const row = el('div', {className: 'probe-row'}, ...PROBE.map(k => input(`pr-${k}`, k, p[k] || '')), del('cr-del'));
     row._was = p;
     box.append(row);
 }
+// a row is a check where it states its behaviour and one form whole — dropped, a reader's check left the contract narrower
+export const keptProbe = p => Boolean(p.behaviour && ((p.command && p.expect) || p.procedure));
 const readProbes = row => [...row.querySelectorAll('.probe-row')].map(r => ({...r._was,
-    ...Object.fromEntries(PROBE.map((k, i) => [k, r.querySelectorAll('input')[i].value.trim()]))})).filter(p => PROBE.every(k => p[k]));
+    ...Object.fromEntries(PROBE.map((k, i) => [k, r.querySelectorAll('input')[i].value.trim()]))})).filter(keptProbe);
 export function critRow(box, c = {}, opts = {}) {
     const row = pairRow(box, c.name, c.description, opts), probes = el('div', {className: 'probes'});
     // a seam (`depends_on`) decides nothing about this node, so it pins no check (procedure.py)

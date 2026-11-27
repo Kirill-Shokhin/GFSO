@@ -58,6 +58,7 @@ function written(p, go) {
             `<span>${esc(c.name)}</span>${c.added_at_the_go ? `<em>${esc(PLAN.atTheGo)}</em>` : ''}` + tally((c.check || []).length, (c.check || []).length === 1 ? 'check' : 'checks'),
             // …each check in words first (`behaviour`), then what runs and what it expects
             [c.description, ...(c.check || []).map(k => [`– ${k.behaviour || k.command || ''}`, k.behaviour && k.command && `  ${PLAN.runs(k.command)}`,
+                !k.command && k.procedure && `  ${k.procedure}`,
                 k.expect && `  ${PLAN.expect(k.expect, k.exact)}`].filter(Boolean).join('\n'))].filter(Boolean).join('\n'))))
         + sec(PLAN.parts(parts.length), parts.map(x => more(`part|${x.id}`,
             `<span>${esc(x.name || x.id)}</span>${x.split_after?.length ? `<em>${esc(PLAN.after(x.split_after))}</em>` : ''}`

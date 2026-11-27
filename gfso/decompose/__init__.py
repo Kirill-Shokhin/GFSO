@@ -265,7 +265,8 @@ def criterion_key(c) -> tuple:
     """A criterion as text: what it says and what its checks run — dicts of a spec and `Criteria` of the graph alike."""
     get = (lambda o, k: o.get(k)) if isinstance(c, dict) else getattr
     return (get(c, "description") or "", tuple((get(p, "behaviour") or "", get(p, "command") or "", get(p, "expect") or "",
-                                                *((True,) if get(p, "exact") is True else ()))
+                                                *((True,) if get(p, "exact") is True else ()),
+                                                *((get(p, "procedure"),) if get(p, "procedure") else ()))
                                                for p in get(c, "check") or ()))
 
 
@@ -313,7 +314,8 @@ class _Agreement:
             return
         shown = [{"node": n, "criterion": c.get("name"), "description": c.get("description"),
                   "checks": [{**{k: p.get(k) for k in ("behaviour", "command", "expect")},
-                              **({"exact": True} if p.get("exact") is True else {})} for p in c.get("check") or ()]}
+                              **({"exact": True} if p.get("exact") is True else {}),
+                              **({"procedure": p["procedure"]} if p.get("procedure") else {})} for p in c.get("check") or ()]}
                  for n, c in judged]
         out = self.llm.complete_structured(AGREE_PROMPT, f"# TASK\n{self.task}\n\n# CRITERIA AND THEIR CHECKS\n```json\n"
                                            f"{__import__('json').dumps(shown, ensure_ascii=False)}\n```", AGREE_SCHEMA)

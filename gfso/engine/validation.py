@@ -370,7 +370,7 @@ def unmapped(graph: Graph, audit, parent, m) -> dict:
     part = graph.get_task(m.child_id)
     return {"criterion": m.criterion_name, "part": str(part.id),
             "checks": [{"check": probe_id(c.name, p), "command": p.command, "expect": p.expect,
-                        "inputs": sorted(k for k, _ in p.inputs)}
+                        "inputs": sorted(k for k, _ in p.inputs), **({"procedure": p.procedure} if p.procedure else {})}
                        for c in part_criteria(part.id, settled_procedure(graph, part, audit)) for p in c.check or ()]}
 
 
