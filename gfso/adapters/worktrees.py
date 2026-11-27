@@ -196,8 +196,11 @@ INHERITED = ("core.autocrlf", "core.eol", "core.symlinks", "core.filemode", "cor
 
 
 def inherited(base, execution) -> dict:
-    """{key: value} of the base's `INHERITED` settings it sets — what every node's own repository is made with."""
-    return {k: v for k in INHERITED if (v := git(base, "config", "--local", "--get", k, execution=execution).stdout.strip())}
+    """{key: value} of the base's `INHERITED` settings it sets — what every node's own repository is made with: read in
+    one git child, every place made paying it (a read per key was five)."""
+    out = git(base, "config", "--local", "--get-regexp", rf"^({'|'.join(map(re.escape, INHERITED))})$",
+              execution=execution).stdout
+    return {k: v.strip() for k, _, v in (line.partition(" ") for line in out.splitlines()) if k in INHERITED and v.strip()}
 
 
 def kept_out(base, execution=None) -> dict:

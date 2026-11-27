@@ -120,14 +120,16 @@ def store_verdict(storage, task_id: TaskId, task, verdict: str, failed_criteria,
     # …with what each criterion read, the record whole: the current record is overwritten by the next round, so a past
     # FAIL's passing criteria could not be told from unchecked ones (the ui stream's verdict history, 2026-10-27), and a
     # record kept beside the verdict of record takes its place whole when its party is appointed (`Engine.set_checker`)
-    _ledger = observations(storage, task_id)
-    _ledger.append(rec)
-    ledger_write(storage, task_id, OBSERVATIONS, _ledger)
-    # …and what a FAIL refuted, whoever's: one beside the verdict of record refuted that version too (`claim_drift`)
-    if verdict_word(verdict) == Verdict.FAIL and task is not None:
-        _remember_refuted_versions(storage, task_id, task, failed_criteria, validated)
-    if of_record:
-        storage.store_exec_verdict(task_id, json.dumps(rec, default=str))
+    # …its read and write one step with the system's later write onto its rows (`see_outside`): apart, either lost the other
+    with storage.one_write:
+        _ledger = observations(storage, task_id)
+        _ledger.append(rec)
+        ledger_write(storage, task_id, OBSERVATIONS, _ledger)
+        # …and what a FAIL refuted, whoever's: one beside the verdict of record refuted that version too (`claim_drift`)
+        if verdict_word(verdict) == Verdict.FAIL and task is not None:
+            _remember_refuted_versions(storage, task_id, task, failed_criteria, validated)
+        if of_record:
+            storage.store_exec_verdict(task_id, json.dumps(rec, default=str))
 
 
 def observations(storage, task_id: TaskId) -> list:
@@ -144,6 +146,46 @@ OUTSIDE_NOTE = ("observations outside the written criteria, newest first and non
                 "verdict: no criterion failed on it.")
 
 
+#: the criterion name an observation's probe runs under (`validate._observe_outside`): it belongs to none
+OUTSIDE = "outside the criteria"
+#: …and what an observation the system did not see on the delivery is to its reader
+READ_NOT_OBSERVED = "read, not observed"
+#: …and of one whose probe the system is still running, after the verdict was recorded: not yet either way (critic
+#: over 6b8475ea — shown «read, not observed» meanwhile, a person signed over a find about to be observed)
+BEING_OBSERVED = ("being observed by the system on the delivery — read the verdict again for what it saw; still so "
+                  "minutes later, the run ended unfinished (a server stopped): read, not observed")
+
+
+def outside_seen(probe, row) -> str:
+    """What the system's run of an observation's `probe` (`row`, `observe.run_checks`) says of it: observed, where its
+    output shows the probe's `expect`; not reproduced, where it ran and does not; read, not observed, where there was
+    no probe or it could not run."""
+    if not (probe and row and "matched" in row):
+        return READ_NOT_OBSERVED + (f": `{probe['command']}` {row['note']}" if probe and row and row.get("note") else "")
+    said = f"`{probe['command']}` printed «{' | '.join(str(row.get('out') or '').splitlines())}»"
+    return f"observed: {said}" if row["matched"] else f"not reproduced: {said}, which does not show «{probe['expect']}»"
+
+
+def see_outside(storage, task_id: TaskId, seen: dict) -> None:
+    """What the system's run showed of observations already on the record (`seen`: {row: observed},
+    `validate._observe_outside`), written onto each record row carrying that `row` — the ledger's and the current
+    verdict's alike, whatever state the node has moved to: data for its issuer, never a verdict's input (Inv-2)."""
+    def onto(rec):
+        """`rec` with its outside rows given what was seen; whether any was."""
+        hit = False
+        for o in (rec.get("outside") or ()) if isinstance(rec, dict) else ():
+            if isinstance(o, dict) and o.get("row") in seen:
+                o["observed"], hit = seen[o["row"]], True
+        return hit
+    with storage.one_write:      # …one step with a record landing meanwhile (`store_verdict`)
+        ledger = observations(storage, task_id)
+        if any([onto(r) for r in ledger]):
+            ledger_write(storage, task_id, OBSERVATIONS, ledger)
+        raw = storage.get_exec_verdict(task_id)
+        if raw and onto(rec := json.loads(raw)):
+            storage.store_exec_verdict(task_id, json.dumps(rec, default=str))
+
+
 def _outside(outside) -> dict:
     """The record's `outside` key, written only where the report observed something: a report without one is stored
     as it always was."""
@@ -151,7 +193,7 @@ def _outside(outside) -> dict:
 
 
 def outside_observations(storage, task_id: TaskId) -> list:
-    """[{what, evidence, log_at}] — the observations outside the criteria the recorded verdicts on this node kept and its
+    """[{what, evidence, observed, log_at}] — the observations outside the criteria the recorded verdicts on this node kept and its
     issuer has not answered (`answer_outside`), once each by `what`, newest first: the next round's record replaces the
     current one, and a run that saw it once may not again. Oldest first and never retired, the newest fell past the
     packet's cap and an answered one kept asking for its criterion (critic over 5cad9c4)."""
@@ -160,17 +202,19 @@ def outside_observations(storage, task_id: TaskId) -> list:
     for r in reversed(observations(storage, task_id)):
         for o in r.get("outside") or () if isinstance(r, dict) else ():
             if isinstance(o, dict) and (k := " ".join(str(o.get("what") or "").split())) and k not in answered:
-                seen.setdefault(k, {"what": k, "evidence": str(o.get("evidence") or ""), "log_at": int(r.get("log_at") or 0)})
+                seen.setdefault(k, {"what": k, "evidence": str(o.get("evidence") or ""),
+                                    "observed": str(o.get("observed") or READ_NOT_OBSERVED),
+                                    "log_at": int(r.get("log_at") or 0)})
     return list(seen.values())
 
 
 def outside_of_this_delivery(storage, task_id: TaskId, rec) -> list:
-    """[{what, evidence}] the verdict on the CURRENT delivery (`rec`) saw outside the criteria, its issuer not having
+    """[{what, evidence, observed}] the verdict on the CURRENT delivery (`rec`) saw outside the criteria, its issuer not having
     answered them — what the person weighs before signing that delivery. The node's whole unanswered ledger
     (`outside_observations`) told them, on a second delivery, what the first one's validator saw before the second had
     run (fresh client s23g3)."""
     answered = {str(a.get("what")) for a in ledger_read(storage, task_id, OUTSIDE_ANSWERED, []) if isinstance(a, dict)}
-    return [{"what": k, "evidence": str(o.get("evidence") or "")}
+    return [{"what": k, "evidence": str(o.get("evidence") or ""), "observed": str(o.get("observed") or READ_NOT_OBSERVED)}
             for o in ((rec or {}).get("outside") or ()) if isinstance(o, dict)
             if (k := " ".join(str(o.get("what") or "").split())) and k not in answered]
 

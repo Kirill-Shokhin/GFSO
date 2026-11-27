@@ -71,7 +71,8 @@ def test_an_outside_observation_is_recorded_with_the_verdict_and_decides_nothing
     try:
         assert (out["verdict"], out["failed_criteria"]) == (out0["verdict"], out0["failed_criteria"]) == ("PASS", [])
         rec = e.get_exec_verdict(TaskId("n1"))
-        assert rec["outside"] == [{"what": SEEN, "evidence": "SELECT 1 WHERE 1 NOT IN (SELECT 2) printed NULL"}], rec
+        assert [{k: v for k, v in o.items() if k != "row"} for o in rec["outside"]] == [{"what": SEEN, "evidence": "SELECT 1 WHERE 1 NOT IN (SELECT 2) printed NULL",
+                                  "observed": "read, not observed"}], rec
         assert rec["per_criterion"] == e0.get_exec_verdict(TaskId("n1"))["per_criterion"]
     finally:
         e.stop()
@@ -85,7 +86,8 @@ def test_it_reaches_the_machine_issuer_of_the_node_and_of_its_parents_split_and_
             ctx = issuer_context(e, TaskId(tid), question)
             assert f"`n1`: {SEEN}" in ctx and "is FM-1.f, which the split's own moves close" in ctx, (tid, question)
         read = T.get_task(e, "goal")["outside_the_criteria"]
-        assert read["observations"] == [{"node": "n1", "what": SEEN, "evidence": "printed NULL"}]
+        assert read["observations"] == [{"node": "n1", "what": SEEN, "evidence": "printed NULL",
+                                          "observed": "read, not observed"}]
         assert "judge each against the goal statement" in read["judge"]
     finally:
         e.stop()

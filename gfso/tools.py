@@ -1,4 +1,4 @@
-﻿"""MCP tool layer — the agent's surface over the CORE upper API.
+"""MCP tool layer — the agent's surface over the CORE upper API.
 
 Pure functions `(engine, *args) -> JSON-able dict` so the logic is testable without the MCP transport.
 Every AUTHORING tool desugars to the canonical 12-signal FSM (the lower layer is closed: no mutation
@@ -726,7 +726,7 @@ def _bound_the_read(out: dict, task_id: str, trimmed: list, keep: int) -> None:
 
 
 def _outside_seen(engine: Engine, task_id: str) -> list:
-    """[{what, evidence}] the verdict on the current delivery saw outside the criteria, unanswered — what the sign-off step
+    """[{what, evidence, observed}] the verdict on the current delivery saw outside the criteria, unanswered — what the sign-off step
     tells the person (`Engine.persons_verdict`); the page had no other read of it."""
     return engine.outside_of_this_delivery(TaskId(task_id))
 

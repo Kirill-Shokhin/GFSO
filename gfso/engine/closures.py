@@ -264,7 +264,7 @@ def open_nodes(engine, root_id: Optional[TaskId] = None) -> list[str]:
 def questions_left_standing(engine, root_id: Optional[TaskId] = None) -> list[str]:
     """What validators observed outside the criteria and no issuer answered, over nodes now settled: asked of no one any
     more (`issuer.open_questions` stops at a settled node), so said where a person reads the end."""
-    return [f"{t.id}: {o['node']} saw {o['what']}" for t in _within(engine, root_id) if t.state in TERMINAL_STATES
+    return [f"{t.id}: {o['node']} saw {o['what']} ({o['observed']})" for t in _within(engine, root_id) if t.state in TERMINAL_STATES
             for o in engine.outside_the_criteria(t.id, own=engine.graph.get_parent(t.id) is None)]
 
 

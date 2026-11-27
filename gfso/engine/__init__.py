@@ -45,7 +45,7 @@ from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_
                     resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
                        OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations, answer_outside,
-                       outside_of_this_delivery)
+                       outside_of_this_delivery, see_outside)
 from .findings import (disputed_findings, ever_pinned, finding_rulings, keep_files, keep_unrun, lay_files, not_reproduced, record_not_reproduced,
                        released, return_finding as _return_finding, ruled, unrun,
                        regression as standing_regression, round_stands, standing_rulings)
@@ -799,7 +799,7 @@ class Engine:
         return rec
 
     def outside_of_this_delivery(self, task_id) -> list:
-        """[{what, evidence}] the verdict on the node's current delivery saw outside the criteria, unanswered
+        """[{what, evidence, observed}] the verdict on the node's current delivery saw outside the criteria, unanswered
         (`verdicts.outside_of_this_delivery`); [] with no verdict on it yet."""
         return outside_of_this_delivery(self._storage, TaskId(str(task_id)), self.current_exec_verdict(TaskId(str(task_id))))
 
@@ -853,7 +853,8 @@ class Engine:
                         + (f" ({one(said, f'`get_verdict {t.id} criterion={name}`')})" if said else ""))
         # …and what it saw beyond them, with what it saw it on: no criterion failed on it, so it is theirs to weigh — a
         # client shown the criteria alone signed over "x.tar.gz is counted as .gz" without telling them (s23g1)
-        beyond = [one(o["what"] + (f" ({o['evidence']})" if o.get("evidence") else ""), f"`get_verdict {t.id}`")
+        beyond = [one(f"{o['what']} — {o['observed']}" + (f" ({o['evidence']})" if o.get("evidence") else ""),
+                      f"`get_verdict {t.id}`")
                   for o in outside_of_this_delivery(self._storage, t.id, rec)]
         more = lambda n, cap: f"; and {n - cap} more — `get_verdict {t.id}` reads them all" if n > cap else ""
         if not lines:      # …where the read carries the lines itself (`get_verdict`): the ask alone, not them twice
@@ -2085,7 +2086,7 @@ class Engine:
         return json.loads(self._storage.get_critique(register_log_key(task_id)) or "[]")
 
     def outside_the_criteria(self, task_id: TaskId, own: bool = True) -> list:
-        """[{node, what, evidence}], newest first — what validators of each active child of this node's split (and, with
+        """[{node, what, evidence, observed}], newest first — what validators of each active child of this node's split (and, with
         `own`, of the node itself) observed that none of their criteria states and their issuer — this node's executor —
         has not yet answered (`verdicts.outside_observations`): candidates for that issuer's judgement
         (`verdicts.OUTSIDE_NOTE`), never a verdict's input. One read for the issuer's question (`own=False`), its
@@ -2093,6 +2094,11 @@ class Engine:
         nodes = [*([task_id] if own else []), *(k.id for k in self._graph.get_active_children(task_id))]
         rows = [(o.pop("log_at"), {"node": str(t), **o}) for t in nodes for o in outside_observations(self._storage, t)]
         return [r for _, r in sorted(rows, key=lambda x: -x[0])]
+
+    def see_outside(self, task_id: TaskId, seen: dict) -> None:
+        """What the system's own run showed of observations outside the criteria already recorded on this node — {row:
+        observed} onto those rows (`verdicts.see_outside`), never a verdict's input."""
+        see_outside(self._storage, TaskId(str(task_id)), seen)
 
     def answer_outside(self, rows, by: str, move: str, why: str) -> None:
         """The issuer answered these rows of `outside_the_criteria` — by `move`, or declining with `why`: retired from

@@ -12,7 +12,9 @@ import hashlib
 import json
 import logging
 import subprocess
+import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, suppress
 from datetime import datetime
@@ -32,8 +34,9 @@ from gfso.adapters.llm.stats import (stat_line, calls_of, is_limit, refused_by_l
                                      what_stopped)
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.issuer import CONTACT_ROUND as _CONTACT, signal_ok as _signal, system_issues
-from gfso.core.types import (BATCH, HOST, LAID, AgentId, LLMProviderPort, PlaceUnavailable, Signal, Stage, State, TaskId,
-                             Verdict, files_at, system_decides)
+from gfso.core.types import (BATCH, HOST, LAID, AgentId, Criteria, LLMProviderPort, PlaceUnavailable, Probe, Signal, Stage,
+                             State, TaskId, Verdict, files_at, system_decides)
+from gfso.engine.verdicts import BEING_OBSERVED, OUTSIDE, READ_NOT_OBSERVED, outside_seen
 from gfso.core.protocol.invariants import INTENT, RED_SET, criterion_meant, probes_of, red_set, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import laid_down_dirs, probe_id
 from gfso.core.protocol.accounting import (BOUND_SPENT, SYSTEMS_ACT, canonical_citations, with_engine_observations,
@@ -54,6 +57,9 @@ from gfso.inflight import flight
 from gfso.tools import answering
 
 log = logging.getLogger(__name__)
+
+#: the head of the name of the thread a validation's outside probes run in, after its record (`_observe_outside`)
+OUTSIDE_RUN = "gfso-outside-"
 
 
 def validate_internal_on() -> bool:
@@ -204,7 +210,15 @@ _VALIDATOR_SCHEMA = {
                     "who judges it against the goal. Leave it empty when there was none",
                     "items": {"type": "object", "properties": {
                         "what": {"type": "string", "description": "the behaviour, one line"},
-                        "evidence": {"type": "string", "description": "the command you ran and what it printed"}},
+                        "evidence": {"type": "string", "description": "the command you ran and what it printed"},
+                        # …and the scenario that shows it, which the SYSTEM runs on a fresh copy of the delivery as it
+                        # runs a pinned check (`_observe_outside`): the issuer is told whether it was seen there
+                        "probe": {"type": "object", "description":
+                                  "the command that shows it, re-runnable as-is in the delivered directory, and a "
+                                  "substring its output shows: the system runs it on the delivery and tells the issuer "
+                                  "what it printed; without one the entry reaches them as read, not observed",
+                                  "properties": {"command": {"type": "string"}, "expect": {"type": "string"}},
+                                  "required": ["command", "expect"]}},
                         "required": ["what"]}},
         "failed_criteria": {"type": "array", "items": {"type": "string"}},
         "tech_report": TECH_REPORT,
@@ -958,11 +972,18 @@ def _named_node(x: dict) -> str:
 def _place_outside(parsed: dict, said: dict, own: bool) -> None:
     """What the report observed outside the criteria, onto the node each observation names (one node's report: that
     node) — data beside the verdict for its issuer, read by nothing that decides it (Inv-2). One naming no node of
-    this validation is dropped, as an unplaced entry is."""
+    this validation is dropped, as an unplaced entry is. Its `probe` is kept where it names a command and what it
+    must show: the system runs it (`_observe_outside`)."""
     for o in (o for o in parsed.get("outside") or () if isinstance(o, dict)):
         tid = next(iter(said)) if own else _named_node(o)
         if tid in said and str(o.get("what") or "").strip():
-            said[tid]["outside"].append({"what": str(o["what"]).strip(), "evidence": str(o.get("evidence") or "").strip()})
+            p = o.get("probe") if isinstance(o.get("probe"), dict) else {}
+            probe = {k: str(p.get(k) or "").strip() for k in ("command", "expect")}
+            # …`row`: where the system's run of its probe, made after the record, writes what it saw (`see_outside`)
+            said[tid]["outside"].append({"what": str(o["what"]).strip(), "evidence": str(o.get("evidence") or "").strip(),
+                                         **({"probe": probe} if all(probe.values()) else {}),
+                                         "observed": BEING_OBSERVED if all(probe.values()) else READ_NOT_OBSERVED,
+                                         "row": uuid.uuid4().hex[:12]})
 
 
 def _shaped(parsed: Optional[dict]) -> Optional[dict]:
@@ -1105,8 +1126,15 @@ def _observe_pins(engine: Engine, parts: list, workdir, built: Optional[list] = 
     # …the exact ones first: where the budget ends, the pins left unrun are ⊥ for their criteria (`PAST_BOUND`), and the
     # next validation runs those alone, with the whole budget
     probes.sort(key=lambda x: not x[2].exact)
-    if not probes:
-        return {}
+    return _on_the_delivery(engine, parts, workdir, probes, ex, built, touched) if probes else {}
+
+
+def _on_the_delivery(engine: Engine, parts: list, workdir, probes: list, ex=None, built: Optional[list] = None,
+                     touched: Optional[set] = None, delivered=None) -> dict:
+    """{key: row} — each `(key, criterion, probe)` of `probes` run by the system on a fresh copy of the delivery of
+    `parts`, in its own scratch, by `observe.run_checks`, within what is left of the validation's bound: the one door by
+    which the system runs a command on a delivery (`_observe_pins`, `_observe_outside`). A probe that could not run is
+    a row with a `note` and no `matched`. Raises `BuildFailed` / `NotTheDelivery` where the copy cannot be built or made."""
     ex, rows = ex or validation_execution(engine), {}
     shell = bool(workdir) and ex.shell()
     why = ("the delivery could not be copied" if shell else "no shell to run it in" if workdir else
@@ -1120,7 +1148,9 @@ def _observe_pins(engine: Engine, parts: list, workdir, built: Optional[list] = 
             # …a copy the delivery makes impossible raises `NotTheDelivery`: its FAIL, as a judge's copy's (`_unjudged`);
             # one that failed for another cause leaves these not run, said so
             try:
-                delivered = engine.delivered(*(t.id for t, *_ in parts))
+                # …the delivery judged, read once where a run in a thread of its own is started: read inside it, a later
+                # check of a new commit could stand there (`Engine.delivered` while judging) — critic over 6b8475ea
+                delivered = delivered or engine.delivered(*(t.id for t, *_ in parts))
                 with snapshot(_read_by_id(engine, delivered, workdir, ex), at / "delivery", ex, delivered=delivered,
                               built=built) as tree:
                     if tree:
@@ -1133,6 +1163,36 @@ def _observe_pins(engine: Engine, parts: list, workdir, built: Optional[list] = 
             except Uncopied as e:
                 why = str(e)
     return {k: rows.get(k) or {"note": f"not run: {why}"} for k, _, _ in probes}
+
+
+def _observe_outside(engine: Engine, parts: list, workdir, said: dict, ex=None, _cb=None, top_id: str = "",
+                     delivered=None) -> int:
+    """Each observation outside the criteria (`_place_outside`) given what the system's own run of its `probe` showed,
+    as `observed` (`outside_seen`) — run as a pinned check is, on a fresh copy of the delivery (`_on_the_delivery`):
+    a find read off the diff is a suspicion until it is seen, and the validator told to probe it wrote "I built no
+    scenario and ran nothing" (live, 2026-11). Made AFTER the verdict is recorded and written onto its rows there
+    (`Engine.see_outside`): data for the issuer, read by nothing that decides the verdict (Inv-2; §8.3 FM-1.f), so
+    nothing of it may cost the verdict paid for — a failure of its own is its rows' «not run», and the second copy's
+    build spends no time the record needed: run in a thread of its own once the record is written (`OUTSIDE_RUN`,
+    `_validation_pass`), said through `_cb`. Returns how many the run showed."""
+    probes = [((tid, n), Criteria(OUTSIDE), Probe(o["what"], o["probe"]["command"], o["probe"]["expect"]))
+              for tid, s in said.items() for n, o in enumerate(s["outside"]) if o.get("probe")]
+    try:
+        rows = _on_the_delivery(engine, parts, workdir, probes, ex, delivered=delivered) if probes else {}
+    except Exception as e:         # noqa: BLE001 — no verdict rests on it: whatever stopped it is said on its rows
+        rows = {k: {"note": f"not run: {e}"} for k, _, _ in probes}
+    for tid, s in said.items():
+        for n, o in enumerate(s["outside"]):
+            o["observed"] = outside_seen(o.get("probe"), rows.get((tid, n)))
+        try:
+            engine.see_outside(TaskId(tid), {o["row"]: o["observed"] for o in s["outside"]})
+        except Exception:          # noqa: BLE001 — the rows stay «read, not observed» on the record
+            log.warning(f"could not write what the system saw outside the criteria on {tid}", exc_info=True)
+    shown = sum(r.get("matched") is True for r in rows.values())
+    if _cb:
+        _cb(f"{top_id}: the system ran {len(probes)} probe(s) of what the validator saw outside the criteria — "
+            f"{shown} shown on the delivery")
+    return shown
 
 
 def _pins_budget(probes: list, cap: Optional[int]) -> float:
@@ -1376,6 +1436,13 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
                                                None if unbuilt else llm, claims[str(t.id)],
                                                None if unbuilt else model, workdir, scratch, text)
                        for t, _ in nodes}
+    # …and only then, OFF the caller's path, what the validator saw outside the criteria, run by the system: the caller
+    # signs the recorded verdict, and a second build and its probes before that sign let VALIDATING's bound pass under
+    # a paid verdict (critic over 76e0d949). A server stopping mid-run leaves its rows «being observed», whose words say what that means minutes on
+    if not unbuilt and any(o.get("probe") for s in said.values() for o in s["outside"]):
+        threading.Thread(target=_observe_outside, args=(engine, parts, workdir, copy.deepcopy(said), ex, _cb, top_id),
+                         kwargs={"delivered": engine.delivered(*(t.id for t, _ in nodes))},
+                         name=f"{OUTSIDE_RUN}{top_id}", daemon=True).start()
     return out, text
 
 

@@ -13,7 +13,7 @@ from gfso.core.protocol.invariants import INTENT, QUOTE_WORDS
 from gfso.core.protocol.procedure import EXACT_READ, laid, materialize_inputs, probe_id, probe_key, same_probe
 from gfso.core.protocol.accounting import unrerunnable
 from gfso.core.types import EXECUTOR_STATES, INPUTS_TOKEN, Signal, TaskId, files_at, set_aside_of
-from gfso.engine import Engine
+from gfso.engine import PERSONS_ACTS, Engine
 from gfso.engine.audit import rejected_on_current_version
 from gfso.engine.findings import round_stands
 from gfso.engine.verdicts import OUTSIDE_NOTE
@@ -210,7 +210,8 @@ def _judged_as(p, seen: Optional[dict]) -> str:
     what the system's own run of it on this delivery observed (`validate._observe_pins`)."""
     if not p.exact:
         return ("" if not (seen or {}).get("printed") else
-                "\n      (The system ran it on this delivery: its output shows that.)" if seen.get("matched") else
+                f"\n      (The system ran it on this delivery: its output shows that — it printed «{_flat(seen.get('out'))}».)"
+                if seen.get("matched") else
                 f"\n      (The system ran it on this delivery: it printed «{_flat(seen.get('out'))}», which does not "
                 f"show that word for word. Judge it over that output; a pass holds only where the `expect` you cite "
                 f"for it is a part of what that run printed.)")
@@ -608,16 +609,24 @@ def _criteria_text(engine: Engine, task, crits, scratch: Optional[str], workdir:
 
     def _probe_line(c, p, part: bool = False) -> str:
         pid = probe_id(c.name, p)
-        d = _dirs.get(pid)
-        return (f"    - {'PART’S ' if part else ''}PINNED CHECK [{pid}] — {p.behaviour}: run `{_cmd(c, p)}` → "
-                f"{must_show(p, (seen or {}).get((tid, pid)))}"
+        d, s = _dirs.get(pid), (seen or {}).get((tid, pid))
+        # …one the system's run DECIDES — it matched, or an exact one did not — is handed as that run, never as a command
+        # to run: told «need not be run again» under «run every pinned probe», a validator re-ran an 11-minute suite the
+        # system had just run (11-27). One not exact that did not match is still the validator's to observe
+        # (`accounting.with_engine_observations`: printed nothing, or not what it pins — critic over 359730d)
+        if ran := (s or {}).get("matched") is True or p.exact and (s or {}).get("matched") is False:
+            how = f"the system RAN `{_cmd(c, p)}` on this delivery — cite it under this id with `held`, never run it again"
+        else:
+            how = f"run `{_cmd(c, p)}`"
+        return (f"    - {'PART’S ' if part else ''}PINNED CHECK [{pid}] — {p.behaviour}: {how} → {must_show(p, s)}"
                 + ("\n      (the part it belongs to passed its own validation on an earlier delivery; its result "
-                   "now stands inside THIS delivery, and this criterion rests on it — run it here and report it ONCE, "
+                   "now stands inside THIS delivery, and this criterion rests on it — "
+                   + ("" if ran else "run it here and ") + "report it ONCE, "
                    "under this id, in the probe list of any one criterion that rests on it, with `held`: true if it "
                    "showed what it must, false if not — and then every criterion resting on it fails)" if part else "")
                 + (f"\n      (its {len(p.inputs)} input file(s) were written by the system from the "
                    f"contract into {d} — run the command as shown; do not substitute files from "
-                   f"the delivery)" if d else ""))
+                   f"the delivery)" if d and not ran else ""))
 
     def _crit_block(c, items) -> str:
         # …A SEAM CRITERION ANSWERED IN ITS OWN ENTRY: reported only under the free-text `seams` note it had no verdict,
@@ -699,9 +708,19 @@ _HEARD = {"request": "The person's request, as they asked it", "go": "The person
 
 def _persons_words(engine: Engine, task, crits) -> str:
     """What `answers_the_persons_words` is read against, where `crits` carry it: every word recorded over the goal, in
-    the order said (`validation.heard_on`); the goal as given is the node's description. "" elsewhere."""
+    the order said (`validation.heard_on`); the goal as given is the node's description. Where no criterion carries it,
+    the same words as the goal the delivery serves — what an outside critic is handed first, and a validator without
+    them read a planner's text as the goal (critic over the rewrite, 2026-11-27); "" where none are recorded."""
     if INTENT not in {c.name for c in crits}:
-        return ""
+        at, heard = task, []
+        # …the person's own acts only, as `Engine.persons_words` reads them: the plan and a checker's appointment are the
+        # agent's and the system's, and printed as «the goal» they buried the person's words (critic over the rewrite)
+        mine = lambda n: [h for h in heard_on(engine.graph, n) if h["act"] in PERSONS_ACTS]      # noqa: E731
+        while at is not None and not (heard := mine(at.id)):    # …a part's: its nearest whole's
+            at = engine.graph.get_parent(at.id)
+        said = "".join(f"### {_HEARD.get(h['act'], h['act'])}\n{h['said']}\n\n" for h in heard)
+        return (f"## The person's recorded words — the goal this delivery serves (question 1; no criterion of theirs is "
+                f"judged here)\n\n{said}" if said else "")
     return (f"## The person's recorded words — what `{INTENT}` is read against\n"
             "The goal as given is the node's description above; then, as recorded. Any verdict short of pass carries "
             "`quote`: ONE unbroken span (no `…`) of at least "
@@ -765,7 +784,7 @@ def validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[s
     negl = "\n".join(f"- {n.item}" for n in set_aside_of(task))
     return (f"# Node under validation: {tid} — {task.spec.name}\n\n{task.spec.description}\n{prior}"
             f"{_issuers_fails(engine, task, True)}\n"
-            + (f"## Contract — the criteria (the ENTIRE obligation; use these EXACT names in your "
+            + (f"## Contract — the criteria (the ENTIRE obligation of the verdict; use these EXACT names in your "
                f"report, each criterion in its own `per_criterion` entry; a dependency below is an edge, not a criterion)\n" if len(_crits) == len(task.spec.criteria) else
                f"## Contract — the criteria THIS RUN VALIDATES ({len(_crits)} of "
                f"{len(task.spec.criteria)}; the others are validated by their own runs, and the node's "
@@ -779,7 +798,7 @@ def validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[s
             f"speak of the same behaviour the CRITERION decides, and a divergence from it is that "
             f"criterion's value — fail (Inv-2, §9.2)\n"
             f"{negl or '- none'}\n\n"
-            f"## Executor's DELIVER report (where the work lives, how each criterion is claimed met)\n"
+            f"## Executor's DELIVER report — its CLAIM, what you test (where the work lives, how each criterion is claimed met)\n"
             f"{deliverable}\n\n" + (changes or {}).get(tid, "")
             + _working_directory(workdir, validating=True) + _scratch_note(scratch))
 
@@ -806,7 +825,7 @@ def scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str], 
                       f"one should be goes in the `seams` advisory)\n{ups}\n\n"
                       f"### ACCEPTED_RISKS of `{tid}` — the plan set these aside; none retires a criterion, "
                       f"and a divergence from a criterion is its value, fail (Inv-2, §9.2)\n{negl}\n\n"
-                      f"### Executor's DELIVER report for `{tid}`\n{deliverable}\n"
+                      f"### Executor's DELIVER report for `{tid}` — its CLAIM, what you test\n{deliverable}\n"
                       + ("\n" + changes[tid] if tid in (changes or {}) else ""))
     return ("# One scope under validation — the nodes one executor session delivered, parts before the whole\n\n"
             "Validate EACH node below against ITS OWN criteria, over the artifact as delivered. Every "
@@ -822,7 +841,8 @@ def outside_text(engine: Engine, task_id, rows: list, lists: Optional[str] = Non
     evidence by its tail as an observed check's is (`observe.TAIL`; the whole stays on the record): one evidence of 5000
     characters took an issuer packet from 1.4k to 7k. Empty where there are none. `lists`: where its file goes (`list_key`)."""
     return ("## What validators observed outside the written criteria\nThese are " + OUTSIDE_NOTE
-            + capped([f"`{r['node']}`: {r['what']}" + (f" — seen: {_flat(_tail(r['evidence']))}" if r["evidence"] else "")
+            + capped([f"`{r['node']}`: {r['what']} — {_flat(_tail(r['observed']))}"
+                      + (f"; the validator's evidence: {_flat(_tail(r['evidence']))}" if r["evidence"] else "")
                       for r in rows], "observations", list_key(engine, task_id, "outside", at=lists))) if rows else ""
 
 

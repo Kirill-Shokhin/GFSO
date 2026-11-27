@@ -205,7 +205,8 @@ def test_the_verdict_read_serves_what_the_validator_saw_outside_the_criteria(cha
     _worked(repo)
     call("signal", "root", "DELIVER", "user", result="f.txt written", self_validation="PASS")
     call("wait", seconds=60)
-    assert TL.TOOLS["get_verdict"](e, "root").get("outside") == [{"what": seen, "evidence": "ran it on x.tar.gz"}]
+    assert TL.TOOLS["get_verdict"](e, "root").get("outside") == [{"what": seen, "evidence": "ran it on x.tar.gz",
+                                                                   "observed": "read, not observed"}]
 
 
 def test_a_second_delivery_is_shown_only_what_its_own_validator_saw(chat, monkeypatch):

@@ -98,7 +98,7 @@ def test_the_dial_at_zero_is_one_run_carrying_everything():
 
 # ── the fold: a criterion split between runs of ONE validation ───────────────────────────────────────────────────────
 
-_LINE = re.compile(r"PINNED CHECK \[([^\]]+)\] — ([^:]+): run `([^`]+)`")
+_LINE = re.compile(r"PINNED CHECK \[([^\]]+)\] — ([^:]+): (?:run|the system RAN) `([^`]+)`")
 
 
 def _split_node(e, at):

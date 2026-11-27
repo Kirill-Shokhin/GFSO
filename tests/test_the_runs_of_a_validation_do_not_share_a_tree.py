@@ -29,7 +29,7 @@ import gfso.validate as VAL
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="a node's place is a git worktree")
 
-_LINE = re.compile(r"PINNED CHECK \[([^\]]+)\] — ([^:]+): run `([^`]+)`")
+_LINE = re.compile(r"PINNED CHECK \[([^\]]+)\] — ([^:]+): (?:run|the system RAN) `([^`]+)`")
 _BS = chr(92)
 
 
