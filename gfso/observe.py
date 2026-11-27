@@ -381,5 +381,8 @@ def _run(ex, bash: str, cmd: str, tree: str, timeout: float, place: str) -> dict
     except OSError as e:
         return {"note": f"could not run ({e})"}
     o, e = (swap(x or "", tree, place) for x in (r.stdout, r.stderr))
-    out = "\n".join(x.strip() for x in (o, e) if x.strip())
-    return {"rc": r.returncode, "out": out[-TAIL:], "stdout": o, "stderr": e}
+    # …each stream's own tail: one tail of both read only the end of stderr — a suite's summary line, the end of its
+    # stdout, sat behind its tests' log lines, and the validator handed it judged the run «shows nothing» and re-ran
+    # the suite in its copy, which no record can take for the delivered tree (replay r1 on 5b3d627)
+    out = "\n".join(f"{tag}{x.strip()[-TAIL:]}" for tag, x in (("", o), ("[stderr] ", e)) if x.strip())
+    return {"rc": r.returncode, "out": out, "stdout": o, "stderr": e}
