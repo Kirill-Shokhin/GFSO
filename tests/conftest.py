@@ -499,6 +499,20 @@ def _l2_gate_off():
         os.environ["GFSO_L2_GATE"] = prior
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _no_contact_reading_unless_asked():
+    """The suite's validations are the check alone, as its fakes answer them: a contact reading before each (on by
+    default, `engine.validation.contact_on`) would hand every fake validator a second call it does not know. A test of
+    the reading turns it on (`GFSO_CONTACT=1`) and scripts both calls."""
+    prior = os.environ.get("GFSO_CONTACT")
+    os.environ["GFSO_CONTACT"] = "0"
+    yield
+    if prior is None:
+        os.environ.pop("GFSO_CONTACT", None)
+    else:
+        os.environ["GFSO_CONTACT"] = prior
+
+
 #: every attempt to start a model inside the suite — a test's teardown fails on any made during it
 _LIVE_SPAWNS: list = []
 #: attempts that landed outside any test's window — the session fails on them

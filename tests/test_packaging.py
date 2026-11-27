@@ -63,7 +63,7 @@ def test_the_assets_the_product_cannot_run_without_are_present():
     stay green because it only asks whether what EXISTS is shipped."""
     required = ("web/index.html", "web/gfso.css", "web/tokens.css", "web/icon.svg",
                 *(f"web/js/{m}.js" for m in WEB_MODULES),
-                "mcp/ORCHESTRATOR.md", "mcp/prompts/executor.md", "mcp/prompts/validator.md",
+                "mcp/ORCHESTRATOR.md", "mcp/prompts/executor.md", "mcp/prompts/validator.md", "mcp/prompts/contact.md",
                 "decompose/prompts/search.md", "decompose/prompts/audit.md",
                 "critic/prompts/atomicity.md", "critic/prompts/checker.md")
     assert not [r for r in required if not (PKG / r).exists()]

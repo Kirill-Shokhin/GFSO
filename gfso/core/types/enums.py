@@ -187,6 +187,9 @@ class Stage(StrEnum):
     AUTHORING_AGREE = "authoring-agree"
     VALIDATE_RESULT = "validate_result"
     VALIDATOR = "validator"
+    # The CONTACT READING made before a validation's check — the kit critic's question on its inputs, its own call: its
+    # spend apart from the check's, so what the reading costs is read where the person decides its switch (§B.5)
+    CONTACT = "contact"
     # The ISSUER answering a dispute (§12.4's two exits of CHALLENGED). Its own line in the ledger
     # because it is its own act by its own party: a run where the disputes cost more than the work
     # is a statement about the plan, and it is unreadable if the adjudication hides inside the

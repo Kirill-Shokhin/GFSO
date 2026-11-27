@@ -22,9 +22,12 @@ from gfso.core.protocol.accounting import coverage as procedure_coverage
 #: The records kept BESIDE a node's verdict, each under its own key in the critique store — one table of their names and
 #: one reader and writer, where seven hand-built keys were each read and written in their own spelling, three readers
 #: guarding a corrupt record and three not (ortho audit, D-F11).
-OBSERVATIONS, REFUTED_VERSIONS, CLOSING, OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, OUTSIDE_ANSWERED = (
+(OBSERVATIONS, REFUTED_VERSIONS, CLOSING, OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, OUTSIDE_ANSWERED,
+ CONTACT_READING) = (
     "observations", "refuted-versions", "closing-verdict", "overruled-verdict", "rejected-report",
-    "regression-probes", "failed-through-parts", "outside-answered")
+    "regression-probes", "failed-through-parts", "outside-answered", "contact-reading")
+#: who a row beside the verdict is by, where the contact reading made it (`validate._contact`), not the check
+CONTACT_BY = "contact"
 
 
 def ledger_read(storage, task_id, kind: str, default=None):
@@ -230,7 +233,10 @@ def outside_of_this_delivery(storage, task_id: TaskId, rec) -> list:
     (`outside_observations`) told them, on a second delivery, what the first one's validator saw before the second had
     run (fresh client s23g3)."""
     answered = {str(a.get("what")) for a in ledger_read(storage, task_id, OUTSIDE_ANSWERED, []) if isinstance(a, dict)}
-    return [{"what": k, "evidence": str(o.get("evidence") or ""), "observed": str(o.get("observed") or READ_NOT_OBSERVED)}
+    # …a contact claim on a criterion said as one, with how the check answered it: no criterion failed on it unless the
+    # check observed it refuting, and then the FAIL is the verdict's own (`validate._refuted_at_contact`)
+    return [{"what": f"contradicts `{o['bears_on']}`: {k}" if o.get("bears_on") else k,
+             "evidence": str(o.get("evidence") or ""), "observed": str(o.get("observed") or READ_NOT_OBSERVED)}
             for o in ((rec or {}).get("outside") or ()) if isinstance(o, dict)
             if (k := " ".join(str(o.get("what") or "").split())) and k not in answered]
 

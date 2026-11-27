@@ -88,6 +88,17 @@ def l2_gate_on(graph: "Graph | None" = None, node=None) -> bool:
     return flag("GFSO_L2_GATE", True)
 
 
+def contact_on(graph: "Graph") -> bool:
+    """Is each validation here read at contact before its check (`validate._contact`)? The person's switch
+    (`set_mode(contact=)`), on by default; `GFSO_CONTACT=0` is the server's for a project that set none. The reading is
+    the system's ADOPTED check — the canon owes it at no seam, and no value it fixes prices it (§9.9 *boundary*) —, put
+    at every seam by the author's «не хуже критика»; its cost and the risk it reads are the person's, so the switch is
+    theirs (M11), and turning it off breaks no requirement."""
+    if (v := graph.setting("contact")) is not None:
+        return v == "1"
+    return flag("GFSO_CONTACT", True)
+
+
 def reviewed_in_file(graph: "Graph", node) -> bool:
     """Was `node`, or a node above it, built from a plan file carrying its own Level-2 review (`auto_decompose(plan=)`)?"""
     marked = set(json.loads(graph.setting(REVIEWED_IN_FILE_KEY) or "[]"))

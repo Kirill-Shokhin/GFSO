@@ -44,7 +44,8 @@ from gfso.config import (PIPELINE_PAGE, USAGE_PAGE, PERSONS_NAMES, SYSTEM, CALLE
 from .audit import (AuditLog, AuditEntry, VERSION_INSTALLING, failed_on_current_version,
                     resolved_on_current_version, on_current_version)
 from .verdicts import (store_verdict, criterion_version, refuted_versions, ledger_read, ledger_write, CLOSING,
-                       OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, outside_observations, answer_outside,
+                       OVERRULED, REJECTED_REPORT, REGRESSION, FAILED_THROUGH_PARTS, CONTACT_READING,
+                       outside_observations, answer_outside,
                        outside_of_this_delivery, see_outside)
 from .findings import (disputed_findings, ever_pinned, finding_rulings, keep_files, keep_unrun, lay_files, not_reproduced, record_not_reproduced,
                        released, return_finding as _return_finding, ruled, unrun,
@@ -93,10 +94,10 @@ from .loop import _guard_context, event_loop, record_refusal, refresh_checks, ti
 log = logging.getLogger(__name__)
 
 #: what a project sets for itself (`set_mode`): the system's model, the Level-2 gate, the switch on the way out, the
-#: deadline nobody typed, the place's observation, the states' own bounds, the rework bound nobody typed — each in the
-#: settings table alone (`Engine.settings`)
+#: deadline nobody typed, the place's observation, the states' own bounds, the rework bound nobody typed, the reading of
+#: each delivery at contact before its check — each in the settings table alone (`Engine.settings`)
 SETTINGS = ("system_model", "planner_model", "l2_gate", "network", "deadline_s", "observe", "bounds", "max_iterations",
-            "intent_check")
+            "intent_check", "contact")
 
 #: THE PERSON'S OWN WORDS on the act a door is making now (`set_mode`'s `user_said`, carried to every verb that can revise
 #: a root's packet): under `solo` and `semi` the root's criteria are the person's agreement, and they change only on their
@@ -2118,6 +2119,23 @@ class Engine:
         every later read, kept in the record (`verdicts.answer_outside`)."""
         for node in dict.fromkeys(r["node"] for r in rows):
             answer_outside(self._storage, TaskId(node), [r["what"] for r in rows if r["node"] == node], by, move, why)
+
+    def contact_reading(self, top_id, nodes=None) -> Optional[dict]:
+        """The contact reading kept beside `top_id` (`validate._contact`) where it was made on the delivery of `nodes`
+        (default: the top alone) standing now — its generations and the tree DELIVER recorded —, else None: a new
+        delivery, even of an unchanged tree, is read again (round-4 finding 3: a tree key re-applied a claim to a
+        correct re-delivery with no new reading)."""
+        rec = ledger_read(self._storage, top_id, CONTACT_READING)
+        return rec if isinstance(rec, dict) and rec.get("delivery") == self._contact_key(nodes or [top_id]) else None
+
+    def keep_contact_reading(self, top_id, nodes, rec: dict) -> None:
+        """Keep the contact reading on the delivery of `nodes` standing now beside `top_id`, apart from the check's
+        report: a refused report, a split batch or a stale run of the same delivery reuses it."""
+        ledger_write(self._storage, top_id, CONTACT_READING, {**rec, "delivery": self._contact_key(nodes)})
+
+    def _contact_key(self, nodes) -> dict:
+        return json.loads(json.dumps({"delivered": self.delivered(*nodes), "generations": {
+            str(n): generation_of_task(self._graph.get_task(TaskId(str(n)))) for n in nodes}}))
 
     def regression_probes(self, task_id: TaskId) -> dict:
         """{criterion: [probes that have REFUTED it on this node]} — the set every later PASS must re-run. Grows at

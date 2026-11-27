@@ -741,23 +741,29 @@ _HEARD = {"request": "The person's request, as they asked it", "go": "The person
           "revise": "The person's words on a revision of the goal's packet", "verdict": "The person's words on a verdict"}
 
 
+def _goal_words(engine: Engine, task) -> tuple[str, str]:
+    """(the person's own words recorded over the goal `task` serves, as sections; where they were said over a whole it
+    is a part of, the line saying so) — the words alone, never what a criterion of theirs is read by."""
+    at, heard = task, []
+    # …the person's own acts only, as `Engine.persons_words` reads them: the plan and a checker's appointment are the
+    # agent's and the system's, and printed as «the goal» they buried the person's words (critic over the rewrite)
+    mine = lambda n: [h for h in heard_on(engine.graph, n) if h["act"] in PERSONS_ACTS]      # noqa: E731
+    while at is not None and not (heard := mine(at.id)):    # …a part's: its nearest whole's
+        at = engine.graph.get_parent(at.id)
+    # …and said to be a whole's where they are: a part answers its share of them, and every sibling's share landed in
+    # `outside` as probed rows the issuer must read (critic over 2b6c6e2; the cure 89ca38b9 carried in the old prose)
+    share = ("" if at is task else " — said over the whole this node is a part of: this node answers its own share "
+             "of them, its criteria above; what a sibling part covers is not missing here")
+    return "".join(f"### {_HEARD.get(h['act'], h['act'])}\n{h['said']}\n\n" for h in heard), share
+
+
 def _persons_words(engine: Engine, task, crits) -> str:
     """What `answers_the_persons_words` is read against, where `crits` carry it: every word recorded over the goal, in
     the order said (`validation.heard_on`); the goal as given is the node's description. Where no criterion carries it,
     the same words as the goal the delivery serves — what an outside critic is handed first, and a validator without
     them read a planner's text as the goal (critic over the rewrite, 2026-11-27); "" where none are recorded."""
     if INTENT not in {c.name for c in crits}:
-        at, heard = task, []
-        # …the person's own acts only, as `Engine.persons_words` reads them: the plan and a checker's appointment are the
-        # agent's and the system's, and printed as «the goal» they buried the person's words (critic over the rewrite)
-        mine = lambda n: [h for h in heard_on(engine.graph, n) if h["act"] in PERSONS_ACTS]      # noqa: E731
-        while at is not None and not (heard := mine(at.id)):    # …a part's: its nearest whole's
-            at = engine.graph.get_parent(at.id)
-        said = "".join(f"### {_HEARD.get(h['act'], h['act'])}\n{h['said']}\n\n" for h in heard)
-        # …and said to be a whole's where they are: a part answers its share of them, and every sibling's share landed in
-        # `outside` as probed rows the issuer must read (critic over 2b6c6e2; the cure 89ca38b9 carried in the old prose)
-        share = ("" if at is task else " — said over the whole this node is a part of: this node answers its own share "
-                 "of them, its criteria above; what a sibling part covers is not missing here")
+        said, share = _goal_words(engine, task)
         return (f"## The person's recorded words — the goal this delivery serves (question 1; no criterion of theirs is "
                 f"judged here){share}\n\n{said}" if said else "")
     return (f"## The person's recorded words — what `{INTENT}` is read against\n"
@@ -784,11 +790,65 @@ def _issuers_fails(engine: Engine, task, validating: bool) -> str:
                       f"{f['said'] or '(no words recorded with it)'}\n" for f in fails))
 
 
+#: the key a contact row is carried under in a batch's `carry`, as a unit of that batch's size (`validate._scope_batches`)
+CONTACT_ROW = "contact:"
+#: where the contact reading stands: its copy is not built (`snapshot(build=False)`), so no build of the system's stands
+#: on the record's path before the check's — it builds what it runs itself, within its own bound
+_UNBUILT = ("That directory is a checkout of exactly the tree DELIVER recorded, NOT built: build and run what you need "
+            "yourself, there or in your scratch.\n")
+
+
+def contact_packet(engine: Engine, tasks: list, workdir: Optional[str], scratch: Optional[str],
+                   changes: Optional[dict] = None) -> str:
+    """The contact reading's input — the kit critic's (design §B.1): each node's goal, its description and the person's
+    own words alone; its criteria as prose, which a find must name or say none writes (FM-1.f is a relation to them,
+    §8.3); what the delivery changed (`changes`: {node: its `change_text`}); where it stands. `tasks`: one node, or a
+    scope's, each under its heading. Not held: the pins or the system's runs of them, the DELIVER report, the
+    ACCEPTED_RISKS, the rulings, earlier answers, refused reports, the per-criterion form — handed a form to close and
+    green runs to cite into it, a reader closes it and stops (replay r3: the critic probed the defect 2/2, the validator
+    handed them 0/4)."""
+    scope = len(tasks) > 1
+    blocks = []
+    for t in tasks:
+        said, share = _goal_words(engine, t)
+        blocks.append((f"## Node `{t.id}` — {t.spec.name}\n\n" if scope else f"# The goal — {t.spec.name}\n\n")
+                      + f"{t.spec.description}\n\n"
+                      + (f"### The person's own words{share}\n\n{said}" if said and not (scope and share) else "")
+                      + "### What must hold — the written criteria\n"
+                      + "".join(f"- **{c.name}**: {c.description}\n" for c in t.spec.criteria) + "\n"
+                      + (changes or {}).get(str(t.id), ""))
+    return ("\n".join(blocks)
+            + ("Each find names its node in `node`, by the id in its heading.\n\n" if scope else "")
+            + _working_directory(workdir, validating=True) + _UNBUILT + _scratch_note(scratch))
+
+
+def contact_lines(engine: Engine, rows: list, at: Optional[str]) -> str:
+    """The contact reading's claims on criteria, shown to the check as claims to test — each under its own id, never
+    owed (design §B.1 «Why shown, not owed»): a command over a file the reader wrote in its round laid under `at`, the
+    check's own round or batch, as a regression line's is (`lay_probe_files`). "" where none is shown."""
+    def _line(r) -> str:
+        cmd = (r.get("probe") or {}).get("command")
+        shown = engine.lay_probe_files(cmd, at, execution_of(engine), Path(at) / "delivery") if cmd and at else cmd
+        return (f"- CONTACT [{r['id']}] on **{r['bears_on']}** (an outside reader's claim that this criterion is "
+                f"contradicted — not a criterion, not demanded) — {r['what']}: "
+                + (f"run `{shown}` (it showed then «{r['probe'].get('expect')}»)" if cmd else
+                   f"read, no command: {r.get('evidence') or '(it said nothing it rests on)'}")
+                + (f" — a `refuting` answer on `{INTENT}` carries `quote`, the span of the person's words it misses"
+                   if r["bears_on"] == INTENT else ""))
+    return ("## CONTACT — what an outside reader claims contradicts a criterion\n"
+            "An outside reader read this delivery against the goal before you. Each line is its claim, tested as the "
+            "DELIVER report is: run what it names if you choose, and decide from what it prints against the criterion's "
+            "own words. Answer each in `contact`, under its id: `refuting` — what it shows contradicts the criterion, "
+            "which then fails with your evidence —, `held`, `not_refuting` with why, or `not_run` with why.\n"
+            + "\n".join(_line(r) for r in rows) + "\n\n") if rows else ""
+
+
 def validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[str],
                       scratch: Optional[str] = None, criteria=None, carry: Optional[dict] = None,
-                      seen: Optional[dict] = None, changes: Optional[dict] = None) -> str:
+                      seen: Optional[dict] = None, changes: Optional[dict] = None, contact: list = ()) -> str:
     """The validator's self-contained input: contract + seams + ACCEPTED_RISKS + the DELIVER report + what the
-    delivery changed (`changes`: {node: its `change_text`}; none where the caller read none).
+    delivery changed (`changes`: {node: its `change_text`}; none where the caller read none) + the contact reading's
+    claims this run is shown (`contact`, `contact_lines`).
     Embedded by the system — the validator has no graph access (read-only instrument, §10.3).
 
     `criteria` names the SUBSET this run validates (all of them by default). A rich contract is validated
@@ -839,7 +899,7 @@ def validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[s
                f"{len(task.spec.criteria)}; the others are validated by their own runs, and the node's "
                f"verdict is their conjunction, §2). Use these EXACT names and report on EVERY "
                f"one, each in its own `per_criterion` entry:\n")
-            + f"{crits}\n\n" + _persons_words(engine, task, _crits) +
+            + f"{crits}\n\n" + contact_lines(engine, list(contact), scratch) + _persons_words(engine, task, _crits) +
             f"## Upstream dependencies (edges, not criteria — a stub where one should be goes in the `seams` advisory)\n"
             f"{chr(10).join(ups) or '- none'}\n\n"
             f"## ACCEPTED_RISKS — risk factors the PLAN set aside. Do not fail the node for a gap "
@@ -853,10 +913,12 @@ def validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[s
 
 
 def scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str], scratch: Optional[str],
-                            inside: frozenset, seen: Optional[dict] = None, changes: Optional[dict] = None) -> str:
+                            inside: frozenset, seen: Optional[dict] = None, changes: Optional[dict] = None,
+                            contact: Optional[dict] = None) -> str:
     """ONE validator's input over a scope's deliveries: every node under its own heading, with its criteria,
-    pinned probes and regression lines, its seams from outside the scope, its ACCEPTED_RISKS and its own
-    DELIVER report and what its delivery changed — the single-node packet's content, node by node."""
+    pinned probes and regression lines, the contact reading's claims on them (`contact`: {node: its rows shown}), its
+    seams from outside the scope, its ACCEPTED_RISKS and its own DELIVER report and what its delivery changed — the
+    single-node packet's content, node by node."""
     blocks = []
     for task, deliverable, crits, *carry in batch:
         tid = str(task.id)
@@ -869,7 +931,7 @@ def scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str], 
                       + _issuers_fails(engine, task, True)
                       + f"\n### Criteria of `{tid}` this run validates — report each with task_id `{tid}`\n"
                       f"{_criteria_text(engine, task, crits, place, workdir, *carry, seen=seen)}\n\n"
-                      + _persons_words(engine, task, crits) +
+                      + contact_lines(engine, (contact or {}).get(tid, []), place) + _persons_words(engine, task, crits) +
                       f"### Upstream dependencies from outside the scope (edges, not criteria — a stub where "
                       f"one should be goes in the `seams` advisory)\n{ups}\n\n"
                       f"### ACCEPTED_RISKS of `{tid}` — the plan set these aside; none retires a criterion, "

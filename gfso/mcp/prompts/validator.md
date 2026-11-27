@@ -5,12 +5,14 @@ words — the node's description and the person's recorded words in the packet �
 changed, and the delivery itself. Nothing else is yours to rely on: not the executor's report, not its hypotheses,
 not the story of how the work was done. The report is the claim you test.
 
-Answer two questions, from outside:
-1. Does the delivery answer the goal? A piece can be correct in every line and solve something the person did not
-   ask for, or solve it in a way that no longer serves why they wanted it.
-2. Does the result actually hold? Open it and verify — read what it rests on, and run what can be run: where the
-   subject is rules or behavior, rebuild and exercise it in your own scratch copy and report in numbers. A claim you
-   cannot check is reported as unchecked, not assumed.
+Answer, from outside:
+<!-- whole -->
+- Does the delivery answer the goal? A piece can be correct in every line and solve something the person did not
+  ask for, or solve it in a way that no longer serves why they wanted it.
+<!-- /whole -->
+- Does the result actually hold? Open it and verify — read what it rests on, and run what can be run: where the
+  subject is rules or behavior, rebuild and exercise it in your own scratch copy and report in numbers. A claim you
+  cannot check is reported as unchecked, not assumed.
 
 Judge the WHOLE delivery as it now stands. The diff tells you where to look; look past it to the thing itself.
 
@@ -20,8 +22,10 @@ it, whatever its checks printed. One nothing observed leaves it undecided, never
 could decide — an action, an opinion, nothing to observe — is `not_decidable`, for the issuer to rewrite. The node's
 verdict is the AND of its criteria.
 
+<!-- whole -->
 **What the goal needs that no criterion writes fails nothing:** put it in `outside`, with the probe — a command and
 what it prints — that shows it, for the issuer, who can write the criterion.
+<!-- /whole -->
 
 Pinned checks are the system's: where the packet says it ran one on the delivery, cite its run and do not run it
 again; where it says run it, run it.

@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import logging
+import re
 import subprocess
 import threading
 import time
@@ -36,7 +37,7 @@ from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.issuer import CONTACT_ROUND as _CONTACT, signal_ok as _signal, system_issues
 from gfso.core.types import (BATCH, HOST, LAID, AgentId, Criteria, LLMProviderPort, PlaceUnavailable, Probe, Signal, Stage,
                              State, TaskId, Verdict, files_at, system_decides)
-from gfso.engine.verdicts import BEING_OBSERVED, OUTSIDE, READ_NOT_OBSERVED, carried_outside, outside_seen
+from gfso.engine.verdicts import BEING_OBSERVED, CONTACT_BY, OUTSIDE, READ_NOT_OBSERVED, carried_outside, outside_seen
 from gfso.core.protocol.invariants import INTENT, RED_SET, criterion_meant, probes_of, red_set, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import laid_down_dirs, probe_id
 from gfso.core.protocol.accounting import (NOT_ASKED_AGAIN, SYSTEMS_ACT, canonical_citations, with_engine_observations,
@@ -48,11 +49,12 @@ from gfso.engine import CheckRunning, Engine
 from gfso.engine.events import emit_cb
 from gfso.engine.findings import record_round
 from gfso.engine.loop import state_bound_left
-from gfso.engine.validation import StaleRun, whole_waits_for_its_parts
+from gfso.engine.validation import StaleRun, contact_on, whole_waits_for_its_parts
 from gfso.engine.closures import verdict_provenance
 from gfso.config import CALLER, MODEL_DEFAULT, state_bound, validate_internal, validation_batch
-from gfso.packets import (BUILT, TECH_REPORT, UNCOPIED, last_deliver_result, scope_order, scope_validator_packet,
-                          validator_packet, file_tech_reports, owed_probes, snapshot_note, change_text)
+from gfso.packets import (BUILT, CONTACT_ROW, TECH_REPORT, UNCOPIED, contact_packet, last_deliver_result, scope_order,
+                          scope_validator_packet, validator_packet, file_tech_reports, owed_probes, snapshot_note,
+                          change_text)
 from gfso.inflight import flight
 from gfso.tools import answering
 
@@ -857,8 +859,52 @@ def _naming_the_node(schema: dict) -> dict:
 #: scope, and a FAIL still names the node it is about, so attribution stays inside the scope (§4.4).
 _SCOPE_VALIDATOR_SCHEMA = _naming_the_node(_VALIDATOR_SCHEMA)
 
+#: The contact reading's report (design §B.1), parsed, never trusted: each find with the criterion it contradicts or
+#: `outside`, and the command that shows it where one does. «Nothing found» is an empty list.
+_CONTACT_SCHEMA = {
+    "type": "object",
+    "properties": {"finds": {"type": "array", "description": "what changes what the person will act on — empty where "
+                                                            "nothing of that kind is left",
+                             "items": {"type": "object", "properties": {
+                                 "what": {"type": "string", "description": "the find, one line"},
+                                 "bears_on": {"type": "string", "description":
+                                              "`criterion: <its exact name>` where the delivery contradicts what that "
+                                              "criterion says; `outside` where no criterion writes it"},
+                                 "node": {"type": "string", "description":
+                                          "where the goal lists several nodes: the id of the one it is about"},
+                                 "evidence": {"type": "string", "description":
+                                              "what it rests on: the command you ran and what it printed, or what you read"},
+                                 "probe": {"type": "object", "description":
+                                           "the command that shows it, re-runnable as-is in the delivered directory, "
+                                           "and a line its output shows",
+                                           "properties": {"command": {"type": "string"}, "expect": {"type": "string"}},
+                                           "required": ["command", "expect"]}},
+                                 "required": ["what", "bears_on"]}}},
+    "required": ["finds"],
+}
+#: A's answers to the contact claims its packet shows (`packets.contact_lines`); `refuting` is that criterion's fail
+REFUTING = "refuting"
+_CONTACT_ANSWERS = {"type": "array", "description": "your answer to each CONTACT claim shown above, under its id",
+                    "items": {"type": "object", "properties": {
+                        "id": {"type": "string"},
+                        "answer": {"type": "string", "enum": [REFUTING, "held", "not_refuting", "not_run"]},
+                        "why": {"type": "string", "description": "what decided it, against the criterion's own words"},
+                        "command": {"type": "string", "description":
+                                    "with `refuting`: the command you ran that shows it, re-runnable as-is"},
+                        "printed": {"type": "string", "description": "with `refuting`: a part of what it printed"},
+                        "quote": {"type": "string", "description":
+                                  f"with `refuting` on `{INTENT}`: the span of the person's own words the result misses"}},
+                        "required": ["id", "answer"]}}
 
-def _scope_batches(engine: Engine, parts: list, size: int) -> list:
+
+def _answering(schema: dict) -> dict:
+    """A check's schema with the `contact` answers its packet's claims ask for."""
+    out = copy.deepcopy(schema)
+    out["properties"]["contact"] = _CONTACT_ANSWERS
+    return out
+
+
+def _scope_batches(engine: Engine, parts: list, size: int, shown: Optional[dict] = None) -> list:
     """The scope's validation cut into runs that each OWE at most `size` probes (`config.validation_batch`) — per run,
     [(node, its deliverable, its criteria this run speaks to, {probe id: the criterion it is written under} for the
     probes this run carries)], in scope order; one run where `size` is 0.
@@ -866,9 +912,11 @@ def _scope_batches(engine: Engine, parts: list, size: int) -> list:
     A criterion goes whole into the run with room for it, else into a fresh one; one owing more than `size` alone is
     split between runs, and its value is their conjunction (`_conjoined`). A part's probe is owed once per node, under
     the first criterion resting on it (`packets.owed_probes`), so it is placed in exactly one run; a criterion owing
-    nothing costs one, for its verdict."""
-    units = [(i, c, [pid for pid, _ in items] or [None]) for i, (t, _, crits) in enumerate(parts)
-             for c, items in owed_probes(engine, t, crits)]
+    nothing costs one, for its verdict. `shown`: {(node, criterion): the keys of the contact claims on it
+    (`packets.CONTACT_ROW`)} — each carried by exactly one run of its criterion and counted in its size as a probe is,
+    so no claim is run twice and no run passes the measured bound (round-7 finding 2)."""
+    units = [(i, c, [pid for pid, _ in items] + (shown or {}).get((str(t.id), c.name), []) or [None])
+             for i, (t, _, crits) in enumerate(parts) for c, items in owed_probes(engine, t, crits)]
     size = size or sum(len(pids) for *_, pids in units) or 1
     runs: list = []
     room = 0
@@ -996,11 +1044,11 @@ def _named_node(x: dict) -> str:
     return str(x.get("task_id") or "").strip().strip("`'\"").strip()
 
 
-def _place_outside(parsed: dict, said: dict, own: bool) -> None:
+def _place_outside(parsed: dict, said: dict, own: bool, by: Optional[str] = None) -> None:
     """What the report observed outside the criteria, onto the node each observation names (one node's report: that
     node) — data beside the verdict for its issuer, read by nothing that decides it (Inv-2). One naming no node of
     this validation is dropped, as an unplaced entry is. Its `probe` is kept where it names a command and what it
-    must show: the system runs it (`_observe_outside`)."""
+    must show: the system runs it (`_observe_outside`). `by`: who saw it, where not the check (`CONTACT_BY`)."""
     for o in (o for o in parsed.get("outside") or () if isinstance(o, dict)):
         tid = next(iter(said)) if own else _named_node(o)
         if tid in said and str(o.get("what") or "").strip():
@@ -1010,7 +1058,7 @@ def _place_outside(parsed: dict, said: dict, own: bool) -> None:
             said[tid]["outside"].append({"what": str(o["what"]).strip(), "evidence": str(o.get("evidence") or "").strip(),
                                          **({"probe": probe} if all(probe.values()) else {}),
                                          "observed": BEING_OBSERVED if all(probe.values()) else READ_NOT_OBSERVED,
-                                         "row": uuid.uuid4().hex[:12]})
+                                         "row": uuid.uuid4().hex[:12], **({"by": by} if by else {})})
 
 
 def _shaped(parsed: Optional[dict]) -> Optional[dict]:
@@ -1207,17 +1255,20 @@ def _observe_outside(engine: Engine, parts: list, workdir, said: dict, ex=None, 
     nothing of it may cost the verdict paid for — a failure of its own is its rows' «not run», and the second copy's
     build spends no time the record needed: run in a thread of its own once the record is written (`OUTSIDE_RUN`,
     `_validation_pass`), said through `_cb`. Returns how many the run showed."""
+    # …the rows outside the criteria alone: a contact claim on a criterion is the check's to answer, its answer on the
+    # row, and no system run of it stands on any path (design §B.3)
+    beside = {tid: [o for o in s["outside"] if not o.get("bears_on")] for tid, s in said.items()}
     probes = [((tid, n), Criteria(OUTSIDE), Probe(o["what"], o["probe"]["command"], o["probe"]["expect"]))
-              for tid, s in said.items() for n, o in enumerate(s["outside"]) if o.get("probe")]
+              for tid, obs in beside.items() for n, o in enumerate(obs) if o.get("probe")]
     try:
         rows = _on_the_delivery(engine, parts, workdir, probes, ex, delivered=delivered) if probes else {}
     except Exception as e:         # noqa: BLE001 — no verdict rests on it: whatever stopped it is said on its rows
         rows = {k: {"note": f"not run: {e}"} for k, _, _ in probes}
-    for tid, s in said.items():
-        for n, o in enumerate(s["outside"]):
+    for tid, obs in beside.items():
+        for n, o in enumerate(obs):
             o["observed"] = outside_seen(o.get("probe"), rows.get((tid, n)))
         try:
-            engine.see_outside(TaskId(tid), {o["row"]: o["observed"] for o in s["outside"]})
+            engine.see_outside(TaskId(tid), {o["row"]: o["observed"] for o in obs})
         except Exception:          # noqa: BLE001 — the rows stay «read, not observed» on the record
             log.warning(f"could not write what the system saw outside the criteria on {tid}", exc_info=True)
     shown = sum(r.get("matched") is True for r in rows.values())
@@ -1290,9 +1341,52 @@ def _unjudged(parts: list, e: Exception) -> tuple:
                          "outside": [], "contradiction": None} for t, _, crits in parts})
 
 
+def _prompt(name: str) -> str:
+    """A role's prompt as the product ships it."""
+    return (Path(__file__).parent / "mcp" / "prompts" / name).read_text(encoding="utf-8")
+
+
+#: the block of the validator's prompt asked only where no contact reading stands on the delivery
+_WHOLE = re.compile(r"<!-- whole -->\n(.*?)<!-- /whole -->\n", re.S)
+
+
+def _validator_prompt(whole: bool) -> str:
+    """The validator's prompt: `whole` — question 1 and the bold `outside` line as its duty, the role as it stood before
+    the contact reading — where none stands on this delivery (the person's switch off, or B not done after its re-run),
+    so neither costs a question; without them where B's does: both are then B's, and asked of the check again they
+    dilute it (design §B.4, B.0)."""
+    return _WHOLE.sub(r"\1" if whole else "", _prompt("validator.md"))
+
+
+def _keyed_claims(shown) -> dict:
+    """{(node, criterion): the keys its contact claims are carried under} — what `_scope_batches` places."""
+    keyed: dict = {}
+    for r in shown:
+        keyed.setdefault((r["node"], r["bears_on"]), []).append(CONTACT_ROW + r["row"])
+    return keyed
+
+
+def _batch_packet(engine: Engine, batch: list, workdir, place, inside: Optional[frozenset], seen, shown) -> tuple:
+    """(the packet of one batch of the check, as `body(changes)` writes it, schema included; its cap, as `cap()` reads
+    it) — a scope's packet where `inside` names its members, else one node's, each shown the contact claims this batch
+    carries and asked to answer them where there are any."""
+    claims = {str(t.id): got for t, _, _, *carry in batch
+              if (got := [r for r in shown if r["node"] == str(t.id)
+                          and (not carry or CONTACT_ROW + r["row"] in carry[0])])}
+    asked = lambda schema: schema_instruction(_answering(schema) if claims else schema)     # noqa: E731
+    if inside is not None:
+        return (lambda changes=None: scope_validator_packet(engine, batch, workdir, place, inside, seen, changes, claims)
+                + asked(_SCOPE_VALIDATOR_SCHEMA)), lambda: _scope_cap(batch, engine.graph)
+    (task, deliverable, crits, *carry), = batch
+    return (lambda changes=None: validator_packet(
+        engine, task, deliverable, workdir, place, criteria=None if len(crits) == len(task.spec.criteria) else crits,
+        carry=carry[0] if carry else None, seen=seen, changes=changes, contact=claims.get(str(task.id), ()))
+        + asked(_VALIDATOR_SCHEMA)), lambda: _validation_cap(task, engine.graph)
+
+
 def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside: Optional[frozenset], spawn,
                      edits: Optional[list] = None, built: Optional[list] = None, ex=None,
-                     seen: Optional[dict] = None) -> list:
+                     seen: Optional[dict] = None, shown: tuple = (), whole: bool = True) -> list:
     """The validator's reports over the parts' deliveries — one run, or one per batch at the same time (`_run_each`),
     each batch carrying a disjoint share of the probes the validation owes over one unchanging set of deliveries, so
     their conjunction is the verdict whatever order they finish in (§2 V = ⋀ cᵢ; `_scope_batches`, `_conjoined`). A
@@ -1302,23 +1396,15 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
     and 42 root criteria (2026-08-21) — so a long contract is batched, every owed probe carried exactly once.
     `GFSO_VALIDATION_BATCH=0` restores the single run, whatever the size. Each copy is built before its run, what ran
     appended to `built`; a build that fails raises `BuildFailed` (`snapshots._build`). `seen`: what the system's own
-    runs of the pinned checks observed (`_observe_pins`), told to the validator in its packet."""
-    system = (Path(__file__).parent / "mcp" / "prompts" / "validator.md").read_text(encoding="utf-8")
-    batches = _scope_batches(engine, parts, validation_batch())
+    runs of the pinned checks observed (`_observe_pins`), told to the validator in its packet. `shown`: the contact
+    reading's claims on criteria (`_contact`), each in the one batch of its criterion, answered in `contact`; `whole`:
+    the prompt asks both questions (`_validator_prompt`), no reading standing on this delivery."""
+    system = _validator_prompt(whole)
+    batches = _scope_batches(engine, parts, validation_batch(), _keyed_claims(shown))
     ex, delivered = ex or validation_execution(engine), engine.delivered(*(t.id for t, *_ in parts))
 
     def _run(batch, client=None, place=None) -> str:
-        if inside is not None:
-            body = lambda changes=None: (scope_validator_packet(engine, batch, workdir, place or scratch, inside, seen,
-                                                                changes) + schema_instruction(_SCOPE_VALIDATOR_SCHEMA))
-            cap = lambda: _scope_cap(batch, engine.graph)
-        else:
-            (task, deliverable, crits, *carry), = batch
-            body = lambda changes=None: (validator_packet(
-                engine, task, deliverable, workdir, place or scratch,
-                criteria=None if len(crits) == len(task.spec.criteria) else crits,
-                carry=carry[0] if carry else None, seen=seen, changes=changes) + schema_instruction(_VALIDATOR_SCHEMA))
-            cap = lambda: _validation_cap(task, engine.graph)
+        body, cap = _batch_packet(engine, batch, workdir, place or scratch, inside, seen, shown)
         # RUNS SIDE BY SIDE EACH IN A COPY OF THE PLACE OF ITS OWN (`adapters.snapshots`): sharing the place, one run's
         # pinned `make clean` took the binary from under the others' probes — a false root FAIL (GB_sql_database_tngtvm580).
         # A run alone gets its copy too (`_run_each`); without a scratch no run starts: the delivery is read by its id
@@ -1380,12 +1466,234 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
                      _run_again_if_unread if len(batches) > 1 else _run, ex)
 
 
+#: where a validation's contact reading copies the delivery, inside the validation's own round — a recorded round, so a
+#: probe over a file the reader wrote there is laid into the check's copy (`packets.contact_lines`)
+CONTACT_PLACE = "contact"
+
+
+def _contact(engine: Engine, top_id: str, parts: list, workdir, scratch, llm, spawn, ex, _cb) -> Optional[dict]:
+    """The contact reading of this delivery (design §B.2–B.3) — the kit critic's question on the critic's inputs, its
+    own act before the check: the one kept beside `top_id` on this same delivery, reused (a refused report's retry, a
+    split batch, a stale run cost no second reading), else made now (`_read_at_contact`) and kept. None where the
+    person's switch is off (`contact_on`). {done, tools, finds, rows} — or {done: False, reason}."""
+    if not contact_on(engine.graph):
+        return None
+    ids = [t.id for t, *_ in parts]
+    if (rec := engine.contact_reading(top_id, ids)) is None:
+        rec = _read_at_contact(engine, top_id, parts, workdir, scratch, llm, spawn, ex)
+        if rec["done"]:
+            rec["rows"] = _contact_rows(rec["finds"], parts, top_id)
+            rec["finds"] = len(rec["rows"])
+        engine.keep_contact_reading(top_id, ids, rec)
+        _cb(f"{top_id}: read at contact before its check — {rec['finds']} find(s)" if rec["done"] else
+            f"{top_id}: contact reading not done: {rec['reason']} — the check is asked both questions")
+    return rec
+
+
+def _read_at_contact(engine: Engine, top_id: str, parts: list, workdir, scratch, llm, spawn, ex) -> dict:
+    """The contact reading's call: a client of its own (`spawn`) in its own copy of the delivery inside the validation's
+    round — a checkout, NOT built (`snapshot(build=False)`): it builds what it runs, as the kit critic does in its
+    scratch, so no third build stands on the record's path and none can fail there — capped at half of what is left of
+    the validation's bound once that copy stands (its measured 155–204 s against the check's 11–109 s; the check keeps
+    the rest), its report mapped back to the working directory, so a claim's command names the delivery as the check's
+    copy lays it and its id is the same on every delivery of the node. Done where its own call used any tool and its
+    report parsed — its tools read off ITS client: `_run_each` folds every client's into the validation's, and read
+    there the reading was credited with the check's. A call that failed, used no tool or did not parse is made once
+    more, alone, within the same half. {done, tools, finds} or {done: False, reason}."""
+    delivered = engine.delivered(*(t.id for t, *_ in parts))
+    if spawn is None or not (workdir and scratch and delivered):
+        return {"done": False, "reason": "no client of its own to read on" if spawn is None else
+                "no copy of the delivery to read: no place beside it, or no commit recorded"}
+    system, ends, why = _prompt("contact.md"), [], ""
+    for place in (str(Path(scratch) / CONTACT_PLACE), str(Path(scratch) / f"{CONTACT_PLACE}_again")):
+        client = spawn()
+        client.on_tick, client.stage_hint = llm.on_tick, f"{top_id} contact-reading"
+        try:
+            text, tools = _contact_call(engine, client, system, parts, workdir, _fresh(ex, place), delivered, ex, ends)
+        except Exception as e:     # noqa: BLE001 — a reading that fell over costs the check nothing: it runs whole
+            why = f"its call failed: {e}"
+            continue
+        finally:
+            engine.record_llm_usage(Stage.CONTACT, client, TaskId(top_id))
+            ex.release(place)
+        parsed = parse_structured(text, _CONTACT_SCHEMA)
+        why = ("its call used no tool" if not sum(tools.values()) else "its report did not parse"
+               if parsed is None or not isinstance(parsed.get("finds"), list) else "")
+        if not why:
+            return {"done": True, "tools": tools, "finds": parsed["finds"]}
+    return {"done": False, "reason": why}
+
+
+def _contact_call(engine: Engine, client, system: str, parts: list, workdir, place: str, delivered, ex, ends: list):
+    """(the reading's report as run in the working directory, the tools its call used) — one call in its copy under
+    `place`; `ends`: when its half of the bound ends, read once, when its first copy stands (as `_validator_texts`
+    reads the check's cap)."""
+    with snapshot(_read_by_id(engine, delivered, workdir, ex), Path(place) / "delivery", ex, delivered=delivered,
+                  build=False) as tree:
+        here = judged_at(tree, workdir, ex)
+        if not ends:
+            ends.append(None if (cap := _scope_cap(parts, engine.graph)) is None else time.time() + cap / 2)
+        changes = {str(t.id): _change(engine, t, delivered[1], ex) for t, *_ in parts}
+        text = (swap(contact_packet(engine, [t for t, *_ in parts], workdir, place, changes), workdir, here)
+                + schema_instruction(_CONTACT_SCHEMA))
+        out = client.run_agent(system, text, allowed_tools=_VALIDATOR_TOOLS, cwd=here,
+                               timeout=None if ends[0] is None else max(30, int(ends[0] - time.time())))
+        return swap(out or "", here, workdir), dict(client.last_tool_calls)
+
+
+def _contact_rows(finds: list, parts: list, top_id: str) -> list:
+    """The reading's finds as rows on the nodes of this validation: each on the node it names (one node's reading: that
+    node), one naming none of them on the top — never dropped; `bears_on` that node's criterion it names
+    (`criterion_meant`), else None — `outside`, FM-1.f, the issuer's (§8.3). Its `id` the claim's command's (`probe_id`,
+    the same on every delivery: the command is mapped back to the working directory), or its own where it has none: an
+    empty command is one hash for all, so a probe-less row is matched by nothing."""
+    names = {str(t.id): [c.name for c in t.spec.criteria] for t, *_ in parts}
+    top = top_id if top_id in names else list(names)[-1]
+    rows = []
+    for f in (f for f in finds if isinstance(f, dict) and str(f.get("what") or "").strip()):
+        tid = _named_node({"task_id": f.get("node")}) if len(names) > 1 else top
+        # …a scope's find naming no member is the top's `outside`, whatever criterion it names: the top's of that name
+        # is not what it was read against (design §B.1)
+        placed = tid in names
+        tid = tid if placed else top
+        said = re.sub(r"^\s*criterion\s*:\s*", "", str(f.get("bears_on") or ""), flags=re.I).strip()
+        crit = criterion_meant(said, names[tid]) if placed and said and said.lower() != "outside" else None
+        p = f.get("probe") if isinstance(f.get("probe"), dict) else {}
+        probe = {k: str(p.get(k) or "").strip() for k in ("command", "expect")}
+        rows.append({"row": uuid.uuid4().hex[:12], "what": str(f["what"]).strip(),
+                     "evidence": str(f.get("evidence") or "").strip(), "by": CONTACT_BY, "node": tid,
+                     "bears_on": crit if crit in names[tid] else None,
+                     "id": probe_id(crit or OUTSIDE, probe) if probe["command"] else uuid.uuid4().hex[:12],
+                     **({"probe": probe} if all(probe.values()) else {})})
+    return rows
+
+
+def _shown_at_contact(engine: Engine, rec: Optional[dict], parts: list) -> tuple:
+    """(the reading's claims shown to the check — each on a criterion this pass validates, none a ruling in force
+    covers —, {row: «ruled»} for those it covers). Shown on every delivery it is filed on, as a fresh critic would raise
+    it again (round-7 finding 3: one dismissal kept a claim from every rework after); a ruling is its issuer's act, the
+    one parity the check has (`Engine._refiled_rulings`)."""
+    crits = {str(t.id): {c.name for c in cs} for t, _, cs in parts}
+    ruled = {str(t.id): {(r.get("criterion"), r.get("id")) for r in engine.retired_findings(t.id)} for t, *_ in parts}
+    rows = [r for r in (rec or {}).get("rows") or () if r["bears_on"] and r["bears_on"] in crits.get(r["node"], ())]
+    held = {r["row"] for r in rows if (r["bears_on"], r["id"]) in ruled[r["node"]]}
+    return tuple(r for r in rows if r["row"] not in held), held
+
+
+def _answer_word(raw) -> str:
+    """An answer's word as the check meant it — `Refuting`, `**refuting**`, `REFUTING.`, `not refuting` read as
+    `refuting` and `not_refuting`: read exactly, a capitalised word stood beside the verdict as «answered: Refuting»
+    and failed nothing — a false PASS (outside critic over the build). One reading, as `spoken_verdict` is the verdicts'."""
+    word = re.sub(r"[^a-z]+", "_", str(raw or "").lower()).strip("_")
+    # …a word around it («is refuting», «refuting (reproduced)») is still the refutation: read exactly, it failed nothing
+    toks = set(word.split("_"))
+    return REFUTING if REFUTING in toks and not toks & {"not", "non", "no"} else word
+
+
+def _contact_answers(texts: list, schema: dict, shown: tuple) -> tuple:
+    """({row: the check's answer to that shown claim}, [the answers that name no claim shown]) over its reports, the word
+    read by `_answer_word`. An answer is to the claim whose id OCCURS in the id it gives — the packet prints
+    `CONTACT [<id>]`, and a check copying that form was read as answering nothing; one naming none is kept to be said
+    beside the verdict, deciding nothing, never dropped unseen."""
+    out, stray = {}, []
+    for x in texts:
+        for a in (parse_structured(x or "", schema) or {}).get("contact") or ():
+            if not isinstance(a, dict) or not (said := str(a.get("id") or "").strip()):
+                continue
+            a = {**a, "answer": _answer_word(a.get("answer"))}
+            if hits := [r for r in shown if r["id"] in said]:
+                out.update({r["row"]: a for r in hits})
+            else:
+                stray.append({**a, "id": said})
+    return out, stray
+
+
+def _refuted_at_contact(shown: tuple, answers: dict) -> dict:
+    """{node: an entry failing each criterion a shown claim was answered `refuting` on} — the check's observed
+    divergence on that criterion, its fail whatever the check's own entry says (Inv-2, §12.8: the observation and the
+    verdict are the check's, §10.2–10.3), folded into that entry by the runs' conjunction (`_conjoined`), never refusing
+    the report: a pass beside its own `refuting` was a false PASS or a ⊥ (round-7 finding 1). Its command a standing
+    finding like any refuting probe. On the person's words only with a `quote` of them, as any fail of it
+    (`verdict_report_defects`); without one the claim stays beside the verdict, `outside` by the check's own rule."""
+    out: dict = {}
+    for r in shown:
+        a = answers.get(r["row"]) or {}
+        if a.get("answer") != REFUTING or r["bears_on"] == INTENT and not str(a.get("quote") or "").strip():
+            continue
+        p, cmd = r.get("probe") or {}, str(a.get("command") or (r.get("probe") or {}).get("command") or "").strip()
+        out.setdefault(r["node"], []).append({
+            "criterion": r["bears_on"], "verdict": "fail", "behaviours": [r["what"]], "divergences": [r["what"]],
+            "evidence": f"CONTACT [{r['id']}] refuting: {a.get('why') or r['what']}",
+            "probe": [{"command": cmd, "expect": str(a.get("printed") or p.get("expect") or r["what"]), "held": False,
+                       "behaviour": r["what"]}] if cmd else [],
+            **({"quote": a["quote"]} if a.get("quote") else {})})
+    return out
+
+
+def _beside_at_contact(said: dict, rec: Optional[dict], shown: tuple, held: set, answers: dict, stray: list,
+                       top: str) -> list:
+    """The reading's rows beside the verdict, `by` it: a claim on a criterion with how the check answered it — the
+    person reads these first —, a find no criterion writes as the check's `outside` rows are (`_place_outside`), whose
+    probe the system runs (`_observe_outside`), and on the top each answer of the check's to no claim shown (`stray`),
+    which decides nothing. Returns the check's answers, for the reading's record."""
+    on = top if top in said else next(iter(said))
+    said[on]["outside"] += [{"what": f"an answer to no claim shown: [{a['id']}] {a['answer']}"
+                                     + (f" — {a['why']}" if a.get("why") else ""),
+                             "evidence": "", "by": CONTACT_BY, "observed": READ_NOT_OBSERVED,
+                             "row": uuid.uuid4().hex[:12]} for a in stray]
+    asked, got = {r["row"] for r in shown}, []
+    for r in (rec or {}).get("rows") or ():
+        if r["node"] not in said:
+            continue
+        if not r["bears_on"]:
+            _place_outside({"outside": [{**r, "task_id": r["node"]}]}, said, False, CONTACT_BY)
+            continue
+        a = answers.get(r["row"])
+        said[r["node"]]["outside"].append({
+            **{k: r[k] for k in ("what", "evidence", "by", "bears_on", "id", "row")},
+            "observed": ("ruled: a ruling of its issuer's in force covers it — not shown to the check" if r["row"] in held
+                         else f"the check answered: {a['answer']}" + (f" — {a['why']}" if a.get("why") else "") if a
+                         else "not answered by the check" if r["row"] in asked
+                         else "not shown to the check: its criterion is not validated in this run")})
+        if a:
+            got.append({"node": r["node"], "criterion": r["bears_on"], "id": r["id"], "answer": a["answer"],
+                        "why": str(a.get("why") or "")})
+    return got
+
+
+def _read_then_checked(engine: Engine, top_id: str, parts: list, workdir, scratch, inside, llm, spawn, edits, built,
+                       ex, observed, _cb) -> tuple:
+    """The validation's two acts in their order (design §B.3): the contact reading (`_contact`), then the check shown
+    its claims on criteria (`_validator_texts`), asked both questions where no reading is done — (the reading's record,
+    the claims shown, the rows a ruling holds back, the check's reports)."""
+    contact = _contact(engine, top_id, parts, workdir, scratch, llm, spawn, ex, _cb)
+    shown, held = _shown_at_contact(engine, contact, parts)
+    return contact, shown, held, _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built, ex,
+                                                  observed, shown, not (contact or {}).get("done"))
+
+
+def _answered_at_contact(engine: Engine, top_id: str, ids: list, texts: list, schema: dict, said: dict, contact,
+                         shown: tuple, held: set) -> dict:
+    """What the check answered of the reading's claims: the reading's rows beside the verdict with the answers
+    (`_beside_at_contact`), the answers kept in the reading's record, and {node: the fail of each criterion a claim was
+    answered `refuting` on} (`_refuted_at_contact`) — {} where no reading stands."""
+    if not contact:
+        return {}
+    answers, stray = _contact_answers(texts, _answering(schema), shown)
+    got = _beside_at_contact(said, contact, shown, held, answers, stray, top_id)
+    engine.keep_contact_reading(top_id, ids, {**contact, "handed": [r["id"] for r in shown],
+                                              "answers": [*contact.get("answers", ()), *got]})
+    return _refuted_at_contact(shown, answers)
+
+
 def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, workdir, validator, model, llm, spawn,
                      _cb, inside: Optional[frozenset] = None, ex=None) -> tuple:
     """ONE validation pass over deliveries — a scope's (`inside` its members), or one node's, a scope of one: the
-    validator's reports over every node's criteria left to validate (`_left_to_validate` keeps what a refused attempt
-    already decided), then each node's OWN verdict recorded over its own entries (`_record_node`). Records only; the
-    signatures are the caller's. `nodes`: [(task, its deliverable)]; `claims`: {node: its validation claim}.
+    contact reading of the delivery first (`_contact`), then the validator's reports over every node's criteria left to
+    validate (`_left_to_validate` keeps what a refused attempt already decided), shown the reading's claims on them,
+    then each node's OWN verdict recorded over its own entries (`_record_node`), a claim it observed refuting its
+    criterion's fail, the reading's rows beside it. Records only; the signatures are the caller's. `nodes`: [(task, its
+    deliverable)]; `claims`: {node: its validation claim}.
 
     Returns (out, the reports' text): out = {task_id, stats, verdicts: {node: …}, reports: {node: what its reports
     claimed, with its entries}} — or, where the transport refused to start, `error`; where a report did not parse, the
@@ -1399,14 +1707,16 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     scratch = _validation_place(top_id, workdir, ex, tuple(
         p.get("as_run") or p.get("command") for t in engine.all_tasks()
         for ps in engine.regression_probes(t.id).values() for p in ps), engine.graph, engine.project_name)
-    edits, built, unbuilt, touched = [], [], None, set()
+    edits, built, unbuilt, touched, contact, shown, held = [], [], None, set(), None, (), set()
     try:
         # the system's own run of the pinned checks FIRST, on the delivery as delivered (`_observe_pins`)
         if observed := _observe_pins(engine, parts, workdir, built, ex, touched):
             _cb(f"{top_id}: the system ran {len(observed)} pinned check(s) on a fresh copy of the delivery — "
                 f"{sum(o.get('matched') is True for o in observed.values())} print what they pin, "
                 f"{sum('matched' not in o for o in observed.values())} could not be run")
-        texts = _validator_texts(engine, llm, parts, workdir, scratch, inside, spawn, edits, built, ex, observed)
+        # …then the contact reading, BEFORE the check, and the check shown its claims
+        contact, shown, held, texts = _read_then_checked(engine, top_id, parts, workdir, scratch, inside, llm, spawn,
+                                                         edits, built, ex, observed, _cb)
     except ValueError as ex:
         return {"task_id": top_id, "error": str(ex)}, ""
     except (BuildFailed, NotTheDelivery) as ex:       # …the delivery's FAIL, nothing checked (`_unjudged`)
@@ -1453,6 +1763,7 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
              "the validator's report did not parse — no verdict could be read from it"), text))
         return out, text
     entries, said = read
+    refuted = _answered_at_contact(engine, top_id, [t.id for t, _ in nodes], texts, _schema, said, contact, shown, held)
     # the entries kept from a refused attempt FIRST, what this run saw over them: a criterion spoken again was seen again
     # on the same delivery, and the record reads the last word on it — kept last, a kept `pass` hid a fresh `fail`
     # and a PASS over its own red entry closed a node DONE (critic V5; main's order). The runs of THIS validation are
@@ -1460,7 +1771,8 @@ def _validation_pass(engine: Engine, top_id: str, nodes: list, claims: dict, wor
     # …and over them what the system itself saw its exact checks print (`_observe_pins`), so the record and the answer
     # both read the same report
     whole = {str(t.id): with_engine_observations(
-        left[str(t.id)][1] + _conjoined(entries[str(t.id)]), t.spec.criteria, engine.parts_procedure(t.id),
+        left[str(t.id)][1] + _conjoined(entries[str(t.id)] + refuted.get(str(t.id), [])), t.spec.criteria,
+        engine.parts_procedure(t.id),
         {pid: o for (tid, pid), o in observed.items() if tid == str(t.id)}, moved[:10]) for t, _ in nodes}
     out["reports"] = {tid: {**said[tid], "per_criterion": whole[tid]} for tid in entries}
     # …a FAIL the build or the copy made ran no model: it names none (one never asked was signed as the judge)

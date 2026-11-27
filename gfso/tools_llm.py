@@ -1942,7 +1942,7 @@ def held_steps(engine: Engine) -> dict:
 
 
 def _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, network, bounds,
-                    max_iterations, intent_check=None) -> Union[dict, str]:
+                    max_iterations, intent_check=None, contact=None) -> Union[dict, str]:
     """What `set_mode` was given for the project to set for itself, as the settings table keeps it — or why not."""
     if bounds is not None and (why := bounds_refusal(bounds)):
         return why
@@ -1967,7 +1967,8 @@ def _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, n
                               ("observe", None if observe is None else "1" if observe else "0"),
                               ("bounds", None if bounds is None else json.dumps(bounds)),
                               ("max_iterations", max_iterations),
-                              ("intent_check", None if intent_check is None else "1" if intent_check else "0"))
+                              ("intent_check", None if intent_check is None else "1" if intent_check else "0"),
+                              ("contact", None if contact is None else "1" if contact else "0"))
             if v is not None}
 
 
@@ -1984,7 +1985,7 @@ def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int]
              system_model: Optional[str] = None, planner_model: Optional[str] = None, l2_gate: Optional[bool] = None,
              deadline_s: Optional[float] = None, observe: Optional[bool] = None,
              network: Optional[Union[str, dict]] = None, bounds: Optional[dict] = None,
-             max_iterations: Optional[int] = None, intent_check: Optional[bool] = None,
+             max_iterations: Optional[int] = None, intent_check: Optional[bool] = None, contact: Optional[bool] = None,
              workdir: Optional[str] = None, node: Optional[str] = None) -> dict:
     """Set WHO HOLDS WHICH NODES in this project — the user's choice, made once, before the plan.
 
@@ -2024,7 +2025,9 @@ def set_mode(engine: Engine, mode: Optional[str] = None, boundary: Optional[int]
     without its own bound gets; `intent_check` — whether the go of a plan file adds the root criterion
     `answers_the_persons_words`, read by the validator against the person's recorded words (on where the person holds
     the root's work — solo or semi, `in_chat` — off elsewhere, unless set; turned only with `user_said`, the person's
-    words, at any time); `observe` — whether the system runs a node's pinned checks once on its
+    words, at any time); `contact` — whether each delivery is read at contact before its check, by an outside reader
+    the kit's critic is (`validate._contact`): on unless set off, its spend booked apart (`contact` in `usage`), turned
+    only with `user_said`, the person's words, as `intent_check` is; `observe` — whether the system runs a node's pinned checks once on its
     place before an executor session and hands it what they printed (on unless set off; `observe.observe_place`);
     `network` — how far this project's container reaches out, where its execution is a container: `open` (everything but
     your host), `off` (nothing), or `{"mode": "allowlist", "hosts": [...]}` (only the named hosts, on 443, through one
@@ -2049,10 +2052,13 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
         return no
     # …at any time, before the go too: the default stands for the person against the agent whose work it reads, and
     # only their words turn it (critic over de23af3)
-    if intent_check is not None and not str(user_said).strip() and not ((p := CALLER.get()) is not None and p.a_page):
-        return {"refused": True, "error": f"`intent_check` — whether the system reads the result against the person's "
-                                          f"own words ({INTENT}) — is the person's to turn: ask them, and pass their "
-                                          f"words asking for it as `user_said`"}
+    # …and whether an outside reader reads each delivery before its check: its cost and the risk it reads are theirs
+    for name, turned, what in (("intent_check", intent_check,
+                                f"whether the system reads the result against the person's own words ({INTENT})"),
+                               ("contact", contact, "whether an outside reader reads each delivery before its check")):
+        if turned is not None and not str(user_said).strip() and not ((p := CALLER.get()) is not None and p.a_page):
+            return {"refused": True, "error": f"`{name}` — {what} — is the person's to turn: ask them, and pass their "
+                                              f"words asking for it as `user_said`"}
     if m is None and (boundary is not None or perform is not None or workdir is not None):
         return {"refused": True, "error": "boundary, perform and workdir belong to a mode: name the mode with them"}
     perform = perform or "dispatch"
@@ -2062,7 +2068,7 @@ ceiling), `declared` to follow that alone again; a turn ends the project's runni
         return {"refused": True, "error": "`in_chat` is the work done by your own tools, and this client has only the "
                                           "gfso verbs: `dispatch` has the system perform in your name what you hold"}
     settings = _settings_given(system_model, planner_model, l2_gate, deadline_s, observe, network, bounds, max_iterations,
-                               intent_check)
+                               intent_check, contact)
     if isinstance(settings, str):
         return {"refused": True, "error": settings}
     # …asked of the roster, not of the declaration: an unreadable declaration still names a container, whose switch the

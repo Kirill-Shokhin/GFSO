@@ -134,7 +134,7 @@ def _assets_ok() -> tuple[bool, str]:
     script modules by their entry point, which imports every other one."""
     pkg = Path(__file__).parent
     required = ("web/index.html", "web/gfso.css", "web/tokens.css", "web/icon.svg", "web/js/main.js",
-                "mcp/ORCHESTRATOR.md", "mcp/prompts/executor.md", "mcp/prompts/validator.md",
+                "mcp/ORCHESTRATOR.md", "mcp/prompts/executor.md", "mcp/prompts/validator.md", "mcp/prompts/contact.md",
                 "decompose/prompts/search.md", "decompose/prompts/audit.md",
                 "critic/prompts/atomicity.md", "critic/prompts/checker.md", "adapters/agent.Dockerfile")
     missing = [r for r in required if not (pkg / r).exists()]

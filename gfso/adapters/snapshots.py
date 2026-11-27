@@ -93,7 +93,7 @@ def live(place, execution) -> Source:
 
 @contextmanager
 def snapshot(source, at, execution, edits: Optional[list] = None, delivered: Optional[tuple] = None,
-             built: Optional[list] = None, unbuilt_ok: bool = False):
+             built: Optional[list] = None, unbuilt_ok: bool = False, build: bool = True):
     """A checkout at `at` of the commit `delivered` names — the (tree, commit, build) DELIVER recorded —, for one run,
     yielded as a path, read from `source`: the project's store by the delivery's id (`store.held`, a `Source`, or the
     call that reads it), or a git that holds it (`live`).
@@ -105,7 +105,9 @@ def snapshot(source, at, execution, edits: Optional[list] = None, delivered: Opt
     so does a delivery with no recorded commit: no live place is ever judged in its stead —, a failed build
     `BuildFailed`, all before anything runs in it; `unbuilt_ok`: a failed build is said in `built` and the copy yielded
     unbuilt (an issuer ruling on a FAIL that build made). Whatever the build left running ends with it, and a tracked
-    file it changed is put back as delivered (`_after_build`)."""
+    file it changed is put back as delivered (`_after_build`). Not `build`: the checkout as recorded, nothing built nor
+    put back — a reader that builds what it runs itself, inside its own bound (the contact reading, `validate._contact`):
+    no build of the system's stands on the record's path for it, and none can fail there."""
     if not (commit := delivered[1] if delivered and delivered[1] else None):
         raise Uncopied("no commit was recorded for the delivery: no copy of it is made, and no place is judged as it "
                        "stands — deliver it again")
@@ -131,9 +133,9 @@ def snapshot(source, at, execution, edits: Optional[list] = None, delivered: Opt
             raise
         raise Uncopied(f"no checkout of the delivery {commit[:12]} could be made: {e}") from e
     try:
-        ran = ""
+        ran = "" if build else "nothing: this copy is not built — its reader builds what it runs"
         for step in (lambda: _build(at, delivered[2], execution),   # …where no client's state is (`client`)
-                     lambda: _put_back(at, delivered[0], commit, execution, smudged)):
+                     lambda: _put_back(at, delivered[0], commit, execution, smudged)) if build else ():
             try:
                 ran += step()
             except BuildFailed as e:
