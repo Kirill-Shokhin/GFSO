@@ -185,15 +185,20 @@ def _no_project_left_active(_own_state_home):
     worker (measured 2026-11-27, exposed when `-n` dealt the files by worksteal) — and the project a CLI run in
     process names in `GFSO_PROJECT`, a one-shot command's environment, stood for every test after it the same way.
     The file is cleared BEFORE the test, in the worker's home, ahead of the test's own fixtures: cleared after, it
-    touched the disk while a test's guard on what reaches the host still stood."""
+    touched the disk while a test's guard on what reaches the host still stood.
+    …and the WHOLE environment comes back as the test found it, not one name: a test calling a door that exports the
+    server's environment (`config.install_serve_env`: GFSO_STORAGE=memory, GFSO_DB_PATH, GFSO_LLM …) restored only the
+    name it asserted, and every registry later in its worker built in-memory engines — a stood project's stop read None
+    (test_demo_is_opt_in before test_a_server_start_leaves_its_projects_stopped, measured 2026-11-28 at -n 16)."""
     with contextlib.suppress(OSError):
         (_config.data_dir() / _config.ACTIVE_PROJECT_FILE).unlink(missing_ok=True)
-    named = os.environ.get("GFSO_PROJECT")
+    was = dict(os.environ)
     yield
-    if named is None:
-        os.environ.pop("GFSO_PROJECT", None)
-    else:
-        os.environ["GFSO_PROJECT"] = named
+    for k in [k for k in os.environ if k not in was]:
+        os.environ.pop(k, None)
+    for k, v in was.items():
+        if os.environ.get(k) != v:
+            os.environ[k] = v
 
 
 #: the names the suite's person signs as on the page, beside the standing agent: the parties its HTTP tests act as
