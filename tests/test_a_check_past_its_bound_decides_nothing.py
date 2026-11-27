@@ -7,6 +7,7 @@ whole budget rather than handed to the issuer. The mark is the system's alone.""
 from __future__ import annotations
 
 import json
+import time
 
 import gfso.observe as O
 import gfso.tools_llm as TL
@@ -74,6 +75,19 @@ def test_a_whole_bound_spent_is_not_asked_again(tmp_path, monkeypatch):
     assert BOUND_SPENT in str(out.get("verdict_defects")), out
     said = type("E", (), {"emit_info": lambda self, *a: None})()
     assert _classify_no_verdict(said, "n", out) == "no-verdict:bound"
+
+
+def test_the_systems_read_of_the_delivery_spends_none_of_a_checks_budget(tmp_path, monkeypatch):
+    """The delivered side read once before any check (`on_disk`) is the system's, not the check's: counted, a slow read
+    left the first check short of its whole budget by its length, so a check whose bound outlasts the budget was never
+    whole and was re-asked, paid, each time (measured under a loaded suite, 2026-11-27)."""
+    monkeypatch.setattr(O, "PROBE_S", 2)
+    monkeypatch.setattr(VAL, "OBSERVE_S", 0, raising=False)
+    monkeypatch.setattr(VAL, "FRESH_S", 1.5, raising=False)
+    real = O.on_disk
+    monkeypatch.setattr(O, "on_disk", lambda *a, **k: (time.sleep(1.2), real(*a, **k))[1])
+    out = _validated(tmp_path, "hello", cmd="sleep 1.6; while :; do :; done; cat out.txt")
+    assert out.get("verdict") not in ("PASS", "FAIL") and BOUND_SPENT in str(out.get("verdict_defects")), out
 
 
 def test_a_bound_past_the_whole_budget_is_not_asked_again(tmp_path, monkeypatch):

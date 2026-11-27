@@ -622,9 +622,11 @@ def test_under_semi_the_holder_is_told_the_whole_over_a_failing_part_fails(tmp_p
 def _free_claim(e, tid):
     """The validation slot, once a run the dispatcher started over it has let go — the drive stops at a state, not at
     the end of the runs that state started."""
-    until = time.time() + 10
+    # …the slot's own release ends the wait; the bound only ends a hang — 10 s ran out under a loaded -n 16 (2026-11-27)
+    until = time.time() + 60
     while (key := e.claims.begin_validation(TaskId(tid))) is None and time.time() < until:
         time.sleep(0.05)
+    assert key is not None, f"the validation slot of {tid} was never let go"
     return key
 
 

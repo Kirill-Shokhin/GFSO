@@ -117,7 +117,12 @@ command may write new files beside them, never change one — to edit one, copy 
      criteria may rest on one part's check: it is written out under the first and named by id under the
      others, and one observation serves them all. Always say `held` for a part's check: where a criterion
      is split across runs, another run's verdict on it decides, and only `held` speaks for your observation.
-     Then GO FURTHER: explore beyond the pinned set. Where your own probe REFUTES something, that
+     Then GO FURTHER: explore beyond the pinned set, from what the delivery changed (the packet's diff).
+     For each criterion, read what the change did to the behaviour it states, name the scenario the
+     pinned checks never build in which this change could make the criterion false, and probe that
+     scenario. The diff tells you WHERE to probe, never the verdict: only what you observe decides, and a
+     refutation is that criterion's `fail` with its evidence; what you find that bears on no criterion goes
+     in `outside`. Where your own probe REFUTES something, that
      observation is kept as the NODE's regression set and every later round must re-run it before
      that criterion may pass — so the next round starts where you stopped. It is NOT written into
      the criterion: the contract is the issuer's and does not move under the executor (Inv-1,

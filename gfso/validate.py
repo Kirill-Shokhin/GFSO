@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import logging
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, suppress
@@ -18,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from gfso import store
+from gfso import past, store
 from gfso.llm import llm_factory, session_calls
 from gfso.executions import execution_of
 from gfso.workspaces import node_workspace, rejected_reports_dir, validator_workdir
@@ -48,7 +49,7 @@ from gfso.engine.validation import StaleRun, whole_waits_for_its_parts
 from gfso.engine.closures import verdict_provenance
 from gfso.config import CALLER, MODEL_DEFAULT, state_bound, validate_internal, validation_batch
 from gfso.packets import (BUILT, TECH_REPORT, UNCOPIED, last_deliver_result, scope_order, scope_validator_packet,
-                          validator_packet, file_tech_reports, owed_probes, snapshot_note)
+                          validator_packet, file_tech_reports, owed_probes, snapshot_note, change_text)
 from gfso.inflight import flight
 from gfso.tools import answering
 
@@ -1143,6 +1144,19 @@ def _pins_budget(probes: list, cap: Optional[int]) -> float:
     return asked if cap is None else min(asked, cap)
 
 
+def _change(engine: Engine, task, commit: str, ex) -> str:
+    """What `commit`, the delivery judged, changed since `task`'s work was taken (`packets.change_text`): from the
+    commit the record says that work started at — a chat's ACCEPT, its go for a root (`past.start_of`) — read in the
+    project's store, which holds the delivery once its judge's copy is read (`store.change`). A node whose work the
+    record says no start of — performed by a role of the system, whose ACCEPT records none — is said so, never a base
+    inferred from where its branch happens to stand."""
+    base = past.start_of(engine, task.id) or None
+    try:
+        return change_text(commit, base, base and store.change(engine, ex, base, commit))
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return change_text(commit, base, None, str(e))
+
+
 def _read_by_id(engine: Engine, delivered: Optional[tuple], workdir, ex):
     """Where a judge's copy of `delivered` is read from, as `snapshot` reads it when the copy is taken: the project's
     store by its id, kept first if absent — from the
@@ -1203,15 +1217,15 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
 
     def _run(batch, client=None, place=None) -> str:
         if inside is not None:
-            body = (scope_validator_packet(engine, batch, workdir, place or scratch, inside, seen)
-                    + schema_instruction(_SCOPE_VALIDATOR_SCHEMA))
+            body = lambda changes=None: (scope_validator_packet(engine, batch, workdir, place or scratch, inside, seen,
+                                                                changes) + schema_instruction(_SCOPE_VALIDATOR_SCHEMA))
             cap = lambda: _scope_cap(batch, engine.graph)
         else:
             (task, deliverable, crits, *carry), = batch
-            body = (validator_packet(engine, task, deliverable, workdir, place or scratch,
-                                      criteria=None if len(crits) == len(task.spec.criteria) else crits,
-                                      carry=carry[0] if carry else None, seen=seen)
-                    + schema_instruction(_VALIDATOR_SCHEMA))
+            body = lambda changes=None: (validator_packet(
+                engine, task, deliverable, workdir, place or scratch,
+                criteria=None if len(crits) == len(task.spec.criteria) else crits,
+                carry=carry[0] if carry else None, seen=seen, changes=changes) + schema_instruction(_VALIDATOR_SCHEMA))
             cap = lambda: _validation_cap(task, engine.graph)
         # RUNS SIDE BY SIDE EACH IN A COPY OF THE PLACE OF ITS OWN (`adapters.snapshots`): sharing the place, one run's
         # pinned `make clean` took the binary from under the others' probes — a false root FAIL (GB_sql_database_tngtvm580).
@@ -1230,13 +1244,15 @@ def _validator_texts(engine: Engine, llm, parts: list, workdir, scratch, inside:
             if not workdir:
                 # …a goal acted out in the world, no directory anywhere: its judge reads the world at contact (§3.5).
                 # A directory with no commit delivered is no such goal: no copy (`snapshot`), no verdict
-                return (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=place or None,
+                return (client or llm).run_agent(system, body(), allowed_tools=_VALIDATOR_TOOLS, cwd=place or None,
                                                  timeout=cap())
             with snapshot(_read_by_id(engine, delivered, workdir, ex), Path(place) / "delivery", ex, edits, delivered,
                           ran) as tree:
                 here = judged_at(tree, workdir, ex)       # …the judge's own directory of the commit
-                body = swap(body, workdir, here) + snapshot_note(here, ran[0] if ran else "nothing")
-                text = (client or llm).run_agent(system, body, allowed_tools=_VALIDATOR_TOOLS, cwd=here, timeout=cap())
+                # …what the delivery changed, read once the store holds it: the copy's reading kept it there
+                text = (swap(body({str(t.id): _change(engine, t, delivered[1], ex) for t, *_ in batch}), workdir, here)
+                        + snapshot_note(here, ran[0] if ran else "nothing"))
+                text = (client or llm).run_agent(system, text, allowed_tools=_VALIDATOR_TOOLS, cwd=here, timeout=cap())
                 return swap(text, here, workdir)
         except PlaceUnavailable as e:        # …the place down while copying: the stop a call that could not start makes
             return _no_start(client or llm, "unavailable", e.place, str(e))

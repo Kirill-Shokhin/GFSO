@@ -350,6 +350,28 @@ def held(engine, ex, commit: str, *places: tuple) -> Source:
                   *_credit(engine, store, ex, rec))
 
 
+#: the files a change's `--stat` names before git says the rest in one line
+STAT_FILES = 200
+
+
+def change(engine, ex, base: str, commit: str) -> tuple[str, str]:
+    """(`--stat`, patch) of what `commit` changed since `base`, read in the project's store, where its git runs — the
+    system's repository, no agent's config, no diff driver or textconv a delivered `.gitattributes` names — each stream
+    bounded as a session's are (`children.PRINTED_CAP`: a delivery committing a large file is no server's memory).
+    `OSError` where the store holds no `base`: a base it was never given is no base to read against."""
+    store, ex = _where(engine, ex)
+    at = ex or LocalExecution()
+    if W.git(store, "cat-file", "-e", f"{base}^{{commit}}", execution=at).returncode:
+        raise OSError(f"the store holding the delivery holds no commit {base[:12]}")
+    out = []
+    for args in (("--stat=120", f"--stat-count={STAT_FILES}"), ()):
+        r = W.git(store, "diff", "--no-color", "--no-ext-diff", "--no-textconv", *args, base, commit, execution=at)
+        if r.returncode:
+            raise OSError(f"`git diff` could not read {base[:12]}..{commit[:12]}: {r.stderr.strip()[-300:]}")
+        out.append(r.stdout)
+    return out[0], out[1]
+
+
 def imported(engine) -> Optional[str]:
     """The commit the project's volume base was imported from — None where it has none, or no git."""
     got = json.loads(engine.graph.setting(VOLUME + IMPORTED) or "{}").get("commit")

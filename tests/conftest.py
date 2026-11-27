@@ -170,6 +170,24 @@ def _own_state_home():
             os.environ[name] = was
 
 
+@pytest.fixture(autouse=True)
+def _no_project_left_active(_own_state_home):
+    """No test leaves the worker's home switched to a project of its own: the next test's registry opened it as the
+    active one — a demo planted only in the default project was found missing after `test_projects.py` in the same
+    worker (measured 2026-11-27, exposed when `-n` dealt the files by worksteal) — and the project a CLI run in
+    process names in `GFSO_PROJECT`, a one-shot command's environment, stood for every test after it the same way.
+    The file is cleared BEFORE the test, in the worker's home, ahead of the test's own fixtures: cleared after, it
+    touched the disk while a test's guard on what reaches the host still stood."""
+    with contextlib.suppress(OSError):
+        (_config.data_dir() / _config.ACTIVE_PROJECT_FILE).unlink(missing_ok=True)
+    named = os.environ.get("GFSO_PROJECT")
+    yield
+    if named is None:
+        os.environ.pop("GFSO_PROJECT", None)
+    else:
+        os.environ["GFSO_PROJECT"] = named
+
+
 #: the names the suite's person signs as on the page, beside the standing agent: the parties its HTTP tests act as
 SUITE_NAMES = ("dev", "alice", "engineering", "d", "d1", "pm")
 #: where a suite's client asks by default: a local client that is no browser, as the person's own scripts are

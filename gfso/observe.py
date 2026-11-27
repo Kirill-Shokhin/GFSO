@@ -104,13 +104,17 @@ def run_checks(ex, probes, place: str, tree: Optional[str], budget: float, touch
     crits = list({id(c): c for _, c, _ in probes}.values())
     if unsafe_input_paths(crits):                        # …refused at admission: nothing runs over a truncated corpus
         return []
-    out, ran, t0, copying = [], {}, time.monotonic(), []
+    out, ran, copying = [], {}, []
     base = None
     if touched is not None:          # …the delivered side, read once for every check's copy
         try:
             base = on_disk(tree, ex)
         except Exception:            # noqa: BLE001 — unknown here, read per check as `changed` reads it
             pass
+    # …the budget counted from here, as the copies are not: the read above is the system's, and counted it left the
+    # first check short of its whole budget by its length — a check whose bound outlasts the budget was then never
+    # whole, and re-asked, paid, each time (measured under load, 2026-11-27)
+    t0 = time.monotonic()
     for key, c, p in probes:
         row = {"criterion": c.name, "behaviour": p.behaviour, "command": p.command, "expect": p.expect,
                "exact": p.exact, "bound_s": (bound := bound_of(p)), "bound_supplied": p.bound_s is None}

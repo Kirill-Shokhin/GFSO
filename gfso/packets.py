@@ -104,6 +104,36 @@ def snapshot_note(tree: str, built: str) -> str:
 
 
 
+#: the characters of a delivery's patch a validator's packet carries, cut at a line: what one packet reads in its
+#: window beside a contract; the `--stat` above it names every file the rest touches, read in the copy
+CHANGE_CAP = 40_000
+
+
+def change_text(commit: str, base: Optional[str], got: Optional[tuple] = None, why: str = "") -> str:
+    """The validator's section of what the delivery changed: the `--stat` and the patch `got` from `base`, the commit
+    its node's work was taken at, to `commit`, the one DELIVER recorded (`store.change`), the patch bounded by
+    CHANGE_CAP, the cut said where it falls. Measured on three outcome-changing defects an outside critic found under
+    green tests (2026-11): handed the criteria and the DELIVER text alone the validator caught one, the property a
+    criterion names that its pinned test did not reach; both misses were a scenario no pinned check builds in which
+    the CHANGE makes a criterion false, which the critic, handed the diff, attacked. It says WHERE to probe, never what
+    the verdict is: a criterion is decided by the behaviour observed (§10.2, V = ⋀ cᵢ), and a requirement the change
+    meets or breaks that no criterion writes is read at contact (§8.3 FM-1.f), the `outside` list's. One line where no
+    base is recorded (`past.start_of`) or none is read (`why`) — never a base guessed."""
+    head = "## What this delivery changed — where to probe, not a verdict: a criterion is decided by what you observe\n"
+    if not base:
+        return (head + f"No commit is recorded where this node's work was taken, so what {commit[:12]} changed is not "
+                       f"read: probe the delivery as it stands.\n\n")
+    if got is None:
+        return head + f"From {base[:12]}, where this node's work was taken, to {commit[:12]}: not read ({why}).\n\n"
+    stat, patch = got
+    if len(patch) > CHANGE_CAP:
+        patch = (patch[:patch.rfind("\n", 0, CHANGE_CAP) + 1 or CHANGE_CAP]
+                 + f"… [the patch is cut here, past {CHANGE_CAP} characters: the stat above names every file it "
+                   f"touches — read the rest in your directory]\n")
+    return (head + f"From {base[:12]}, where this node's work was taken, to {commit[:12]}, the commit DELIVER "
+                   f"recorded:\n```\n{stat.rstrip() or '(no file changed)'}\n```\n```diff\n{patch.rstrip()}\n```\n\n")
+
+
 def checkout_note(here: Optional[str]) -> str:
     """A node's place checks out its base as committed when the place was made: those paths are here, the rest of the
     base is read there."""
@@ -695,8 +725,9 @@ def _issuers_fails(engine: Engine, task, validating: bool) -> str:
 
 def validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[str],
                       scratch: Optional[str] = None, criteria=None, carry: Optional[dict] = None,
-                      seen: Optional[dict] = None) -> str:
-    """The validator's self-contained input: contract + seams + ACCEPTED_RISKS + the DELIVER report.
+                      seen: Optional[dict] = None, changes: Optional[dict] = None) -> str:
+    """The validator's self-contained input: contract + seams + ACCEPTED_RISKS + the DELIVER report + what the
+    delivery changed (`changes`: {node: its `change_text`}; none where the caller read none).
     Embedded by the system — the validator has no graph access (read-only instrument, §10.3).
 
     `criteria` names the SUBSET this run validates (all of them by default). A rich contract is validated
@@ -749,15 +780,15 @@ def validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[s
             f"criterion's value — fail (Inv-2, §9.2)\n"
             f"{negl or '- none'}\n\n"
             f"## Executor's DELIVER report (where the work lives, how each criterion is claimed met)\n"
-            f"{deliverable}\n\n"
+            f"{deliverable}\n\n" + (changes or {}).get(tid, "")
             + _working_directory(workdir, validating=True) + _scratch_note(scratch))
 
 
 def scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str], scratch: Optional[str],
-                            inside: frozenset, seen: Optional[dict] = None) -> str:
+                            inside: frozenset, seen: Optional[dict] = None, changes: Optional[dict] = None) -> str:
     """ONE validator's input over a scope's deliveries: every node under its own heading, with its criteria,
     pinned probes and regression lines, its seams from outside the scope, its ACCEPTED_RISKS and its own
-    DELIVER report — the single-node packet's content, node by node."""
+    DELIVER report and what its delivery changed — the single-node packet's content, node by node."""
     blocks = []
     for task, deliverable, crits, *carry in batch:
         tid = str(task.id)
@@ -775,7 +806,8 @@ def scope_validator_packet(engine: Engine, batch: list, workdir: Optional[str], 
                       f"one should be goes in the `seams` advisory)\n{ups}\n\n"
                       f"### ACCEPTED_RISKS of `{tid}` — the plan set these aside; none retires a criterion, "
                       f"and a divergence from a criterion is its value, fail (Inv-2, §9.2)\n{negl}\n\n"
-                      f"### Executor's DELIVER report for `{tid}`\n{deliverable}\n")
+                      f"### Executor's DELIVER report for `{tid}`\n{deliverable}\n"
+                      + ("\n" + changes[tid] if tid in (changes or {}) else ""))
     return ("# One scope under validation — the nodes one executor session delivered, parts before the whole\n\n"
             "Validate EACH node below against ITS OWN criteria, over the artifact as delivered. Every "
             "`per_criterion` entry names its node in `task_id` (the id in the node's heading) and the "
