@@ -107,7 +107,7 @@ def _where_it_joins(engine, agents: "AgentRegistry", task, w: tuple | None) -> s
     return w[0] if w is not None else None
 
 
-def _work_of(engine, agents: "AgentRegistry", node, ex) -> tuple | None:
+def _work_of(engine, agents: "AgentRegistry", node, ex, told: bool = False) -> tuple | None:
     """(repository, commit or branch, its name there) of a node's delivered work, WHATEVER PERFORMED IT — what every
     join, merge and naming of a node's result reads. A DONE node whose DELIVER recorded a commit: THAT COMMIT BY ITS ID,
     read from the project's store where it is joined (`join_whole`, `store.give`) — whatever became of its place, its
@@ -118,13 +118,13 @@ def _work_of(engine, agents: "AgentRegistry", node, ex) -> tuple | None:
     accepted work is not there to join."""
     w, sha = _workspace(engine, agents, node), node.state == State.DONE and engine.accepted_delivery(node.id)[1]
     if w is not None and sha:
-        ref, why = _accepted_ref(engine, node, w, ex)
+        ref, why = _accepted_ref(engine, node, w, ex, told)
         return w[0], ref, (w[2] if ref else why)
     if w is not None:
 
         if not _has_branch(w, ex):
             return None
-        ref, why = _accepted_ref(engine, node, w, ex) if node.state == State.DONE else (w[2], None)
+        ref, why = _accepted_ref(engine, node, w, ex, told) if node.state == State.DONE else (w[2], None)
         return w[0], ref, (w[2] if ref else why)
     if not sha:
         return None
@@ -150,25 +150,39 @@ def _has_branch(w: tuple, execution) -> bool:
     return W.git(w[0], "rev-parse", "--verify", "--quiet", f"refs/heads/{w[2]}", execution=execution).returncode == 0
 
 
-def _accepted_ref(engine, node, w: tuple, execution) -> tuple[str | None, str | None]:
+#: (repository, commit, tree) once seen carrying it: a commit's tree never changes, so the frontier, asking on every poll
+#: for every passed part, asks git once a process — measured: three child processes a part a poll, a third of a run's.
+#: A process started since asks again; a commit gone from that repository since is given back where it joins (`_given`)
+_CARRIES: set[tuple[str, str, str]] = set()
+
+
+def _accepted_ref(engine, node, w: tuple, execution, told: bool = False) -> tuple[str | None, str | None]:
     """(what to merge of a DONE node's branch, why nothing) — the commit its PASS accepted, not whatever the branch
     holds now: the branch is the agents' to write, and the verdict is about the result as it stood at DELIVER
-    (§11.3). A branch moved since is said once; a node whose delivery named no tree joins its branch as before."""
+    (§11.3). A branch moved since is said once, where it joins or lands (`told`): a read of what would join asks git
+    nothing about the branch's tip; a node whose delivery named no tree joins its branch as before."""
     tree, carried = engine.accepted_delivery(node.id)
     if tree is None:
         return w[2], None
     # the commit recorded at DELIVER, read by its id into the base (`_given`) where it still carries that tree; for a
     # delivery recorded before commits were, the newest commit of the branch that does
-    if carried and W.git(w[0], "cat-file", "-e", f"{carried}^{{commit}}", execution=execution).returncode and (
-            why := _given(engine, carried, w[0], execution)):
-        return None, why
-    sha = (carried if carried and W.git(w[0], "rev-parse", "--verify", "--quiet", f"{carried}^{{tree}}",
-                                         execution=execution).stdout.strip() == tree
-           else None if carried else W.accepted_commit(w[0], w[2], tree, execution=execution))
+    if carried and (seen := (str(w[0]), carried, tree)) in _CARRIES:
+        sha = carried
+    else:
+        if carried and W.git(w[0], "cat-file", "-e", f"{carried}^{{commit}}", execution=execution).returncode and (
+                why := _given(engine, carried, w[0], execution)):
+            return None, why
+        sha = (carried if carried and W.git(w[0], "rev-parse", "--verify", "--quiet", f"{carried}^{{tree}}",
+                                             execution=execution).stdout.strip() == tree
+               else None if carried else W.accepted_commit(w[0], w[2], tree, execution=execution))
+        if carried and sha == carried:
+            _CARRIES.add(seen)
     if sha is None:
         return None, f"its branch `{w[2]}` no longer carries the tree its PASS accepted ({tree[:12]})"
-    tip = W.git(w[0], "rev-parse", f"{w[2]}^{{tree}}", execution=execution).stdout.strip()
-    if tip != tree and engine.say_once(f"moved:{node.id}:{tree}"):
+    # …the tip only where the commit joins: the frontier read it for every passed part on every poll (measured: a tenth
+    # of a run's child processes) to say once what changes nothing already joined
+    if told and W.git(w[0], "rev-parse", f"{w[2]}^{{tree}}", execution=execution).stdout.strip() != tree \
+            and engine.say_once(f"moved:{node.id}:{tree}"):
         engine.emit_info("delegate", f"{node.id}: its branch `{w[2]}` moved after its PASS — the accepted commit "
                                      f"{sha[:12]} joins, not the branch as it stands")
     return sha, None
@@ -187,7 +201,7 @@ def join_whole(engine, agents: "AgentRegistry", task_id) -> str | None:
         return None
     parent, ex = engine.graph.get_parent(t.id), execution_of(engine, agents)
     w, pw = _workspace(engine, agents, t), _workspace(engine, agents, parent) if parent is not None else None
-    if (work := _work_of(engine, agents, t, ex)) is None:
+    if (work := _work_of(engine, agents, t, ex, told=True)) is None:
         return None
     base, ref, name = work
     # …WHERE ITS WHOLE WILL WORK, made now if the whole's session has not started yet: joined straight into the base,
@@ -435,7 +449,7 @@ def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tup
         if x is None or str(x.id) in inside or not (x.state == State.DONE or str(x.id) in kept):
             continue
         xw = _workspace(engine, agents, x)
-        if xw is not None and xw[2] == branch or (work := _work_of(engine, agents, x, ex)) is None \
+        if xw is not None and xw[2] == branch or (work := _work_of(engine, agents, x, ex, told=True)) is None \
                 or not (work[0] and same_place(work[0], base)):
             continue
         _, ref, name = work
@@ -445,7 +459,10 @@ def _enter_workspace(engine, agents: "AgentRegistry", top, members: list) -> tup
             continue
         if engine.graph.get_parent(x.id) is not None and engine.graph.get_parent(x.id).id == top.id:
             _before_a_part_joins(engine, top, base, place, ex)
-        if (why := W.merge(base, place, ref, f"gfso: {x.id} joins {top.id}", execution=ex)):
+        # …read by its id into the base the merge takes it from, as `_accepted_ref` did before it remembered a read
+        # (`_CARRIES`): a commit gone from the base since comes back from the store, not named a merge that failed
+        if (why := engine.accepted_delivery(x.id)[1] and _given(engine, ref, base, ex)
+                or W.merge(base, place, ref, f"gfso: {x.id} joins {top.id}", execution=ex)):
             unjoined.append((str(x.id), name, why, ref))    # …and the accepted commit: what it merges, held on
             try:                                             # …a branch named in its own repository, as its packet says;
                 if xw is not None:                           # a holder's recorded commit its objects already reach
@@ -608,7 +625,7 @@ def _land_from_its_place(engine, agents: "AgentRegistry", root, ex) -> str | Non
         sha = engine.accepted_delivery(root.id)[1]
         return (f"its accepted commit {sha[:12]} was recorded before the log named its repository - {NOT_ON_ITS_BRANCH}: "
                 f"reopen the root and deliver its work again" if sha else None)
-    sha, why = _accepted_ref(engine, root, w, ex)
+    sha, why = _accepted_ref(engine, root, w, ex, told=True)
     if sha is None:
         return why
     if engine.accepted_delivery(root.id)[1] and (why := _given(engine, sha, w[0], None)):

@@ -112,7 +112,9 @@ def test_the_wholes_packet_names_a_joined_part_whose_work_is_gone(tmp_path):
     e.stop()
 
 
-def test_an_executor_round_hands_its_packet_the_parts_not_there(monkeypatch):
+def test_an_executor_round_hands_its_packet_the_parts_not_there(monkeypatch, tmp_path):
+    """…its place a directory of its own: given `.`, the session's observation copied and weighed this whole repository
+    — its data and the suite's temp — 190 s of the suite's 420 (2026-11-27)."""
     e = make_engine()
     e.start()
     T.TOOLS["create_task"](e, "root", {"description": "the goal", "criteria": [criterion("g", "G holds")]},
@@ -121,9 +123,9 @@ def test_an_executor_round_hands_its_packet_the_parts_not_there(monkeypatch):
     T.signal(e, "root", "ACCEPT", "me")
     e.wait_idle()
     asked, said = {}, []
-    monkeypatch.setattr(S, "_enter_workspace", lambda *a, **k: (".", [], None))
+    monkeypatch.setattr(S, "_enter_workspace", lambda *a, **k: (str(tmp_path), [], None))
     monkeypatch.setattr(S, "parts_not_there", lambda *a, **k: [("root.part", ["ld.c"], "a" * 12, "b" * 12, {"ld.c": "c0ffee1 a sibling joins"})])
-    monkeypatch.setattr(S, "performer", lambda *a, **k: ("me", {"workdir": "."}))
+    monkeypatch.setattr(S, "performer", lambda *a, **k: ("me", {"workdir": str(tmp_path)}))
     monkeypatch.setattr(S, "emit_cb", lambda *a, **k: said.append)
 
     def _stop(engine, node_id, executor_id, cfg, _llm, role, prompt, packet, *a, **k):

@@ -123,8 +123,11 @@ def _dispatch_validate(e, agents, verdict_payload):
     started = d.dispatch_once()
     # until the VALIDATION is over, not until the canned text was read: the verdict is recorded and signed
     # after the fake returns, and waiting on the text alone raced that under load
+    # …until the dispatcher's own threads have ended, not until the canned text is read: a validation the system's own
+    # checks decide never asks the fake, and waiting on its text ran every such test to the 30 s cap (2026-11-27)
     for _ in range(3000):                  # …a judge's copy is read by id from the store first: seconds, not ms
-        if not llm._texts and not any(e.claims.validation_in_flight(t.id) for t in e.all_tasks()):
+        if (not any(getattr(getattr(th, "_target", None), "__self__", None) is d for th in threading.enumerate())
+                and not any(e.claims.validation_in_flight(t.id) for t in e.all_tasks())):
             break
         time.sleep(0.01)
     e.wait_idle()
@@ -556,7 +559,7 @@ def test_parent_validation_waits_for_children_and_rejected_verdict_frees_key(tmp
     T.signal(e, "kid", "PASS", "exec-1")
     assert "validate:par" in d.dispatch_once()                # children settled → fresh validation
     for _ in range(3000):                  # …until the validation is over, its copy read by id first
-        if not llm._texts and e.graph.get_state(TaskId("par")).name != "VALIDATING":
+        if e.graph.get_state(TaskId("par")).name != "VALIDATING":        # …its own end: the fake may go unasked
             break
         time.sleep(0.01)
     e.wait_idle()

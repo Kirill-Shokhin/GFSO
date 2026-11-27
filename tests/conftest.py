@@ -521,6 +521,10 @@ def pytest_addoption(parser):
 
 @pytest.hookimpl(tryfirst=True)     # …before pytest's own reads the base temp
 def pytest_configure(config):
+    # …`-n` deals the tests out by worksteal, not in collection order: the git-heavy files collected side by side went to
+    # the same two workers, 400 s busy beside fourteen at 200, and the wall was theirs (measured 2026-11-27)
+    if getattr(config.option, "dist", None) == "load":
+        config.option.dist = "worksteal"
     if worker := getattr(config, "workerinput", None):
         config.option.basetemp = str(Path(config.option.basetemp).parent / worker["workerid"].removeprefix("gw"))
     elif config.option.basetemp is None:

@@ -7,6 +7,7 @@ and the third does; let `accepted_artifact` keep the last delivery instead of th
 from __future__ import annotations
 
 import shutil
+import traceback
 from pathlib import Path
 
 import pytest
@@ -58,10 +59,25 @@ def test_a_branch_moved_after_its_pass_joins_the_accepted_commit(tmp_path):
     (place / "a.txt").write_text("written after the verdict\n")
     W.commit_all(base, place, "later", "someone", branch="gfso/p/a")
     e = _Engine(tree)
-    ref, why = WS._accepted_ref(e, _Node(), w, LocalExecution())
+    ref, why = WS._accepted_ref(e, _Node(), w, LocalExecution(), told=True)     # …where it joins
     assert why is None and _git(base, "rev-parse", f"{ref}^{{tree}}").strip() == tree
     assert W.merge(base, base, ref, "join") is None
     assert (base / "a.txt").read_text() == "accepted\n" and "moved after its PASS" in e.said[0]
+
+
+def test_a_read_of_what_would_join_asks_git_once_and_never_of_the_tip(tmp_path, monkeypatch):
+    """The frontier asks this for every passed part on every poll: the accepted commit read again costs no child process
+    (its tree is immutable), and a moved branch is said only where the commit joins."""
+    base, place, tree, w = _delivered(tmp_path)
+    delivered = W.head(place)
+    (place / "a.txt").write_text("written after the verdict\n")
+    W.commit_all(base, place, "later", "someone", branch="gfso/p/a")
+    e, calls, real = _Engine(tree, delivered), [], W.git
+    monkeypatch.setattr(W, "git", lambda *a, **k: calls.append(a) or real(*a, **k))
+    first = WS._accepted_ref(e, _Node(), w, LocalExecution())
+    calls.clear()
+    assert WS._accepted_ref(e, _Node(), w, LocalExecution()) == first and first[1] is None
+    assert calls == [] and e.said == [], (calls, e.said)
 
 
 def test_a_branch_that_no_longer_carries_the_accepted_tree_does_not_join(tmp_path):
@@ -133,16 +149,40 @@ def test_a_part_whose_branch_moved_after_its_pass_reaches_its_whole_as_accepted(
     e, agents, _ = _plan(tmp_path, whole="exec-1")
     real, moved = WS._accepted_ref, []
 
-    def _moved_first(engine, node, w, execution):
+    def _moved_first(engine, node, w, execution, told=False):
         if not moved:
             moved.append(node.id)
             (Path(w[1]) / "tampered.c").write_text("not accepted\n")
             W.commit_all(w[0], w[1], "after the verdict", "someone")
-        return real(engine, node, w, execution)
+        return real(engine, node, w, execution, told)
     monkeypatch.setattr(WS, "_accepted_ref", _moved_first)
     sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}), "par": _Executor("par", {})}
     _run(e, agents, sessions, _in(e, "par", states=(State.VALIDATING, State.DONE)))
     assert moved and {"a.c", "b.c"} <= sessions["par"].saw and "tampered.c" not in sessions["par"].saw
+    e.stop()
+
+
+def test_a_part_whose_commit_left_the_base_after_it_was_read_still_reaches_its_whole(tmp_path, monkeypatch):
+    """A read of a part's accepted commit is remembered (`_CARRIES`); the commit gone from the base after it — its branch
+    deleted, its objects pruned — still reaches the whole by its id from the project's store, at every merge of it, not
+    named a merge that failed (critic over the read once a process)."""
+    e, agents, _ = _plan(tmp_path, whole="exec-1")
+    real_merge, gone, sites = W.merge, [], []
+
+    def _pruned_first(base, into, ref, *a, **k):
+        sites.append(next(f.name for f in reversed(traceback.extract_stack()[:-1]) if f.filename.endswith("workspaces.py")))
+        if not gone and ref == e.accepted_delivery(TaskId("a"))[1]:     # …the commit of the branch it deletes
+            gone.append(len(sites))
+            for args in (["branch", "-D", "gfso/p/a"], ["reflog", "expire", "--expire=now", "--all"],
+                         ["gc", "-q", "--prune=now"]):
+                _git(base, *args)
+            assert W.git(base, "cat-file", "-e", f"{ref}^{{commit}}").returncode, "the probe did not take the commit away"
+        return real_merge(base, into, ref, *a, **k)
+    monkeypatch.setattr(W, "merge", _pruned_first)
+    sessions = {"a": _Executor("a", {"a.c": "A\n"}), "b": _Executor("b", {"b.c": "B\n"}), "par": _Executor("par", {})}
+    _run(e, agents, sessions, _in(e, "par", states=(State.VALIDATING, State.DONE)))
+    assert gone and "_enter_workspace" in sites[gone[0]:], f"no merge of it after it was gone: {sites}"
+    assert {"a.c", "b.c"} <= sessions["par"].saw, (sessions["par"].saw, sites)
     e.stop()
 
 
@@ -166,13 +206,13 @@ def test_a_part_whose_accepted_work_is_gone_from_its_branch_is_merged_by_nobody(
     e, agents, _ = _plan(tmp_path, whole="exec-1")
     real, rewritten, merged = WS._accepted_ref, [], []
 
-    def _rewritten_first(engine, node, w, execution):
+    def _rewritten_first(engine, node, w, execution, told=False):
         if not rewritten and str(node.id) == "a":
             rewritten.append(node.id)
             _git(w[1], "reset", "-q", "--hard", "HEAD~1")
             (Path(w[1]) / "tampered.c").write_text("not accepted\n")
             W.commit_all(w[0], w[1], "another history", "someone")
-        return real(_Unrecorded(engine) if str(node.id) == "a" else engine, node, w, execution)
+        return real(_Unrecorded(engine) if str(node.id) == "a" else engine, node, w, execution, told)
     real_merge = W.merge
     monkeypatch.setattr(WS, "_accepted_ref", _rewritten_first)
     monkeypatch.setattr(W, "merge", lambda base, into, ref, *a, **k: merged.append(ref) or real_merge(base, into, ref, *a, **k))

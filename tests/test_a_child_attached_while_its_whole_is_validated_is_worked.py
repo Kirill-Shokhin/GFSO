@@ -394,7 +394,7 @@ def test_a_review_that_moved_nothing_lifts_the_hold_though_it_counts_nothing(tmp
         return {"stats": [{"cost_usd": 0}]}
 
     monkeypatch.setattr(DG, "ISSUER_VERBS", I.Verbs(llm=None, busy=flight, review=review, refine=None))
-    d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None,
+    d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: {"status": "not_offered"},
                    validator_runner=lambda *a, **k: "rejected")
     try:
         assert "validate:root" not in d.dispatch_once()
@@ -541,7 +541,7 @@ def test_under_auto_the_system_reopens_a_refuted_pass_whose_issuer_role_it_holds
     the run stood silent on it."""
     e, agents = _delivered_whole(tmp_path)
     monkeypatch.setattr(DG, "clear_workspaces", lambda *a: None)
-    d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None)
+    d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: {"status": "not_offered"})
     d._rejoined_once = True
     try:
         instrument_passes(e, TaskId("root"))
@@ -653,7 +653,7 @@ def test_a_holder_keeps_his_moves_and_is_named_them(tmp_path):
         instrument_passes(e, TaskId("kid"))
         assert "error" not in (o := T.signal(e, "kid", "PASS", "user")), o
         e.wait_idle()
-        d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: None)
+        d = Dispatcher(e, agents, poll=30, runner=lambda *a: None, consent_runner=lambda *a: {"status": "not_offered"})
         d.dispatch_once()
         e.wait_idle()
         assert e.graph.get_state(TaskId("kid")) == State.DONE and e.graph.get_task(TaskId("kid")).reopens == 0
