@@ -36,7 +36,7 @@ from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.issuer import CONTACT_ROUND as _CONTACT, signal_ok as _signal, system_issues
 from gfso.core.types import (BATCH, HOST, LAID, AgentId, Criteria, LLMProviderPort, PlaceUnavailable, Probe, Signal, Stage,
                              State, TaskId, Verdict, files_at, system_decides)
-from gfso.engine.verdicts import BEING_OBSERVED, OUTSIDE, READ_NOT_OBSERVED, outside_seen
+from gfso.engine.verdicts import BEING_OBSERVED, OUTSIDE, READ_NOT_OBSERVED, carried_outside, outside_seen
 from gfso.core.protocol.invariants import INTENT, RED_SET, criterion_meant, probes_of, red_set, spoken_verdict, verdict_word
 from gfso.core.protocol.procedure import laid_down_dirs, probe_id
 from gfso.core.protocol.accounting import (NOT_ASKED_AGAIN, SYSTEMS_ACT, canonical_citations, with_engine_observations,
@@ -1097,6 +1097,10 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
     # list the report adds decides nothing
     failed = red_set(entries, [c.name for c in task.spec.criteria])
     verdict = Verdict.FAIL if failed else Verdict.PASS
+    # WHAT A REFUSED ATTEMPT SAW OUTSIDE THE CRITERIA STANDS: a contact reading for the issuer (§8.3 FM-1.f), no value of
+    # V, so the refusal of that report's verdict refuses none of it. Dropped with the report, the issuer never heard it,
+    # and the retry — asked to close the gap — did not find it again (replay r3, 2026-11-28: named at 02:19, refused, lost)
+    said["outside"] = carried_outside(said.get("outside") or [], engine.refused_report_for_this_delivery(task.id))
     try:
         if said.get("contradiction"):
             raise ValueError(said["contradiction"])
@@ -1114,7 +1118,8 @@ def _record_node(engine: Engine, task, entries: list, said: dict, validator, llm
         kept = _keep_rejected_report(engine.project_name, str(task.id), str(e), text)
         try:
             engine.record_rejected_report(task.id, str(e), entries, tools_used=tools,
-                                          validated_by={"validator": validator or "validate_result", "model": _model})
+                                          validated_by={"validator": validator or "validate_result", "model": _model},
+                                          outside=said["outside"])
         except Exception:
             log.warning(f"could not keep the refused report on {task.id}", exc_info=True)
         return {"verdict": None, "failed_criteria": [], "error": str(e), "report_kept_at": kept,

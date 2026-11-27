@@ -186,6 +186,21 @@ def see_outside(storage, task_id: TaskId, seen: dict) -> None:
             storage.store_exec_verdict(task_id, json.dumps(rec, default=str))
 
 
+def carried_outside(now: list, refused: Optional[dict]) -> list:
+    """`now` — this report's observations outside the criteria — and every one the REFUSED report on the same delivery
+    (`refused`, `Engine.refused_report_for_this_delivery`) made that this one does not say again (by `what`), each to be
+    seen anew by the system's run of its probe: a refusal is of a report's verdict, and what it saw outside the criteria
+    was never a value of V (Inv-2, §8.3)."""
+    key = lambda o: " ".join(str(o.get("what") or "").split())
+    said, out = {key(o) for o in now}, list(now)
+    for o in ((refused or {}).get("outside") or ()):
+        if isinstance(o, dict) and (k := key(o)) and k not in said:
+            said.add(k)
+            out.append({**o, "observed": BEING_OBSERVED if o.get("probe") else READ_NOT_OBSERVED,
+                        "carried_from": (refused or {}).get("ts")})
+    return out
+
+
 def _outside(outside) -> dict:
     """The record's `outside` key, written only where the report observed something: a report without one is stored
     as it always was."""

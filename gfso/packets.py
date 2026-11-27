@@ -800,6 +800,10 @@ def validator_packet(engine: Engine, task, deliverable: str, workdir: Optional[s
              f"time decides nothing. A criterion nothing you observed decides is `undecidable`, one whose words no delivery can "
              f"decide `not_decidable` with why; a delivery that does not build or run is a `fail`. "
              f"This is attempt {int(_gap.get('refusals', 1)) + 1}.\n"
+             + ("What it saw OUTSIDE the criteria stays on the record for the issuer — say again only what you would "
+                "correct; the two questions stand as before:\n"
+                + "".join(f"- {o.get('what')}\n" for o in _gap["outside"] if isinstance(o, dict))
+                if _gap.get("outside") else "")
              if _gap else "")
     negl = "\n".join(f"- {n.item}" for n in set_aside_of(task))
     return (f"# Node under validation: {tid} — {task.spec.name}\n\n{task.spec.description}\n{prior}"

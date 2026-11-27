@@ -499,6 +499,8 @@ def _what_there_is_to_decide_with(engine: Engine, task_id: str, out: dict,
                                                     "why_it_is_not_a_verdict"),
             "refusals_on_this_node": engine.refusals_on_this_delivery(TaskId(task_id)),   # two = the contract, not the run
             "observed_anyway": obs,
+            # …and what it saw outside the criteria: the issuer's, refused verdict or not (§8.3)
+            **({"outside": rej["outside"]} if rej.get("outside") else {}),
             "ts": rej.get("ts"),
             "note": "this is EVIDENCE, not a verdict: the validator could not decide every criterion, "
                     "and ⊥ is not a pass. Read it, then either run the validation again or record "

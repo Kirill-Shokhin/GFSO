@@ -1750,8 +1750,9 @@ class Engine:
     def record_rejected_report(self, task_id: TaskId, defects: str,
                                per_criterion: Optional[list] = None,
                                tools_used: Optional[dict] = None,
-                               validated_by: Optional[dict] = None) -> None:
-        """Keep a report the engine REFUSED to record as a verdict — as evidence, never as one.
+                               validated_by: Optional[dict] = None, outside=()) -> None:
+        """Keep a report the engine REFUSED to record as a verdict — as evidence, never as one. `outside`: what it saw
+        outside the criteria, which the next record on this delivery carries (`verdicts.carried_outside`).
 
         §2.3: ⊥ is not a pass, so a refused report stops the node and the issuer decides. They were
         given nothing to decide WITH: the observations lived in a return value the dispatcher does
@@ -1779,6 +1780,7 @@ class Engine:
                          "tools_used": dict(tools_used or {}),
                          # …and WHO validated, so an entry reused later says so on the verdict
                          "validated_by": dict(validated_by or {}),
+                         **({"outside": list(outside)} if outside else {}),
                          "refusals": (int(prev.get("refusals", 0)) + 1) if _same else 1,
                          **stamp(gen), **({"tree": tree} if tree else {}),
                          "ts": datetime.now().isoformat(sep=" ", timespec="seconds")})
