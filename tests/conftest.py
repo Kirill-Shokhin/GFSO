@@ -77,6 +77,26 @@ def _no_thread_writes_through_the_interpreters_end():
 
 atexit.register(_no_thread_writes_through_the_interpreters_end)
 
+#: THE SUITE'S HOME IS SET HERE, AT IMPORT, before any module of the product: a module that reads a path as it is
+#: imported reads it at collection, ahead of every fixture — `gfso.api.server`'s own registry took the checkout's
+#: `data/`, the live server's projects, and `past.OPEN` handed them to every test that read the past: 51 spans of this
+#: machine's real projects in one test's answer (2026-11-28). `_own_state_home` sweeps, owns and restores it
+
+#: the process a suite's home belongs to, in the home: a run cut short is known at once where the process is gone
+OWNER = "suite.pid"
+_PRIOR = {n: os.environ.get(n) for n in ("GFSO_HOME", "CLAUDE_CONFIG_DIR", "GFSO_DATA_DIR", "GFSO_DB_PATH")}
+MINE = tempfile.mkdtemp(prefix=HOME)
+(Path(MINE) / OWNER).write_text(str(os.getpid()), encoding="utf-8")
+atexit.register(lambda: shutil.rmtree(MINE, onerror=_writable_then))   # …xdist's controller runs no fixture of it
+os.environ["GFSO_HOME"] = MINE
+# …nor the person's own Claude state: a host session's state dir is `claude_config_dir()`, and tests wrote their
+# sessions' files into ~/.claude/gfso-sessions (2026-11-15); a test that sets its own keeps it
+os.environ["CLAUDE_CONFIG_DIR"] = str(Path(MINE) / "claude")
+# …nor a server's state: a validator's probe running this suite inherits the server's environment, and a data
+# directory or database named there outranks the home — the suite's stores were laid in the live server's data
+for _n in ("GFSO_DATA_DIR", "GFSO_DB_PATH"):
+    os.environ.pop(_n, None)
+
 from gfso.adapters import execution as E  # noqa: E402
 from gfso import config as _config  # noqa: E402
 from gfso.config import agents_path  # noqa: E402
@@ -94,8 +114,6 @@ from starlette.testclient import TestClient  # noqa: E402
 
 #: older than this, a suite's home is a run that was cut short: a whole suite takes under an hour
 CUT_RUN_S = 6 * 3600
-#: the process a suite's home belongs to, in the home: a run cut short is known at once where the process is gone
-OWNER = "suite.pid"
 
 
 def _dead(pid_file: Path) -> bool | None:
@@ -139,12 +157,9 @@ def tmp_path(tmp_path_factory) -> Path:
 
 @pytest.fixture(autouse=True, scope="session")
 def _own_state_home():
-    """A home of the suite's own, for the whole session."""
-    prior = os.environ.get("GFSO_HOME")
+    """The suite's home (`MINE`, laid at import) for the whole session; the homes of runs cut short swept."""
     _sweep(*[d for d in Path(tempfile.gettempdir()).glob(HOME + "*")
              if _dead(d / OWNER) or (_dead(d / OWNER) is None and time.time() - d.stat().st_mtime > CUT_RUN_S)])
-    os.environ["GFSO_HOME"] = mine = tempfile.mkdtemp(prefix=HOME)
-    (Path(mine) / OWNER).write_text(str(os.getpid()), encoding="utf-8")
     os.environ["GFSO_ALLOWED_HOSTS"] = "testserver"     # the name Starlette's TestClient sends; the door refuses others
     E.CEILING_GROUP = "gfso/suite"                      # its live containers under the machine's ceiling, never its limit
     _config.local_agents = lambda: True                 # the suite's sessions are fakes on this host, by its own word;
@@ -152,18 +167,11 @@ def _own_state_home():
     os.environ["GFSO_NETWORK_RECORD"] = "off"           # …a listener for each worker's live tests; its own file asks for it
     os.environ["GFSO_NO_UPDATE_CHECK"] = "1"            # …nor PyPI asked by a doctor or a use_project under test
     os.environ["GFSO_OPEN_PAGE"] = "0"                  # …nor a browser opened by a go under test
-    # …nor the person's own Claude state: a host session's state dir is `claude_config_dir()`, and tests wrote their
-    # sessions' files into ~/.claude/gfso-sessions (2026-11-15); a test that sets its own keeps it
-    prior_cfg = os.environ.get("CLAUDE_CONFIG_DIR")
-    os.environ["CLAUDE_CONFIG_DIR"] = str(Path(mine) / "claude")
-    # …nor a server's state: a validator's probe running this suite inherits the server's environment, and a data
-    # directory or database named there outranks the home — the suite's stores were laid in the live server's data
-    prior_state = {n: os.environ.pop(n, None) for n in ("GFSO_DATA_DIR", "GFSO_DB_PATH")}
     E._DISK_WATCH.set()                                 # …nor a watch beside each worker's: a test runs its own
     E._WATCH.set()
     yield
-    _sweep(Path(mine))
-    for name, was in (("GFSO_HOME", prior), ("CLAUDE_CONFIG_DIR", prior_cfg), *prior_state.items()):
+    _sweep(Path(MINE))
+    for name, was in _PRIOR.items():
         if was is None:
             os.environ.pop(name, None)
         else:
