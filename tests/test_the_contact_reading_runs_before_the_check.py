@@ -60,6 +60,9 @@ class _Script:
         self.e, self.order, self.b_users, self.a_users, self.a_systems, self.b_cwds = e, [], [], [], [], []
         self.finds, self.a = (lambda cwd: [_find()]), (lambda d, user: d)
         self.b_tools, self.a_tools, self.b_raise = {"Bash": 3, "Read": 2}, {"Bash": 1}, False
+        # …how each B call ends, in turn, past which it reports: `cut` at its timeout, `nothing` (no report)
+        self.b_ends, self.b_asked, self.forgotten = [], [], []
+        self.cut_sessions, self.resume_refused = set(), False   # …a turn on a cut session resumes it, unless refused
 
 
 class _Role(_Validator):
@@ -69,17 +72,22 @@ class _Role(_Validator):
         super().__init__(s.e)
         self.s, self.last_tool_calls = s, {}
 
-    def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None):
+    def run_agent(self, system, user, allowed_tools, cwd=None, timeout=None, session=None, keep_cut=False):
         s = self.s
         if system == CONTACT_PROMPT:
             s.order.append("B")
             s.b_users.append(user)
             s.b_cwds.append(cwd)
-            self.calls.append({"duration_ms": 1, "output_tokens": 1})
+            s.b_asked.append({"session": session, "keep_cut": keep_cut, "timeout": timeout})
+            self.calls.append({"duration_ms": 1, "output_tokens": 1,
+                               "resumed": session in s.cut_sessions and not s.resume_refused})
             if s.b_raise:
                 raise RuntimeError("the contact reader fell over")
             self.last_tool_calls = dict(s.b_tools)
-            return _fenced({"finds": s.finds(cwd)})
+            if (ends := s.b_ends.pop(0) if s.b_ends else "report") == "cut":
+                self.calls[-1].update(ended="cut", stop_reason="timeout")
+                s.cut_sessions.add(session)
+            return "" if ends in ("cut", "nothing") else _fenced({"finds": s.finds(cwd)})
         s.order.append("A")
         s.a_users.append(user)
         s.a_cwd = cwd
@@ -87,6 +95,9 @@ class _Role(_Validator):
         self.last_tool_calls = dict(s.a_tools)
         text = super().run_agent(system, user, allowed_tools, cwd, timeout)
         return _fenced(s.a(json.loads(text.split("```json\n", 1)[1].rsplit("\n```", 1)[0]), user))
+
+    def forget(self, session):
+        self.s.forgotten.append(session)
 
 
 @pytest.fixture
@@ -459,3 +470,48 @@ def test_the_system_runs_no_contact_claim_on_a_criterion(monkeypatch):
     said = {"root": {"outside": [claim, find]}}
     VAL._observe_outside(engine, [], "w", said)
     assert ran == [("root", 0)] and "r1" not in seen and claim["observed"] == "the check answered: held", (ran, seen)
+
+
+# ── G1: a reading cut at its time reports what it has ────────────────────────────────────────────────────────────────
+
+def test_a_reading_cut_at_its_time_is_asked_once_for_its_report_and_that_report_is_recorded(contact):
+    """Measured on the gate (SET.md attempts 8–9): 3 of 4 B tries cut by their half of T_validate, each having run the
+    whole suite, returned nothing — every probe B had made was lost, and A was sent the whole role."""
+    e, repo, call, s = contact
+    s.b_ends = ["cut"]
+    _delivered(e, repo, call)
+    assert s.order == ["B", "B", "A"], s.order
+    first, report = s.b_asked
+    assert first["session"] and first["keep_cut"] and report["session"] == first["session"], s.b_asked
+    assert report["timeout"] <= 60 and not report["keep_cut"], report
+    assert "Your time for this reading is over" in s.b_users[1], s.b_users[1]
+    rec = e.contact_reading("root")
+    assert rec["done"] and rec["rows"] and rec["tools"] == {"Bash": 6, "Read": 4}, rec
+    assert f"CONTACT [{RID}]" in s.a_users[0] and first["session"] in s.forgotten
+
+
+def test_a_report_turn_that_did_not_continue_the_reading_is_no_report(contact):
+    """Outside critic over G1: a report turn that opened FRESH (no transcript kept, or `--resume` refused and the cold
+    retry sent «Your time is over» to a model that saw none of the work) answered «nothing found», recorded as a done
+    reading with no finds — the check spared question 1 over a reading that never reported."""
+    e, repo, call, s = contact
+    s.b_ends, s.resume_refused = ["cut", "report"], True
+    _delivered(e, repo, call)
+    assert s.order == ["B", "B", "B", "A"], f"a report turn that opened fresh was taken as the reading: {s.order}"
+    assert s.b_asked[2]["session"] != s.b_asked[0]["session"], "the fresh try continued the cut conversation"
+
+
+def test_a_reading_whose_report_turn_fails_is_read_once_more_afresh(contact):
+    e, repo, call, s = contact
+    s.b_ends = ["cut", "nothing"]
+    _delivered(e, repo, call)
+    assert s.order == ["B", "B", "B", "A"], s.order
+    assert s.b_asked[2]["session"] != s.b_asked[0]["session"], "the fresh try continued the cut conversation"
+    assert e.contact_reading("root")["done"]
+
+
+def test_a_reading_that_ended_on_its_own_is_asked_for_no_report(contact):
+    e, repo, call, s = contact
+    s.b_ends = ["nothing", "report"]
+    _delivered(e, repo, call)
+    assert s.order == ["B", "B", "A"] and "Your time for this reading is over" not in s.b_users[1], s.b_users

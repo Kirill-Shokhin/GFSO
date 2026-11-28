@@ -112,14 +112,18 @@ class RecordingProvider(LLMProviderPort):
         raise NotImplementedError
 
     def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...], cwd: str | None = None,
-                  timeout: int | None = None, max_turns: int | None = None, session: str | None = None) -> str:
-        """The port's agent run — a work session's under its ceiling and the resource's budget (`budget.run`)."""
+                  timeout: int | None = None, max_turns: int | None = None, session: str | None = None,
+                  keep_cut: bool = False) -> str:
+        """The port's agent run — a work session's under its ceiling and the resource's budget (`budget.run`), whose
+        rounds continue by the budget's own rule; any other's one round, `keep_cut` its own (`LLMProviderPort`)."""
         if not self.budgeted:
-            return self.agent_round(system, user, allowed_tools, cwd, timeout, max_turns, session)
+            # …asked only by a caller keeping a cut conversation: a round that asks none is the same call it always was
+            return self.agent_round(system, user, allowed_tools, cwd, timeout, max_turns, session,
+                                    **({"keep_cut": True} if keep_cut else {}))
         return (budget.hooked if self.handover_hook else budget.run)(self, system, user, allowed_tools, cwd, timeout,
                                                                      max_turns, session)
 
-    def agent_round(self, system, user, allowed_tools, cwd, timeout, max_turns, session) -> str:
+    def agent_round(self, system, user, allowed_tools, cwd, timeout, max_turns, session, keep_cut=False) -> str:
         """One round of an agent run, the transport's own."""
         return LLMProviderPort.run_agent(self, system, user, allowed_tools, cwd, timeout, max_turns, session)
 

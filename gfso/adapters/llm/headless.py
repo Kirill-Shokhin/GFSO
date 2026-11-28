@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 from gfso.core.types import ExecutionPort, PlaceUnavailable
 from . import credentials
 from .base import RecordingProvider
-from .stats import is_limit, is_unauthorized, refused_by_limit
+from .stats import TIMED_OUT, is_limit, is_unauthorized, refused_by_limit
 from .structured import holds_an_object
 from gfso.config import MODEL_DEFAULT, agent_trace_dir, subprocess_env
 from gfso.adapters.execution import LocalExecution, scrubs
@@ -482,11 +482,13 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
                            "error": str(e), "transport_torn": False, "resumed": resumed, "at": time.time()})
         return ""
 
-    def _after_the_round(self, sid: str | None, out: dict, mine: list) -> None:
+    def _after_the_round(self, sid: str | None, out: dict, mine: list, keep_cut: bool = False) -> None:
         """ONLY A ROUND CUT AT ITS TURN CAP IS CONTINUED: the next round of any other starts with a clean context, each
         agent's own (the author, 2026-09-27: «агенты … с чистым контекстом дешево»). Measured continuing every round
         (GB_sql_database_tn9nii608): a disputing executor repeated its challenge out of the conversation every 24 s, 40
-        calls, each one's input 16k tokens longer."""
+        calls, each one's input 16k tokens longer. `keep_cut`: one cut at its TIMEOUT is kept too, where its caller asks
+        — its next turn is no new round of work but the same reading asked for its form (`validate._contact_call`):
+        killed at its cap, a reading's every probe was lost (gate G1, 3 of 4 tries)."""
         if mine and mine[-1].get("context_window"):
             _WINDOWS[self._model] = mine[-1]["context_window"]
         # …and one its handover hook stopped at the ceiling: its note is asked for by that conversation (`budget.hooked`);
@@ -494,7 +496,8 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         hook = self.hooks.state(sid) if sid in self.hooks.armed else None
         if hook is not None and mine:
             mine[-1]["hook"] = hook
-        if sid and out.get("subtype") != "error_max_turns" and not (hook or {}).get("stopped"):
+        if (sid and out.get("subtype") != "error_max_turns" and not (hook or {}).get("stopped")
+                and not (keep_cut and mine and mine[-1].get("stop_reason") == TIMED_OUT)):
             self.forget(sid)
         elif sid and isinstance(out.get("total_cost_usd"), (int, float)):
             (ex := self.hooks.where(sid)).files.write_bytes(str(kept(ex, sid, "spent")),
@@ -502,7 +505,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
 
     def agent_round(self, system: str, user: str, allowed_tools: tuple[str, ...],
                      cwd: str | None = None, timeout: int | None = None,
-                     max_turns: int | None = None, session: str | None = None) -> str:
+                     max_turns: int | None = None, session: str | None = None, keep_cut: bool = False) -> str:
         """Port B — the AGENT-RUNNER: one headless run WITH work tools (multi-step inside one
         process), returning its final report text. Headless-by-necessity: an agent run needs a harness
         (tools/permissions/cwd); a chat API gets one from the system's own loop (`toolloop.ToolLoop`).
@@ -530,7 +533,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         loaded = ",".join(dict.fromkeys(t.split("(", 1)[0].strip() for t in allowed_tools))
         if session:                                      # a named conversation's CLI state is its place's from here on
             self.hooks.place(session, cwd, self.agent)
-        return self._call(system, user, cwd=cwd, timeout=timeout, session=session,
+        return self._call(system, user, cwd=cwd, timeout=timeout, session=session, keep_cut=keep_cut,
                           tools_args=["--tools", loaded,
                                       "--allowedTools", " ".join(allowed_tools),
                                       "--dangerously-skip-permissions"]
@@ -645,7 +648,8 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         return envelope, text_acc, out_tokens
 
     def _call(self, system: str, user: str, tools_args: list[str] | None = None,
-              cwd: str | None = None, timeout: int | None = None, session: str | None = None) -> str:
+              cwd: str | None = None, timeout: int | None = None, session: str | None = None,
+              keep_cut: bool = False) -> str:
         """One fresh `claude -p` subprocess, STREAMED (stream-json + partial messages): while the model
         generates, cumulative output tokens tick to `on_tick` — real progress, never an estimate. The
         final `result` event carries the same envelope the aggregate json format did (usage,
@@ -658,11 +662,13 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         # validator following one removed the project's own database (GB_sql_database_tmzgc0724, 2026-10-16)
         if not cwd:
             with self._exec.scratch("gfso-noplace-") as empty:
-                return self._call(system, user, tools_args, empty, timeout, session)
+                return self._call(system, user, tools_args, empty, timeout, session, keep_cut)
         return _once_more(tools_args is None, lambda: self._on_credentials(
-            lambda cred: self._attempt(cred, system, user, tools_args, cwd, timeout, session)), lambda: self._mine.last)
+            lambda cred: self._attempt(cred, system, user, tools_args, cwd, timeout, session, keep_cut)),
+            lambda: self._mine.last)
 
-    def _attempt(self, credential, system: str, user: str, tools_args, cwd: str, timeout, session) -> str:
+    def _attempt(self, credential, system: str, user: str, tools_args, cwd: str, timeout, session,
+                 keep_cut: bool = False) -> str:
         try:
             resuming = self._session_args(session)      # …read where its session keeps it: a dead place stops first
         except PlaceUnavailable as e:
@@ -767,7 +773,9 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
                 # a context of its own: real contexts are the calls that did not
                 "resumed": "--resume" in args,
                 # a round cut at its turn cap, in the record's one word for it (`budget.cut_at_turn_cap`)
-                "stop_reason": "max_turns" if out.get("subtype") == "error_max_turns" else out.get("stop_reason"),
+                # …and one its own timeout killed, no result streamed (`TIMED_OUT`)
+                "stop_reason": "max_turns" if out.get("subtype") == "error_max_turns" else TIMED_OUT
+                               if envelope is None and time.monotonic() - t0 >= cap else out.get("stop_reason"),
                 # …and WHY a call that errored ended: read as "did not parse", 38 re-issues of a root whose packet no
                 # longer fit the model's window answered a bug no executor could fix (GB_sql_database_tmxu0n436)
                 # …with the envelope's own `api_error`: an account's limit came back as "api_error: You've hit your
@@ -800,7 +808,7 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
                 self._exec.end(proc)
             # …a round what stops the project refused never ran: the conversation it would continue is kept
             if not refused_by_limit(self.calls[n0:]):
-                self._after_the_round(session, out, self.calls[n0:])
+                self._after_the_round(session, out, self.calls[n0:], keep_cut)
         # Reached only by a conversation the CLI could not take up (gone, outgrown its window): that is not the round's
         # failure, so the round runs cold — after the first process is gone, which otherwise rewrote the transcript
         # just forgotten and sent the "cold" retry back to `--resume` (critic, live on CLI 2.1.306)
@@ -808,4 +816,4 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         # and still armed: forgotten with the conversation, the hook left the cold run without a ceiling and the provider
         # was sent back to rounds for good (critic over the hook path)
         return self.hooks.across(session, self.forget) or self._call(system, self.resume_fallback or user, tools_args,
-                                                                     cwd, timeout, session)
+                                                                     cwd, timeout, session, keep_cut)

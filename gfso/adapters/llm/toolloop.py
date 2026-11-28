@@ -26,6 +26,7 @@ from gfso.config import agent_trace_dir, work_env
 from gfso.core.types import PlaceUnavailable
 from gfso.adapters.worktrees import base_of
 from gfso.places import cheap_to_ask, names_a_device
+from gfso.adapters.llm.stats import TIMED_OUT
 
 #: what one tool result may carry into the context — the CLI's own cap on a command's output
 OUTPUT_CAP = 30_000
@@ -276,7 +277,7 @@ class ToolLoop:
                             f"— run the tool again if you need it]")
             m["_elided"] = True
 
-    def run(self, system, user, allowed_tools, cwd, timeout, max_turns, session) -> str:
+    def run(self, system, user, allowed_tools, cwd, timeout, max_turns, session, keep_cut=False) -> str:
         """The run's final answer, or "" where it gave none; its record booked on the provider either way."""
         p, t0 = self.p, time.monotonic()
         names = [n for n in dict.fromkeys(t.split("(", 1)[0].strip() for t in allowed_tools) if n in TOOLS]
@@ -303,7 +304,8 @@ class ToolLoop:
                 tools.exec.commands_ended()
         p.book(turns, t0, ended=ended, resumed=resumed, stop_reason=stop, error=error, place=place)
         if kept is not None:                # only a round cut at its cap is continued (the CLI's rule)
-            if stop == "max_turns" or ended in ("limit", "unavailable", "unauthorized"):
+            # …and one cut at its time where its caller asks (`keep_cut`, the CLI's rule)
+            if stop == "max_turns" or ended in ("limit", "unavailable", "unauthorized") or keep_cut and stop == TIMED_OUT:
                 # …and a round a stop refused mid-run is continued after the lift, as the CLI's is (`headless`)
                 files.write_bytes(kept, json.dumps(msgs).encode())
             else:
@@ -317,7 +319,7 @@ class ToolLoop:
         for n in (range(max_turns) if max_turns else itertools.count()):
             left = timeout - (time.monotonic() - t0)
             if left <= 0:
-                return "", "cut", None, f"the run's cap of {timeout}s passed"
+                return "", "cut", TIMED_OUT, f"the run's cap of {timeout}s passed"
             self._elide(msgs, turns[-1].prompt_tokens if turns else None)
             t = self.p.wire.turn([{k: v for k, v in m.items() if not k.startswith("_")} for m in msgs], specs,
                                  timeout=left)

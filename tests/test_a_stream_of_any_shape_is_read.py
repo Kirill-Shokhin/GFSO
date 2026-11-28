@@ -110,7 +110,7 @@ def test_an_agent_run_loads_only_the_tools_it_may_use(tmp_path):
     schemas of all built-in tools (58% of its cached input, 2026-09-27) and held Write and Edit."""
     seen = {}
     llm = ClaudeCodeProvider.__new__(ClaudeCodeProvider)
-    llm._call = lambda system, user, tools_args=None, cwd=None, timeout=None, session=None: seen.update(args=tools_args) or ""
+    llm._call = lambda system, user, tools_args=None, cwd=None, timeout=None, session=None, keep_cut=False: seen.update(args=tools_args) or ""
     llm.run_agent("s", "u", ("Read", "Bash(git *)", "Glob", "Bash"), cwd=str(tmp_path))
     a = seen["args"]
     assert a[a.index("--tools") + 1] == "Read,Bash,Glob"

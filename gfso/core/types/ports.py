@@ -737,8 +737,10 @@ class LLMProviderPort(ABC):
 
     def run_agent(self, system: str, user: str, allowed_tools: tuple[str, ...], cwd: Optional[str] = None,
                   timeout: Optional[int] = None, max_turns: Optional[int] = None,
-                  session: Optional[str] = None) -> str:
-        """One agent run with work tools in `cwd`, continuing `session` where named; its final report."""
+                  session: Optional[str] = None, keep_cut: bool = False) -> str:
+        """One agent run with work tools in `cwd`, continuing `session` where named; its final report. `keep_cut`: a
+        named conversation cut at its `timeout` is kept for its next turn — every other round of a named one but a turn
+        cap's starts clean (the author's clean-context rule)."""
         raise NotImplementedError(f"{type(self).__name__} runs no agents (`runs_agents` is False)")
 
     def forget(self, session: str) -> None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import time
 
 import pytest
 
@@ -48,6 +49,9 @@ def cli(tmp_path, monkeypatch):
 
     def read_stream(self, proc, t0, cap):
         args, ends = seen[-1], state["ends"]
+        if ends == "timeout":                           # …killed at its cap: the stream ends with no result
+            time.sleep(cap)
+            return None, [], 0
         if ends == "cap":
             return {"is_error": True, "subtype": "error_max_turns", "terminal_reason": "max_turns", "result": ""}, [], 0
         if ends == "gone" and "--resume" in args:
@@ -66,8 +70,8 @@ def cli(tmp_path, monkeypatch):
     return llm, seen, state, tmp_path
 
 
-def _run(llm, place, session):
-    return llm.run_agent("sys", "packet", ("Read",), cwd=str(place), session=session)
+def _run(llm, place, session, **kw):
+    return llm.run_agent("sys", "packet", ("Read",), cwd=str(place), session=session, **kw)
 
 
 _SID = session_key("proj", "root.dml", "", "exec-2", "executor")
@@ -139,3 +143,22 @@ def test_the_executor_round_names_its_nodes_conversation(monkeypatch):
     S._spawn(_E(), "root.dml", "exec-2", {}, _L(), "executor", "executor.md", "p", S.EXECUTOR_SCHEMA, "v", ".")
     S._spawn(_E(), "root.dml", "exec-2", {}, _L(), "consent", "consent.md", "p", S.CONSENT_SCHEMA, "v", ".", work=False)
     assert got == [_SID, None]
+
+
+def test_an_executors_round_cut_at_its_timeout_starts_the_next_clean(cli):
+    """The author's clean-context rule holds for a round of work that ran out of time: only a turn cap continues."""
+    llm, seen, state, tmp = cli
+    state["ends"] = "timeout"
+    assert _run(llm, tmp, _SID, timeout=1) == "" and llm.calls[-1]["stop_reason"] == "timeout"
+    assert not llm._transcripts(_SID)
+
+
+def test_a_conversation_cut_at_its_timeout_is_kept_where_its_caller_asks_and_its_next_turn_continues_it(cli):
+    """A reading asked for its report once its time is over (`validate._contact_call`) continues what it saw."""
+    llm, seen, state, tmp = cli
+    state["ends"] = "timeout"
+    _run(llm, tmp, _SID, timeout=1, keep_cut=True)
+    assert llm._transcripts(_SID), "the cut conversation was forgotten though its caller asked to keep it"
+    state["ends"] = "answer"
+    assert _run(llm, tmp, _SID, timeout=60) == "REPORT"
+    assert seen[1][seen[1].index("--resume") + 1] == _SID and not llm._transcripts(_SID)

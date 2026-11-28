@@ -25,14 +25,14 @@ from typing import Optional
 from gfso import past, store
 from gfso.llm import llm_factory, session_calls
 from gfso.executions import execution_of
-from gfso.workspaces import node_workspace, rejected_reports_dir, validator_workdir
+from gfso.workspaces import node_workspace, rejected_reports_dir, session_key, validator_workdir
 from gfso.roster import AgentRegistry, default_agents
 from gfso.adapters import worktrees as W
 from gfso.adapters.snapshots import BuildFailed, NotTheDelivery, Uncopied, judged_at, snapshot, swap
 from gfso.adapters.execution import NODES as _NODES, scratch_of
 from gfso.adapters.verifiers import evaluate_unittest
-from gfso.adapters.llm.stats import (stat_line, calls_of, is_limit, refused_by_limit, the_call_was_cut, torn_among,
-                                     what_stopped)
+from gfso.adapters.llm.stats import (TIMED_OUT, stat_line, calls_of, is_limit, refused_by_limit, the_call_was_cut,
+                                     torn_among, what_stopped)
 from gfso.adapters.llm.structured import parse_structured, schema_instruction
 from gfso.issuer import CONTACT_ROUND as _CONTACT, signal_ok as _signal, system_issues
 from gfso.core.types import (BATCH, HOST, LAID, AgentId, Criteria, LLMProviderPort, PlaceUnavailable, Probe, Signal, Stage,
@@ -1524,10 +1524,22 @@ def _read_at_contact(engine: Engine, top_id: str, parts: list, workdir, scratch,
     return {"done": False, "reason": why}
 
 
+#: how long the reading's report turn may take, once its own time is over
+REPORT_S = 60
+#: what a reading cut at its time is asked, continuing its conversation (`_contact_call`)
+REPORT_NOW = ("Your time for this reading is over. Report now in the form: what you found, each with the command that "
+              "shows it; what you started and could not finish, as unchecked.")
+
+
 def _contact_call(engine: Engine, client, system: str, parts: list, workdir, place: str, delivered, ex, ends: list):
-    """(the reading's report as run in the working directory, the tools its call used) — one call in its copy under
-    `place`; `ends`: when its half of the bound ends, read once, when its first copy stands (as `_validator_texts`
-    reads the check's cap)."""
+    """(the reading's report as run in the working directory, the tools its session used) — one call in its copy under
+    `place`, a NAMED conversation; `ends`: when its half of the bound ends, read once, when its first copy stands (as
+    `_validator_texts` reads the check's cap). CUT AT ITS TIME, it is asked once more in the same conversation for its
+    report (`REPORT_NOW`, within `REPORT_S`), and that answer is the reading's: killed at its cap, a headless call
+    returns nothing, and 3 of 4 tries on the gate lost every probe they had made, each having spent its half on the
+    whole suite (SET.md attempts 8–9) — the kit critic is never cut, it reports what it has, and «a claim you cannot
+    check is reported as unchecked» is a sentence B had no turn to obey (an instruction does not hold a mechanism up).
+    Kept for that turn alone (`keep_cut`), forgotten after it: the author's clean-context rule for rounds of work stands."""
     with snapshot(_read_by_id(engine, delivered, workdir, ex), Path(place) / "delivery", ex, delivered=delivered,
                   build=False) as tree:
         here = judged_at(tree, workdir, ex)
@@ -1536,9 +1548,23 @@ def _contact_call(engine: Engine, client, system: str, parts: list, workdir, pla
         changes = {str(t.id): _change(engine, t, delivered[1], ex) for t, *_ in parts}
         text = (swap(contact_packet(engine, [t for t, *_ in parts], workdir, place, changes), workdir, here)
                 + schema_instruction(_CONTACT_SCHEMA))
-        out = client.run_agent(system, text, allowed_tools=_VALIDATOR_TOOLS, cwd=here,
-                               timeout=None if ends[0] is None else max(30, int(ends[0] - time.time())))
-        return swap(out or "", here, workdir), dict(client.last_tool_calls)
+        sid = session_key(place, CONTACT_PLACE)
+        try:
+            out = client.run_agent(system, text, allowed_tools=_VALIDATOR_TOOLS, cwd=here, session=sid, keep_cut=True,
+                                   timeout=None if ends[0] is None else max(30, int(ends[0] - time.time())))
+            tools = dict(client.last_tool_calls)
+            if (calls_of(client) or [{}])[-1].get("stop_reason") == TIMED_OUT:
+                out = client.run_agent(system, REPORT_NOW + schema_instruction(_CONTACT_SCHEMA),
+                                       allowed_tools=_VALIDATOR_TOOLS, cwd=here, session=sid, timeout=REPORT_S)
+                tools = {k: tools.get(k, 0) + client.last_tool_calls.get(k, 0) for k in {*tools, *client.last_tool_calls}}
+                # …only a turn that CONTINUED the reading is its report: one that opened fresh (no transcript kept, or a
+                # refused `--resume` falling to the cold retry) saw none of its work and says «nothing found» — recorded
+                # as a done reading with no finds, the check spared question 1 over a reading that never reported
+                if not (calls_of(client) or [{}])[-1].get("resumed"):
+                    out = ""
+        finally:
+            client.forget(sid)
+        return swap(out or "", here, workdir), tools
 
 
 def _contact_rows(finds: list, parts: list, top_id: str) -> list:

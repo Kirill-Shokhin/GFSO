@@ -346,17 +346,18 @@ class ChatProvider(RecordingProvider):
 
     def agent_round(self, system: str, user: str, allowed_tools: tuple[str, ...], cwd: Optional[str] = None,
                      timeout: Optional[int] = None, max_turns: Optional[int] = None,
-                     session: Optional[str] = None) -> str:
+                     session: Optional[str] = None, keep_cut: bool = False) -> str:
         """One round of an agent run through the system's own tool loop."""
         if not self.runs_agents:
-            return super().agent_round(system, user, allowed_tools, cwd, timeout, max_turns, session)
+            return super().agent_round(system, user, allowed_tools, cwd, timeout, max_turns, session, keep_cut)
         if not cwd:
             raise ValueError("an agent run needs a working directory: without one it would run where the server "
                              "stands (the gfso state home), which holds none of the work. Pass `workdir`.")
         if not (self._window_asked or self.wire.context_window):
             self._window_asked = True
             self.wire.discover_window()
-        return ToolLoop(self).run(system, user, allowed_tools, cwd, timeout or self._timeout, max_turns, session)
+        return ToolLoop(self).run(system, user, allowed_tools, cwd, timeout or self._timeout, max_turns, session,
+                                  keep_cut)
 
     def forget(self, session: str) -> None:
         """Drop a conversation kept between rounds."""

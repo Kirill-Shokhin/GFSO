@@ -15,6 +15,11 @@ from concurrent.futures import ThreadPoolExecutor
 from gfso.core.types.ports import LLMProviderPort
 
 
+#: a call's `stop_reason` where its own timeout ended it: the process killed at its cap, no result streamed — read by a
+#: caller that asks such a conversation for its report (`validate._contact_call`)
+TIMED_OUT = "timeout"
+
+
 def tag_stage(llm, stage: str) -> None:
     """Label the llm's last call with its stage (duck-typed: only stat-collecting adapters have tag_last)."""
     if hasattr(llm, "tag_last"):
