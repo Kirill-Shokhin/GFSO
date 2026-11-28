@@ -26,8 +26,8 @@ from typing import Optional
 
 from dataclasses import replace
 
-from gfso.config import host_env
-from gfso.core.types import IN_THE_WORKS_PATH, INPUTS_TOKEN, PlaceUnavailable
+from gfso.config import host_env, work_env
+from gfso.core.types import HOST, IN_THE_WORKS_PATH, INPUTS_TOKEN, PlaceUnavailable
 from gfso.adapters.execution import ended_by_watch, past_disk
 from gfso import store
 from gfso.adapters.snapshots import WATCHED, NotTheDelivery, Uncopied, changed_or_unknown, judged_at, on_disk, snapshot, swap
@@ -375,7 +375,13 @@ def _run(ex, bash: str, cmd: str, tree: str, timeout: float, place: str) -> dict
         # in the copy's own container (`ExecutionPort.session`): a check runs what the agents wrote — the plan's probe,
         # the delivery's scripts — and in the project's container that would reach every node's place (critic over
         # SECURITY.md); there it writes its copy alone
-        r = ex.session(tree).run([bash, "-c", IN_THE_WORKS_PATH + cmd], cwd=tree, timeout=timeout)
+        # …on this host with the environment a model child's commands get (`work_env`, the copy first on PYTHONPATH):
+        # with the server's own, a check whose commands left the copy's root imported this host's editable install of
+        # the delivered package, and a test of this repository went red only in the judge's copy (2026-11-28) — a
+        # verdict about another tree than the one delivered (§11.3), and the server's keys and switches handed to the
+        # delivery's code. A container holds nothing of this host: its own environment stands
+        r = ex.session(tree).run([bash, "-c", IN_THE_WORKS_PATH + cmd], cwd=tree, timeout=timeout,
+                                 **({"env": work_env(tree)} if ex.files is HOST else {}))
     except subprocess.TimeoutExpired:
         return {"note": f"did not finish in {int(timeout)} s"}
     except OSError as e:
