@@ -1245,6 +1245,12 @@ def _env_names(env_file: str) -> list[str]:
         return []
 
 
+def path_sep(execution: ExecutionPort) -> str:
+    """The separator of a path list (PYTHONPATH) as the place's commands read it: this host's own, or a Linux
+    container's `:` — a Windows host's `;` reached a container as one bogus entry (`config.work_env`)."""
+    return os.pathsep if execution.files is HOST else ":"
+
+
 def scrubs(execution: ExecutionPort) -> bool:
     """Can the agent CLI started by `execution` keep its tools' shells clean of its credential? On Linux its scrub needs
     bubblewrap, and told to scrub without it the CLI exits before its first turn (probed: e3-linux-agent:2, CLI

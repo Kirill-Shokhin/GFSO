@@ -789,15 +789,25 @@ SECRET_ENV = re.compile(r"(API_KEY|AUTH_TOKEN|_SECRET|_PASSWORD)$")
 SYSTEM_PREFIX = "GFSO_"
 
 
-def work_env() -> dict:
+def work_env(cwd: str | None = None, sep: str = os.pathsep) -> dict:
     """What every command a model child runs on the work starts with, whichever route runs it — the CLI's own tools
     (`subprocess_env`) or the chat API's loop (`toolloop`): `env_without_secrets`, and long paths for every git it runs,
     as the system's own git has them (`worktrees.APART`): a validator's checks under its round's copy passed Windows'
-    260 and git alone broke there (2026-11-24); the chat loop's had none (critic, 2026-11-26)."""
+    260 and git alone broke there (2026-11-24); the chat loop's had none (critic, 2026-11-26).
+
+    `cwd`, the tree the run works in, first on PYTHONPATH: a probe run from a directory above the tree imported the
+    package of THIS host's editable install — the person's live checkout — beside the tree's own tests, and a correct
+    delivery FAILED on a check of another tree than the one delivered (validator gate, 2026-11-28: one file 1 failed from
+    the parent dir, 18 passed inside; a verdict is about the delivered tree, §11.3). Ahead of a declared shim, never
+    instead of it. `sep` the separator of the place the commands run in: a Linux container read a Windows host's `;`
+    as one bogus entry, the tree not first and the shim lost (critic over this). Only a child that runs commands is
+    given it (a one-shot with no tools runs in an empty place of its own: nothing there to import)."""
     env = env_without_secrets()
     if os.name == "nt":
         n = int(env.get("GIT_CONFIG_COUNT") or 0)
         env.update({"GIT_CONFIG_COUNT": str(n + 1), f"GIT_CONFIG_KEY_{n}": "core.longpaths", f"GIT_CONFIG_VALUE_{n}": "true"})
+    if cwd:
+        env["PYTHONPATH"] = sep.join(p for p in (str(cwd), env.get("PYTHONPATH")) if p)
     return env
 
 
@@ -1030,7 +1040,8 @@ def host_env() -> dict:
     return dict(os.environ)
 
 
-def subprocess_env(*, credential: dict | None = None, extra: dict | None = None) -> dict:
+def subprocess_env(*, credential: dict | None = None, extra: dict | None = None, cwd: str | None = None,
+                   sep: str = os.pathsep) -> dict:
     """The environment a subprocess inherits — a fresh dict, nothing installed here: this process's, less every key and
     token it holds and every switch of the system's (`env_without_secrets`), plus the one credential a MODEL call is
     given (`credential`, its provider's: `adapters/llm/credentials`) and what the caller names (`extra`).
@@ -1042,7 +1053,7 @@ def subprocess_env(*, credential: dict | None = None, extra: dict | None = None)
     """
     # …the server's mark among them: a gfso a model child runs (a probe running this product's own suite) must not treat
     # itself as the server and end its own children
-    env = {**work_env(), **(credential or {})}
+    env = {**work_env(cwd, sep), **(credential or {})}
     # …and room to answer: the CLI's default 32k output cap cut a plan of 14 parts, and the model's re-emission after
     # the cut is what was kept (AUTO haiku 4.5 sql_database, GB_sql_database_tmu9cb784)
     env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "64000")

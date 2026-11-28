@@ -28,7 +28,7 @@ from .base import RecordingProvider
 from .stats import TIMED_OUT, is_limit, is_unauthorized, refused_by_limit
 from .structured import holds_an_object
 from gfso.config import MODEL_DEFAULT, agent_trace_dir, subprocess_env
-from gfso.adapters.execution import LocalExecution, scrubs
+from gfso.adapters.execution import LocalExecution, path_sep, scrubs
 
 log = logging.getLogger(__name__)
 
@@ -715,7 +715,8 @@ class ClaudeCodeProvider(_Credentials, RecordingProvider):
         try:
             # …its door first, where the execution keeps one: a place down there is the call's own ending (critic 3)
             door = sess.door(credential, UPSTREAM) if credential else None
-            env = {**subprocess_env(credential=client_env(credential, door is None and scrubs(self._exec), door)),
+            env = {**subprocess_env(credential=client_env(credential, door is None and scrubs(self._exec), door),
+                                  cwd=cwd if tools_args is not None else None, sep=path_sep(self._exec)),
                    **({"MAX_THINKING_TOKENS": str(self._max_thinking)} if self._max_thinking is not None else {}),
                    **sess.commands_env()}
             proc = sess.popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
