@@ -51,7 +51,7 @@ from gfso.engine.findings import record_round
 from gfso.engine.loop import state_bound_left
 from gfso.engine.validation import StaleRun, contact_on, whole_waits_for_its_parts
 from gfso.engine.closures import verdict_provenance
-from gfso.config import CALLER, MODEL_DEFAULT, state_bound, validate_internal, validation_batch
+from gfso.config import CALLER, MODEL_DEFAULT, flag, state_bound, validate_internal, validation_batch
 from gfso.packets import (BUILT, CONTACT_ROW, TECH_REPORT, UNCOPIED, contact_packet, last_deliver_result, scope_order,
                           scope_validator_packet, validator_packet, file_tech_reports, owed_probes, snapshot_note,
                           change_text)
@@ -1586,9 +1586,15 @@ def _contact_rows(finds: list, parts: list, top_id: str) -> list:
         crit = criterion_meant(said, names[tid]) if placed and said and said.lower() != "outside" else None
         p = f.get("probe") if isinstance(f.get("probe"), dict) else {}
         probe = {k: str(p.get(k) or "").strip() for k in ("command", "expect")}
-        rows.append({"row": uuid.uuid4().hex[:12], "what": str(f["what"]).strip(),
-                     "evidence": str(f.get("evidence") or "").strip(), "by": CONTACT_BY, "node": tid,
-                     "bears_on": crit if crit in names[tid] else None,
+        crit = crit if crit in names[tid] else None
+        # …SHOWN TO THE CHECK ONLY WHILE THE ROUTE STANDS (`GFSO_CONTACT_CLAIMS`, off): the gate's uninjected tree took a
+        # false FAIL through it (SET.md attempt 12: the check's probe, run above the delivery, imported this installation's
+        # gfso), and the design's pre-registered rule withdraws the route on one (§B.5) — the claim then stands beside
+        # the verdict as an `outside` row, its probe run by the system, the criterion it named said in its words
+        shown = flag("GFSO_CONTACT_CLAIMS", False)
+        rows.append({"row": uuid.uuid4().hex[:12], "evidence": str(f.get("evidence") or "").strip(), "by": CONTACT_BY,
+                     "what": (f"contradicts `{crit}`: " if crit and not shown else "") + str(f["what"]).strip(),
+                     "node": tid, "bears_on": crit if shown else None,
                      "id": probe_id(crit or OUTSIDE, probe) if probe["command"] else uuid.uuid4().hex[:12],
                      **({"probe": probe} if all(probe.values()) else {})})
     return rows

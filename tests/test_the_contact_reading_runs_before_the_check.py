@@ -105,6 +105,7 @@ def contact(chat, monkeypatch):
     """The chat's project with the contact reading on and every client of a validation scripted."""
     e, repo, call, _ = chat
     monkeypatch.setenv("GFSO_CONTACT", "1")
+    monkeypatch.setenv("GFSO_CONTACT_CLAIMS", "1")     # …the route these tests pin; off by default (withdrawn, §B.5)
     s = _Script(e)
     monkeypatch.setattr(VAL, "llm_factory", lambda *a, **k: _Role(s))
     return e, repo, call, s
@@ -178,6 +179,19 @@ def test_a_shown_claim_the_check_fails_its_criterion_on_is_a_recorded_fail(conta
     rec = _delivered(e, repo, call)
     assert f"CONTACT [{RID}]" in s.a_users[0], s.a_users[0]
     assert rec.get("verdict") == "FAIL" and rec.get("failed_criteria") == ["says_v1"], rec
+
+
+def test_with_the_route_withdrawn_a_claim_on_a_criterion_stands_outside_and_is_shown_to_no_check(contact, monkeypatch):
+    """The gate's uninjected tree took a false FAIL through the shown claim (SET.md attempt 12), and the design's
+    pre-registered rule withdraws the route on one (§B.5): by default a claim naming a criterion is an `outside` row,
+    the criterion it named in its words, and the check is shown nothing."""
+    monkeypatch.delenv("GFSO_CONTACT_CLAIMS")
+    e, repo, call, s = contact
+    s.a = _answering("refuting", command=CMD, printed="v1")
+    rec = _delivered(e, repo, call)
+    assert f"CONTACT [{RID}]" not in s.a_users[0], "a claim was shown to the check with the route withdrawn"
+    assert rec.get("verdict") == "PASS" and not rec.get("failed_criteria"), rec
+    assert any(o.get("what", "").startswith("contradicts `says_v1`:") and not o.get("bears_on") for o in rec["outside"]), rec["outside"]
 
 
 def test_a_refuting_answer_beside_a_pass_entry_is_its_criterions_fail(contact):
@@ -339,7 +353,8 @@ def test_each_claim_goes_to_the_one_batch_of_its_criterion_and_counts_in_its_siz
 
 # ── (s) a scope ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_in_a_scope_a_claim_goes_under_its_member_and_one_naming_none_to_the_top(tmp_path):
+def test_in_a_scope_a_claim_goes_under_its_member_and_one_naming_none_to_the_top(tmp_path, monkeypatch):
+    monkeypatch.setenv("GFSO_CONTACT_CLAIMS", "1")
     e, _ = S._project(tmp_path)
     parts = [(e.graph.get_task(TaskId(t)), "d", list(e.graph.get_task(TaskId(t)).spec.criteria))
              for t in ("root.a", "root.b", "root")]
