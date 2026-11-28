@@ -162,12 +162,15 @@ BEING_OBSERVED = ("being observed by the system on the delivery — read the ver
 
 def outside_seen(probe, row) -> str:
     """What the system's run of an observation's `probe` (`row`, `observe.run_checks`) says of it: observed, where its
-    output shows the probe's `expect`; not reproduced, where it ran and does not; read, not observed, where there was
-    no probe or it could not run."""
+    output shows the probe's `expect`; read, not observed, where there was no probe, it could not run, or it ran and
+    its output lacks its own `expect` — then with what it printed. The find is its `what`, the probe its finder's offer
+    of how to see it: one that missed its own `expect` decided nothing of the find, and «not reproduced»
+    there read to the issuer as a refutation — 3 of 4 true finds on the gate's goal-mismatch case so labelled, their
+    `expect` written as prose while the output showed the find (VALIDATOR_AS_CRITIC.md, G3)."""
     if not (probe and row and "matched" in row):
         return READ_NOT_OBSERVED + (f": `{probe['command']}` {row['note']}" if probe and row and row.get("note") else "")
     said = f"`{probe['command']}` printed «{' | '.join(str(row.get('out') or '').splitlines())}»"
-    return f"observed: {said}" if row["matched"] else f"not reproduced: {said}, which does not show «{probe['expect']}»"
+    return f"observed: {said}" if row["matched"] else f"{READ_NOT_OBSERVED}: {said}, not its expect «{probe['expect']}»"
 
 
 def see_outside(storage, task_id: TaskId, seen: dict) -> None:

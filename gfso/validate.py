@@ -1587,11 +1587,13 @@ def _contact_rows(finds: list, parts: list, top_id: str) -> list:
         p = f.get("probe") if isinstance(f.get("probe"), dict) else {}
         probe = {k: str(p.get(k) or "").strip() for k in ("command", "expect")}
         crit = crit if crit in names[tid] else None
-        # …SHOWN TO THE CHECK ONLY WHILE THE ROUTE STANDS (`GFSO_CONTACT_CLAIMS`, off): the gate's uninjected tree took a
-        # false FAIL through it (SET.md attempt 12: the check's probe, run above the delivery, imported this installation's
-        # gfso), and the design's pre-registered rule withdraws the route on one (§B.5) — the claim then stands beside
-        # the verdict as an `outside` row, its probe run by the system, the criterion it named said in its words
-        shown = flag("GFSO_CONTACT_CLAIMS", False)
+        # …SHOWN TO THE CHECK WHILE THE ROUTE STANDS (`GFSO_CONTACT_CLAIMS`, on; `0` withdraws it): withdrawn once by the
+        # design's pre-registered rule on a false FAIL (§B.5; SET.md attempt 12, the check's probe importing this
+        # installation's gfso), back on its measure — after that cause was cured, the uninjected tree 3/3 clean, B's
+        # three false claims each answered `not_refuting` by the check: measured on sonnet-5-5 only, and on no real find
+        # outside the criteria filed under one (the class that withdrew it) — both owed before a release. Withdrawn, the claim stands beside the verdict as
+        # an `outside` row, its probe run by the system, the criterion it named said in its words
+        shown = flag("GFSO_CONTACT_CLAIMS", True)
         rows.append({"row": uuid.uuid4().hex[:12], "evidence": str(f.get("evidence") or "").strip(), "by": CONTACT_BY,
                      "what": (f"contradicts `{crit}`: " if crit and not shown else "") + str(f["what"]).strip(),
                      "node": tid, "bears_on": crit if shown else None,

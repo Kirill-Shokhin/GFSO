@@ -17,7 +17,7 @@ from gfso.driver import _locally
 from gfso.runtime import ProjectRegistry
 from gfso.mcp import connect as C
 from gfso import tools_llm as T
-from tests.support import criterion, make_engine
+from tests.support import a_repository, criterion, make_engine
 
 SPEC = {"description": "node", "criteria": [criterion("k", "keep")]}
 LOOPBACK = "http://127.0.0.1:8000"
@@ -125,9 +125,15 @@ def test_a_token_signs_as_its_one_name_through_every_door_and_the_log_names_it(d
     assert _client(app, Authorization=f"Bearer {token}").get("/api/whoami").json()["signs_as"] == []
 
 
-def test_the_systems_names_are_issued_to_no_one(door):
+def _registered(e, name: str, place) -> None:
+    """`name` on the roster as an executor in `place`, a repository of its own: a directory that is not one is refused
+    (`no_repository`), and a test run in a copy of the tree with no `.git` would then lean on a role never registered."""
+    assert not T.TOOLS["register_agent"](e, name, "llm-executor", workdir=str(a_repository(place))).get("refused")
+
+
+def test_the_systems_names_are_issued_to_no_one(door, tmp_path):
     e, _ = door
-    T.TOOLS["register_agent"](e, "exec-1", "llm-executor", workdir=".")
+    _registered(e, "exec-1", tmp_path / "work")
     for name in ("exec-1", "system", "a b"):
         with pytest.raises(ValueError):
             signin.issue(name)
@@ -189,7 +195,7 @@ def test_a_person_never_signs_as_a_system_role_whatever_the_old_graphs_named(doo
     assert ("exec-1", "session") not in [(s, v) for s, v, _ in _signed(e, "n", Signal.ACCEPT)]
     # …and a token issued before its name became a role on the roster signs nothing now
     _, token = signin.issue("later-role")
-    T.TOOLS["register_agent"](e, "later-role", "llm-executor", workdir=".")
+    _registered(e, "later-role", tmp_path / "work")
     assert _client(app, Authorization=f"Bearer {token}").get("/api/whoami").json()["signs_as"] == []
 
 

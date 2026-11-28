@@ -1,6 +1,6 @@
 """What a validator saw outside the criteria is a suspicion until it is observed: an entry carries `probe: {command,
 expect}`, the system runs it itself on a fresh copy of the delivery as it runs a pinned check, and the issuer is told
-«observed: …», «not reproduced: …» or «read, not observed» — never a verdict's input (Inv-2; §8.3 FM-1.f). Measured: told
+«observed: …» or «read, not observed» (with what a probe that missed its own expect printed) — never a verdict's input (Inv-2; §8.3 FM-1.f). Measured: told
 to probe such a find, a live validator wrote «Read from the diff only. I built no scenario and ran nothing for it.»
 
 CONTROL (each run, each red): drop `probe` from `_place_outside`'s entry → the kept-probe test and every observed test;
@@ -70,7 +70,7 @@ def test_the_system_runs_each_probe_on_the_delivered_tree_and_says_what_it_saw(c
         {"what": "a hunch", "evidence": "read off the diff"}])
     by = {r["what"]: r["observed"] for r in rows}
     assert by["f.txt says v1"] == "observed: `echo x > planted; cat f.txt` printed «v1»", by
-    assert by["f.txt says v2"] == "not reproduced: `cat f.txt` printed «v1», which does not show «v2»", by
+    assert by["f.txt says v2"] == "read, not observed: `cat f.txt` printed «v1», not its expect «v2»", by
     assert by["a hunch"] == READ_NOT_OBSERVED, by
     assert not (repo / "planted").exists(), "the probe ran in the place itself"
 
@@ -94,9 +94,9 @@ def test_no_observation_is_a_verdict(chat, monkeypatch):
 
 def test_the_issuer_is_told_what_the_system_saw(tmp_path):
     rows = [{"node": "root.a", "what": "f.txt says v2", "evidence": "ran it",
-             "observed": "not reproduced: `cat f.txt` printed «v1», which does not show «v2»"}]
+             "observed": "read, not observed: `cat f.txt` printed «v1», not its expect «v2»"}]
     text = P.outside_text(None, "root", rows, str(tmp_path))
-    assert "`root.a`: f.txt says v2 — not reproduced: `cat f.txt` printed «v1»" in text, text
+    assert "`root.a`: f.txt says v2 — read, not observed: `cat f.txt` printed «v1»" in text, text
 
 
 def _for_outside(monkeypatch, then):
@@ -135,7 +135,7 @@ def test_the_end_says_what_was_seen_of_a_question_left_standing(chat, monkeypatc
     _seen(e, repo, call, monkeypatch, [{"what": "f.txt says v2", "probe": {"command": "cat f.txt", "expect": "v2"}}])
     assert call("signal", "root", "PASS", "user", user_said=ACCEPTED)["accepted"]
     left = questions_left_standing(e)
-    assert left == ["root: root saw f.txt says v2 (not reproduced: `cat f.txt` printed «v1», which does not show «v2»)"], left
+    assert left == ["root: root saw f.txt says v2 (read, not observed: `cat f.txt` printed «v1», not its expect «v2»)"], left
 
 def test_the_caller_is_answered_while_the_outside_run_still_runs(chat, monkeypatch):
     e, repo, call, _ = chat
